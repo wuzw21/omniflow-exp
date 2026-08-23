@@ -4020,7 +4020,7 @@ def _mobilegpt_observation_package(observation: Any) -> str:
                 for package in packages
                 if package not in _MOBILEGPT_IGNORED_TARGET_PACKAGES
             ]
-            xml_package = (non_system or packages or [""])[-1]
+            xml_package = (non_system or [""])[-1]
             if xml_package:
                 return xml_package
     return package_name

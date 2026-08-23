@@ -201,6 +201,17 @@ def test_mobilegpt_source_target_ignores_permission_controller_surface(
     assert target["target_source"] == "canonical_source_observation"
 
 
+def test_mobilegpt_observation_package_ignores_systemui_only_xml() -> None:
+    assert pipeline._mobilegpt_observation_package(
+        {
+            "xml": (
+                '<hierarchy><node package="com.android.systemui" '
+                'text="MODE LIST" /></hierarchy>'
+            )
+        }
+    ) == ""
+
+
 def test_mobilegpt_source_target_preserves_open_app_alias_for_device_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
