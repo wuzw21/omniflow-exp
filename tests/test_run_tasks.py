@@ -428,6 +428,64 @@ def test_native_cold_mobilegpt_method_failure_is_reusable_without_validator(
     )
 
 
+def test_native_cold_mobilegpt_zero_action_failure_is_retryable(
+    tmp_path: Path,
+) -> None:
+    registry_root = tmp_path / "result_registry"
+    result_root = (
+        registry_root
+        / "SimpleCalendarEventOnDateAtTime"
+        / "mobilegpt"
+        / "small5562"
+        / "attempt_002.mobilegpt.small5562"
+    )
+    result_root.mkdir(parents=True)
+    memory_root = tmp_path / "native_cold_memory"
+    memory_root.mkdir()
+    (memory_root / "memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.androidworld_method_memory.v2",
+                "memory_mode": "mobilegpt_single_episode_native_cold_memory",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_root / "registered_result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "SimpleCalendarEventOnDateAtTime",
+                "source_seed": SOURCE_SEED,
+                "evaluation_seed": 113,
+                "details": [
+                    {
+                        "method": "mobilegpt",
+                        "device": "small5562",
+                        "status": "command_failed",
+                        "returncode": 1,
+                        "official_validator_success": None,
+                        "environment_failure": None,
+                        "actions_executed": 0,
+                        "episode_model_calls": 0,
+                        "model_calls": 2,
+                        "prep_model_calls": 2,
+                        "memory_root": str(memory_root),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert not _mobilegpt_registered_conclusion_is_reusable(
+        registry_root=registry_root,
+        task_name="SimpleCalendarEventOnDateAtTime",
+        device="small5562",
+        source_seed=SOURCE_SEED,
+        evaluation_seed=113,
+    )
+
+
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:
     args = _args(tmp_path)
     args.attempt_id = "attempt_001"

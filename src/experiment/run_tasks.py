@@ -2051,6 +2051,22 @@ def _mobilegpt_registered_conclusion_is_reusable(
                 method_manifest = json.loads(
                     method_manifest_path.read_text(encoding="utf-8")
                 )
+                # A cold episode that never reached the official executor is
+                # not a terminal method result.  In particular, client build,
+                # install, or handshake failures can be registered without a
+                # useful ``environment_failure`` flag.  Reuse only after at
+                # least one episode action/model event exists; otherwise the
+                # next task-major resume must retry the setup path.
+                if (
+                    str(method_manifest.get("memory_mode") or "")
+                    == "mobilegpt_single_episode_native_cold_memory"
+                    and int(detail.get("actions_executed") or 0) == 0
+                    and int(detail.get("episode_model_calls") or 0) == 0
+                    and int(detail.get("model_calls") or 0) <= int(
+                        detail.get("prep_model_calls") or 0
+                    )
+                ):
+                    continue
                 if (
                     str(method_manifest.get("memory_mode") or "")
                     == "mobilegpt_single_episode_native_cold_memory"
