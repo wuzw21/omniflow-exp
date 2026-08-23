@@ -455,6 +455,11 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
             activity = str(
                 getattr(controller._env, "foreground_activity_name", "") or ""
             ).strip().casefold()
+            packages = {
+                str(getattr(element, "package_name", "") or "").strip().casefold()
+                for element in controller._env.get_ui_elements() or ()
+                if str(getattr(element, "package_name", "") or "").strip()
+            }
             labels = {
                 str(value or "").strip().casefold()
                 for element in controller._env.get_ui_elements() or ()
@@ -464,8 +469,11 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
                 )
                 if str(value or "").strip()
             }
-            if activity.startswith("com.android.chrome/") and not labels.intersection(
-                chrome_onboarding_labels
+            chrome_is_foreground = activity.startswith("com.android.chrome/")
+            chrome_is_visible = "com.android.chrome" in packages
+            if (
+                (chrome_is_foreground or chrome_is_visible)
+                and not labels.intersection(chrome_onboarding_labels)
             ):
                 logger.info(
                     "AndroidWorld Chrome onboarding is already settled; "

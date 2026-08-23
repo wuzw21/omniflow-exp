@@ -730,7 +730,13 @@ def test_chrome_setup_skips_absent_onboarding_ids_after_first_run(
         foreground_activity_name = "com.android.chrome/.Main"
 
         def get_ui_elements(self):
-            return [SimpleNamespace(text="Chrome", content_description="")]
+            return [
+                SimpleNamespace(
+                    package_name="com.android.chrome",
+                    text="Chrome",
+                    content_description="",
+                )
+            ]
 
     class Controller:
         _env = Env()
