@@ -893,13 +893,17 @@ if [[ -n "$mobilegpt_convert_runlog" ]]; then
     source "$env_file"
     set +a
   fi
+  mobilegpt_convert_model="${MOBILEGPT_CHAT_MODEL:-$formal_model}"
+  normalize_model_environment
+  select_model_endpoint "$formal_model_endpoint_profile"
+  configure_model_stack "$mobilegpt_convert_model"
   mobilegpt_convert_command=(
     "$python_bin" -m src.experiment.mobilegpt_source convert
     --run-log "$mobilegpt_convert_runlog"
     --mobilegpt-root "$mobilegpt_root"
     --output-root "$mobilegpt_convert_output_root"
-    --model "${MOBILEGPT_CHAT_MODEL:-$formal_model}"
-    --embedding-model "${MOBILEGPT_EMBEDDING_MODEL:-GLM-Embedding-2}"
+    --model "$mobilegpt_convert_model"
+    --embedding-model "$MOBILEGPT_EMBEDDING_MODEL"
   )
   if [[ -n "$mobilegpt_convert_target_package" ]]; then
     mobilegpt_convert_command+=(--target-package "$mobilegpt_convert_target_package")
