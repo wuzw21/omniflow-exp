@@ -709,7 +709,7 @@ def test_expense_setup_timeout_only_expands_official_next_lookup(
     controller_type, original = patch
     try:
         controller_type.click_resource_id(
-            Controller(), "com.arduia.expense:id/btn_continue"
+            Controller(), "com.arduia.expense:id/btn_continue", timeout_sec=5.0
         )
         controller_type.click_resource_id(Controller(), "other:id/button")
     finally:

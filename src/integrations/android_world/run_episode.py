@@ -420,7 +420,7 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
         return None
 
     expense_continue_id = "com.arduia.expense:id/btn_continue"
-    timeout_sec = max(
+    expense_timeout_sec = max(
         10.0,
         float(os.environ.get("OMNIFLOW_ANDROIDWORLD_APP_READY_TIMEOUT_SEC", "30")),
     )
@@ -428,12 +428,12 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
     def click_resource_id(
         controller: Any,
         resource_ids: str | tuple[str, ...],
-        timeout_sec_arg: float = 10.0,
+        timeout_sec: float = 10.0,
     ) -> Any:
         ids = (resource_ids,) if isinstance(resource_ids, str) else resource_ids
         if expense_continue_id in ids:
-            timeout_sec_arg = max(float(timeout_sec_arg), timeout_sec)
-        return original(controller, resource_ids, timeout_sec_arg)
+            timeout_sec = max(float(timeout_sec), expense_timeout_sec)
+        return original(controller, resource_ids, timeout_sec)
 
     controller_type.click_resource_id = click_resource_id
     return controller_type, original
