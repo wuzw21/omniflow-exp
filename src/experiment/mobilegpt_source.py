@@ -38,6 +38,43 @@ _IGNORED_SOURCE_PACKAGES = {
 }
 
 
+def _registered_function_source_runlog(
+    index_path: str | Path,
+    *,
+    task_name: str,
+) -> Path | None:
+    """Read only the registered source-RunLog provenance, never the Store."""
+
+    path = Path(index_path).expanduser().resolve()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("schema_version") != "omniflow.data-index.v2":
+        return None
+    canonical = payload.get("canonical")
+    if not isinstance(canonical, dict):
+        return None
+    stores = canonical.get("function_stores")
+    if not isinstance(stores, dict):
+        return None
+    record = stores.get(str(task_name))
+    if not isinstance(record, dict):
+        return None
+    raw_source = str(record.get("source_run_log_path") or "").strip()
+    if not raw_source:
+        lineage = record.get("source_run_log_lineage")
+        if isinstance(lineage, dict):
+            raw_source = str(lineage.get("source_path") or "").strip()
+    if not raw_source:
+        return None
+    candidate = Path(raw_source).expanduser()
+    if not candidate.is_absolute():
+        candidate = path.parent / candidate
+    candidate = candidate.resolve()
+    return candidate if candidate.is_file() else None
+
+
 def load_canonical_source_item(
     index_path: str | Path,
     *,
@@ -82,6 +119,45 @@ def load_canonical_source_item(
         raise ValueError(
             f"mobilegpt_source_runlog_not_successful:task={task_name}"
         )
+    registered_source = _registered_function_source_runlog(
+        index_path,
+        task_name=task_name,
+    )
+    if registered_source is not None and registered_source != item.source_run_log:
+        registered = import_run_log(
+            json.loads(registered_source.read_text(encoding="utf-8"))
+        )
+        registered_validator = registered.get("validator")
+        if (
+            registered.get("status") == "succeeded"
+            and registered.get("success") is True
+            and isinstance(registered_validator, dict)
+            and registered_validator.get("official") is True
+            and registered_validator.get("success") is True
+            and registered.get("steps")
+        ):
+            meta = dict(item.meta)
+            meta.update(
+                {
+                    "mobilegpt_source_selection": (
+                        "canonical_function_source_runlog_provenance"
+                    ),
+                    "generic_source_run_log": str(item.source_run_log),
+                }
+            )
+            item = CanonicalRunLog(
+                task=item.task,
+                goal=str(registered.get("goal") or item.goal),
+                params=(
+                    dict(registered.get("task_parameters"))
+                    if isinstance(registered.get("task_parameters"), dict)
+                    else dict(item.params)
+                ),
+                source_run_log=registered_source,
+                replay_seed=int(registered.get("seed") or item.replay_seed),
+                step_count=len(registered["steps"]),
+                meta=meta,
+            )
     return item
 
 

@@ -139,6 +139,53 @@ def _write_mobilegpt_memory(root: Path, *, include_screenshot: bool = False) -> 
         (screen_root / "screenshot.jpg").write_bytes(b"jpeg")
 
 
+def test_v2_index_prefers_registered_function_source_runlog_provenance(
+    tmp_path: Path,
+) -> None:
+    _, generic_source = _write_source_index(
+        tmp_path / "generic",
+        action={"action_type": "click", "x": 150, "y": 150},
+    )
+    _, registered_source = _write_source_index(tmp_path / "registered")
+    index = tmp_path / "current.json"
+    index.write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.data-index.v2",
+                "source_index": {
+                    "SystemBluetoothTurnOn": {
+                        "goal": "Turn Bluetooth on.",
+                        "params": {},
+                        "source_seed": 111,
+                        "step_count": 1,
+                        "retained_source_run_log": str(generic_source),
+                        "latest_official_success_source": True,
+                        "source_kind": "androidworld_validator_success_source_runlog",
+                    }
+                },
+                "canonical": {
+                    "function_stores": {
+                        "SystemBluetoothTurnOn": {
+                            "source_run_log_path": str(registered_source),
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = mobilegpt_source.load_canonical_source_item(
+        index,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert selected.source_run_log == registered_source.resolve()
+    assert selected.meta["mobilegpt_source_selection"] == (
+        "canonical_function_source_runlog_provenance"
+    )
+
+
 def _write_stats(path: Path) -> None:
     path.write_text(
         "\n".join(
