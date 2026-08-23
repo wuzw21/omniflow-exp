@@ -400,6 +400,45 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
     return controller_type, original
 
 
+def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
+    """Give the official Pro Expense onboarding enough time on large AVDs.
+
+    AndroidWorld's ``ExpenseApp.setup`` hard-codes a 2-second launch delay and
+    then uses the default 10-second resource lookup timeout.  On the fold and
+    tablet AVDs the first-run view can take longer to publish its ``NEXT``
+    button even though the APK and emulator are healthy.  Keep the official
+    setup flow and only extend that one lookup while setup is running.
+    """
+
+    try:
+        tools_module = importlib.import_module("android_world.env.tools")
+    except ModuleNotFoundError:
+        return None
+    controller_type = getattr(tools_module, "AndroidToolController", None)
+    original = getattr(controller_type, "click_resource_id", None)
+    if controller_type is None or not callable(original):
+        return None
+
+    expense_continue_id = "com.arduia.expense:id/btn_continue"
+    timeout_sec = max(
+        10.0,
+        float(os.environ.get("OMNIFLOW_ANDROIDWORLD_APP_READY_TIMEOUT_SEC", "30")),
+    )
+
+    def click_resource_id(
+        controller: Any,
+        resource_ids: str | tuple[str, ...],
+        timeout_sec_arg: float = 10.0,
+    ) -> Any:
+        ids = (resource_ids,) if isinstance(resource_ids, str) else resource_ids
+        if expense_continue_id in ids:
+            timeout_sec_arg = max(float(timeout_sec_arg), timeout_sec)
+        return original(controller, resource_ids, timeout_sec_arg)
+
+    controller_type.click_resource_id = click_resource_id
+    return controller_type, original
+
+
 def utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -2167,6 +2206,7 @@ def _run_androidworld_setup_apps(
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
     optional_setup_patch = _patch_androidworld_optional_setup_click()
+    expense_setup_patch = _patch_androidworld_expense_setup_timeout()
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
     setup_started_at = time.monotonic()
@@ -2225,6 +2265,9 @@ def _run_androidworld_setup_apps(
         if optional_setup_patch is not None:
             controller_type, original_click_element = optional_setup_patch
             controller_type.click_element = original_click_element
+        if expense_setup_patch is not None:
+            controller_type, original_click_resource_id = expense_setup_patch
+            controller_type.click_resource_id = original_click_resource_id
 
 
 def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | None:

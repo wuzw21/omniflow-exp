@@ -30,6 +30,7 @@ from src.integrations.android_world.run_episode import (
     _patch_androidworld_app_launch,
     _patch_androidworld_current_activity,
     _patch_androidworld_chcon_compat,
+    _patch_androidworld_expense_setup_timeout,
     _patch_androidworld_directory_clear,
     _patch_androidworld_optional_setup_click,
     _prepare_androidworld_episode_apps,
@@ -683,6 +684,41 @@ def test_androidworld_setup_timeout_is_positive(monkeypatch) -> None:
     monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_SETUP_TIMEOUT_SEC", "0")
     with pytest.raises(RuntimeError, match="must be positive"):
         _androidworld_setup_timeout_sec()
+
+
+def test_expense_setup_timeout_only_expands_official_next_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, float]] = []
+
+    class Controller:
+        def click_resource_id(self, resource_ids, timeout_sec=10.0):
+            calls.append((resource_ids, float(timeout_sec)))
+
+    module = SimpleNamespace(AndroidToolController=Controller)
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.importlib.import_module",
+        lambda name: module
+        if name == "android_world.env.tools"
+        else real_import_module(name),
+    )
+
+    patch = _patch_androidworld_expense_setup_timeout()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller_type.click_resource_id(
+            Controller(), "com.arduia.expense:id/btn_continue"
+        )
+        controller_type.click_resource_id(Controller(), "other:id/button")
+    finally:
+        controller_type.click_resource_id = original
+
+    assert calls == [
+        ("com.arduia.expense:id/btn_continue", 30.0),
+        ("other:id/button", 10.0),
+    ]
 
 
 def test_androidworld_setup_has_hard_deadline(monkeypatch) -> None:
