@@ -327,6 +327,40 @@ def test_native_cold_memory_rejects_failed_official_validator(
     assert not (bundle / MOBILEGPT_MEMORY_MANIFEST).exists()
 
 
+def test_mobilegpt_package_resolution_gives_adb_wrapper_real_sdk_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk_root = tmp_path / "android-sdk"
+    real_adb = sdk_root / "platform-tools" / "adb"
+    real_adb.parent.mkdir(parents=True)
+    real_adb.write_text("#!/bin/sh\n", encoding="utf-8")
+    real_adb.chmod(0o755)
+    monkeypatch.setattr(
+        pipeline,
+        "_subprocess_env",
+        lambda *_args, **_kwargs: {"ANDROID_SDK_ROOT": str(sdk_root)},
+    )
+    captured: dict[str, object] = {}
+
+    def run(*args: object, **kwargs: object) -> SimpleNamespace:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(stdout="package:com.android.settings\n", returncode=0)
+
+    monkeypatch.setattr(pipeline.subprocess, "run", run)
+
+    resolved = pipeline._resolve_mobilegpt_target_package(
+        "settings",
+        adb_path="/repo/tools/androidworld_adb_compat.sh",
+        serial="emulator-5560",
+    )
+
+    assert resolved == "com.android.settings"
+    env = captured["kwargs"]["env"]
+    assert env["OMNIFLOW_REAL_ADB_PATH"] == str(real_adb)
+
+
 def test_prepare_runs_original_mobilegpt_on_source_device(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

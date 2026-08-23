@@ -4139,6 +4139,26 @@ def _resolve_mobilegpt_target_package(
         "camera": "com.android.camera2",
     }
     value = known_aliases.get(value.casefold(), value)
+    subprocess_env = _subprocess_env({})
+    if not str(subprocess_env.get("OMNIFLOW_REAL_ADB_PATH") or "").strip():
+        sdk_root = next(
+            (
+                str(subprocess_env.get(key) or "").strip()
+                for key in (
+                    "OMNIFLOW_ANDROID_SDK_ROOT",
+                    "ANDROID_SDK_ROOT",
+                    "ANDROID_HOME",
+                )
+                if str(subprocess_env.get(key) or "").strip()
+            ),
+            "",
+        )
+        real_adb = Path(sdk_root) / "platform-tools" / "adb" if sdk_root else None
+        if real_adb is not None and real_adb.is_file() and os.access(real_adb, os.X_OK):
+            # Package discovery is a child process of the public launcher.
+            # Give its AndroidWorld compatibility wrapper the same concrete
+            # adb selected by that launcher.
+            subprocess_env["OMNIFLOW_REAL_ADB_PATH"] = str(real_adb)
     try:
         completed = subprocess.run(
             [
@@ -4155,6 +4175,7 @@ def _resolve_mobilegpt_target_package(
             stderr=subprocess.STDOUT,
             text=True,
             timeout=20.0,
+            env=subprocess_env,
         )
     except (OSError, subprocess.SubprocessError):
         return value
