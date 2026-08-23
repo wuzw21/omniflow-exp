@@ -196,6 +196,39 @@ def test_mobilegpt_staged_client_observes_again_after_official_speak(
     )
 
 
+def test_mobilegpt_staged_client_selects_primary_same_package_window(
+    tmp_path: Path,
+) -> None:
+    client = tmp_path / "client"
+    service = client / "app/src/main/java/com/example/MobileGPT"
+    service.mkdir(parents=True)
+    path = service / "MobileGPTAccessibilityService.java"
+    path.write_text(
+        """
+    private AccessibilityNodeInfo getRootForActiveApp(){
+        List<AccessibilityWindowInfo> windows = getWindows();
+
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root.getPackageName().equals(targetPackageName)) {
+                return root;
+            }
+        }
+        Log.d(TAG, "No Appropriate Root found in this screen.");
+        return null;
+    }
+""",
+        encoding="utf-8",
+    )
+
+    _configure_mobilegpt_client_launch_lifecycle(client)
+    staged = path.read_text(encoding="utf-8")
+
+    assert "omniflow_mobilegpt_primary_app_window" in staged
+    assert "largestArea" in staged
+    assert "root.getBoundsInScreen(bounds)" in staged
+
+
 def test_mobilegpt_protocol_probe_distinguishes_handshake_failure(
     tmp_path: Path,
 ) -> None:

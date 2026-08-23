@@ -1754,6 +1754,53 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
     if speak_original in source and "omniflow_mobilegpt_speak_lifecycle" not in source:
         source = source.replace(speak_original, speak_replacement, 1)
         changed = True
+    root_original = (
+        "    private AccessibilityNodeInfo getRootForActiveApp(){\n"
+        "        List<AccessibilityWindowInfo> windows = getWindows();\n"
+        "\n"
+        "        for (AccessibilityWindowInfo window : windows) {\n"
+        "            AccessibilityNodeInfo root = window.getRoot();\n"
+        "            if (root.getPackageName().equals(targetPackageName)) {\n"
+        "                return root;\n"
+        "            }\n"
+        "        }\n"
+        "        Log.d(TAG, \"No Appropriate Root found in this screen.\");\n"
+        "        return null;\n"
+        "    }\n"
+    )
+    root_replacement = (
+        "    private AccessibilityNodeInfo getRootForActiveApp(){\n"
+        "        // omniflow_mobilegpt_primary_app_window: AndroidWorld apps can\n"
+        "        // expose a same-package tooltip/snackbar as a separate window.\n"
+        "        // Keep the official Accessibility observation, but select the\n"
+        "        // largest same-package root instead of a transient overlay.\n"
+        "        List<AccessibilityWindowInfo> windows = getWindows();\n"
+        "        AccessibilityNodeInfo largestRoot = null;\n"
+        "        int largestArea = -1;\n"
+        "        for (AccessibilityWindowInfo window : windows) {\n"
+        "            AccessibilityNodeInfo root = window.getRoot();\n"
+        "            if (root == null || root.getPackageName() == null\n"
+        "                    || !root.getPackageName().equals(targetPackageName)) {\n"
+        "                continue;\n"
+        "            }\n"
+        "            Rect bounds = new Rect();\n"
+        "            root.getBoundsInScreen(bounds);\n"
+        "            int area = Math.max(0, bounds.width()) * Math.max(0, bounds.height());\n"
+        "            if (area > largestArea) {\n"
+        "                largestArea = area;\n"
+        "                largestRoot = root;\n"
+        "            }\n"
+        "        }\n"
+        "        if (largestRoot != null) {\n"
+        "            return largestRoot;\n"
+        "        }\n"
+        "        Log.d(TAG, \"No Appropriate Root found in this screen.\");\n"
+        "        return null;\n"
+        "    }\n"
+    )
+    if root_original in source and "omniflow_mobilegpt_primary_app_window" not in source:
+        source = source.replace(root_original, root_replacement, 1)
+        changed = True
     marker = "// omniflow_mobilegpt_launch_lifecycle"
     if marker in source:
         if changed:
