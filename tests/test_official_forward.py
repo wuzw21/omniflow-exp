@@ -804,6 +804,50 @@ def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     assert "gpt-4o" in (server / "main.py").read_text(encoding="utf-8")
 
 
+def test_mobilegpt_forwarder_parameterizes_only_explicit_memory_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "utils").mkdir()
+    (server / "main.py").write_text("# official\n", encoding="utf-8")
+    (server / "memory" / "memory_manager.py").write_text(
+        "import os\n"
+        "def select(candidates):\n"
+        "    highest_similarity = candidates[0]\n"
+        "    if highest_similarity > 0.95:\n"
+        "        return 0\n",
+        encoding="utf-8",
+    )
+    (server / "utils" / "utils.py").write_text(
+        "import os\nimport json\n\n"
+        "def write_omniflow_mobilegpt_event(event):\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    memory = tmp_path / "prepared"
+    (memory / "frozen_memory").mkdir(parents=True)
+    monkeypatch.setenv("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", "0.70")
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+    )
+
+    staged = Path(result["server_root"])
+    staged_memory_manager = (
+        staged / "memory" / "memory_manager.py"
+    ).read_text(encoding="utf-8")
+    assert "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" in staged_memory_manager
+    assert "if highest_similarity > threshold:" in staged_memory_manager
+    assert "if highest_similarity > 0.95:" in (
+        server / "memory" / "memory_manager.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     tmp_path: Path,
 ) -> None:

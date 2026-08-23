@@ -1025,14 +1025,56 @@ def _configure_mobilegpt_server(
     """Inject provider names into a temporary copy of the official Server.
 
     MobileGPT's upstream code keeps provider model names as constants. This
-    function changes routing/observability only; it does not alter memory
-    matching, task selection, planning or action semantics.
+    function changes routing/observability only unless an experiment
+    explicitly sets ``MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD``. In that case
+    only the official cosine-similarity cutoff is parameterized; task
+    selection, page embeddings, planning and action semantics remain upstream.
     """
 
     normalized_embedding = str(embedding_model or "").strip()
     utils_path = server_root / "utils" / "utils.py"
     _configure_mobilegpt_telemetry(server_root)
     _configure_mobilegpt_finish_transport(server_root)
+    configured_threshold = str(
+        os.environ.get("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD") or ""
+    ).strip()
+    if configured_threshold:
+        try:
+            threshold_value = float(configured_threshold)
+        except ValueError as error:
+            raise ValueError("mobilegpt_memory_similarity_threshold_invalid") from error
+        if not 0.0 < threshold_value <= 1.0:
+            raise ValueError("mobilegpt_memory_similarity_threshold_invalid")
+        memory_manager_path = server_root / "memory" / "memory_manager.py"
+        if not memory_manager_path.is_file():
+            raise FileNotFoundError(
+                f"official_mobilegpt_memory_manager_missing:{memory_manager_path}"
+            )
+        memory_manager_source = memory_manager_path.read_text(encoding="utf-8")
+        if "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" not in memory_manager_source:
+            memory_manager_source, replacement_count = re.subn(
+                r"(?m)^(?P<indent>[ \t]*)if highest_similarity > 0\.95:[ \t]*$",
+                lambda match: (
+                    match.group("indent")
+                    + "threshold = float(os.getenv(\n"
+                    + match.group("indent")
+                    + '    "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", "0.95"\n'
+                    + match.group("indent")
+                    + "))\n"
+                    + match.group("indent")
+                    + "if highest_similarity > threshold:"
+                ),
+                memory_manager_source,
+                count=1,
+            )
+            if replacement_count != 1:
+                raise RuntimeError(
+                    "official_mobilegpt_memory_threshold_anchor_missing"
+                )
+            memory_manager_path.write_text(
+                memory_manager_source,
+                encoding="utf-8",
+            )
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
         if "def write_omniflow_mobilegpt_event" not in source:
