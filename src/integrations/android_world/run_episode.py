@@ -1838,7 +1838,7 @@ def prepare_androidworld_environment(
         )
         controller = getattr(env, "controller", None)
         controller_type = None
-        if _is_oob_control_backend():
+        if controller is not None:
             controller_type = importlib.import_module(
                 "android_world.env.android_world_controller"
             )
