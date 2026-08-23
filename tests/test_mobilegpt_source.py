@@ -201,6 +201,27 @@ def test_mobilegpt_source_target_ignores_permission_controller_surface(
     assert target["target_source"] == "canonical_source_observation"
 
 
+def test_mobilegpt_source_target_preserves_open_app_alias_for_device_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda _item: {"target_package": "settings", "target_app": "settings"},
+    )
+
+    target = mobilegpt_source._mobilegpt_source_target(
+        item=SimpleNamespace(task="SystemBluetoothTurnOn"),
+        source={"steps": []},
+    )
+
+    assert target == {
+        "target_package": "settings",
+        "target_app": "settings",
+        "target_source": "canonical_source_open_app_alias",
+    }
+
+
 def test_only_one_mobilegpt_contract_is_active() -> None:
     assert MOBILEGPT_MEMORY_SCHEMA == "omniflow.mobilegpt-native-cold-memory.v1"
     assert MOBILEGPT_SOURCE_METHOD == "mobilegpt_native_source_cold"
@@ -316,9 +337,18 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
         pipeline,
         "_infer_mobilegpt_target_from_source_run_log",
         lambda _item: {
-            "target_package": "com.android.settings",
-            "target_app": "Settings",
+            "target_package": "settings",
+            "target_app": "settings",
         },
+    )
+    package_resolution: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_mobilegpt_target_package",
+        lambda candidate, *, adb_path, serial: package_resolution.append(
+            (candidate, serial)
+        )
+        or "com.android.settings",
     )
 
     def build_server(action: str, **kwargs: object) -> pipeline.CommandSpec:
@@ -389,7 +419,9 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
     assert isinstance(server_kwargs, dict)
     assert isinstance(episode_kwargs, dict)
     assert captured["server_action"] == "server"
+    assert package_resolution == [("settings", "emulator-5560")]
     assert "source_run_log" not in server_kwargs
+    assert server_kwargs["target_package"] == "com.android.settings"
     assert server_kwargs["embedding_model"] == "GLM-Embedding-2"
     assert server_kwargs["write_through_memory"] is True
     assert episode_kwargs["task_random_seed"] == 111

@@ -102,11 +102,15 @@ def _mobilegpt_source_target(
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
     inferred_package = str(inferred.get("target_package") or "").strip()
-    if inferred_package and "." in inferred_package:
+    if inferred_package:
         return {
             "target_package": inferred_package,
             "target_app": str(inferred.get("target_app") or inferred_package),
-            "target_source": "canonical_source_metadata",
+            "target_source": (
+                "canonical_source_package"
+                if "." in inferred_package
+                else "canonical_source_open_app_alias"
+            ),
         }
 
     packages: set[str] = set()
@@ -278,6 +282,20 @@ def prepare_mobilegpt_source_memory(
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_path, _, source_audit, target = _source_preflight(item)
+    resolved_target_package = pipeline._resolve_mobilegpt_target_package(
+        target["target_package"],
+        adb_path=str(adb_path),
+        serial=str(serial),
+    )
+    if "." not in resolved_target_package:
+        raise ValueError(
+            "mobilegpt_source_target_package_unresolved:"
+            f"alias={target['target_package']}:resolved={resolved_target_package}"
+        )
+    target = {
+        **target,
+        "target_package": resolved_target_package,
+    }
     bundle_root = Path(output_root).expanduser().resolve()
     if bundle_root.exists():
         raise FileExistsError(f"immutable_mobilegpt_source_attempt_exists:{bundle_root}")
