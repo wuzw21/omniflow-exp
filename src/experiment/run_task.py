@@ -2378,7 +2378,7 @@ def build_mobilegpt_server_command(
         # completion room for the official selector/derive JSON not to be
         # truncated on screens with many available actions.
         env["MOBILEGPT_THINKING"] = "disabled"
-        env["MOBILEGPT_MAX_TOKENS"] = "1024"
+        env["MOBILEGPT_MAX_TOKENS"] = "512"
         env["MOBILEGPT_LIST_MAX_TOKENS"] = "512"
         env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
