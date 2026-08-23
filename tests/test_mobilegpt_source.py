@@ -157,6 +157,33 @@ def _write_native_stats(path: Path) -> None:
     )
 
 
+def _write_official_native_stats_without_task_markers(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {
+                    "event": "chat_call",
+                    "model": "GLM-4.6V",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                },
+                {
+                    "event": "embedding_call",
+                    "model": "GLM-Embedding-2",
+                    "prompt_tokens": 4,
+                    "completion_tokens": 0,
+                    "total_tokens": 4,
+                },
+                {"event": "mobilegpt_action_sent", "action": "click"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_official_result(path: Path, *, success: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -336,6 +363,34 @@ def test_native_cold_memory_rejects_failed_official_validator(
         )
 
     assert not (bundle / MOBILEGPT_MEMORY_MANIFEST).exists()
+
+
+def test_native_cold_memory_does_not_require_nonofficial_task_markers(
+    tmp_path: Path,
+) -> None:
+    _, source_run_log = _write_source_index(tmp_path / "source")
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    stats = bundle / "source_stats.jsonl"
+    _write_official_native_stats_without_task_markers(stats)
+    result_path = bundle / "source_result.jsonl"
+    _write_official_result(result_path, success=True)
+
+    sealed = pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        official_source_result=result_path,
+        task_name="SystemBluetoothTurnOn",
+        target_package="com.android.settings",
+        target_app="Settings",
+        source_model="GLM-4.6V",
+    )
+
+    assert sealed["manifest"]["source_stats"]["task_started_count"] == 0
+    assert sealed["manifest"]["source_stats"]["task_finished_count"] == 0
+    assert sealed["manifest"]["memory"]["inventory"]["has_useful_actions"] is True
 
 
 def test_mobilegpt_package_resolution_gives_adb_wrapper_real_sdk_binary(

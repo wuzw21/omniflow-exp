@@ -1999,10 +1999,6 @@ def _mobilegpt_native_memory_write_status(
     task_started_count = _coerce_int(stats_summary.get("task_started_count"))
     task_finished_count = _coerce_int(stats_summary.get("task_finished_count"))
     reasons: list[str] = []
-    if task_started_count != 1:
-        reasons.append("task_not_started_once")
-    if task_finished_count <= 0:
-        reasons.append("missing_task_finished")
     if not official_validator_success:
         reasons.append("cold_validator_failed")
     if _coerce_int(stats_summary.get("model_calls")) <= 0:

@@ -881,10 +881,6 @@ def _validate_mobilegpt_native_cold_memory(
         bundle_root, manifest.get("source_stats"), label="source_stats"
     )
     stats_summary = summarize_mobilegpt_stats(stats_path)
-    if int(stats_summary.get("task_started_count") or 0) != 1:
-        raise ValueError("mobilegpt_cold_memory_task_start_invalid")
-    if int(stats_summary.get("task_finished_count") or 0) <= 0:
-        raise ValueError("mobilegpt_cold_memory_task_finish_missing")
     if int(stats_summary.get("model_calls") or 0) <= 0:
         raise ValueError("mobilegpt_cold_memory_model_calls_missing")
     if int(stats_summary.get("teacher_event_count") or 0) > 0:
