@@ -1248,6 +1248,48 @@ def test_conversion_rejects_ambiguous_coordinate_free_input(
         )
 
 
+def test_conversion_repairs_stale_before_observation_from_next_evidence(
+    tmp_path: Path,
+) -> None:
+    target_xml = (
+        '<hierarchy><node text="Shutter" resource-id="shutter_button" '
+        'clickable="true" bounds="[0,0][100,100]" /></hierarchy>'
+    )
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=["<hierarchy />"],
+    )
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["steps"][0]["next_observation"] = androidworld_state(
+        "settled",
+        forest=target_xml,
+    )
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    trajectory = _load_runlog_trajectory(source)
+
+    assert len(trajectory["transitions"]) == 1
+    transition = trajectory["transitions"][0]
+    assert transition.observation_repaired_from_next is True
+    assert transition.forest == target_xml
+    assert "shutter_button" in transition.forest
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    assert result["observation_repair_count"] == 1
+    audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8"))
+    assert audit["validation_rows"][0]["observation_repaired_from_next"] is True
+
+
 def test_conversion_preserves_repeated_runlog_actions(
     tmp_path: Path,
 ) -> None:

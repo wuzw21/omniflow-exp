@@ -279,6 +279,7 @@ class _RunLogTransition:
     observation: dict[str, Any]
     forest: str
     next_forest: str = ""
+    observation_repaired_from_next: bool = False
 
 
 def _read_csv_rows(path: Path, *, label: str) -> list[dict[str, str]]:
@@ -702,20 +703,48 @@ def _load_runlog_trajectory(
                 step_index=step_index,
                 error=str(error),
             ) from error
+        next_observation = raw_step.get("next_observation")
+        if not isinstance(next_observation, dict) and ordinal + 1 < len(raw_steps):
+            next_observation = _observation_for_step(raw_steps[ordinal + 1])
+        next_forest = (
+            androidworld_observation_xml(next_observation)
+            if isinstance(next_observation, dict)
+            else ""
+        )
+        observation_repaired_from_next = False
+        # Some historical AndroidWorld RunLogs captured the screenshot/XML
+        # immediately before the UI settled, while the action result already
+        # contains the settled observation.  Do not replay coordinates or
+        # guess a target: only promote the next observation when the exact
+        # source point is absent from the current XML and is grounded by an
+        # actionable native node in that next XML.  The stored action remains
+        # the official MobileGPT index-based action.
+        if (
+            next_forest
+            and _action_type(action) in {"click", "double_tap", "long_press"}
+            and not _xml_has_action_target(forest, action)
+            and _xml_has_action_target(next_forest, action)
+        ):
+            forest = next_forest
+            if isinstance(next_observation, dict):
+                observation = dict(next_observation)
+            observation_repaired_from_next = True
+        try:
+            ET.fromstring(forest)
+        except ET.ParseError as error:
+            raise MobileGPTConversionError(
+                "source_observation_invalid_xml",
+                step_index=step_index,
+                error=str(error),
+            ) from error
         transitions.append(
             _RunLogTransition(
                 step_index=step_index,
                 action=action,
                 observation=observation,
                 forest=forest,
-                next_forest=(
-                    androidworld_observation_xml(
-                        _observation_for_step(raw_steps[ordinal + 1])
-                    )
-                    if ordinal + 1 < len(raw_steps)
-                    and isinstance(raw_steps[ordinal + 1], dict)
-                    else ""
-                ),
+                next_forest=next_forest,
+                observation_repaired_from_next=observation_repaired_from_next,
             )
         )
 
@@ -1213,6 +1242,38 @@ def _element_contains_action(element: ET.Element, action: dict[str, Any]) -> boo
     x, y = point
     left, top, right, bottom = element_bounds
     return left <= x <= right and top <= y <= bottom
+
+
+def _xml_has_action_target(xml_text: str, action: dict[str, Any]) -> bool:
+    """Check native XML evidence before allowing stale-observation repair.
+
+    This is deliberately narrower than the official encoded-page mapper: it
+    is only a guard for deciding whether ``next_observation`` can repair a
+    stale before-action capture.  A coordinate is accepted only when the XML
+    itself contains a clickable/checkable node at that point.  The actual
+    MobileGPT index and action are still produced by ``encode_xml`` and the
+    official action utilities.
+    """
+
+    point = _point(action)
+    if point is None or _action_type(action) not in {
+        "click",
+        "double_tap",
+        "long_press",
+    }:
+        return False
+    try:
+        root = ET.fromstring(str(xml_text or ""))
+    except ET.ParseError:
+        return False
+    for element in root.iter():
+        if not _element_contains_action(element, action):
+            continue
+        if str(element.get("clickable") or "").strip().lower() == "true":
+            return True
+        if str(element.get("checkable") or "").strip().lower() == "true":
+            return True
+    return False
 
 
 def _swipe_direction(action: dict[str, Any]) -> str:
@@ -3315,6 +3376,7 @@ def convert_runlog_to_mobilegpt_memory(
             row = {
                 "source_step_index": transition.step_index,
                 "source_action_type": _action_type(transition.action),
+                "observation_repaired_from_next": transition.observation_repaired_from_next,
                 "memory_page_index": page_index,
                 "memory_subtask_name": subtask["name"],
                 "selected_subtask": selected_subtask,
@@ -3571,6 +3633,9 @@ def convert_runlog_to_mobilegpt_memory(
         "launch_only": launch_only,
         "transition_count": len(transitions),
         "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),
+        "observation_repair_count": sum(
+            1 for transition in transitions if transition.observation_repaired_from_next
+        ),
         "validation_rows": audit_rows,
         "actions_supplied_to_mobilegpt": True,
         "source_transitions_supplied": True,
