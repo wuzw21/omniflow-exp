@@ -2330,7 +2330,18 @@ def _run_mobilegpt_client(
         ["shell", "settings", "get", "secure", "enabled_accessibility_services"],
         check=False,
     ).stdout.strip()
-    services = [value for value in current.split(":") if value and value != "null"]
+    # API-33 images can retain AndroidWorld's legacy AccessibilityForwarder
+    # component after it has been removed/disabled.  Keeping that stale entry
+    # makes the accessibility manager repeatedly start the crashing forwarder
+    # and prevents the official MobileGPT service from binding.  Preserve
+    # valid services (including OOB), but drop only the obsolete forwarder.
+    services = [
+        value
+        for value in current.split(":")
+        if value
+        and value != "null"
+        and not value.startswith("com.google.androidenv.accessibilityforwarder/")
+    ]
     if service not in services:
         services.append(service)
     # Android may retain the old accessibility manager state across an APK
