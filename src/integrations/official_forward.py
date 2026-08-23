@@ -2577,14 +2577,19 @@ def run_mobilegpt_client(
             server_log_path=server_log_path,
         )
         # MobileGPT toggles Accessibility off and on while binding its own
-        # official service. Android can leave the AndroidWorld forwarder
-        # enabled but unbound, so restore the canonical validator transport
-        # before reading the official reward.
+        # official service. Native AndroidWorld runs restore its forwarder
+        # before validation. OOB owns observe/act in the formal campaign, so
+        # rebinding the legacy forwarder would turn a valid OOB setup into an
+        # environment failure.
         from src.integrations.android_world.run_episode import (
             ensure_androidworld_accessibility_ready,
         )
 
-        ensure_androidworld_accessibility_ready(env)
+        control_backend = str(
+            os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+        ).strip().lower()
+        if control_backend not in {"oob", "omniflow", "oob_control"}:
+            ensure_androidworld_accessibility_ready(env)
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
         # AndroidWorld task is already successful. Preserve that timeout in
