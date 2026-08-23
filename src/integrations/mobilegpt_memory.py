@@ -765,6 +765,12 @@ def _validate_mobilegpt_converted_memory(
         raise ValueError("mobilegpt_virtual_memory_schema_invalid") from error
     if str(manifest.get("task_name") or "") != str(task_name):
         raise ValueError("mobilegpt_virtual_memory_task_name_mismatch")
+    target_package = str(manifest.get("target_package") or "").strip()
+    if target_package in {
+        "com.google.android.inputmethod.latin",
+        "com.android.inputmethod.latin",
+    }:
+        raise ValueError("mobilegpt_virtual_memory_target_package_invalid")
     if int(manifest.get("source_seed") or -1) != int(source_seed):
         raise ValueError("mobilegpt_virtual_memory_source_seed_mismatch")
     if int(source_seed) != SOURCE_SEED:
