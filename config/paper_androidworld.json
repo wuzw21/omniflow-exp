@@ -10,9 +10,9 @@
       "t3a_hint"
     ],
     "devices": [
-      {"label": "small5562", "serial": "emulator-5562", "console_port": 5562, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
-      {"label": "fold5564", "serial": "emulator-5564", "console_port": 5564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold"},
-      {"label": "small5554", "serial": "emulator-5554", "console_port": 5554, "avd": "WXGA_Tablet_test_00", "api_level": 33, "profile": "tablet"}
+      {"label": "standard45562", "serial": "emulator-45562", "console_port": 45562, "avd": "OmniFlowTargetSmall", "api_level": 33, "profile": "small_phone"},
+      {"label": "fold45564", "serial": "emulator-45564", "console_port": 45564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold"},
+      {"label": "tablet45554", "serial": "emulator-45554", "console_port": 45554, "avd": "WXGA_Tablet_test_00", "api_level": 33, "profile": "tablet"}
     ],
     "source_device": {
       "label": "source5560",

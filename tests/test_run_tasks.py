@@ -380,8 +380,8 @@ def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> No
         outcomes_root=outcomes_root,
         task_name=args.task,
         method="appagent",
-        device="small5562",
-        device_serial="emulator-5562",
+        device=DEVICES[0][0],
+        device_serial=DEVICES[0][1],
         attempt_id="attempt_001",
         source_seed=111,
         evaluation_seed=113,
@@ -830,21 +830,21 @@ def test_e2e_selection_runs_only_one_method_and_device(
         command_runner=runner,
     )
 
-    assert calls == [("omniflow", "fold5564:emulator-5564:5564")]
+    assert calls == [("omniflow", "fold45564:emulator-45564:45564")]
 
 
 def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
     selected = SimpleNamespace(
         e2e_method="omniflow,appagent",
         e2e_device=(
-            "small5554:emulator-5554:5554,"
-            "fold5564:emulator-5564:5564"
+            "tablet45554:emulator-45554:45554,"
+            "fold45564:emulator-45564:45564"
         ),
     )
     assert _e2e_methods(selected) == ("omniflow", "appagent")
     assert [device[0] for device in _e2e_devices(selected)] == [
-        "small5554",
-        "fold5564",
+        "tablet45554",
+        "fold45564",
     ]
     all_selected = SimpleNamespace(e2e_method="all", e2e_device="all")
     assert _e2e_methods(all_selected) == METHODS
@@ -2044,7 +2044,7 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
         for command in commands
     )
     assert all("bash" not in command for command in commands)
-    for device in ("small5554", "fold5564"):
+    for device in (DEVICES[2][0], DEVICES[1][0]):
         rows = sorted((row for row in calls if row[0] == device), key=lambda row: row[2])
         assert [row[1] for row in rows] == list(METHODS)
         assert all(current[3] <= following[2] for current, following in zip(rows, rows[1:]))
@@ -2405,12 +2405,12 @@ def test_rerun_concluded_override_keeps_old_results_runnable(
     args = _args(tmp_path)
     args.task = "CameraTakePhoto"
     args.e2e_method = "fixed_replay"
-    args.e2e_device = "small5554:emulator-5554:5554"
+    args.e2e_device = DEVICES[2]
     outcomes_root = tmp_path / "outcomes"
     monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_RERUN_CONCLUDED", "1")
     monkeypatch.setattr(
         "src.experiment.run_tasks.concluded_result_keys",
-        lambda **_: {("fixed_replay", "small5554")},
+        lambda **_: {("fixed_replay", DEVICES[2][0])},
     )
 
     assert _concluded_results(args, outcomes_root, "attempt_002") == set()

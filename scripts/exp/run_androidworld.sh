@@ -663,7 +663,7 @@ Examples:
   bash scripts/exp/run_androidworld.sh \
     --e2e-task AudioRecorderRecordAudioWithFileName \
     --e2e-method omniflow \
-    --e2e-device small5562:emulator-5562:5562 \
+    --e2e-device standard45562:emulator-45562:45562 \
     --e2e-source-seed 111 \
     --e2e-evaluation-seed 113 \
     --task-deadline-sec 1800

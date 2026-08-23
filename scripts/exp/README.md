@@ -13,7 +13,7 @@
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \
   --e2e-method omniflow \
-  --e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564,small5554:emulator-5554:5554 \
+  --e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564,tablet45554:emulator-45554:45554 \
   --e2e-source-seed 111 \
   --e2e-evaluation-seed 113 \
   --control-backend oob
@@ -47,7 +47,7 @@ host 环境，并用当前 OOB observe bridge 做最小通信探针：
 PYTHON_BIN=/absolute/.venv/bin/python \
 OMNIFLOW_ANDROID_SDK_ROOT=/absolute/Android/Sdk \
 OMNIFLOW_ANDROIDWORLD_A11Y_APK=/absolute/accessibility_forwarder.apk \
-bash scripts/exp/run_androidworld.sh --setup-device small5554
+bash scripts/exp/run_androidworld.sh --setup-device tablet45554
 ```
 
 `--setup-device` 可接单个 label、逗号列表或 `all`；`all` 包含三个 target
@@ -68,7 +68,7 @@ bash scripts/exp/run_androidworld.sh --setup-device small5554
 
 # 逗号分隔的子集
 --e2e-method omniflow,mobilegpt \
---e2e-device small5562:emulator-5562:5562,fold5564:emulator-5564:5564
+--e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564
 ```
 
 MobileGPT 的可复用 memory 由 seed 111 的成功 source RunLog 离线生成。转换器
