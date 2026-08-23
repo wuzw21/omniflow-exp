@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.experiment.device_setup import (
+    _is_required_setup_checkout,
     _python_install_timeout_sec,
     _python_requirement_installs,
 )
@@ -70,3 +71,10 @@ def test_python_requirement_installs_skip_absent_optional_appagent_file(
         if kind == "package"
     }
     assert packages == {"colorama", "dashscope"}
+
+
+def test_only_method_scoped_appagent_checkout_is_optional() -> None:
+    assert _is_required_setup_checkout("appagent_checkout") is False
+    assert _is_required_setup_checkout("androidworld_checkout") is True
+    assert _is_required_setup_checkout("omnitransfer_checkout") is True
+    assert _is_required_setup_checkout("mobilegpt_checkout") is True

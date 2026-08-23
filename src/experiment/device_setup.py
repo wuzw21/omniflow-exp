@@ -95,6 +95,10 @@ def _python_requirement_installs(
     return installs
 
 
+def _is_required_setup_checkout(name: str) -> bool:
+    return str(name) != "appagent_checkout"
+
+
 @dataclass(frozen=True)
 class Device:
     label: str
@@ -297,7 +301,12 @@ def _check_host(
         f"expected={canonical_transfer} actual={transfer_actual}",
     )
     record("mobilegpt_checkout", mobilegpt_root.is_dir(), str(mobilegpt_root))
-    record("appagent_checkout", appagent_root.is_dir(), str(appagent_root))
+    record(
+        "appagent_checkout",
+        appagent_root.is_dir(),
+        str(appagent_root),
+        required=_is_required_setup_checkout("appagent_checkout"),
+    )
     if env_file is not None:
         record("model_env", env_file.is_file(), str(env_file))
         text = env_file.read_text(encoding="utf-8", errors="replace")
