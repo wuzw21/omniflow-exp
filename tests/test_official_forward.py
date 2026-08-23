@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 import pytest
 
+import src.integrations.official_forward as official_forward
 from src.integrations.official_forward import (
     MOBILEGPT_HANDSHAKE_RETURN_CODE,
     _mobilegpt_instruction_broadcast_args,
@@ -28,6 +29,37 @@ from src.integrations.official_forward import (
     validate_autodroid_memory_root,
     write_adb_proxy,
 )
+
+
+def test_mobilegpt_accessibility_binding_requires_the_mobilegpt_service_in_bound_block() -> None:
+    dumpsys = """
+User state[
+     Bound services:{Service[label=AndroidWorld Accessibility Forwarder,
+       id=com.google.androidenv.accessibilityforwarder/.AccessibilityForwarder]}
+     Enabled services:{{com.google.androidenv.accessibilityforwarder/.AccessibilityForwarder,
+       com.example.MobileGPT/.MobileGPTAccessibilityService}}
+]
+"""
+
+    assert official_forward._mobilegpt_accessibility_service_bound(
+        dumpsys,
+        "com.example.MobileGPT/.MobileGPTAccessibilityService",
+    ) is False
+
+
+def test_mobilegpt_accessibility_binding_accepts_the_official_service_label() -> None:
+    dumpsys = """
+User state[
+     Bound services:{Service[label=com.example.MobileGPT.MobileGPTAccessibilityService,
+       feedbackType[FEEDBACK_GENERIC], eventTypes=TYPES_ALL_MASK]}
+     Enabled services:{{com.example.MobileGPT/.MobileGPTAccessibilityService}}
+]
+"""
+
+    assert official_forward._mobilegpt_accessibility_service_bound(
+        dumpsys,
+        "com.example.MobileGPT/.MobileGPTAccessibilityService",
+    ) is True
 
 
 def test_official_forward_accepts_appagent_step_budget() -> None:

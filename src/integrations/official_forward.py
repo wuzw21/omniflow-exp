@@ -52,6 +52,33 @@ _AUTODROID_OFFICIAL_MEMORY_KEYS = {
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
+def _mobilegpt_accessibility_service_bound(
+    dumpsys: str,
+    service: str,
+) -> bool:
+    bound_match = re.search(
+        r"(?ms)^\s*Bound services:(.*?)"
+        r"(?=^\s*(?:Enabled services|Binding services|Crashed services|"
+        r"Client list info):|\Z)",
+        str(dumpsys or ""),
+    )
+    if bound_match is None:
+        return False
+    package, separator, class_name = str(service or "").partition("/")
+    if not separator or not package or not class_name:
+        return False
+    full_class_name = (
+        f"{package}{class_name}" if class_name.startswith(".") else class_name
+    )
+    identifiers = {
+        service,
+        f"{package}/{full_class_name}",
+        full_class_name,
+    }
+    bound_services = bound_match.group(1)
+    return any(identifier in bound_services for identifier in identifiers)
+
+
 def _count_appagent_actions(log_text: str) -> int:
     """Count official AppAgent device actions, excluding its FINISH marker."""
 
@@ -2007,14 +2034,7 @@ def _run_mobilegpt_client(
             ["shell", "dumpsys", "accessibility"],
             check=False,
         ).stdout
-        normalized_service = (
-            "com.example.MobileGPT/"
-            "com.example.MobileGPT.MobileGPTAccessibilityService"
-        )
-        if (
-            (service in accessibility_state or normalized_service in accessibility_state)
-            and "Bound services:" in accessibility_state
-        ):
+        if _mobilegpt_accessibility_service_bound(accessibility_state, service):
             service_bound = True
             break
         time.sleep(1.0)
