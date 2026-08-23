@@ -420,6 +420,20 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
         return None
 
     expense_continue_id = "com.arduia.expense:id/btn_continue"
+    chrome_onboarding_ids = frozenset(
+        {
+            "com.android.chrome:id/signin_fre_dismiss_button",
+            "com.android.chrome:id/terms_accept",
+        }
+    )
+    chrome_onboarding_labels = frozenset(
+        {
+            "accept & continue",
+            "no thanks",
+            "use without an account",
+            "use chrome without an account",
+        }
+    )
     expense_timeout_sec = max(
         10.0,
         float(os.environ.get("OMNIFLOW_ANDROIDWORLD_APP_READY_TIMEOUT_SEC", "30")),
@@ -433,7 +447,32 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
         ids = (resource_ids,) if isinstance(resource_ids, str) else resource_ids
         if expense_continue_id in ids:
             timeout_sec = max(float(timeout_sec), expense_timeout_sec)
-        return original(controller, resource_ids, timeout_sec)
+        try:
+            return original(controller, resource_ids, timeout_sec)
+        except ValueError:
+            if not chrome_onboarding_ids.intersection(ids):
+                raise
+            activity = str(
+                getattr(controller._env, "foreground_activity_name", "") or ""
+            ).strip().casefold()
+            labels = {
+                str(value or "").strip().casefold()
+                for element in controller._env.get_ui_elements() or ()
+                for value in (
+                    getattr(element, "text", None),
+                    getattr(element, "content_description", None),
+                )
+                if str(value or "").strip()
+            }
+            if activity.startswith("com.android.chrome/") and not labels.intersection(
+                chrome_onboarding_labels
+            ):
+                logger.info(
+                    "AndroidWorld Chrome onboarding is already settled; "
+                    "skipping absent resource-id controls"
+                )
+                return None
+            raise
 
     controller_type.click_resource_id = click_resource_id
     return controller_type, original
