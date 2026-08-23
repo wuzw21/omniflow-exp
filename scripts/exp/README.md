@@ -82,6 +82,19 @@ MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试�
 适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
 因此完成跳过不会把连接或 Server 崩溃误登记成 method failure。
 
+如果已经有一条官方 validator 成功的 RunLog，只做确定性的 RunLog → MobileGPT
+memory 转换（不读写 `current.json`、不启动设备、不调用 Explore/Select/Derive）使用：
+
+```bash
+bash scripts/exp/run_androidworld.sh \
+  --convert-mobilegpt-runlog /absolute/path/to/run_log.json \
+  --mobilegpt-output-root /absolute/new/path/to/mobilegpt_bundle
+```
+
+输出目录包含官方 `Memory` / `PageManager` 写出的 `memory/`、逐动作
+`trajectory_audit.json`、模型调用统计以及封存 manifest。转换会拒绝无法表示为官方
+Executor action schema 的动作，不会回退到源设备坐标。
+
 ```bash
 bash scripts/exp/run_androidworld.sh \
   --e2e-task TASK \

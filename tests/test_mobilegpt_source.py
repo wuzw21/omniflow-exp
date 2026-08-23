@@ -563,6 +563,60 @@ def test_source_cli_has_no_teacher_or_cold_learning_commands() -> None:
     assert "cold" not in help_text.casefold()
 
 
+def test_source_cli_converts_one_explicit_runlog_without_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "run_log.json"
+    source.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def convert(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"memory_root": str(tmp_path / "bundle" / "memory")}
+
+    monkeypatch.setattr(
+        mobilegpt_source,
+        "convert_runlog_to_mobilegpt_bundle",
+        convert,
+    )
+
+    returncode = mobilegpt_source.main(
+        [
+            "convert",
+            "--run-log",
+            str(source),
+            "--mobilegpt-root",
+            str(tmp_path / "official-mobilegpt"),
+            "--output-root",
+            str(tmp_path / "bundle"),
+            "--model",
+            "GLM-4.6V",
+            "--embedding-model",
+            "GLM-Embedding-2",
+            "--target-package",
+            "com.example.app",
+            "--target-app",
+            "Example",
+        ]
+    )
+
+    assert returncode == 0
+    assert captured == {
+        "source_run_log": source,
+        "mobilegpt_root": str(tmp_path / "official-mobilegpt"),
+        "output_root": str(tmp_path / "bundle"),
+        "model": "GLM-4.6V",
+        "embedding_model": "GLM-Embedding-2",
+        "target_package": "com.example.app",
+        "target_app": "Example",
+    }
+    assert json.loads(capsys.readouterr().out)["memory_root"].endswith(
+        "/bundle/memory"
+    )
+
+
 def test_strict_reader_validates_canonical_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

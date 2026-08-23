@@ -409,6 +409,10 @@ fold_size="$formal_fold_size"
 dry_run=0
 check_only=0
 prepare_mobilegpt_memory_only=0
+mobilegpt_convert_runlog=""
+mobilegpt_convert_output_root=""
+mobilegpt_convert_target_package=""
+mobilegpt_convert_target_app=""
 development_run=0
 source_qualification_only=0
 source_collection=0
@@ -574,6 +578,15 @@ Options:
   --prepare-mobilegpt-memory-only
                             Build or validate original MobileGPT cold memory,
                             then stop before starting any target emulator.
+  --convert-mobilegpt-runlog PATH
+                            Convert one successful RunLog into an immutable
+                            official-format MobileGPT memory bundle only.
+  --mobilegpt-output-root PATH
+                            New output bundle for --convert-mobilegpt-runlog.
+  --mobilegpt-target-package PACKAGE
+                            Optional package override when RunLog lacks open_app.
+  --mobilegpt-target-app NAME
+                            Optional MobileGPT app-name override.
   --development-run         Run one unregistered `omniflow` episode through this
                             script for bounded method debugging.
   --dry-run                 Build one task command without executing it.
@@ -681,6 +694,38 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --prepare-mobilegpt-memory-only)
       prepare_mobilegpt_memory_only=1
+      ;;
+    --convert-mobilegpt-runlog)
+      shift
+      if [[ "$#" -eq 0 || "$1" != /* || ! -f "$1" ]]; then
+        echo "--convert-mobilegpt-runlog requires one existing absolute RunLog path." >&2
+        exit 2
+      fi
+      mobilegpt_convert_runlog="$1"
+      ;;
+    --mobilegpt-output-root)
+      shift
+      if [[ "$#" -eq 0 || "$1" != /* || -e "$1" ]]; then
+        echo "--mobilegpt-output-root requires one new absolute path." >&2
+        exit 2
+      fi
+      mobilegpt_convert_output_root="$1"
+      ;;
+    --mobilegpt-target-package)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--mobilegpt-target-package requires a package name." >&2
+        exit 2
+      fi
+      mobilegpt_convert_target_package="$1"
+      ;;
+    --mobilegpt-target-app)
+      shift
+      if [[ "$#" -eq 0 || -z "$1" ]]; then
+        echo "--mobilegpt-target-app requires an app name." >&2
+        exit 2
+      fi
+      mobilegpt_convert_target_app="$1"
       ;;
     --environment)
       shift
@@ -829,6 +874,42 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$mobilegpt_convert_runlog" ]]; then
+  if [[ -z "$mobilegpt_convert_output_root" ]]; then
+    echo "--convert-mobilegpt-runlog requires --mobilegpt-output-root." >&2
+    exit 2
+  fi
+  if [[ "$execution_environment" != "androidworld" || -n "$setup_device" ||
+    "$development_run" -eq 1 || "$source_collection" -eq 1 ||
+    "$all_tasks" -eq 1 || -n "$batch_task_filter" || "$refresh_memory" -eq 1 ||
+    -n "$e2e_task" || -n "$selected_method_arg" || -n "$selected_device_arg" ||
+    "$dry_run" -eq 1 || "$check_only" -eq 1 ||
+    "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
+    echo "--convert-mobilegpt-runlog cannot be combined with experiment execution or setup options." >&2
+    exit 2
+  fi
+  if [[ -n "$env_file" && -f "$env_file" ]]; then
+    set -a
+    source "$env_file"
+    set +a
+  fi
+  mobilegpt_convert_command=(
+    "$python_bin" -m src.experiment.mobilegpt_source convert
+    --run-log "$mobilegpt_convert_runlog"
+    --mobilegpt-root "$mobilegpt_root"
+    --output-root "$mobilegpt_convert_output_root"
+    --model "${MOBILEGPT_CHAT_MODEL:-$formal_model}"
+    --embedding-model "${MOBILEGPT_EMBEDDING_MODEL:-GLM-Embedding-2}"
+  )
+  if [[ -n "$mobilegpt_convert_target_package" ]]; then
+    mobilegpt_convert_command+=(--target-package "$mobilegpt_convert_target_package")
+  fi
+  if [[ -n "$mobilegpt_convert_target_app" ]]; then
+    mobilegpt_convert_command+=(--target-app "$mobilegpt_convert_target_app")
+  fi
+  cd "$repo"
+  exec "${mobilegpt_convert_command[@]}"
+fi
 if [[ -n "$setup_device" ]]; then
   if [[ "$execution_environment" != "androidworld" || "$development_run" -eq 1 ||
     "$source_collection" -eq 1 || "$all_tasks" -eq 1 || -n "$batch_task_filter" ||

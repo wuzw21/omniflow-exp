@@ -168,6 +168,8 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert "--convert-source-runlogs" not in completed.stdout
     assert "\n  --prepare-mobilegpt-memory\n" not in completed.stdout
     assert "--prepare-mobilegpt-memory-only" in completed.stdout
+    assert "--convert-mobilegpt-runlog" in completed.stdout
+    assert "--mobilegpt-output-root" in completed.stdout
     assert "--refresh-memory" in completed.stdout
     assert "--e2e-task" in completed.stdout
     assert "--setup-device" in completed.stdout

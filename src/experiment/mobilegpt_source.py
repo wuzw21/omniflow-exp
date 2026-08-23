@@ -475,6 +475,17 @@ def _write_failure_marker(output_root: str | Path, error: BaseException) -> None
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+    convert = subparsers.add_parser("convert")
+    convert.add_argument("--run-log", required=True, type=Path)
+    convert.add_argument("--mobilegpt-root", required=True)
+    convert.add_argument("--output-root", required=True)
+    convert.add_argument("--model", required=True)
+    convert.add_argument(
+        "--embedding-model",
+        default=MOBILEGPT_EMBEDDING_MODEL,
+    )
+    convert.add_argument("--target-package", default="")
+    convert.add_argument("--target-app", default="")
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--index", required=True)
     prepare.add_argument("--task", required=True)
@@ -497,7 +508,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     try:
-        if args.command == "prepare":
+        if args.command == "convert":
+            result = convert_runlog_to_mobilegpt_bundle(
+                source_run_log=args.run_log,
+                mobilegpt_root=args.mobilegpt_root,
+                output_root=args.output_root,
+                model=args.model,
+                embedding_model=args.embedding_model,
+                target_package=args.target_package,
+                target_app=args.target_app,
+            )
+        elif args.command == "prepare":
             result = prepare_mobilegpt_source_memory(
                 index_path=args.index,
                 task_name=args.task,
@@ -522,7 +543,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             raise ValueError(f"unsupported_mobilegpt_source_command:{args.command}")
     except BaseException as error:
-        if args.command == "prepare":
+        if args.command in {"convert", "prepare"}:
             _write_failure_marker(args.output_root, error)
         raise
     print(json.dumps(result, ensure_ascii=False, indent=2))
