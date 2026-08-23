@@ -468,7 +468,9 @@ PY
 
 configure_model_stack() {
   local chat_model="${1:-$formal_model}"
-  local embedding_model="${2:-${MOBILEGPT_EMBEDDING_MODEL:-GLM-Embedding-2}}"
+  # MobileGPT memory and the official server must always share this exact
+  # embedding model. Do not let a stale shell environment select another one.
+  local embedding_model="GLM-Embedding-2"
   if [[ -z "$selected_model_api_key" || -z "$selected_model_base_url" ]]; then
     echo "model_endpoint_not_selected" >&2
     exit 2
@@ -484,7 +486,7 @@ configure_model_stack() {
   export MOBILEGPT_VISION_MODEL="$chat_model"
   export MOBILEGPT_EMBEDDING_API_KEY="$selected_model_api_key"
   export MOBILEGPT_EMBEDDING_BASE_URL="$selected_model_base_url"
-  export MOBILEGPT_EMBEDDING_MODEL="$embedding_model"
+  export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"
 }
 
 validate_model_endpoint_auth() {
