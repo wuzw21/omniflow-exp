@@ -1259,7 +1259,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "[static] ready task=$e2e_task methods=$e2e_method devices=$e2e_device; no device or persistent output created"
     exit 0
   fi
-  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( "$e2e_method" == "all" || ",${e2e_method}," == *,appagent,* ) && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
   fi
