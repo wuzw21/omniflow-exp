@@ -2380,12 +2380,12 @@ def _run_mobilegpt_client(
     if (
         install_result.returncode != 0
         and "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in install_result.stdout
-        and os.environ.get("OMNIFLOW_MOBILEGPT_APK", "").strip()
     ):
-        # A locally rebuilt disposable client has a different debug signing
-        # key from the pinned APK on 9207.  Only the explicit override is
-        # allowed to replace that user install; the normal official APK path
-        # keeps the existing update-in-place contract.
+        # The disposable official client is rebuilt on every run and therefore
+        # has a debug signing key that may differ from the APK left on the
+        # emulator by a previous run.  This package is pipeline-owned, so
+        # replace only that client package when Android reports a signature
+        # mismatch; the task application and its state are untouched.
         _run_adb(
             adb_path,
             serial,
