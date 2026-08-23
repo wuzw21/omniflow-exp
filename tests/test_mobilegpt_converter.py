@@ -12,6 +12,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from src.integrations import mobilegpt as mobilegpt_module
 from src.integrations.mobilegpt import (
+    CONVERSION_MODE_OFFICIAL,
     MobileGPTConversionError,
     _load_runlog_trajectory,
     _mobilegpt_action_from_runlog,
@@ -414,6 +415,7 @@ def test_official_conversion_forwards_teacher_query_provider(
         audit_path=tmp_path / "audit.json",
         model="GLM-4.6V",
         semantic_query_provider=teacher_query,
+        conversion_mode=CONVERSION_MODE_OFFICIAL,
     )
 
     assert captured["semantic_query_provider"] is teacher_query
@@ -527,6 +529,7 @@ def test_official_authoring_prompt_preserves_runlog_action_end_to_end(
         model="GLM-4.6V",
         embedding_provider=lambda _screen: [0.25, 0.75],
         semantic_query_provider=query,
+        conversion_mode=CONVERSION_MODE_OFFICIAL,
     )
 
     payload = json.loads(audit.read_text(encoding="utf-8"))

@@ -79,6 +79,7 @@ from src.experiment.protocol import (
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_EMBEDDING_MODEL,
+    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
@@ -1627,11 +1628,14 @@ def _validate_prepared_mobilegpt_memory(
         and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
         and str(manifest.get("task_name") or "") == str(task_name)
         and isinstance(provenance, dict)
-        and provenance.get("native_mobilegpt_learning") is True
-        and provenance.get("learning_mode") == "mobilegpt_native_cold"
+        and provenance.get("native_mobilegpt_learning") is False
+        and provenance.get("learning_mode") == MOBILEGPT_LEARNING_MODE
         and provenance.get("teacher_forcing") is False
-        and provenance.get("source_emulator_used") is True
-        and provenance.get("official_authoring_session") is True
+        and provenance.get("actions_supplied_to_mobilegpt") is True
+        and provenance.get("runlog_transition_compilation") is True
+        and provenance.get("complete_transition_mapping") is True
+        and provenance.get("official_reader_validation") is True
+        and provenance.get("source_emulator_used") is False
     ):
         raise ValueError(
             f"mobilegpt_source_memory_not_authoritative:{manifest_path}"
@@ -1741,29 +1745,12 @@ def prepare_mobilegpt_memory(
             args.task,
             "--mobilegpt-root",
             str(args.mobilegpt_root),
-            "--android-world-root",
-            str(args.android_world_root),
             "--output-root",
             str(output_root),
             "--model",
             args.formal_model,
-            "--embedding-model",
-            str(
-                os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
-                or MOBILEGPT_EMBEDDING_MODEL
-            ),
             "--memory-index",
             str(args.memory_index),
-            "--serial",
-            str(args.source_device[1]),
-            "--console-port",
-            str(args.source_device[2]),
-            "--adb-path",
-            str(args.adb_path),
-            "--max-steps",
-            str(args.max_steps),
-            "--timeout-sec",
-            str(min(deadline.remaining(TASK_DEADLINE_SEC), 900.0)),
         ],
         cwd=args.repo,
         environment=dict(os.environ),
@@ -3521,14 +3508,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "status": "skipped",
             "model_calls": 0,
             "total_tokens": 0,
-            "reason": "source_cold_build_only",
+            "reason": "runlog_memory_conversion_only",
+        }
+        phases["source_device"] = {
+            "status": "skipped",
+            "model_calls": 0,
+            "total_tokens": 0,
+            "reason": "runlog_conversion_is_offline",
         }
         try:
-            phases["source_device"] = ensure_source_device(
-                args=args,
-                attempt_root=attempt_root,
-                deadline=deadline,
-            )
             memory_root, memory_phase = prepare_mobilegpt_memory(
                 args=args,
                 attempt_root=attempt_root,

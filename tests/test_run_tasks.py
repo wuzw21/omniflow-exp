@@ -3225,7 +3225,7 @@ def test_source_qualification_only_stops_before_baselines_and_targets(
     assert phases["source_qualification"]["qualified"] is True
 
 
-def test_mobilegpt_memory_only_starts_source_but_never_target_emulators(
+def test_mobilegpt_memory_only_starts_no_emulators(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3267,10 +3267,10 @@ def test_mobilegpt_memory_only_starts_source_but_never_target_emulators(
     report = run_pipeline(args)
 
     assert report["status"] == "validated"
-    assert source_calls == ["source"]
-    assert report["phases"]["source_device"]["status"] == "ready"
+    assert source_calls == []
+    assert report["phases"]["source_device"]["status"] == "skipped"
     assert report["phases"]["target_devices"]["reason"] == (
-        "source_cold_build_only"
+        "runlog_memory_conversion_only"
     )
 
 

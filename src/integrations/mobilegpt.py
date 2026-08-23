@@ -23,9 +23,9 @@ import xml.dom.minidom
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_EMBEDDING_MODEL,
+    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
-    MOBILEGPT_RUNLOG_LEARNING_MODE as MOBILEGPT_LEARNING_MODE,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA as MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_MEMORY_SCHEMA,
 )
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.android_world.host import (
@@ -42,9 +42,8 @@ from omniflow.core.model import Action
 from omniflow.transfer.runtime import load_transfer_state_catalog
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt.source.v2"
-CONVERSION_MODE_OFFICIAL = "official_mobilegpt_learning"
-# Kept as a read-only label for old evidence.  New conversion never selects it.
 CONVERSION_MODE_DIRECT = "runlog_direct"
+CONVERSION_MODE_OFFICIAL = "official_mobilegpt_learning"
 CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 # The upstream Server normally terminates by sending ``$$$$$``.  A malformed
 # model response or a dirty upstream checkout can otherwise keep asking for
@@ -138,21 +137,18 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_memory_provenance_missing")
     required_provenance = {
-        "native_mobilegpt_learning": True,
+        "native_mobilegpt_learning": False,
         "task_local_memory": True,
         "learning_mode": MOBILEGPT_LEARNING_MODE,
         "teacher_forcing": False,
-        "synthetic_subtasks": False,
-        "semantic_subtasks": True,
-        "original_mobilegpt_prompts": True,
-        "official_prompt_extension": True,
-        "runlog_teacher_alignment": True,
-        "actions_supplied_to_mobilegpt": False,
+        "synthetic_subtasks": True,
+        "semantic_subtasks": False,
+        "original_mobilegpt_prompts": False,
+        "actions_supplied_to_mobilegpt": True,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": False,
-        "complete_transition_mapping": False,
-        "official_authoring_session": True,
+        "runlog_transition_compilation": True,
+        "complete_transition_mapping": True,
         "official_reader_validation": True,
         "source_emulator_used": False,
         "function_store_used": False,
@@ -212,8 +208,9 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         or str(audit.get("task_name") or "")
         != str(payload.get("task_name") or "")
         or audit.get("complete") is not True
-        or audit.get("teacher_prompt_used") is not True
-        or audit.get("teacher_action_alignment_complete") is not True
+        or audit.get("conversion_mode") != CONVERSION_MODE_DIRECT
+        or audit.get("actions_supplied_to_mobilegpt") is not True
+        or audit.get("source_reader_coverage_validation") is not True
         or transition_count <= 0
         or int(audit.get("validated_transition_count") or 0)
         != transition_count
@@ -222,8 +219,6 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         or any(
             not isinstance(row, dict)
             or row.get("matched") is not True
-            or not isinstance(row.get("expected_action"), dict)
-            or row.get("expected_action") != row.get("actual_action")
             for row in validation_rows
         )
         or sum(
@@ -232,7 +227,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         )
         != transition_count
     ):
-        raise ValueError("mobilegpt_memory_teacher_alignment_invalid")
+        raise ValueError("mobilegpt_memory_runlog_alignment_invalid")
     if "official_source_result" in payload:
         raise ValueError("mobilegpt_memory_official_source_forbidden")
     return {
@@ -243,7 +238,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "memory_sha256": digest,
         "memory_file_count": len(files),
         "task_file_count": len(task_files),
-        "runlog_teacher_alignment": True,
+        "runlog_direct_alignment": True,
         "validated_transition_count": transition_count,
     }
 
@@ -743,10 +738,9 @@ def _load_runlog_trajectory(
         and _action_type(step["action"]) == "open_app"
         and str(step["action"].get("app_name") or "").strip()
     ]
-    # AndroidWorld may record the human-facing label in open_app while the
-    # canonical source boundary already resolved the real package from the
-    # observed UI tree.  Never overwrite a resolved package with that label.
-    if open_app_packages and not resolved_target_package:
+    # The source action is the authoritative application intent.  Observed
+    # package names may still belong to Launcher during the launch transition.
+    if open_app_packages:
         resolved_target_package = open_app_packages[0]
     for evidence in open_app_evidence:
         observed_package = str(evidence.get("observed_package") or "").strip()
@@ -2842,7 +2836,7 @@ def write_conversion_failure_audit(
     wall_sec: float,
     target_package: str = "",
     target_app: str = "",
-    conversion_mode: str = CONVERSION_MODE_OFFICIAL,
+    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
     """Persist partial evidence after an interrupted offline conversion."""
 
@@ -2933,9 +2927,9 @@ def convert_runlog_to_mobilegpt_memory(
     target_app: str = "",
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
     semantic_query_provider: Callable[..., Any] | None = None,
-    conversion_mode: str = CONVERSION_MODE_OFFICIAL,
+    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
-    """Author one RunLog through the upstream MobileGPT learning protocol."""
+    """Compile one verified RunLog through MobileGPT's official memory APIs."""
 
     if conversion_mode == CONVERSION_MODE_OFFICIAL:
         trajectory = _load_runlog_trajectory(
@@ -3111,6 +3105,16 @@ def convert_runlog_to_mobilegpt_memory(
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
             if launch_only:
+                finish_subtask = {
+                    "name": "finish",
+                    "description": "Signal that the task is complete.",
+                    "parameters": {},
+                }
+                page["available_subtasks"].append(finish_subtask)
+                page["subtasks"]["finish"] = {
+                    "metadata": finish_subtask,
+                    "example": {},
+                }
                 task_path[str(page_index)] = ["finish"]
                 official_task_path_records.append(
                     {
@@ -3284,20 +3288,20 @@ def convert_runlog_to_mobilegpt_memory(
                         model=normalized_embedding_model,
                     )
                 ]
-                _write_event(
-                    stats,
-                    {
-                        "event": "embedding_call",
-                        "model": normalized_embedding_model,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                        "latency_sec": round(
-                            time.monotonic() - embedding_started,
-                            6,
-                        ),
-                    },
-                )
+            _write_event(
+                stats,
+                {
+                    "event": "embedding_call",
+                    "model": normalized_embedding_model,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "latency_sec": round(
+                        time.monotonic() - embedding_started,
+                        6,
+                    ),
+                },
+            )
             if not result:
                 raise MobileGPTConversionError("mobilegpt_page_embedding_empty")
             return result
