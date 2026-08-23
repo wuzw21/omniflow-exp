@@ -5125,6 +5125,10 @@ def build_mobilegpt_command(
         "GRADLE_USER_HOME",
         "JAVA_HOME",
         "OMNIFLOW_GRADLE_BIN",
+        # The public launcher may provide a prebuilt official MobileGPT APK.
+        # Keep it in the narrow client environment so official_forward does
+        # not fall back to a per-task Gradle/network build.
+        "OMNIFLOW_MOBILEGPT_APK",
         "PATH",
     ):
         value = str(client_runtime_env.get(key) or "").strip()
