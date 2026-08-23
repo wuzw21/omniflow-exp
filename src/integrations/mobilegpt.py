@@ -3272,6 +3272,15 @@ def convert_runlog_to_mobilegpt_memory(
                 }
                 pages_by_identity[identity] = page
             page_index = int(page["index"])
+            screenshot_value = transition.observation.get("screenshot")
+            if not isinstance(screenshot_value, dict):
+                screenshot_value = transition.observation.get("pixels")
+            if isinstance(screenshot_value, dict) and screen_index in source_screen_artifacts:
+                screenshot = Path(
+                    str(screenshot_value.get("path") or "")
+                ).expanduser()
+                if screenshot.is_file():
+                    source_screen_artifacts[screen_index]["screenshot.jpg"] = screenshot
             if launch_only:
                 finish_subtask = {
                     "name": "finish",
