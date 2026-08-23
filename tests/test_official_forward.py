@@ -703,6 +703,10 @@ def test_mobilegpt_source_cold_build_writes_through_staged_memory(
     server = official / "Server"
     (server / "memory").mkdir(parents=True)
     (server / "main.py").write_text("print('official server')\n", encoding="utf-8")
+    (server / "memory" / "memory_manager.py").write_text(
+        "# official memory implementation\n",
+        encoding="utf-8",
+    )
     memory = tmp_path / "cold-memory"
     memory.mkdir()
 
@@ -715,6 +719,9 @@ def test_mobilegpt_source_cold_build_writes_through_staged_memory(
 
     staged_memory = Path(result["server_root"]) / "memory"
     assert staged_memory.is_symlink()
+    assert (staged_memory / "memory_manager.py").read_text(encoding="utf-8") == (
+        "# official memory implementation\n"
+    )
     (staged_memory / "tasks.csv").write_text("name\n", encoding="utf-8")
     assert (memory / "tasks.csv").read_text(encoding="utf-8") == "name\n"
 

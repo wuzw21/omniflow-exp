@@ -842,6 +842,16 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_selection_compat(target)
     staged_memory = target / "memory"
     if write_through_memory:
+        if any(memory.iterdir()):
+            raise ValueError(
+                f"official_mobilegpt_cold_memory_not_empty:{memory}"
+            )
+        # Upstream keeps both its Python memory package and the learned CSV
+        # graph under ``Server/memory``.  Seed the empty persistent directory
+        # with that exact staged package before linking it back into Server;
+        # otherwise replacing the directory with an empty symlink removes
+        # ``memory.memory_manager`` and the official server cannot import.
+        shutil.copytree(staged_memory, memory, symlinks=True, dirs_exist_ok=True)
         if staged_memory.is_symlink() or staged_memory.is_file():
             staged_memory.unlink()
         elif staged_memory.is_dir():
