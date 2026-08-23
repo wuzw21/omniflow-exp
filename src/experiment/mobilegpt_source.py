@@ -95,6 +95,23 @@ def _load_mobilegpt_source_payload(item: CanonicalRunLog) -> dict[str, Any]:
     )
 
 
+def _official_episode_result_path(episode_spec: pipeline.CommandSpec) -> Path:
+    """Return the result written by the official MobileGPT client."""
+    client_output = str(
+        episode_spec.metadata.get("official_client_output") or ""
+    ).strip()
+    if client_output:
+        return Path(client_output).expanduser().resolve() / "task_results.jsonl"
+    if episode_spec.output_path is None:
+        raise RuntimeError("mobilegpt_source_episode_output_missing")
+    nested_result = (
+        episode_spec.output_path / "official_client" / "task_results.jsonl"
+    )
+    if nested_result.is_file():
+        return nested_result
+    return episode_spec.output_path / "task_results.jsonl"
+
+
 def _mobilegpt_source_target(
     *,
     item: CanonicalRunLog,
@@ -437,9 +454,7 @@ def prepare_mobilegpt_source_memory(
         pipeline._stop_background_command(browser_server)
     wall_sec = round(time.monotonic() - started, 6)
 
-    if episode_spec.output_path is None:
-        raise RuntimeError("mobilegpt_source_episode_output_missing")
-    result_path = episode_spec.output_path / "task_results.jsonl"
+    result_path = _official_episode_result_path(episode_spec)
     stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
     stats_summary_path.write_text(
         json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",

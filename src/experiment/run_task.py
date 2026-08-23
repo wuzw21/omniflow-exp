@@ -5261,6 +5261,7 @@ def build_mobilegpt_command(
             "official_server_entry": "Server/main.py",
             "official_client_entry": "App/app",
             "official_client_host": client_host,
+            "official_client_output": str(client_output),
             "external_forward_only": True,
             "app_ready_timeout_sec": float(app_ready_timeout_sec),
             "app_ready_poll_sec": float(app_ready_poll_sec),

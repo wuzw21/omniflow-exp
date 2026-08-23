@@ -501,7 +501,9 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
             env={},
             cwd=tmp_path,
             output_path=episode_output,
-            metadata={},
+            metadata={
+                "official_client_output": str(episode_output / "official_client")
+            },
         )
 
     monkeypatch.setattr(pipeline, "build_mobilegpt_command", build_episode)
@@ -513,7 +515,10 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
     monkeypatch.setattr(pipeline, "_stop_background_command", lambda _process: None)
 
     def run_episode(_spec: pipeline.CommandSpec) -> int:
-        _write_official_result(episode_output / "task_results.jsonl", success=True)
+        _write_official_result(
+            episode_output / "official_client" / "task_results.jsonl",
+            success=True,
+        )
         _write_native_stats(tmp_path / "bundle" / "source_stats.jsonl")
         return 0
 
@@ -552,7 +557,7 @@ def test_prepare_runs_original_mobilegpt_on_source_device(
     assert episode_kwargs["method_name"] == MOBILEGPT_SOURCE_METHOD
     assert episode_kwargs["perform_emulator_setup"] is True
     assert seal_calls[0]["official_source_result"] == (
-        episode_output / "task_results.jsonl"
+        episode_output / "official_client" / "task_results.jsonl"
     )
     assert prepared["teacher_forcing"] is False
     assert prepared["actions_supplied_to_mobilegpt"] is False
