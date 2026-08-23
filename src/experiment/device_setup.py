@@ -64,6 +64,14 @@ def _python_install_timeout_sec() -> float:
     return timeout
 
 
+def _python_import_probe_code() -> str:
+    return (
+        "import android_world, omniflow, openai, uiautomator2, "
+        "cv2, yaml, colorama, requests, dashscope; "
+        "from serpapi import GoogleSearch"
+    )
+
+
 def _python_requirement_installs(
     *,
     repo: Path,
@@ -90,6 +98,16 @@ def _python_requirement_installs(
     appagent_requirements = appagent_root / "requirements.txt"
     if appagent_requirements.is_file():
         installs.append(("requirements", ["-r", str(appagent_requirements)]))
+    # MobileGPT's pinned requirements contain two distributions which own the
+    # same ``serpapi`` import namespace.  The Server imports GoogleSearch from
+    # google-search-results, so make that official symbol the final owner.
+    installs.append(("uninstall", ["-y", "serpapi"]))
+    installs.append(
+        (
+            "package",
+            ["--force-reinstall", "--no-deps", "google-search-results==2.4.2"],
+        )
+    )
     installs.append(("package", ["colorama"]))
     installs.append(("package", ["dashscope"]))
     return installs
@@ -242,10 +260,7 @@ def _check_host(
             [
                 str(python_bin),
                 "-c",
-                (
-                "import android_world, omniflow, openai, uiautomator2, "
-                    "cv2, yaml, colorama, requests, dashscope"
-                ),
+                _python_import_probe_code(),
             ],
             timeout=60,
         )
@@ -270,7 +285,8 @@ def _check_host(
             requirement = Path(arguments[-1]) if kind == "requirements" else None
             if requirement is not None and not requirement.exists():
                 record("python_requirement", False, f"missing {requirement}")
-            command = [str(python_bin), "-m", "pip", "install", *arguments]
+            pip_action = "uninstall" if kind == "uninstall" else "install"
+            command = [str(python_bin), "-m", "pip", pip_action, *arguments]
             result = _run(command, timeout=_python_install_timeout_sec())
             record("python_install", result.returncode == 0, result.stdout[-2000:])
 

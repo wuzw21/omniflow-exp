@@ -4,6 +4,7 @@ import pytest
 
 from src.experiment.device_setup import (
     _is_required_setup_checkout,
+    _python_import_probe_code,
     _python_install_timeout_sec,
     _python_requirement_installs,
 )
@@ -70,7 +71,16 @@ def test_python_requirement_installs_skip_absent_optional_appagent_file(
         for kind, arguments in installs
         if kind == "package"
     }
-    assert packages == {"colorama", "dashscope"}
+    assert packages == {
+        "colorama",
+        "dashscope",
+        "google-search-results==2.4.2",
+    }
+    assert ("uninstall", ["-y", "serpapi"]) in installs
+
+
+def test_python_import_probe_loads_mobilegpt_google_search_symbol() -> None:
+    assert "from serpapi import GoogleSearch" in _python_import_probe_code()
 
 
 def test_only_method_scoped_appagent_checkout_is_optional() -> None:
