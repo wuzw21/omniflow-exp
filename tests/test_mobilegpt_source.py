@@ -63,6 +63,30 @@ def test_mobilegpt_source_target_ignores_permission_controller_surface(
     assert target["target_source"] == "canonical_source_runlog_observation"
 
 
+def test_mobilegpt_source_target_ignores_keyboard_after_text_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda item: {
+            "target_package": "net.gsantner.markor",
+            "target_app": "net.gsantner.markor",
+        },
+    )
+    target = mobilegpt_source._mobilegpt_source_target(
+        item=SimpleNamespace(task="MarkorCreateFolder"),
+        source={
+            "final_observation": {
+                "package_name": "com.google.android.inputmethod.latin"
+            },
+            "steps": [],
+        },
+    )
+
+    assert target["target_package"] == "net.gsantner.markor"
+
+
 def test_official_authoring_socket_has_a_hard_final_screen_step_limit() -> None:
     socket = _OfficialMobileGPTRunLogSocket(
         [],

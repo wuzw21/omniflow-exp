@@ -3970,6 +3970,11 @@ _MOBILEGPT_IGNORED_TARGET_PACKAGES = {
     "com.android.systemui",
     "com.example.MobileGPT",
     "com.google.android.apps.nexuslauncher",
+    # Text input is exposed as the foreground package while a source task is
+    # typing.  It is not the AndroidWorld target app and must not become the
+    # sealed MobileGPT task package.
+    "com.google.android.inputmethod.latin",
+    "com.android.inputmethod.latin",
 }
 
 

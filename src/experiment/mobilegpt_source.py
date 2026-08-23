@@ -40,6 +40,8 @@ _IGNORED_SOURCE_PACKAGES = {
     "com.google.android.documentsui",
     "com.google.android.apps.nexuslauncher",
     "com.google.android.permissioncontroller",
+    "com.google.android.inputmethod.latin",
+    "com.android.inputmethod.latin",
 }
 
 
