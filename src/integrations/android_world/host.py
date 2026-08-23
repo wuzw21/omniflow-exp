@@ -31,6 +31,9 @@ from src.integrations.android_world.oob_control import (
 from src.integrations.android_world.state import snapshot_androidworld_state
 
 
+_ANDROID_SYSTEM_OPEN_APP_PACKAGES = frozenset({"com.android.settings"})
+
+
 def _read(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(name, default)
@@ -285,7 +288,9 @@ class AndroidWorldHost:
 
     def installed_packages(self) -> set[str]:
         setup = importlib.import_module("android_world.env.setup_device.setup")
-        return set(setup.get_installed_packages(self.env))
+        return set(setup.get_installed_packages(self.env)).union(
+            _ANDROID_SYSTEM_OPEN_APP_PACKAGES
+        )
 
     def observe(
         self,

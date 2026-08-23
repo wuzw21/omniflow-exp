@@ -2422,6 +2422,24 @@ def test_actions_dispatch_only_through_official_androidworld_api(monkeypatch) ->
     ]
 
 
+def test_androidworld_host_exposes_system_settings_as_installed(monkeypatch) -> None:
+    setup = SimpleNamespace(
+        get_installed_packages=lambda _env: frozenset({"com.example.app"})
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.importlib.import_module",
+        lambda name: (
+            setup
+            if name == "android_world.env.setup_device.setup"
+            else None
+        ),
+    )
+
+    packages = AndroidWorldHost(SimpleNamespace()).installed_packages()
+
+    assert packages == {"com.example.app", "com.android.settings"}
+
+
 def test_oob_open_app_resolves_androidworld_launcher_name(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
