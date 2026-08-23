@@ -386,11 +386,22 @@ def concluded_result_keys(
                 str(payload.get(key) or "")
                 for key in ("artifact_root", "task_log", "device_model", "avd")
             )
-            if (
-                f"/{expected_model}_seed" not in evidence
-                and f"/{expected_model}/" not in evidence
-                and str(payload.get("device_model") or "") != expected_model
-            ):
+            known_models = {
+                "OmniFlowSourceSmall",
+                "OmniFlowTargetSmall",
+                "OmniFlowTargetFold",
+                "WXGA_Tablet_test_00",
+                "AndroidWorldAvd4090",
+            }
+            evidence_models = {
+                model for model in known_models if model in evidence
+            }
+            # Historical immutable outcomes often predate device_model/avd
+            # fields. The canonical device label+serial already passed the
+            # caller's device filter; only reject a reusable result when its
+            # stored evidence explicitly identifies a different configured
+            # model.
+            if evidence_models and expected_model not in evidence_models:
                 continue
         concluded.add((method, device))
     return concluded
