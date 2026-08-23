@@ -1899,6 +1899,7 @@ def _run_official_mobilegpt_authoring(
         ).replace(
             "        presence_penalty=0\n    )",
             "        presence_penalty=0,\n"
+            "        timeout=float(os.getenv(\"MOBILEGPT_REQUEST_TIMEOUT_SEC\", \"60\")),\n"
             "        extra_body={\"thinking\": {\"type\": \"disabled\"}}\n"
             "    )",
             1,
