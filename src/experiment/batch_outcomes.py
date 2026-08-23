@@ -378,6 +378,17 @@ def concluded_result_keys(
                 continue
             if str(payload.get("runtime_integrity_error") or "").strip():
                 continue
+            # A command that failed before a validator conclusion and before
+            # producing any device action is not enough evidence to close a
+            # formal cell.  This is the shape emitted when AndroidWorld setup
+            # aborts before the external executor starts; keep it retryable
+            # even when the child summary was labelled ``method_failed``.
+            if (
+                status == "method_failed"
+                and payload.get("official_validator_success") is None
+                and int(payload.get("actions_executed") or 0) == 0
+            ):
+                continue
         else:
             continue
         expected_model = (device_models or {}).get(device)

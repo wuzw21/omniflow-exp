@@ -152,6 +152,58 @@ def test_record_result_outcome_preserves_published_episode_accounting(
     assert outcome["total_tokens"] == 15197
 
 
+def test_record_result_outcome_preserves_function_metrics_from_result_summary(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "artifact"
+    scheduler_root = artifact_root / "scheduler"
+    scheduler_root.mkdir(parents=True)
+    (scheduler_root / "result_summary.json").write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "method": "omniflow",
+                        "device": "small5554",
+                        "function_hit": True,
+                        "function_covered_steps": 2,
+                        "function_total_steps": 2,
+                        "function_step_coverage_rate": 1.0,
+                        "vlm_calls": 0,
+                        "vlm_latency_ms": 0.0,
+                        "latency_sec": 17.8,
+                        "energy_mwh": None,
+                        "energy_measurement_available": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outcome_path = record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="CameraTakePhoto",
+        method="omniflow",
+        device="small5554",
+        device_serial="emulator-5554",
+        attempt_id="attempt-registered-metrics",
+        source_seed=111,
+        evaluation_seed=113,
+        status="completed",
+        stage="androidworld_validate",
+        artifact_root=artifact_root,
+        official_validator_used=True,
+        official_validator_success=True,
+    )
+
+    outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
+    assert outcome["function_hit"] is True
+    assert outcome["function_covered_steps"] == 2
+    assert outcome["function_total_steps"] == 2
+    assert outcome["function_step_coverage_rate"] == 1.0
+
+
 def test_autodroid_validator_conclusion_is_not_non_validator_failure(
     tmp_path: Path,
 ) -> None:
@@ -367,6 +419,32 @@ def test_environment_repair_retry_ignores_prior_attempt_outcomes(
         evaluation_seed=113,
         attempt_id="iteration_02-environment-repair",
     ) == {("fixed_replay", "fold5564")}
+
+
+def test_method_failed_without_validator_or_action_stays_retryable(
+    tmp_path: Path,
+) -> None:
+    record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="BrowserMaze",
+        method="mobilegpt",
+        device="small5562",
+        device_serial="emulator-5562",
+        attempt_id="attempt_setup_abort",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+    )
+
+    assert concluded_result_keys(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="BrowserMaze",
+        methods=("mobilegpt",),
+        devices=("small5562",),
+        source_seed=111,
+        evaluation_seed=113,
+    ) == set()
 
 
 def test_batch_report_merges_validator_and_failure_outcomes(tmp_path: Path) -> None:
