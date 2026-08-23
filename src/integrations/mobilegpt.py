@@ -3665,6 +3665,7 @@ def convert_runlog_to_mobilegpt_memory(
         "audit_path": str(audit),
         "transition_count": len(transitions),
         "validated_transition_count": audit_payload["validated_transition_count"],
+        "observation_repair_count": audit_payload["observation_repair_count"],
         "target_package": trajectory["target_package"],
         "target_app": trajectory["target_app"],
         "embedding_model": normalized_embedding_model,
