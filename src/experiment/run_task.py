@@ -56,6 +56,7 @@ from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     EPISODE_TIMEOUT_SEC,
+    FORMAL_MODEL_BASE_URL,
     MAX_STEPS,
     METHODS,
     RESULT_COMMANDS_FILE,
@@ -238,6 +239,19 @@ def _subprocess_env(
 ) -> dict[str, str]:
     dotenv_env = _local_dotenv_env(repo_root=repo_root)
     env = {**dotenv_env, **dict(os.environ), **dict(spec_env or {})}
+    # The pinned MobileGPT Server uses the OpenAI-compatible client API for
+    # both chat and embedding calls.  The shared 9207 environment exposes the
+    # same GLM endpoint under LLMTHU_API_KEY; publish the canonical aliases
+    # once at the common subprocess boundary so the official executor does
+    # not receive a different credential contract from memory authoring.
+    if not str(env.get("OPENAI_API_KEY") or "").strip() and str(
+        env.get("LLMTHU_API_KEY") or ""
+    ).strip():
+        env["OPENAI_API_KEY"] = str(env["LLMTHU_API_KEY"])
+    if not str(env.get("OPENAI_BASE_URL") or "").strip() and str(
+        env.get("LLMTHU_API_KEY") or ""
+    ).strip():
+        env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
     env.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
     return env
 

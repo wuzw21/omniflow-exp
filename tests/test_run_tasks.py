@@ -26,6 +26,7 @@ from src.experiment.run_task import (
     build_task_command,
     _formal_result_paths,
     _result_summary_rows,
+    _subprocess_env,
     build_parser as build_run_task_parser,
     load_canonical_source_index,
 )
@@ -105,6 +106,17 @@ def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(
         )
         == "com.android.camera2"
     )
+
+
+def test_subprocess_env_aliases_shared_glm_endpoint(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("LLMTHU_API_KEY", "test-key")
+
+    environment = _subprocess_env({})
+
+    assert environment["OPENAI_API_KEY"] == "test-key"
+    assert environment["OPENAI_BASE_URL"]
 
 
 def test_source_index_skips_unmaterialized_unrelated_task(tmp_path: Path) -> None:
