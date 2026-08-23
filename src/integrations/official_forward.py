@@ -840,6 +840,7 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_response_compat(target)
     _configure_mobilegpt_optional_completion_rate(target)
     _configure_mobilegpt_selection_compat(target)
+    _configure_mobilegpt_target_package_fallback(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -1461,6 +1462,31 @@ def _configure_mobilegpt_selection_compat(server_root: Path) -> None:
     replacement = "response.pop('completion_rate', None)"
     if original in source:
         select_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
+def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:
+    """Fill an unresolved official app launch with the setup-resolved package."""
+
+    server_path = server_root / "server.py"
+    if not server_path.is_file():
+        return
+    source = server_path.read_text(encoding="utf-8")
+    if "mobilegpt_target_package_fallback" in source:
+        return
+    original = "                target_package = app_agent.get_package_name(target_app)\n"
+    replacement = (
+        original
+        + "                # mobilegpt_target_package_fallback: the official cold app\n"
+        + "                # catalog initially has no description/name for AndroidWorld\n"
+        + "                # system packages. Preserve official selection and only fill\n"
+        + "                # the empty launch field resolved during environment setup.\n"
+        + "                if not str(target_package or '').strip():\n"
+        + "                    target_package = os.environ.get(\n"
+        + "                        'MOBILEGPT_TARGET_PACKAGE', ''\n"
+        + "                    ).strip()\n"
+    )
+    if original in source:
+        server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
 def _run_adb(

@@ -922,6 +922,9 @@ def test_mobilegpt_forwarder_bridges_finish_to_official_client_frame(
     assert 'client_socket.send("$$$$$".encode())' in staged_source
     assert "mobilegpt_forced_task_binding" not in staged_source
     assert "mobilegpt_target_package_direct" not in staged_source
+    assert "mobilegpt_target_package_fallback" in staged_source
+    assert "target_package = app_agent.get_package_name(target_app)" in staged_source
+    assert "'MOBILEGPT_TARGET_PACKAGE', ''" in staged_source
     assert "task_agent.get_task(instruction)" in staged_source
     assert (server / "server.py").read_text(encoding="utf-8") == server_source
 
