@@ -1818,6 +1818,69 @@ def _ensure_mobilegpt_accessibility_service_bound(
     )
 
 
+def _restore_androidworld_accessibility_service(
+    adb_path: str,
+    serial: str,
+) -> None:
+    """Return the device to AndroidWorld's forwarder after official MobileGPT.
+
+    MobileGPT owns its Accessibility service during execution.  AndroidWorld
+    owns a different forwarder for the validator, so merely calling
+    ``restart_accessibility_forwarder`` is racy on Fold/Tablet images while
+    the official service is still enabled.  Remove only the pipeline-owned
+    MobileGPT service, toggle the manager once, then let AndroidWorld verify
+    and bind its own forwarder.
+    """
+
+    current = _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "get", "secure", "enabled_accessibility_services"],
+        check=False,
+    ).stdout.strip()
+    mobilegpt_services = {
+        "com.example.MobileGPT/.MobileGPTAccessibilityService",
+        "com.example.MobileGPT/com.example.MobileGPT.MobileGPTAccessibilityService",
+    }
+    services = [
+        value
+        for value in current.split(":")
+        if value and value != "null" and value not in mobilegpt_services
+    ]
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "0"],
+        check=False,
+    )
+    _run_adb(
+        adb_path,
+        serial,
+        [
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "enabled_accessibility_services",
+            ":".join(services),
+        ],
+        check=False,
+    )
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
+        check=False,
+    )
+    _run_adb(
+        adb_path,
+        serial,
+        ["shell", "am", "force-stop", "com.example.MobileGPT"],
+        check=False,
+    )
+    time.sleep(1.0)
+
+
 def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
     """Make the staged official client reliable at the first app frame.
 
@@ -2613,6 +2676,7 @@ def run_mobilegpt_client(
             ensure_androidworld_accessibility_ready,
         )
 
+        _restore_androidworld_accessibility_service(adb_path, serial)
         ensure_androidworld_accessibility_ready(env)
         reward = float(task.is_successful(env))
         # MobileGPT can leave its official client loop alive after the
