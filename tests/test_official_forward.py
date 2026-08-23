@@ -305,6 +305,26 @@ def test_mobilegpt_protocol_probe_detects_server_handler_crash(
     assert probe["task_started"] is False
 
 
+def test_mobilegpt_protocol_probe_ignores_auxiliary_connection_reset(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text("", encoding="utf-8")
+
+    probe = _mobilegpt_protocol_probe(
+        stats,
+        "MobileGPT_Service: receive broadcast\n",
+        "Exception in thread Thread-5 (handle_client):\n"
+        "Traceback (most recent call last):\n"
+        "  File \"server.py\", line 59, in handle_client\n"
+        "    raw_message_type = client_socket.recv(1)\n"
+        "ConnectionResetError: [Errno 104] Connection reset by peer\n",
+    )
+
+    assert probe["server_error"] is False
+    assert probe["server_error_markers"] == []
+
+
 def test_autodroid_official_memory_key_uses_paper_app_names() -> None:
     assert _autodroid_official_memory_key("audio") == "voicerecorder"
     assert _autodroid_official_memory_key("files") == "filemanager"

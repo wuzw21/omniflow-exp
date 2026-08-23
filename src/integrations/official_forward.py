@@ -1947,6 +1947,18 @@ def _mobilegpt_protocol_probe(
                 events.append(value)
     lowered = str(log_text or "").lower()
     server_lowered = str(server_log_text or "").lower()
+    # The upstream TCP server creates one thread per short-lived client
+    # connection. Android reconnects while switching from app discovery to
+    # screen execution, and a closed auxiliary socket can therefore print a
+    # bare ConnectionResetError without affecting the active episode. Do not
+    # let that transport cleanup traceback kill the healthy official client.
+    server_diagnostics = re.sub(
+        r"exception in thread[^\n]*\ntraceback .*?"
+        r"connectionreseterror:[^\n]*(?:\n|$)",
+        "",
+        server_lowered,
+        flags=re.DOTALL,
+    )
     client_errors = tuple(
         marker
         for marker in (
@@ -1972,7 +1984,7 @@ def _mobilegpt_protocol_probe(
             "connectionrefusederror",
             "exception in thread",
         )
-        if marker in server_lowered
+        if marker in server_diagnostics
     )
     return {
         "schema_version": "omniflow.mobilegpt_protocol_probe.v1",
