@@ -453,6 +453,7 @@ def test_mobilegpt_restores_androidworld_accessibility_before_validation(
         "_run_mobilegpt_client",
         lambda **_kwargs: events.append("mobilegpt") or 0,
     )
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
     monkeypatch.setattr(
         run_episode,
         "ensure_androidworld_accessibility_ready",
@@ -481,6 +482,65 @@ def test_mobilegpt_restores_androidworld_accessibility_before_validation(
     ) == 0
 
     assert events == ["mobilegpt", "androidworld_accessibility", "validate"]
+
+
+def test_mobilegpt_oob_skips_legacy_forwarder_restore_before_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.integrations.android_world import run_episode
+
+    events: list[str] = []
+    env = object()
+
+    class Task:
+        def is_successful(self, actual_env: object) -> float:
+            assert actual_env is env
+            events.append("validate")
+            return 1.0
+
+    @contextmanager
+    def session(**_kwargs):
+        yield env, Task()
+
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+    monkeypatch.setattr(official_forward, "_androidworld_task_startup", session)
+    monkeypatch.setattr(
+        official_forward,
+        "_run_mobilegpt_client",
+        lambda **_kwargs: events.append("mobilegpt") or 0,
+    )
+    monkeypatch.setattr(
+        official_forward,
+        "_restore_androidworld_accessibility_service",
+        lambda *_args: events.append("legacy_restore"),
+    )
+    monkeypatch.setattr(
+        run_episode,
+        "ensure_androidworld_accessibility_ready",
+        lambda _actual_env: events.append("legacy_forwarder"),
+        raising=False,
+    )
+    monkeypatch.delenv("MOBILEGPT_STATS_JSONL", raising=False)
+
+    assert official_forward.run_mobilegpt_client(
+        official_root=tmp_path / "MobileGPT",
+        serial="emulator-5560",
+        adb_path="adb",
+        host="10.0.2.2",
+        instruction="Run the stopwatch.",
+        output_root=tmp_path / "result",
+        timeout_sec=10,
+        android_world_root=tmp_path / "android-world",
+        task_name="ClockStopWatchRunning",
+        task_params_json="{}",
+        task_seed=111,
+        console_port=5560,
+        grpc_port=8560,
+        perform_emulator_setup=False,
+    ) == 0
+
+    assert events == ["mobilegpt", "validate"]
 
 
 def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:

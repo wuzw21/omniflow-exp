@@ -5114,10 +5114,14 @@ def build_mobilegpt_command(
         "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
         "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
         "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-        # MobileGPT owns its official Accessibility client and socket
-        # transport. Do not let the parent OmniFlow campaign's OOB setting
-        # leak into this subprocess.
-        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "androidworld",
+        # Preserve the campaign's canonical physical backend.  In the formal
+        # setup this is OOB; forcing AndroidWorld here re-enables the legacy
+        # accessibility-forwarder and can fail before the official client
+        # executes its first action.
+        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": str(
+            os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+        ).strip().lower()
+        or "oob",
     }
     for key in (
         "ANDROID_HOME",
