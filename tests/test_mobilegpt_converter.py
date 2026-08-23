@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -647,6 +648,47 @@ def test_conversion_writes_runlog_action_and_official_reader_loads_it(
     audit_payload = json.loads(audit.read_text(encoding="utf-8"))
     assert audit_payload["actions_supplied_to_mobilegpt"] is True
     assert audit_payload["official_reader_validation"]["loadable"] is True
+
+
+def test_direct_conversion_runs_official_memory_in_bundle_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Draw" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+    memory = tmp_path / "bundle" / "memory"
+    observed: list[Path] = []
+    original = mobilegpt_module._working_directory
+
+    @contextmanager
+    def observe_working_directory(path: Path):
+        observed.append(path)
+        with original(path):
+            yield
+
+    monkeypatch.setattr(
+        mobilegpt_module,
+        "_working_directory",
+        observe_working_directory,
+    )
+
+    convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    assert observed == [memory.parent]
 
 
 def test_direct_conversion_uses_runlog_actions_without_semantic_agents(

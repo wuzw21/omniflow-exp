@@ -3103,7 +3103,11 @@ def convert_runlog_to_mobilegpt_memory(
 
     started = time.monotonic()
     audit_rows: list[dict[str, Any]] = []
-    with _temporary_environment(environment), _working_directory(server_root):
+    # Upstream MobileGPT resolves its database as ``./memory/<app>`` and the
+    # pinned clean release does not consume MOBILEGPT_MEMORY_ROOT.  Run the
+    # unmodified official Memory API from the bundle parent so its native
+    # relative path lands in the requested memory root.
+    with _temporary_environment(environment), _working_directory(memory.parent):
         from memory.memory_manager import Memory
 
         official_generalize_action = None
