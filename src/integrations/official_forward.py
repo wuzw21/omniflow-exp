@@ -748,8 +748,6 @@ def prepare_mobilegpt_server(
     workspace: str | Path,
     embedding_model: str = "",
     chat_model: str = "",
-    use_oob: bool = False,
-    official_memory_mode: bool = False,
 ) -> dict[str, str]:
     """Stage the official Server so its documented relative ``./memory`` works."""
 
@@ -767,22 +765,9 @@ def prepare_mobilegpt_server(
         overlay = memory
     work.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source, target, symlinks=True)
-    # The disposable Server copy below is patched in three distinct ways,
-    # only two of which are purely mechanical:
-    #   - Model/provider routing (chat/embedding model names, endpoints,
-    #     malformed-JSON retries) and the observability event stream
-    #     (write_omniflow_mobilegpt_event) do not change what MobileGPT
-    #     decides to do; they only change which endpoint it calls and record
-    #     what it already did.
-    #   - _configure_mobilegpt_server also patches mobilegpt.py's subtask
-    #     state machine (the "_omniflow_last_explicit_finish" guard) to end
-    #     the task instead of repeating an already-finished subtask when
-    #     AndroidWorld exposes a page outside the sealed task path. This
-    #     DOES change planning/action behavior versus a bare upstream
-    #     checkout, in exchange for avoiding a stuck/looping episode. It
-    #     stays on by default; set
-    #     OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD=1 to run with unpatched
-    #     upstream subtask-finish behavior for ablation runs.
+    # Patch only provider routing, wire compatibility and telemetry in the
+    # disposable Server copy. MobileGPT's memory lookup, task selection,
+    # planner and action state machine remain upstream behavior.
     # Some pinned checkouts already import the experiment's optional
     # telemetry hook from ``utils``.  Provide that hook in the disposable
     # workspace only, so a stale checkout cannot prevent the official server
@@ -820,17 +805,12 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_server(
         target,
         embedding_model=embedding_model,
-        official_memory_mode=official_memory_mode,
     )
-    if use_oob:
-        _configure_mobilegpt_oob_action_bounds(target)
-    _configure_mobilegpt_speak_transport(target)
     _configure_mobilegpt_chat_model(target, chat_model=chat_model)
     _configure_mobilegpt_json_query(target)
     _configure_mobilegpt_response_compat(target)
     _configure_mobilegpt_optional_completion_rate(target)
     _configure_mobilegpt_selection_compat(target)
-    _configure_mobilegpt_xml_compat(target)
     staged_memory = target / "memory"
     for entry in overlay.iterdir():
         destination = staged_memory / entry.name
@@ -1009,296 +989,22 @@ def _configure_mobilegpt_finish_transport(server_root: Path) -> None:
     server_path.write_text(source.replace(marker, replacement, 1), encoding="utf-8")
 
 
-def _configure_mobilegpt_oob_action_bounds(server_root: Path) -> None:
-    """Attach parsed-screen bounds to staged MobileGPT actions."""
-
-    server_path = server_root / "server.py"
-    if not server_path.is_file():
-        return
-    source = server_path.read_text(encoding="utf-8")
-    marker = "# omniflow_mobilegpt_oob_action_bounds"
-    if marker in source:
-        return
-    anchor = "\ndef _omniflow_send_action(client_socket, action):\n"
-    if anchor not in source:
-        return
-    helper = (
-        "\n# omniflow_mobilegpt_oob_action_bounds\n"
-        "def _omniflow_add_oob_bounds(action, parsed_xml):\n"
-        "    if not isinstance(action, dict) or not isinstance(parsed_xml, str):\n"
-        "        return action\n"
-        "    if str(action.get(\"name\") or \"\").strip() not in {\"click\", \"long-click\", \"input\"}:\n"
-        "        return action\n"
-        "    parameters = action.get(\"parameters\")\n"
-        "    if not isinstance(parameters, dict) or parameters.get(\"oob_bounds\"):\n"
-        "        return action\n"
-        "    wanted = str(parameters.get(\"index\") or \"\").strip()\n"
-        "    if not wanted:\n"
-        "        return action\n"
-        "    try:\n"
-        "        root = __import__(\"xml.etree.ElementTree\", fromlist=[\"ElementTree\"]).fromstring(parsed_xml)\n"
-        "    except Exception:\n"
-        "        return action\n"
-        "    for element in root.iter():\n"
-        "        if str(element.attrib.get(\"index\") or \"\").strip() != wanted:\n"
-        "            continue\n"
-        "        bounds = str(element.attrib.get(\"bounds\") or \"\").strip()\n"
-        "        if not bounds:\n"
-        "            continue\n"
-        "        enriched = dict(action)\n"
-        "        enriched[\"parameters\"] = dict(parameters)\n"
-        "        enriched[\"parameters\"][\"oob_bounds\"] = bounds\n"
-        "        return enriched\n"
-        "    return action\n"
-    )
-    source = source.replace(anchor, helper + anchor, 1)
-    source = source.replace(
-        "def _omniflow_send_action(client_socket, action):\n",
-        "def _omniflow_send_action(client_socket, action, parsed_xml=\"\"):\n"
-        "    action = _omniflow_add_oob_bounds(action, parsed_xml)\n",
-        1,
-    )
-    for indentation in ("        ", "            ", "                ", "                    ", "                        "):
-        source = source.replace(
-            indentation + "_omniflow_send_action(client_socket, action)",
-            indentation
-            + "_omniflow_send_action(client_socket, action, parsed_xml if \"parsed_xml\" in locals() else \"\")",
-        )
-    server_path.write_text(source, encoding="utf-8")
-
-
 def _configure_mobilegpt_server(
     server_root: Path,
     *,
     embedding_model: str = "",
-    chat_model: str = "",
-    official_memory_mode: bool = False,
 ) -> None:
     """Inject provider names into a temporary copy of the official Server.
 
-    MobileGPT's upstream code keeps provider model names as constants; most
-    of what this function patches (endpoints, model aliases, malformed-JSON
-    retries, the telemetry event stream) only changes routing/observability,
-    not what MobileGPT decides to do. The one exception is the
-    ``mobilegpt.py`` subtask-finish guard below (see the
-    ``_omniflow_last_explicit_finish`` block): it changes planning behavior
-    versus a bare upstream checkout by ending the task instead of repeating
-    an already-finished subtask on a page AndroidWorld exposed outside the
-    sealed task path. It is on by default; set
-    ``OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD=1`` to skip it and run with
-    unpatched upstream subtask-finish behavior.
+    MobileGPT's upstream code keeps provider model names as constants. This
+    function changes routing/observability only; it does not alter memory
+    matching, task selection, planning or action semantics.
     """
 
     normalized_embedding = str(embedding_model or "").strip()
-    normalized_chat = str(chat_model or "").strip()
     utils_path = server_root / "utils" / "utils.py"
     _configure_mobilegpt_telemetry(server_root)
     _configure_mobilegpt_finish_transport(server_root)
-    memory_manager_path = server_root / "memory" / "memory_manager.py"
-    if memory_manager_path.is_file() and not official_memory_mode:
-        source = memory_manager_path.read_text(encoding="utf-8")
-        threshold_pattern = r"(?m)^(?P<indent>[ \t]*)if highest_similarity > 0\.95:\n"
-        threshold_replacement = (
-            r'\g<indent>threshold = float(os.getenv("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", "0.95"))\n'
-            r'\g<indent>if os.getenv("MOBILEGPT_TARGET_TASK_NAME", "").strip() and os.getenv("MOBILEGPT_TARGET_PACKAGE", "").strip():\n'
-            r'\g<indent>    threshold = min(threshold, float(os.getenv("MOBILEGPT_TARGET_MEMORY_THRESHOLD", "0.70")))\n'
-            r'\g<indent>if highest_similarity > threshold:\n'
-        )
-        threshold_changed = False
-        if re.search(threshold_pattern, source) and "MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD" not in source:
-            source = re.sub(threshold_pattern, threshold_replacement, source, count=1)
-            threshold_changed = True
-        page_match_marker = "MOBILEGPT_NATIVE_TRIGGER_UI_PAGE_MATCH"
-        native_page_match = (
-            "        # MOBILEGPT_NATIVE_TRIGGER_UI_PAGE_MATCH\n"
-            "        # The paper's page classifier uses hierarchy embeddings only\n"
-            "        # to shortlist candidates.  NodeManager then verifies the\n"
-            "        # candidate's trigger/key UI attributes and extra UI set.\n"
-            "        candidate_nodes_indexes = self.__search_similar_hierarchy_nodes(hierarchy_xml)\n"
-            "        node_manager = NodeManager(self.page_db, self, parsed_xml, encoded_xml)\n"
-            "        node_index, new_subtasks = node_manager.search(candidate_nodes_indexes)\n"
-            "        if node_index >= 0:\n"
-            "            page_data = json.loads(self.page_db.loc[node_index].to_json())\n"
-            "            available_subtasks = json.loads(page_data['available_subtasks'])\n"
-            "            return node_index, available_subtasks + new_subtasks\n"
-            "        return -1, []\n"
-        )
-        native_page_match_old = (
-            "        # candidate_nodes_indexes = self.__search_similar_hierarchy_nodes(hierarchy_xml)\n"
-            "        #\n"
-            "        # node_manager = NodeManager(self.page_db, self, parsed_xml, encoded_xml)\n"
-            "        # node_index, new_subtasks = node_manager.search(candidate_nodes_indexes)\n"
-            "        most_similar_node_index = self.__search_most_similar_hierarchy_node(hierarchy_xml)\n"
-            "        if most_similar_node_index >= 0:\n"
-            "            return most_similar_node_index, []\n"
-            "        else:\n"
-            "            return -1, []\n"
-        )
-        if page_match_marker not in source and native_page_match_old in source:
-            source = source.replace(native_page_match_old, native_page_match, 1)
-            threshold_changed = True
-        strict_marker = "MOBILEGPT_MEMORY_REUSE_STRICT"
-        strict_anchor = (
-            "            if len(next_subtask['parameters']) > 0:\n"
-            "                params = param_fill_agent.parm_fill_subtask(instruction=self.instruction,\n"
-        )
-        strict_replacement = (
-            "            if len(next_subtask['parameters']) > 0:\n"
-            "                strict_reuse = os.getenv(\"MOBILEGPT_MEMORY_REUSE_STRICT\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\")\n"
-            "                if strict_reuse:\n"
-            "                    # The sealed source example is the verified parameter binding.\n"
-            "                    # Do not ask a second model to reinterpret it on replay.\n"
-            "                    example_payload = json.loads(next_subtask_data.get(\"example\", \"{}\") or \"{}\")\n"
-            "                    example_action = ((example_payload.get(\"response\") or {}).get(\"action\") or {})\n"
-            "                    example_parameters = example_action.get(\"parameters\")\n"
-            "                    if isinstance(example_parameters, dict):\n"
-            "                        next_subtask['parameters'] = dict(example_parameters)\n"
-            "                    else:\n"
-            "                        next_subtask['parameters'] = {}\n"
-            "                else:\n"
-            "                    params = param_fill_agent.parm_fill_subtask(instruction=self.instruction,\n"
-        )
-        if strict_anchor in source and strict_marker not in source:
-            source = source.replace(strict_anchor, strict_replacement, 1)
-            source = source.replace(
-                "                                                            example=json.loads(\n"
-                "                                                                next_subtask_data.get('example', {})))\n"
-                "\n"
-                "                next_subtask['parameters'] = params\n",
-                "                                                            example=json.loads(\n"
-                "                                                                next_subtask_data.get('example', {})))\n"
-                "\n"
-                "                    next_subtask['parameters'] = params\n"
-                "",
-                1,
-            )
-            threshold_changed = True
-        if threshold_changed:
-            memory_manager_path.write_text(source, encoding="utf-8")
-    mobilegpt_path = server_root / "mobilegpt.py"
-    if mobilegpt_path.is_file():
-        source = mobilegpt_path.read_text(encoding="utf-8")
-        replay_marker = "MOBILEGPT_RUNLOG_REPLAY_ONLY"
-        page_lookup = (
-            "        if page_index == -1:\n"
-            "            if os.getenv(\"MOBILEGPT_RUNLOG_REPLAY_ONLY\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\"):\n"
-            "                raise RuntimeError(\"mobilegpt_runlog_page_not_found\")\n"
-            "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
-        )
-        page_lookup_old = (
-            "        if page_index == -1:\n"
-            "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
-        )
-        if replay_marker not in source and page_lookup_old in source:
-            source = source.replace(page_lookup_old, page_lookup, 1)
-        subtask_lookup = (
-            "                if os.getenv(\"MOBILEGPT_RUNLOG_REPLAY_ONLY\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\"):\n"
-            "                    raise RuntimeError(\"mobilegpt_runlog_subtask_not_found\")\n\n"
-            "                response, new_action = self.select_agent.select(available_subtasks, self.subtask_history,\n"
-        )
-        subtask_lookup_old = (
-            "                response, new_action = self.select_agent.select(available_subtasks, self.subtask_history,\n"
-        )
-        if subtask_lookup_old in source and "mobilegpt_runlog_subtask_not_found" not in source:
-            source = source.replace(subtask_lookup_old, subtask_lookup, 1)
-        action_lookup = (
-            "            if os.getenv(\"MOBILEGPT_RUNLOG_REPLAY_ONLY\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\"):\n"
-            "                raise RuntimeError(\"mobilegpt_runlog_action_not_found\")\n\n"
-            "            if self.subtask_status == Status.WAIT or self.subtask_status == Status.LEARN:\n"
-        )
-        action_lookup_old = (
-            "            if self.subtask_status == Status.WAIT or self.subtask_status == Status.LEARN:\n"
-        )
-        if action_lookup_old in source and "mobilegpt_runlog_action_not_found" not in source:
-            source = source.replace(action_lookup_old, action_lookup, 1)
-        example_lookup = (
-            "            if \"examples\" in next_action:\n"
-            "                if os.getenv(\"MOBILEGPT_RUNLOG_REPLAY_ONLY\", \"0\").strip().lower() in (\"1\", \"true\", \"yes\"):\n"
-            "                    raise RuntimeError(\"mobilegpt_runlog_example_fallback\")\n"
-            "                next_action, example = self.derive_agent.derive(self.encoded_xml, examples=next_action['examples'])\n"
-        )
-        example_lookup_old = (
-            "            if \"examples\" in next_action:\n"
-            "                next_action, example = self.derive_agent.derive(self.encoded_xml, examples=next_action['examples'])\n"
-        )
-        if example_lookup_old in source and "mobilegpt_runlog_example_fallback" not in source:
-            source = source.replace(example_lookup_old, example_lookup, 1)
-        page_change_marker = (
-            "            if self.subtask_status == Status.LEARN:\n"
-            "                self.__finish_subtask()\n"
-        )
-        page_change_replacement = (
-            "            if self.subtask_status == Status.LEARN:\n"
-            "                self.__finish_subtask()\n"
-            "            elif (\n"
-            "                os.getenv(\"MOBILEGPT_MEMORY_REUSE_STRICT\", \"0\").strip().lower()\n"
-            "                in (\"1\", \"true\", \"yes\")\n"
-            "                and self.current_subtask is not None\n"
-            "            ):\n"
-            "                # A direct RunLog memory bundle records one source\n"
-            "                # transition per page.  When that transition changes\n"
-            "                # the page, advance the sealed task path before the\n"
-            "                # next action lookup; do not re-derive the old\n"
-            "                # subtask on the new page.\n"
-            "                self.__finish_subtask(mark_finish=False)\n"
-        )
-        if page_change_marker in source and "mobilegpt_strict_page_advance" not in source:
-            source = source.replace(
-                page_change_marker,
-                "            # mobilegpt_strict_page_advance\n" + page_change_replacement,
-                1,
-            )
-            mobilegpt_path.write_text(source, encoding="utf-8")
-    server_path = server_root / "server.py"
-    if server_path.is_file():
-        source = server_path.read_text(encoding="utf-8")
-        task_marker = "                task, is_new_task = task_agent.get_task(instruction)\n"
-        if task_marker in source and "mobilegpt_forced_task_binding" not in source:
-            task_binding = (
-                "                # mobilegpt_forced_task_binding: the formal runner\n"
-                "                # already supplies the exact AndroidWorld task and app.\n"
-                "                # Bind from the staged native tasks.csv before the\n"
-                "                # upstream TaskAgent can call an LLM.\n"
-                "                target_task_name = os.getenv(\"MOBILEGPT_TARGET_TASK_NAME\", \"\").strip()\n"
-                "                forced_target_app = os.getenv(\"MOBILEGPT_TARGET_APP\", \"\").strip()\n"
-                "                forced_target_package = os.getenv(\"MOBILEGPT_TARGET_PACKAGE\", \"\").strip()\n"
-                "                if target_task_name and forced_target_package:\n"
-                "                    task = None\n"
-                "                    for known_task in task_agent.database.to_dict(orient=\"records\"):\n"
-                "                        if str(known_task.get(\"name\") or \"\").strip() == target_task_name:\n"
-                "                            task = dict(known_task)\n"
-                "                            break\n"
-                "                    task = task or {\n"
-                "                        \"name\": target_task_name,\n"
-                "                        \"description\": instruction,\n"
-                "                        \"parameters\": {},\n"
-                "                        \"app\": forced_target_package,\n"
-                "                    }\n"
-                "                    task[\"name\"] = target_task_name\n"
-                "                    # The Android client launches this field as a\n"
-                "                    # package name; the display label is only\n"
-                "                    # metadata and cannot be passed to\n"
-                "                    # PackageManager.getLaunchIntentForPackage.\n"
-                "                    task[\"app\"] = forced_target_package\n"
-                "                    is_new_task = False\n"
-                "                else:\n"
-                "                    task, is_new_task = task_agent.get_task(instruction)\n"
-            )
-            source = source.replace(task_marker, task_binding, 1)
-            package_lookup = "                target_package = app_agent.get_package_name(target_app)\n"
-            direct_package_lookup = (
-                "                # mobilegpt_target_package_direct: the formal runner\n"
-                "                # already resolved the package; do not ask the\n"
-                "                # display-name resolver to reinterpret it.\n"
-                "                target_package = (\n"
-                "                    forced_target_package\n"
-                "                    if target_task_name and forced_target_package\n"
-                "                    else app_agent.get_package_name(target_app)\n"
-                "                )\n"
-            )
-            if package_lookup in source and "mobilegpt_target_package_direct" not in source:
-                source = source.replace(package_lookup, direct_package_lookup, 1)
-            server_path.write_text(source, encoding="utf-8")
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
         if "def write_omniflow_mobilegpt_event" not in source:
@@ -1334,214 +1040,6 @@ def _configure_mobilegpt_server(
             1,
         )
         utils_path.write_text(source, encoding="utf-8")
-    if normalized_chat:
-        main_path = server_root / "main.py"
-        source = main_path.read_text(encoding="utf-8")
-        for name in (
-            "TASK_AGENT_GPT_VERSION",
-            "APP_AGENT_GPT_VERSION",
-            "SELECT_AGENT_HISTORY_GPT_VERSION",
-            "EXPLORE_AGENT_GPT_VERSION",
-            "SELECT_AGENT_GPT_VERSION",
-            "DERIVE_AGENT_GPT_VERSION",
-            "PARAMETER_FILLER_AGENT_GPT_VERSION",
-            "ACTION_SUMMARIZE_AGENT_GPT_VERSION",
-            "SUBTASK_MERGE_AGENT_GPT_VERSION",
-            "gpt_4",
-            "gpt_4_turbo",
-            "gpt_3_5_turbo",
-        ):
-            source = re.sub(
-                rf'os\.environ\["{re.escape(name)}"\] = "[^"]+"',
-                f'os.environ["{name}"] = os.environ.get("MOBILEGPT_CHAT_MODEL", "{normalized_chat}")',
-                source,
-            )
-        source = source.replace(
-            'os.environ["vision_model"] = "gpt-4o"',
-            'os.environ["vision_model"] = os.environ.get("MOBILEGPT_VISION_MODEL", os.environ.get("MOBILEGPT_CHAT_MODEL", "GLM-4.6V"))',
-        )
-        main_path.write_text(source, encoding="utf-8")
-        param_path = server_root / "agents" / "param_fill_agent.py"
-        if param_path.is_file():
-            param_source = param_path.read_text(encoding="utf-8")
-            param_source = param_source.replace(
-                'model="gpt-4o"',
-                'model=os.getenv("MOBILEGPT_CHAT_MODEL", "GLM-4.6V")',
-            )
-            param_path.write_text(param_source, encoding="utf-8")
-        mobilegpt_path = server_root / "mobilegpt.py"
-        finish_guard_disabled = str(
-            os.environ.get("OMNIFLOW_MOBILEGPT_DISABLE_FINISH_GUARD", "")
-        ).strip().lower() in ("1", "true", "yes")
-        if mobilegpt_path.is_file() and not finish_guard_disabled:
-            mobilegpt_source = mobilegpt_path.read_text(encoding="utf-8")
-            repeated_subtask_guard = "        if self.current_subtask is None:\n"
-            guarded_subtask_selection = (
-                "        if self.current_subtask is None:\n"
-                "            last_finish = getattr(self, \"_omniflow_last_explicit_finish\", None)\n"
-                "            if last_finish and last_finish.get(\"page_index\") == self.current_page_index:\n"
-                "                # AndroidWorld can expose a newly explored page that is not\n"
-                "                # present in the sealed task path. If the planner repeats\n"
-                "                # the same completed subtask on that page, end the task\n"
-                "                # instead of sending the same device action again.\n"
-                "                self.__finish_task()\n"
-                "                return None\n"
-            )
-            if repeated_subtask_guard in mobilegpt_source and (
-                "last_finish = getattr(self, \"_omniflow_last_explicit_finish\", None)"
-                not in mobilegpt_source
-            ):
-                mobilegpt_source = mobilegpt_source.replace(
-                    "        self.subtask_status = Status.WAIT\n",
-                    "        self.subtask_status = Status.WAIT\n"
-                    "        self._omniflow_last_explicit_finish = None\n",
-                    1,
-                )
-                mobilegpt_source = mobilegpt_source.replace(
-                    repeated_subtask_guard,
-                    guarded_subtask_selection,
-                    1,
-                )
-                mobilegpt_source = mobilegpt_source.replace(
-                    "        if next_action['name'] == 'finish':\n"
-                    "            self.__finish_subtask(mark_finish=False, explicit_finish=True)\n",
-                    "        if next_action['name'] == 'finish':\n"
-                    "            self._omniflow_last_explicit_finish = {\n"
-                    "                \"page_index\": self.current_page_index,\n"
-                    "                \"subtask_name\": str((self.current_subtask or {}).get(\"name\") or \"\"),\n"
-                    "            }\n"
-                    "            self.__finish_subtask(mark_finish=False, explicit_finish=True)\n",
-                    1,
-                )
-                mobilegpt_path.write_text(mobilegpt_source, encoding="utf-8")
-        task_agent_path = server_root / "agents" / "task_agent.py"
-        if task_agent_path.is_file():
-            task_agent_source = task_agent_path.read_text(encoding="utf-8")
-            original_query = (
-                "        response = query(messages=task_agent_prompt.get_prompts(instruction, known_tasks),\n"
-                "                         model=os.getenv(\"TASK_AGENT_GPT_VERSION\"))\n"
-            )
-            retry_query = (
-                "        target_package = os.getenv(\"MOBILEGPT_TARGET_PACKAGE\", \"\").strip()\n"
-                "        target_tasks = [task for task in known_tasks if isinstance(task, dict) and str(task.get(\"app\") or \"\").strip() == target_package]\n"
-                "        if target_package and len(target_tasks) == 1:\n"
-                "            log(f\"Binding MobileGPT task to target package {target_package}\", \"blue\")\n"
-                "            response = {\"api\": target_tasks[0], \"found_match\": True}\n"
-                "        else:\n"
-                "            response = _omniflow_task_agent_query(\n"
-                "                task_agent_prompt.get_prompts(instruction, known_tasks),\n"
-                "                os.getenv(\"TASK_AGENT_GPT_VERSION\"),\n"
-                "            )\n"
-            )
-            if original_query in task_agent_source and (
-                "def _omniflow_task_agent_query" not in task_agent_source
-            ):
-                task_agent_source = task_agent_source.replace(
-                    "from utils.utils import query, log\n",
-                    "from utils.utils import query, log\n\n\n"
-                    "def _omniflow_task_agent_query(messages, model):\n"
-                    "    # Retry the real API when upstream parsing returns raw text.\n"
-                    "    attempts = max(1, int(os.getenv(\"MOBILEGPT_TASK_AGENT_RETRIES\", \"3\")))\n"
-                    "    response = None\n"
-                    "    for attempt in range(attempts):\n"
-                    "        response = query(messages=messages, model=model)\n"
-                    "        if isinstance(response, dict) and isinstance(response.get(\"api\"), dict):\n"
-                    "            return response\n"
-                    "        log(f\"TaskAgent response was not a task object; retry {attempt + 1}/{attempts}\", \"red\")\n"
-                    "    raise RuntimeError(\"mobilegpt_task_agent_json_response_invalid\")\n\n",
-                    1,
-                )
-                task_agent_source = task_agent_source.replace(
-                    original_query,
-                    retry_query,
-                    1,
-                )
-                task_agent_path.write_text(task_agent_source, encoding="utf-8")
-        utils_path = server_root / "utils" / "utils.py"
-        if utils_path.is_file():
-            utils_source = utils_path.read_text(encoding="utf-8")
-            utils_source = utils_source.replace(
-                "        max_tokens=900,\n",
-                "        max_tokens=int(os.getenv(\"MOBILEGPT_MAX_TOKENS\", \"1800\")),\n",
-                1,
-            )
-            utils_source = utils_source.replace(
-                "    if json_formatted_response:\n"
-                "        return json.loads(json_formatted_response)\n"
-                "    else:\n"
-                "        return result\n",
-                "    if json_formatted_response:\n"
-                "        try:\n"
-                "            return json.loads(json_formatted_response)\n"
-                "        except json.JSONDecodeError:\n"
-                "            log(\"MobileGPT response was truncated or invalid JSON; retrying the real API\", \"red\")\n"
-                "            for _ in range(2):\n"
-                "                retry = client.chat.completions.create(\n"
-                "                    model=model, messages=messages, temperature=0,\n"
-                "                    max_tokens=int(os.getenv(\"MOBILEGPT_MAX_TOKENS\", \"1800\")),\n"
-                "                    top_p=0, frequency_penalty=0, presence_penalty=0\n"
-                "                )\n"
-                "                retry_result = retry.choices[0].message.content\n"
-                "                retry_json = __parse_json(retry_result, is_list=is_list)\n"
-                "                if retry_json:\n"
-                "                    try:\n"
-                "                        return json.loads(retry_json)\n"
-                "                    except json.JSONDecodeError:\n"
-                "                        continue\n"
-                "            raise RuntimeError(\"mobilegpt_model_json_response_invalid\")\n"
-                "    return result\n",
-                1,
-            )
-            utils_source = utils_source.replace(
-                "        value = float(input_str)\n",
-                "        try:\n"
-                "            value = float(input_str)\n"
-                "        except (TypeError, ValueError):\n"
-                "            # completion_rate is telemetry; some providers return\n"
-                "            # a natural-language status while the action is valid.\n"
-                "            percent = re.search(r\"(?<!\\d)(\\d+(?:\\.\\d+)?)\\s*%\", input_str)\n"
-                "            if percent:\n"
-                "                value = float(percent.group(1))\n"
-                "            else:\n"
-                "                return 0\n",
-                1,
-            )
-            utils_path.write_text(utils_source, encoding="utf-8")
-
-
-def _configure_mobilegpt_speak_transport(server_root: Path) -> None:
-    """Suppress intermediate speech packets in the disposable Server copy.
-
-    The official Android client speaks the message and returns without
-    sending a new observation. Sending this packet between two real actions
-    therefore deadlocks the official socket protocol in AndroidWorld.
-    """
-
-    mobilegpt_path = server_root / "mobilegpt.py"
-    if not mobilegpt_path.is_file():
-        return
-    source = mobilegpt_path.read_text(encoding="utf-8")
-    marker = "MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"
-    if marker in source:
-        return
-    original = (
-        "                if next_subtask['name'] != 'read_screen':\n"
-        "                    msg = response['speak']\n"
-        "                    self.__send_speak_action(msg)\n"
-    )
-    replacement = (
-        "                if (\n"
-        "                    next_subtask['name'] != 'read_screen'\n"
-        "                    and os.getenv(\"MOBILEGPT_SUPPRESS_SPEAK_ACTIONS\", \"1\").strip().lower()\n"
-        "                    not in (\"1\", \"true\", \"yes\")\n"
-        "                ):\n"
-        "                    msg = response['speak']\n"
-        "                    self.__send_speak_action(msg)\n"
-    )
-    if original in source:
-        mobilegpt_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
-
-
 def _configure_mobilegpt_chat_model(
     server_root: Path,
     *,
@@ -1877,35 +1375,6 @@ def _configure_mobilegpt_selection_compat(server_root: Path) -> None:
         select_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
-def _configure_mobilegpt_xml_compat(server_root: Path) -> None:
-    """Keep a transient empty accessibility frame from killing Server threads."""
-
-    server_path = server_root / "server.py"
-    if not server_path.is_file():
-        return
-    source = server_path.read_text(encoding="utf-8")
-    original = (
-        "                parsed_xml, hierarchy_xml, encoded_xml = screen_parser.encode(raw_xml, current_screen_index)\n"
-    )
-    replacement = (
-        "                try:\n"
-        "                    parsed_xml, hierarchy_xml, encoded_xml = screen_parser.encode(raw_xml, current_screen_index)\n"
-        "                except Exception as error:\n"
-        "                    # Android accessibility can emit one empty frame while\n"
-        "                    # an app/window is settling. The official parser raises\n"
-        "                    # ParseError here and otherwise kills this client thread.\n"
-        "                    log(f\"MobileGPT XML frame ignored: {error}\", \"yellow\")\n"
-        "                    parsed_xml, hierarchy_xml, encoded_xml = screen_parser.encode(\n"
-        "                        \"<hierarchy />\", current_screen_index\n"
-        "                    )\n"
-    )
-    if original in source and "MobileGPT XML frame ignored" not in source:
-        server_path.write_text(
-            source.replace(original, replacement, 1),
-            encoding="utf-8",
-        )
-
-
 def _run_adb(
     adb_path: str,
     serial: str,
@@ -2114,6 +1583,74 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
     if receiver_original in source:
         source = source.replace(receiver_original, receiver_replacement, 1)
         changed = True
+    # The official client keeps the previous XML value when Accessibility has
+    # no root for the target app. On a fresh episode that value is empty, yet
+    # sendScreen still transmits it and the official Server parser thread
+    # crashes. Clear the value for every capture and retry locally until a
+    # real root exists; never fabricate a hierarchy or alter Server semantics.
+    if "omniflow_mobilegpt_xml_capture" not in source:
+        source, count = re.subn(
+            r"(?m)^(?P<indent>[ \t]*)nodeMap = new HashMap<>\(\);\n",
+            lambda match: (
+                match.group(0)
+                + match.group("indent")
+                + "// omniflow_mobilegpt_xml_capture\n"
+                + match.group("indent")
+                + 'currentScreenXML = "";\n'
+            ),
+            source,
+            count=1,
+        )
+        changed = changed or count > 0
+    if "currentScreenXML.trim().isEmpty()" not in source:
+        source, count = re.subn(
+            r"(?m)^(?P<indent>[ \t]*)private void sendScreen\(\)\{\n",
+            lambda match: (
+                match.group(0)
+                + match.group("indent")
+                + "    if (currentScreenXML == null || currentScreenXML.trim().isEmpty()) {\n"
+                + match.group("indent")
+                + "        Log.d(TAG, \"Target app root unavailable; retrying screen capture\");\n"
+                + match.group("indent")
+                + "        xmlPending = true;\n"
+                + match.group("indent")
+                + "        screenNeedUpdate = true;\n"
+                + match.group("indent")
+                + "        firstScreen = false;\n"
+                + match.group("indent")
+                + "        mainThreadHandler.postDelayed(screenUpdateTimeoutRunnable, 500);\n"
+                + match.group("indent")
+                + "        return;\n"
+                + match.group("indent")
+                + "    }\n"
+            ),
+            source,
+            count=1,
+        )
+        changed = changed or count > 0
+    speak_original = (
+        "            if (action.equals(\"speak\")) {\n"
+        "                String content = (String) args.get(\"message\");\n"
+        "                mSpeech.speak(content, false);\n"
+        "                return;\n"
+        "            }\n"
+    )
+    speak_replacement = (
+        "            if (action.equals(\"speak\")) {\n"
+        "                String content = (String) args.get(\"message\");\n"
+        "                mSpeech.speak(content, false);\n"
+        "                // omniflow_mobilegpt_speak_lifecycle: the official\n"
+        "                // Server needs a new observation after every response.\n"
+        "                xmlPending = true;\n"
+        "                screenNeedUpdate = true;\n"
+        "                firstScreen = false;\n"
+        "                mainThreadHandler.postDelayed(screenUpdateTimeoutRunnable, 500);\n"
+        "                return;\n"
+        "            }\n"
+    )
+    if speak_original in source and "omniflow_mobilegpt_speak_lifecycle" not in source:
+        source = source.replace(speak_original, speak_replacement, 1)
+        changed = True
     marker = "// omniflow_mobilegpt_launch_lifecycle"
     if marker in source:
         if changed:
@@ -2239,50 +1776,7 @@ def _run_mobilegpt_client(
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     server_log_path: str | Path = "",
 ) -> int:
-    """Run the MobileGPT client boundary for one episode.
-
-    Formal AndroidWorld runs select the OOB transport through the public
-    launcher.  The upstream APK remains available for protocol compatibility,
-    but it is not used for physical observe/act in that mode.
-    """
-
-    if os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "").strip().lower() == "oob":
-        from src.integrations.mobilegpt_oob_client import run_mobilegpt_oob_client
-
-        result = run_mobilegpt_oob_client(
-            serial=serial,
-            adb_path=adb_path,
-            server_host=host,
-            server_port=server_port,
-            instruction=instruction,
-            timeout_sec=timeout_sec,
-            max_steps=max_steps,
-            output_root=output_root,
-            server_log_path=server_log_path,
-        )
-        output = Path(output_root).expanduser().resolve()
-        stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
-        server_log = Path(server_log_path).expanduser() if str(server_log_path).strip() else None
-        server_text = (
-            server_log.read_text(encoding="utf-8", errors="replace")[-20000:]
-            if server_log is not None and server_log.is_file()
-            else ""
-        )
-        probe = _mobilegpt_protocol_probe(stats_path, str(result.get("log") or ""), server_text)
-        probe.update(
-            {
-                "failure_reason": str(result.get("reason") or ""),
-                "returncode": int(result.get("returncode", 1)),
-                "server_host": str(result.get("server_host") or "127.0.0.1"),
-                "server_port": int(result.get("server_port") or server_port),
-                "transport": "oob",
-            }
-        )
-        (output / "protocol_probe.json").write_text(
-            json.dumps(probe, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        return int(result.get("returncode", 1))
+    """Run one episode through MobileGPT's official Accessibility client."""
 
     root = Path(official_root).expanduser().resolve()
     output = Path(output_root).expanduser().resolve()
@@ -2855,7 +2349,6 @@ def run_mobilegpt_client(
         environment_failure = failure_reason in {
             "mobilegpt_target_app_package_unresolved",
             "mobilegpt_target_app_not_ready",
-            "mobilegpt_oob_observation_xml_missing",
         } or failure_reason.startswith("mobilegpt_target_app_not_ready:")
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",

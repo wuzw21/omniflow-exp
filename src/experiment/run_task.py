@@ -2319,7 +2319,6 @@ def build_mobilegpt_server_command(
     target_package: str = "",
     target_app: str = "",
     target_task_name: str = "",
-    runtime_observe_backend: str = "androidworld",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -2333,11 +2332,6 @@ def build_mobilegpt_server_command(
     env["PYTHONUNBUFFERED"] = "1"
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
-    normalized_runtime_backend = str(runtime_observe_backend or "androidworld").strip().lower()
-    if normalized_runtime_backend in {"oob_control", "omniflow"}:
-        normalized_runtime_backend = "oob"
-    if normalized_runtime_backend not in {"androidworld", "oob"}:
-        raise ValueError(f"mobilegpt_runtime_observe_backend_invalid:{runtime_observe_backend}")
     if adb_path.strip():
         env["ADB_PATH"] = adb_path.strip()
     resolved_memory_root = (
@@ -2382,8 +2376,6 @@ def build_mobilegpt_server_command(
             workspace=staged,
             embedding_model=embedding_model,
             chat_model=chat_model,
-            use_oob=normalized_runtime_backend == "oob",
-            official_memory_mode=True,
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
@@ -2396,11 +2388,6 @@ def build_mobilegpt_server_command(
         env["MOBILEGPT_LIST_MAX_TOKENS"] = "512"
         env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         env["MOBILEGPT_EMBEDDING_MODEL"] = embedding_model
-        # The official Android client treats ``speak`` as terminal for the
-        # current socket and does not send a new observation.  The staged
-        # Server therefore suppresses intermediate announcements so the next
-        # real device action can be delivered on the same episode.
-        env["MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"] = "1"
         if chat_model:
             env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
@@ -5860,7 +5847,6 @@ def _run_result_mobilegpt(
                     device_target_package,
                 ),
                 target_task_name=args.task,
-                runtime_observe_backend="androidworld",
             )
             server_spec = _configure_mobilegpt_formal_server(
                 server_spec,

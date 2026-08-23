@@ -575,7 +575,6 @@ def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
     assert spec.env["MOBILEGPT_MAX_TOKENS"] == "512"
     assert spec.env["MOBILEGPT_LIST_MAX_TOKENS"] == "512"
     assert spec.env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] == "60"
-    assert spec.env["MOBILEGPT_SUPPRESS_SPEAK_ACTIONS"] == "1"
 
 
 def test_mobilegpt_server_keeps_memory_app_separate_from_installed_package() -> None:
