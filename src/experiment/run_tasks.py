@@ -425,6 +425,7 @@ def ensure_target_devices(
     deadline: Deadline,
 ) -> dict[str, Any]:
     avds = dict(DEVICE_AVDS)
+    mobilegpt_selected = "mobilegpt" in _e2e_methods(args)
     devices: list[dict[str, Any]] = []
     for label, serial, _console_port in _e2e_devices(args):
         avd = avds.get(serial)
@@ -477,6 +478,74 @@ def ensure_target_devices(
                     "total_tokens": 0,
                 },
             )
+        if mobilegpt_selected:
+            preflight_path = (
+                attempt_root
+                / "preflight"
+                / f"target_mobilegpt_{serial}.json"
+            )
+            preflight_command = [
+                str(args.python_bin),
+                str(args.runtime_preflight),
+                "--repo",
+                str(args.asset_root),
+                "--android-world-root",
+                str(args.android_world_root),
+                "--code-root",
+                str(args.repo),
+                "--profile",
+                "mobilegpt",
+                "--serial",
+                serial,
+                "--require-kvm",
+                "--require-device",
+                "--source-index",
+                str(args.memory_index),
+                "--source-task",
+                str(args.task),
+                "--json-out",
+                str(preflight_path),
+            ]
+            if str(args.task).startswith("Contacts"):
+                preflight_command.append("--require-contacts-ready")
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = os.pathsep.join(
+                str(path)
+                for path in (
+                    args.repo,
+                    args.repo / "src",
+                    args.android_world_root,
+                    environment.get("PYTHONPATH", ""),
+                )
+                if str(path)
+            )
+            preflight_result = run_logged_command(
+                preflight_command,
+                cwd=args.repo,
+                environment=environment,
+                log_path=(
+                    attempt_root
+                    / "preflight"
+                    / f"target_mobilegpt_{serial}.log"
+                ),
+                timeout_sec=deadline.remaining(STEP_TIMEOUT_SEC),
+            )
+            device_phase["runtime_preflight"] = {
+                **preflight_result,
+                "profile": "mobilegpt",
+                "report": str(preflight_path),
+            }
+            if preflight_result["returncode"] != 0:
+                raise PipelinePhaseError(
+                    "target_mobilegpt_preflight_failed",
+                    {
+                        "status": "failed",
+                        "devices": devices,
+                        "failed_device": device_phase,
+                        "model_calls": 0,
+                        "total_tokens": 0,
+                    },
+                )
     return {
         "status": "ready",
         "devices": devices,

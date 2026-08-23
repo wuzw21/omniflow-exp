@@ -59,6 +59,7 @@ from src.experiment.run_tasks import (
     build_parser,
     collect_replayed_source,
     ensure_source_device,
+    ensure_target_devices,
     prepare_function_asset,
     prepare_mobilegpt_memory,
     qualify_source_function,
@@ -1774,6 +1775,44 @@ def test_source_device_reports_emulator_process_exit_immediately(
             attempt_root=tmp_path / "attempt",
             deadline=Deadline(1),
         )
+
+
+def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.task = "ContactsAddContact"
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = DEVICES[2]
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+    args.runtime_preflight = tmp_path / "checks.py"
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        calls.append((command, kwargs))
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0.01}
+
+    monkeypatch.setattr("src.experiment.run_tasks.run_logged_command", runner)
+
+    result = ensure_target_devices(
+        args=args,
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(120),
+    )
+
+    assert result["status"] == "ready"
+    assert len(calls) == 2
+    preflight, preflight_kwargs = calls[1]
+    assert preflight[:2] == [str(args.python_bin), str(args.runtime_preflight)]
+    assert preflight[preflight.index("--profile") + 1] == "mobilegpt"
+    assert preflight[preflight.index("--serial") + 1] == DEVICES[2][1]
+    assert "--require-contacts-ready" in preflight
+    assert preflight[preflight.index("--source-task") + 1] == args.task
+    assert str(args.android_world_root) in str(
+        preflight_kwargs["environment"]["PYTHONPATH"]
+    )
 
 
 def test_target_workers_parallelize_devices_and_serialize_methods(
