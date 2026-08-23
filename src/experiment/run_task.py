@@ -1885,6 +1885,19 @@ def seal_mobilegpt_source_memory(
         or audit.get("complete") is not True
     ):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
+    if (
+        audit.get("teacher_prompt_used") is not True
+        or audit.get("teacher_action_alignment_complete") is not True
+        or any(
+            not isinstance(row.get("expected_action"), dict)
+            or not isinstance(row.get("actual_action"), dict)
+            or row.get("expected_action") != row.get("actual_action")
+            for row in validation_rows
+        )
+    ):
+        raise ValueError(
+            "mobilegpt_virtual_memory_teacher_alignment_incomplete"
+        )
     official_reader = audit.get("official_reader_validation")
     if (
         not isinstance(official_reader, dict)
@@ -1926,6 +1939,9 @@ def seal_mobilegpt_source_memory(
     required_audit = {
         "conversion_mode": "official_mobilegpt_learning",
         "original_mobilegpt_prompts": True,
+        "official_prompt_extension": True,
+        "teacher_prompt_used": True,
+        "teacher_action_alignment_complete": True,
         "explore_agent_used": True,
         "select_agent_used": True,
         "derive_agent_fallback_allowed": False,
@@ -2016,6 +2032,8 @@ def seal_mobilegpt_source_memory(
             "synthetic_subtasks": False,
             "semantic_subtasks": True,
             "original_mobilegpt_prompts": True,
+            "official_prompt_extension": True,
+            "runlog_teacher_alignment": True,
             "actions_supplied_to_mobilegpt": False,
             "source_transitions_supplied": True,
             "source_success_boundary_supplied": True,

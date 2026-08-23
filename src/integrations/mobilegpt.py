@@ -1034,6 +1034,7 @@ def preflight_runlog_conversion(
     *,
     target_package: str = "",
     target_app: str = "",
+    mobilegpt_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic source-only readiness report."""
 
@@ -1057,6 +1058,14 @@ def preflight_runlog_conversion(
     for transition in transitions:
         name = _action_type(transition.action)
         counts[name] = counts.get(name, 0) + 1
+    teacher_actions = (
+        _teacher_actions_for_trajectory(
+            trajectory,
+            mobilegpt_root=mobilegpt_root,
+        )
+        if mobilegpt_root is not None
+        else []
+    )
     return {
         "schema_version": CONVERSION_SOURCE_SCHEMA,
         "source_run_log": str(path),
@@ -1064,6 +1073,8 @@ def preflight_runlog_conversion(
         "target_package": trajectory["target_package"],
         "transition_count": len(transitions),
         "action_type_counts": counts,
+        "teacher_action_count": len(teacher_actions),
+        "teacher_actions": teacher_actions,
         "skipped_actions": trajectory["skipped_actions"],
         "ready": True,
     }
@@ -1608,11 +1619,13 @@ def _mobilegpt_action_from_runlog(
                 "input_text": str(action.get("text") or ""),
             },
         }
-    elif action_type == "swipe":
+    elif action_type in {"scroll", "swipe"}:
         direction = _ANDROIDWORLD_SWIPE_TO_MOBILEGPT_SCROLL.get(
             _swipe_direction(action),
             "",
         )
+        if action_type == "scroll":
+            direction = str(action.get("direction") or "").strip().lower()
         if not direction:
             raise MobileGPTConversionError(
                 "source_swipe_direction_unresolved",
@@ -1683,6 +1696,44 @@ def _mobilegpt_action_from_runlog(
         )
     label = _element_semantic_label(target)
     return converted, bindings, label
+
+
+def _teacher_actions_for_trajectory(
+    trajectory: dict[str, Any],
+    *,
+    mobilegpt_root: str | Path | None,
+) -> list[dict[str, Any]]:
+    """Project successful RunLog actions into the official client action space."""
+
+    teacher_actions: list[dict[str, Any]] = []
+    for transition in trajectory["transitions"]:
+        parsed_xml, _, encoded_xml = encode_xml(
+            _official_xml_input(str(transition.forest)),
+            mobilegpt_root=mobilegpt_root,
+        )
+        _, selected_subtask, _ = _direct_subtask_from_runlog(
+            transition,
+            parsed_xml,
+            encoded_xml,
+            str(trajectory["instruction"]),
+            dict(trajectory["task_parameters"]),
+        )
+        required_action, _, target_label = _mobilegpt_action_from_runlog(
+            transition,
+            parsed_xml,
+            task_parameters=dict(trajectory["task_parameters"]),
+            selected_subtask=selected_subtask,
+            generalize_action=None,
+        )
+        teacher_actions.append(
+            {
+                "source_step_index": int(transition.step_index),
+                "source_action_type": _action_type(transition.action),
+                "required_action": required_action,
+                "target_label": target_label,
+            }
+        )
+    return teacher_actions
 
 
 @contextmanager
@@ -1773,6 +1824,22 @@ class _OfficialMobileGPTRunLogSocket:
     def close(self) -> None:
         return None
 
+    def action_messages(self) -> list[dict[str, Any]]:
+        """Return JSON actions emitted by the unmodified official server loop."""
+
+        actions: list[dict[str, Any]] = []
+        for payload in self.sent:
+            text = payload.decode("utf-8", errors="replace").strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                action = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(action, dict) and str(action.get("name") or "").strip():
+                actions.append(action)
+        return actions
+
 
 def _official_protocol_text(kind: bytes, value: str) -> bytes:
     return kind + value.encode("utf-8") + b"\n"
@@ -1780,6 +1847,163 @@ def _official_protocol_text(kind: bytes, value: str) -> bytes:
 
 def _official_protocol_screen(kind: bytes, payload: bytes) -> bytes:
     return kind + str(len(payload)).encode("ascii") + b"\n" + payload
+
+
+def _mobilegpt_action_projection(action: Any) -> dict[str, Any]:
+    if not isinstance(action, dict):
+        return {}
+    name = str(action.get("name") or "").strip()
+    parameters = action.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = {}
+    projected: dict[str, Any] = {}
+    for key in ("index", "direction", "input_text", "message", "number"):
+        if key not in parameters:
+            continue
+        value = parameters[key]
+        if key == "index":
+            projected[key] = str(value)
+        elif key == "direction":
+            projected[key] = str(value).strip().lower()
+        elif key == "number":
+            try:
+                projected[key] = int(value)
+            except (TypeError, ValueError):
+                projected[key] = value
+        else:
+            projected[key] = str(value)
+    return {"name": name, "parameters": projected}
+
+
+def _mobilegpt_actions_match(expected: Any, actual: Any) -> bool:
+    """Compare the source-required action with the official wire action.
+
+    MobileGPT adds execution-only parameters that AndroidWorld does not
+    record, notably the scroll container index.  Those additions are valid;
+    changing any parameter present in the source action is not.
+    """
+
+    expected_action = _mobilegpt_action_projection(expected)
+    actual_action = _mobilegpt_action_projection(actual)
+    if expected_action.get("name") != actual_action.get("name"):
+        return False
+    expected_parameters = expected_action.get("parameters")
+    actual_parameters = actual_action.get("parameters")
+    if not isinstance(expected_parameters, dict) or not isinstance(
+        actual_parameters, dict
+    ):
+        return expected_parameters == actual_parameters
+    return all(
+        actual_parameters.get(key) == value
+        for key, value in expected_parameters.items()
+    )
+
+
+def _official_prompt_kind(messages: Any) -> str:
+    if not isinstance(messages, list):
+        return "unknown"
+    text = "\n".join(
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict)
+    )
+    if "list out high-level functions" in text:
+        return "explore"
+    if "list of actions available on the current mobile screen" in text:
+        return "select"
+    if "specific subtask within their final goal" in text:
+        return "derive"
+    if "List of commands to summarize" in text:
+        return "action_summarize"
+    if "check if it matches any of the known APIs" in text:
+        return "task"
+    return "unknown"
+
+
+def _append_official_teacher_prompt(
+    messages: Any,
+    *,
+    teacher_action: dict[str, Any] | None,
+) -> Any:
+    if not isinstance(messages, list):
+        return messages
+    adapted = [dict(message) if isinstance(message, dict) else message for message in messages]
+    teacher_payload = (
+        {
+            "terminal": False,
+            "source_step_index": teacher_action["source_step_index"],
+            "source_action_type": teacher_action["source_action_type"],
+            "required_action": teacher_action["required_action"],
+            "target_label": teacher_action["target_label"],
+        }
+        if teacher_action is not None
+        else {"terminal": True, "required_action": {"name": "finish", "parameters": {}}}
+    )
+    guidance = (
+        "\n\n<authoritative_runlog_teacher>\n"
+        "This is offline memory authoring from a validator-successful RunLog. "
+        "The demonstrated action is authoritative evidence, not a suggestion. "
+        "Select or create the semantic subtask needed to preserve it, and when "
+        "deriving the low-level action output exactly required_action. Do not "
+        "substitute another UI, route, index, action, or an early finish. When "
+        "terminal is true, finish and emit no additional device action.\n"
+        "MOBILEGPT_AUTHORITATIVE_RUNLOG_STEP="
+        + json.dumps(teacher_payload, ensure_ascii=False, sort_keys=True)
+        + "\n</authoritative_runlog_teacher>"
+    )
+    for index in range(len(adapted) - 1, -1, -1):
+        message = adapted[index]
+        if isinstance(message, dict) and message.get("role") == "user":
+            message["content"] = str(message.get("content") or "") + guidance
+            return adapted
+    adapted.append({"role": "user", "content": guidance.lstrip()})
+    return adapted
+
+
+def _align_official_actions_to_teacher(
+    teacher_actions: Sequence[dict[str, Any]],
+    official_actions: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    actual_index = 0
+    for teacher in teacher_actions:
+        expected = _mobilegpt_action_projection(teacher.get("required_action"))
+        while (
+            actual_index < len(official_actions)
+            and _mobilegpt_action_projection(official_actions[actual_index]).get("name")
+            == "speak"
+            and expected.get("name") != "speak"
+        ):
+            actual_index += 1
+        actual = (
+            _mobilegpt_action_projection(official_actions[actual_index])
+            if actual_index < len(official_actions)
+            else {}
+        )
+        matched = _mobilegpt_actions_match(expected, actual)
+        rows.append(
+            {
+                "source_step_index": int(teacher["source_step_index"]),
+                "source_action_type": str(teacher["source_action_type"]),
+                "expected_action": expected,
+                "actual_action": actual,
+                "target_label": str(teacher.get("target_label") or ""),
+                "matched": matched,
+                "consumed_transitions": 1 if matched else 0,
+            }
+        )
+        if actual_index < len(official_actions):
+            actual_index += 1
+    remaining = [
+        _mobilegpt_action_projection(action)
+        for action in official_actions[actual_index:]
+        if _mobilegpt_action_projection(action).get("name") != "speak"
+    ]
+    if remaining and rows:
+        rows[-1]["unexpected_actions"] = remaining
+        rows[-1]["matched"] = False
+        rows[-1]["consumed_transitions"] = 0
+    return rows
 
 
 def _official_xml_input(raw_xml: str) -> str:
@@ -1806,6 +2030,7 @@ def _run_official_mobilegpt_authoring(
     model: str,
     embedding_model: str,
     embedding_provider: Callable[[str], Sequence[float]] | None,
+    semantic_query_provider: Callable[..., Any] | None,
 ) -> dict[str, Any]:
     """Author one memory through upstream Server/Agent/Memory code.
 
@@ -1825,6 +2050,10 @@ def _run_official_mobilegpt_authoring(
     audit.parent.mkdir(parents=True, exist_ok=True)
 
     transitions = list(trajectory.get("transitions") or [])
+    teacher_actions = _teacher_actions_for_trajectory(
+        trajectory,
+        mobilegpt_root=mobilegpt_root,
+    )
     final_observation = trajectory.get("terminal_observation") or {}
     final_xml = str(trajectory.get("terminal_forest") or "").strip()
     if not final_xml and transitions:
@@ -2128,6 +2357,11 @@ def _run_official_mobilegpt_authoring(
                 return value
 
             chat_call_count = 0
+            teacher_cursor = 0
+            teacher_retry_limit = max(
+                0,
+                int(os.getenv("MOBILEGPT_AUTHORING_TEACHER_RETRIES", "2")),
+            )
 
             def call_once(
                 messages: Any,
@@ -2153,8 +2387,9 @@ def _run_official_mobilegpt_authoring(
                         max_chat_calls=max_chat_calls,
                     )
                 chat_call_count += 1
+                query_provider = semantic_query_provider or original_query
                 try:
-                    return original_query(
+                    return query_provider(
                         messages,
                         model=model_name,
                         is_list=is_list,
@@ -2174,11 +2409,39 @@ def _run_official_mobilegpt_authoring(
                             max_chat_calls=max_chat_calls,
                         ) from error
                     chat_call_count += 1
-                    return original_query(
+                    return query_provider(
                         messages,
                         model=model_name,
                         is_list=is_list,
                     )
+
+            def teacher_response_matches(
+                *,
+                prompt_kind: str,
+                result: Any,
+                teacher_action: dict[str, Any] | None,
+            ) -> bool:
+                if prompt_kind not in {"select", "derive"}:
+                    return True
+                response_action = result.get("action") if isinstance(result, dict) else None
+                actual = _mobilegpt_action_projection(response_action)
+                if teacher_action is None:
+                    return actual == {"name": "finish", "parameters": {}}
+                expected = _mobilegpt_action_projection(
+                    teacher_action.get("required_action")
+                )
+                if prompt_kind == "derive":
+                    return actual == expected
+                if expected.get("name") == "scroll":
+                    return actual.get("name") == "scroll_screen"
+                if expected.get("name") == "speak":
+                    return actual.get("name") == "speak"
+                return actual.get("name") not in {
+                    "",
+                    "finish",
+                    "scroll_screen",
+                    "speak",
+                }
 
             def query_with_stats(
                 messages: Any,
@@ -2186,38 +2449,161 @@ def _run_official_mobilegpt_authoring(
                 is_list: bool = False,
                 **kwargs: Any,
             ) -> Any:
+                nonlocal teacher_cursor
                 started = time.monotonic()
                 model_name = model or str(environment["TASK_AGENT_GPT_VERSION"])
-                result = call_once(
-                    messages,
-                    model_name=model_name,
-                    is_list=is_list,
-                    kwargs=kwargs,
+                prompt_kind = str(kwargs.get("agent_name") or "").strip().lower()
+                if prompt_kind not in {
+                    "task",
+                    "explore",
+                    "select",
+                    "derive",
+                    "action_summarize",
+                }:
+                    prompt_kind = _official_prompt_kind(messages)
+                teacher_action = (
+                    teacher_actions[teacher_cursor]
+                    if teacher_cursor < len(teacher_actions)
+                    else None
                 )
-                if result is None or (
-                    isinstance(result, str) and not result.strip()
-                ):
-                    _write_event(stats, {
-                        "event": "empty_response_retry",
-                        "model": model or str(environment["TASK_AGENT_GPT_VERSION"]),
-                    })
-                    result = call_once(
+                prompted_messages = (
+                    _append_official_teacher_prompt(
                         messages,
+                        teacher_action=teacher_action,
+                    )
+                    if prompt_kind in {"explore", "select", "derive"}
+                    else messages
+                )
+                if prompt_kind in {"explore", "select", "derive"}:
+                    _write_event(
+                        stats,
+                        {
+                            "event": "mobilegpt_teacher_prompt",
+                            "agent": prompt_kind,
+                            "source_step_index": (
+                                teacher_action.get("source_step_index")
+                                if teacher_action is not None
+                                else None
+                            ),
+                            "terminal": teacher_action is None,
+                            "required_action": (
+                                teacher_action.get("required_action")
+                                if teacher_action is not None
+                                else {"name": "finish", "parameters": {}}
+                            ),
+                        },
+                    )
+                result = _official_schema_adapter(
+                    call_once(
+                        prompted_messages,
                         model_name=model_name,
                         is_list=is_list,
                         kwargs=kwargs,
-                    )
-                    if result is None or (
-                        isinstance(result, str) and not result.strip()
-                    ):
-                        raise MobileGPTConversionError(
-                            "official_agent_empty_response",
-                            model=model_name,
-                        )
-                result = _official_schema_adapter(
-                    result,
+                    ),
                     list_items_require_name=is_list,
                 )
+                for retry in range(teacher_retry_limit):
+                    empty_response = result is None or (
+                        isinstance(result, str) and not result.strip()
+                    )
+                    if not empty_response and teacher_response_matches(
+                        prompt_kind=prompt_kind,
+                        result=result,
+                        teacher_action=teacher_action,
+                    ):
+                        break
+                    correction = {
+                        "role": "user",
+                        "content": (
+                            "The response was empty. Return the required official "
+                            "MobileGPT JSON now."
+                            if empty_response
+                            else
+                            "Your response does not preserve the authoritative "
+                            "RunLog action. Return the required action exactly; "
+                            "do not choose another UI or finish early."
+                        ),
+                    }
+                    result = _official_schema_adapter(
+                        call_once(
+                            [*prompted_messages, correction],
+                            model_name=model_name,
+                            is_list=is_list,
+                            kwargs=kwargs,
+                        ),
+                        list_items_require_name=is_list,
+                    )
+                    _write_event(
+                        stats,
+                        {
+                            "event": (
+                                "empty_response_retry"
+                                if empty_response
+                                else "mobilegpt_teacher_prompt_retry"
+                            ),
+                            "agent": prompt_kind,
+                            "retry": retry + 1,
+                            "source_step_index": (
+                                teacher_action.get("source_step_index")
+                                if teacher_action is not None
+                                else None
+                            ),
+                        },
+                    )
+                if result is None or (
+                    isinstance(result, str) and not result.strip()
+                ):
+                    raise MobileGPTConversionError(
+                        "official_agent_empty_response",
+                        model=model_name,
+                        agent=prompt_kind,
+                    )
+                if not teacher_response_matches(
+                    prompt_kind=prompt_kind,
+                    result=result,
+                    teacher_action=teacher_action,
+                ):
+                    raise MobileGPTConversionError(
+                        "official_authoring_teacher_response_mismatch",
+                        agent=prompt_kind,
+                        source_step_index=(
+                            teacher_action.get("source_step_index")
+                            if teacher_action is not None
+                            else None
+                        ),
+                        expected_action=(
+                            teacher_action.get("required_action")
+                            if teacher_action is not None
+                            else {"name": "finish", "parameters": {}}
+                        ),
+                        actual_action=(
+                            result.get("action")
+                            if isinstance(result, dict)
+                            else None
+                        ),
+                    )
+                if teacher_action is not None:
+                    expected_name = _mobilegpt_action_projection(
+                        teacher_action.get("required_action")
+                    ).get("name")
+                    if prompt_kind == "derive" or (
+                        prompt_kind == "select"
+                        and expected_name in {"scroll", "speak"}
+                    ):
+                        _write_event(
+                            stats,
+                            {
+                                "event": "mobilegpt_teacher_action",
+                                "agent": prompt_kind,
+                                "source_step_index": teacher_action[
+                                    "source_step_index"
+                                ],
+                                "required_action": teacher_action[
+                                    "required_action"
+                                ],
+                            },
+                        )
+                        teacher_cursor += 1
                 _write_event(stats, {
                     "event": "chat_call",
                     "model": model_name,
@@ -2302,6 +2688,25 @@ def _run_official_mobilegpt_authoring(
             # translated by this adapter.
             if not protocol_socket.task_finished:
                 raise MobileGPTConversionError("official_authoring_task_not_finished")
+            validation_rows = _align_official_actions_to_teacher(
+                teacher_actions,
+                protocol_socket.action_messages(),
+            )
+            for row in validation_rows:
+                _write_event(
+                    stats,
+                    {"event": "mobilegpt_conversion_action_mapped", **row},
+                )
+            if (
+                len(validation_rows) != len(teacher_actions)
+                or any(row.get("matched") is not True for row in validation_rows)
+            ):
+                raise MobileGPTConversionError(
+                    "official_authoring_teacher_alignment_failed",
+                    expected_action_count=len(teacher_actions),
+                    actual_actions=protocol_socket.action_messages(),
+                    validation_rows=validation_rows,
+                )
             shutil.copytree(official_memory_dir, memory_root, dirs_exist_ok=True)
             _write_event(stats, {
                 "event": "official_memory_tree_copied",
@@ -2326,7 +2731,12 @@ def _run_official_mobilegpt_authoring(
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
+        # The upstream prompts remain intact; the successful RunLog action is
+        # appended as authoring evidence at their user-message boundary.
         "original_mobilegpt_prompts": True,
+        "official_prompt_extension": True,
+        "teacher_prompt_used": True,
+        "teacher_action_alignment_complete": True,
         "explore_agent_used": True,
         "select_agent_used": True,
         "derive_agent_fallback_allowed": False,
@@ -2341,21 +2751,14 @@ def _run_official_mobilegpt_authoring(
         "source_success_boundary": trajectory["source_success_boundary"],
         "transition_count": len(transitions),
         "validated_transition_count": len(transitions),
-        "validation_rows": [
-            {
-                "source_step_index": transition.step_index,
-                "matched": True,
-                "consumed_transitions": 1,
-                "reason": "official_mobilegpt_authoring_session",
-            }
-            for transition in transitions
-        ],
+        "validation_rows": validation_rows,
         "official_reader_validation": {
             "loadable": True,
             "task_path_pages": validation["page_count"],
             "page_count": validation["page_count"],
             "action_row_count": validation["action_count"],
-            "official_action_messages": len(protocol_socket.sent),
+            "official_action_messages": len(protocol_socket.action_messages()),
+            "teacher_aligned_action_count": len(validation_rows),
         },
         "complete": True,
     }
@@ -2396,6 +2799,7 @@ def write_conversion_failure_audit(
         target_app=target_app,
     )
     validation_rows: list[dict[str, Any]] = []
+    teacher_prompt_used = False
     stats = Path(stats_path).expanduser().resolve()
     if stats.is_file():
         for raw_line in stats.read_text(encoding="utf-8").splitlines():
@@ -2403,6 +2807,11 @@ def write_conversion_failure_audit(
                 event = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
+            if (
+                isinstance(event, dict)
+                and event.get("event") == "mobilegpt_teacher_prompt"
+            ):
+                teacher_prompt_used = True
             if (
                 isinstance(event, dict)
                 and event.get("event") == "mobilegpt_conversion_action_mapped"
@@ -2437,6 +2846,8 @@ def write_conversion_failure_audit(
             if row.get("matched") is True
         ),
         "validation_rows": validation_rows,
+        "teacher_prompt_used": teacher_prompt_used,
+        "teacher_action_alignment_complete": False,
         "actions_supplied_to_mobilegpt": conversion_mode == CONVERSION_MODE_DIRECT,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
@@ -2488,6 +2899,7 @@ def convert_runlog_to_mobilegpt_memory(
             model=model,
             embedding_model=str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
             embedding_provider=embedding_provider,
+            semantic_query_provider=semantic_query_provider,
         )
 
     if conversion_mode != CONVERSION_MODE_DIRECT:

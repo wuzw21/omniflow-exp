@@ -271,6 +271,7 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
                 "conversion_mode": "official_mobilegpt_learning",
                 "task_name": "SystemBluetoothTurnOn",
                 "original_mobilegpt_prompts": True,
+                "official_prompt_extension": True,
                 "explore_agent_used": True,
                 "select_agent_used": True,
                 "derive_agent_fallback_allowed": False,
@@ -279,11 +280,21 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
                 "generalize_action_used": True,
                 "direct_subtasks_from_runlog": False,
                 "source_reader_coverage_validation": False,
+                "teacher_prompt_used": True,
+                "teacher_action_alignment_complete": matched,
                 "transition_count": 1,
                 "validated_transition_count": 1,
                 "validation_rows": [
                     {
                         "source_step_index": 0,
+                        "expected_action": {
+                            "name": "click",
+                            "parameters": {"index": "0"},
+                        },
+                        "actual_action": {
+                            "name": "click",
+                            "parameters": {"index": "0" if matched else "1"},
+                        },
                         "matched": matched,
                         "consumed_transitions": 1,
                     }
@@ -398,6 +409,37 @@ def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
             trajectory_audit=audit,
             task_name="SystemBluetoothTurnOn",
             source_model="qwen3-vl-plus",
+        )
+
+    assert not (bundle / MOBILEGPT_MEMORY_MANIFEST).exists()
+
+
+def test_converted_memory_rejects_unaligned_official_teacher_action(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    _, source_run_log = _write_source_index(tmp_path / "source")
+    stats = bundle / "source_stats.jsonl"
+    audit = bundle / "trajectory_audit.json"
+    _write_stats(stats)
+    _write_audit(audit)
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["teacher_action_alignment_complete"] = False
+    payload["validation_rows"][0]["actual_action"]["parameters"]["index"] = "1"
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="mobilegpt_virtual_memory_teacher_alignment_incomplete",
+    ):
+        pipeline.seal_mobilegpt_source_memory(
+            memory_root=memory,
+            source_run_log=source_run_log,
+            source_stats=stats,
+            trajectory_audit=audit,
+            task_name="SystemBluetoothTurnOn",
         )
 
     assert not (bundle / MOBILEGPT_MEMORY_MANIFEST).exists()

@@ -4,11 +4,13 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
+from src.integrations import mobilegpt as mobilegpt_module
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     _load_runlog_trajectory,
@@ -299,6 +301,258 @@ def test_scroll_source_is_passed_to_official_authoring_boundary(tmp_path: Path) 
     report = preflight_runlog_conversion(source)
     assert report["ready"] is True
     assert report["action_type_counts"] == {"scroll": 1}
+
+
+def test_preflight_exposes_authoritative_mobilegpt_teacher_actions(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Stopwatch" clickable="true" '
+            'bounds="[0,0][100,100]" /><node text="More options" '
+            'clickable="true" bounds="[100,0][200,100]" /></hierarchy>'
+        ],
+    )
+
+    report = preflight_runlog_conversion(
+        source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+    )
+
+    assert report["ready"] is True
+    assert report["teacher_action_count"] == 1
+    assert report["teacher_actions"] == [
+        {
+            "source_step_index": 0,
+            "source_action_type": "click",
+            "required_action": {
+                "name": "click",
+                "parameters": {"index": "1"},
+            },
+            "target_label": "Stopwatch",
+        }
+    ]
+
+
+def test_teacher_alignment_allows_official_scroll_container_index() -> None:
+    rows = mobilegpt_module._align_official_actions_to_teacher(
+        [
+            {
+                "source_step_index": 0,
+                "source_action_type": "scroll",
+                "required_action": {
+                    "name": "scroll",
+                    "parameters": {"direction": "down"},
+                },
+                "target_label": "",
+            }
+        ],
+        [
+            {
+                "name": "scroll",
+                "parameters": {"index": 3, "direction": "down"},
+            }
+        ],
+    )
+
+    assert rows[0]["matched"] is True
+
+
+def test_teacher_alignment_rejects_a_different_click_target() -> None:
+    rows = mobilegpt_module._align_official_actions_to_teacher(
+        [
+            {
+                "source_step_index": 0,
+                "source_action_type": "click",
+                "required_action": {
+                    "name": "click",
+                    "parameters": {"index": "1"},
+                },
+                "target_label": "Stopwatch",
+            }
+        ],
+        [{"name": "click", "parameters": {"index": "2"}}],
+    )
+
+    assert rows[0]["matched"] is False
+
+
+def test_official_conversion_forwards_teacher_query_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Stopwatch" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    def teacher_query(*_args: object, **_kwargs: object) -> object:
+        return {}
+
+    def official_authoring(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"memory_root": str(kwargs["memory_root"])}
+
+    monkeypatch.setattr(
+        mobilegpt_module,
+        "_run_official_mobilegpt_authoring",
+        official_authoring,
+    )
+
+    convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="GLM-4.6V",
+        semantic_query_provider=teacher_query,
+    )
+
+    assert captured["semantic_query_provider"] is teacher_query
+
+
+def test_official_authoring_prompt_preserves_runlog_action_end_to_end(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "click", "x": 50, "y": 50},
+            {"action_type": "click", "x": 150, "y": 50},
+        ],
+        forests=[
+            '<hierarchy><node text="Stopwatch" clickable="true" '
+            'bounds="[0,0][100,100]" /><node text="More options" '
+            'clickable="true" bounds="[100,0][200,100]" /></hierarchy>',
+            '<hierarchy><node text="Stopwatch" clickable="true" '
+            'bounds="[0,0][100,100]" /><node text="Start" '
+            'clickable="true" bounds="[100,0][200,100]" /></hierarchy>',
+        ],
+    )
+    observed_teacher_prompts: list[dict[str, object]] = []
+    derive_attempts: list[int] = []
+
+    def teacher_payload(messages: object) -> dict[str, object] | None:
+        text = "\n".join(
+            str(message.get("content") or "")
+            for message in messages
+            if isinstance(message, dict)
+        )
+        match = re.search(
+            r"MOBILEGPT_AUTHORITATIVE_RUNLOG_STEP=(\{.*\})\n"
+            r"</authoritative_runlog_teacher>",
+            text,
+        )
+        return json.loads(match.group(1)) if match else None
+
+    def query(
+        messages: object,
+        *,
+        agent_name: str = "",
+        is_list: bool = False,
+        **_kwargs: object,
+    ) -> object:
+        teacher = teacher_payload(messages)
+        if agent_name in {"explore", "select", "derive"}:
+            assert teacher is not None
+            observed_teacher_prompts.append(teacher)
+        if agent_name == "task":
+            return {
+                "found_match": False,
+                "api": {
+                    "name": "Task",
+                    "description": "Complete the task.",
+                    "parameters": {},
+                    "app": "com.example.app",
+                },
+            }
+        if agent_name == "explore":
+            if teacher and teacher.get("terminal") is False:
+                required = teacher["required_action"]
+                index = int(required["parameters"]["index"])
+                return [
+                    {
+                        "name": "follow_demonstrated_step",
+                        "description": "Follow the demonstrated successful step.",
+                        "parameters": {},
+                        "trigger_UIs": [index],
+                    }
+                ]
+            return [] if is_list else {}
+        if agent_name == "select":
+            if teacher and teacher.get("terminal") is True:
+                return {
+                    "action": {"name": "finish", "parameters": {}},
+                    "completion_rate": 1,
+                    "speak": "",
+                }
+            return {
+                "action": {
+                    "name": "follow_demonstrated_step",
+                    "parameters": {},
+                },
+                "completion_rate": 0,
+                "speak": "",
+            }
+        if agent_name == "derive":
+            assert teacher is not None
+            derive_attempts.append(len(derive_attempts) + 1)
+            if len(derive_attempts) == 1:
+                return None
+            return {
+                "reasoning": "Preserve the successful RunLog action.",
+                "action": teacher["required_action"],
+                "completion_rate": 1,
+                "plan": "Verify the next screen.",
+            }
+        if agent_name == "action_summarize":
+            return "Followed the demonstrated successful step."
+        raise AssertionError(f"unexpected MobileGPT query: {agent_name}")
+
+    audit = tmp_path / "audit.json"
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=audit,
+        model="GLM-4.6V",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+        semantic_query_provider=query,
+    )
+
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    assert observed_teacher_prompts
+    # The first action needs one empty-response retry, then the second action
+    # and official terminal cycle each use one derive call.
+    assert derive_attempts == [1, 2, 3, 4]
+    assert payload["teacher_prompt_used"] is True
+    assert payload["teacher_action_alignment_complete"] is True
+    assert payload["validation_rows"][0]["expected_action"] == {
+        "name": "click",
+        "parameters": {"index": "1"},
+    }
+    assert payload["validation_rows"][0]["actual_action"] == payload[
+        "validation_rows"
+    ][0]["expected_action"]
+    assert payload["validation_rows"][1]["expected_action"] == {
+        "name": "click",
+        "parameters": {"index": "2"},
+    }
+    assert payload["validation_rows"][1]["actual_action"] == payload[
+        "validation_rows"
+    ][1]["expected_action"]
+    assert result["official_reader_validation"][
+        "teacher_aligned_action_count"
+    ] == 2
 
 
 def test_conversion_writes_runlog_action_and_official_reader_loads_it(
