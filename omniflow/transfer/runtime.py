@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any
+import unicodedata
 import xml.etree.ElementTree as ET
 
 TRANSFER_STATE_CATALOG_FILENAME = "transfer_states.json"
@@ -269,16 +270,25 @@ def audit_transfer_action_sources(
                 step_index=step_index,
                 source_state_id=source_state_id,
             )
+            source_element_id = source_semantic_anchor(
+                source_xml,
+                source_point,
+            )
+            transfer_request: dict[str, Any] = {
+                "source_xml": source_xml,
+                "target_xml": source_xml,
+                "source_point": source_point,
+                "source_package_name": str(state.get("package_name") or ""),
+                "target_package_name": str(state.get("package_name") or ""),
+                "source_activity_name": str(state.get("activity_name") or ""),
+                "target_activity_name": str(state.get("activity_name") or ""),
+                "action_type": str(getattr(action, "tool", "") or ""),
+                "top_k": 3,
+            }
+            if source_element_id:
+                transfer_request["source_element_id"] = source_element_id
             result = transfer_action(
-                source_xml=source_xml,
-                target_xml=source_xml,
-                source_point=source_point,
-                source_package_name=str(state.get("package_name") or ""),
-                target_package_name=str(state.get("package_name") or ""),
-                source_activity_name=str(state.get("activity_name") or ""),
-                target_activity_name=str(state.get("activity_name") or ""),
-                action_type=str(getattr(action, "tool", "") or ""),
-                top_k=3,
+                **transfer_request,
             )
             if result.get("mapped") is not True:
                 reason = str(result.get("reason") or "failed")
@@ -493,6 +503,159 @@ def _require_raw_source_target(
             f"{step_index}:{source_state_id}"
         )
     return "named_element" if named else "workflow_actionable_element"
+
+
+def source_semantic_anchor(
+    xml_text: str,
+    point: tuple[float, float],
+) -> str:
+    """Resolve source-side row semantics for OmniTransfer candidate ranking.
+
+    OOB observations may preserve accessibility nodes as an ordered, flat
+    forest.  In that representation the clickable row and its visible title
+    are siblings even though the title's bounds are inside the row.  Select
+    that source title as the matcher anchor; this never identifies a target
+    node and therefore cannot become a resource-id or coordinate replay path.
+    """
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return ""
+    indexed: list[tuple[ET.Element, str, int]] = []
+
+    def visit(element: ET.Element, path: str, depth: int) -> None:
+        indexed.append((element, path, depth))
+        for index, child in enumerate(list(element)):
+            visit(child, f"{path}.{index}", depth + 1)
+
+    visit(root, "0", 0)
+    source = _actionable_source_element(indexed, point)
+    if source is None:
+        return ""
+    source_element, source_path, _ = source
+    source_bounds = _element_bounds(source_element)
+    source_area = _bounds_area(source_bounds)
+    descendants = set(source_element.iter())
+    semantic: list[tuple[tuple[Any, ...], ET.Element, str]] = []
+    for order, (element, path, depth) in enumerate(indexed):
+        label = str(
+            element.attrib.get("text")
+            or element.attrib.get("content-desc")
+            or ""
+        ).strip()
+        if not _semantic_label(label):
+            continue
+        bounds = _element_bounds(element)
+        if element is not source_element and not (
+            source_bounds is not None
+            and bounds is not None
+            and _bounds_contains(source_bounds, bounds)
+            and _bounds_area(bounds) < source_area
+        ):
+            continue
+        resource_tail = str(element.attrib.get("resource-id") or "").rsplit(
+            "/", 1
+        )[-1]
+        semantic.append(
+            (
+                (
+                    0 if element is source_element else 1,
+                    0 if resource_tail == "title" else 1,
+                    0 if element in descendants else 1,
+                    -depth,
+                    order,
+                ),
+                element,
+                path,
+            )
+        )
+    if not semantic:
+        return ""
+    _, anchor, anchor_path = min(semantic, key=lambda item: item[0])
+    origin_id = str(anchor.attrib.get("id") or "").strip()
+    if origin_id:
+        return origin_id
+    resource_id = str(anchor.attrib.get("resource-id") or "").strip()
+    if resource_id and sum(
+        str(element.attrib.get("resource-id") or "").strip() == resource_id
+        for element, _, _ in indexed
+    ) == 1:
+        return resource_id
+    return anchor_path
+
+
+def _actionable_source_element(
+    indexed: list[tuple[ET.Element, str, int]],
+    point: tuple[float, float],
+) -> tuple[ET.Element, str, int] | None:
+    x, y = point
+    containing = [
+        item
+        for item in indexed
+        if (bounds := _element_bounds(item[0])) is not None
+        and bounds[0] <= x <= bounds[2]
+        and bounds[1] <= y <= bounds[3]
+    ]
+    actionable = [
+        item
+        for item in containing
+        if str(item[0].attrib.get("enabled") or "true").lower() != "false"
+        and any(
+            str(item[0].attrib.get(attribute) or "").lower() == "true"
+            for attribute in ("clickable", "editable", "scrollable")
+        )
+    ]
+    candidates = actionable or containing
+    return min(
+        candidates,
+        key=lambda item: (
+            _bounds_area(_element_bounds(item[0])),
+            -item[2],
+            item[1],
+        ),
+        default=None,
+    )
+
+
+def _element_bounds(
+    element: ET.Element,
+) -> tuple[float, float, float, float] | None:
+    numbers = [
+        float(item)
+        for item in re.findall(
+            r"-?\d+(?:\.\d+)?",
+            str(element.attrib.get("bounds") or ""),
+        )
+    ]
+    if len(numbers) != 4 or numbers[2] <= numbers[0] or numbers[3] <= numbers[1]:
+        return None
+    return numbers[0], numbers[1], numbers[2], numbers[3]
+
+
+def _bounds_area(bounds: tuple[float, float, float, float] | None) -> float:
+    if bounds is None:
+        return math.inf
+    return (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+
+
+def _bounds_contains(
+    outer: tuple[float, float, float, float],
+    inner: tuple[float, float, float, float],
+) -> bool:
+    return (
+        outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and outer[2] >= inner[2]
+        and outer[3] >= inner[3]
+    )
+
+
+def _semantic_label(value: str) -> bool:
+    return bool(value) and any(
+        not character.isspace() and unicodedata.category(character) != "Co"
+        for character in value
+    )
 
 
 def transfer_action(**kwargs: Any) -> dict[str, Any]:

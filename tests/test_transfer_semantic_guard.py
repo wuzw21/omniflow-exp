@@ -452,7 +452,7 @@ def test_transfer_keeps_semantically_consistent_row_match(monkeypatch) -> None:
     assert "source_element" not in request
 
 
-def test_transfer_uses_function_source_element_anchor_without_replaying_it(
+def test_transfer_derives_semantic_anchor_from_flat_oob_source_graph(
     monkeypatch,
 ) -> None:
     request = {}
@@ -471,24 +471,32 @@ def test_transfer_uses_function_source_element_anchor_without_replaying_it(
         }
 
     monkeypatch.setattr(execution, "transfer_action", transfer_action)
-    anchor = "com.google.android.apps.nexuslauncher:id/search_results_list_view"
     result = execution.default_transfer(
-        Action(
-            "click",
-            {"x": 745.8333333333334, "y": 187.5, "source_element_id": anchor},
+        Action("click", {"x": 434.72222222222223, "y": 610.9375}),
+        Observation(
+            xml=TARGET_XML,
+            extra={"display": {"width": 2208, "height": 1840}},
         ),
         Observation(
-            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
-            extra={"display": {"width": 720, "height": 1280}},
-        ),
-        Observation(
-            xml='<hierarchy width="720" height="1280"><node bounds="[0,0][720,1280]" /></hierarchy>',
+            xml=(
+                '<hierarchy width="720" height="1280">'
+                '<node bounds="[0,0][720,1280]">'
+                '<node id="26" class="android.widget.LinearLayout" '
+                'clickable="true" enabled="true" bounds="[0,713][720,889]" />'
+                '<node id="30" class="android.widget.TextView" '
+                'resource-id="android:id/title" text="Connected devices" '
+                'bounds="[144,755][482,809]" />'
+                '<node id="31" class="android.widget.TextView" '
+                'resource-id="android:id/summary" text="Bluetooth, pairing" '
+                'bounds="[144,809][361,847]" />'
+                "</node></hierarchy>"
+            ),
             extra={"display": {"width": 720, "height": 1280}},
         ),
     )
 
-    assert request["source_element_id"] == anchor
-    assert request["source_point"] == (537.0, 240.0)
+    assert request["source_element_id"] == "30"
+    assert request["source_point"] == (313.0, 782.0)
     assert result.action is not None
     assert "source_element_id" not in result.action.args
 
