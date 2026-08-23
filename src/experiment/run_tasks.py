@@ -17,7 +17,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
 from omniflow.functions.assets import save_function
@@ -1934,6 +1934,58 @@ def _result_summary_rows(artifact_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _result_row_is_environment_failure(
+    row: Mapping[str, Any],
+    *,
+    artifact_root: Path,
+    task_log: Path,
+) -> bool:
+    """Classify setup failures before an official validator conclusion.
+
+    The native child runner can still publish a ``command_failed`` summary
+    when AndroidWorld setup raises before the external method starts.  Such a
+    row has no validator result and must remain retryable; treating every
+    command failure as a terminal method result is what caused repeated
+    manual scheduler attempts in the first place.
+    """
+
+    if bool(row.get("environment_failure")):
+        return True
+    if str(row.get("classification") or "").strip().lower() == "environment_failure":
+        return True
+    if str(row.get("failure_stage") or "").strip().lower() in {
+        "androidworld_setup",
+        "target_setup",
+        "environment_setup",
+    }:
+        return True
+    evidence_paths = [task_log]
+    if artifact_root.is_dir():
+        evidence_paths.extend(sorted(artifact_root.rglob("*.log")))
+    markers = (
+        "androidworld official app setup exceeded",
+        "prepare_androidworld_environment",
+        "start_androidworld_task_session",
+        "_run_androidworld_setup_apps",
+        "target resource id not found",
+        "target text \\\"no thanks\\\" not found",
+        "mobilegpt_accessibility_service_not_bound",
+        "official_mobilegpt_client_requires_gradle",
+        "official_mobilegpt_apk_missing",
+        "adb path",
+    )
+    for path in evidence_paths:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in markers):
+            return True
+    return False
+
+
 def _has_method_result_evidence(artifact_root: Path) -> bool:
     if not artifact_root.is_dir():
         return False
@@ -2590,8 +2642,10 @@ def run_target_workers(
                 )
                 if official_row:
                     official_success = bool(official_row["validator_success"])
-                    official_environment_failure = bool(
-                        official_row.get("environment_failure")
+                    official_environment_failure = _result_row_is_environment_failure(
+                        official_row,
+                        artifact_root=artifact_root,
+                        task_log=log_path,
                     )
                     completed.add((method, label))
                     outcome_path = record_result_outcome(
@@ -2679,8 +2733,10 @@ def run_target_workers(
                     )
                     official_row = method_rows[-1] if method_rows else {}
                     has_official_conclusion = official_success is not None
-                    official_environment_failure = bool(
-                        official_row.get("environment_failure")
+                    official_environment_failure = _result_row_is_environment_failure(
+                        official_row,
+                        artifact_root=artifact_root,
+                        task_log=log_path,
                     )
                     outcome_path = record_result_outcome(
                         outcomes_root=outcomes_root,

@@ -49,6 +49,7 @@ from src.experiment.run_tasks import (
     _next_pipeline_attempt_id,
     _parse_source_device,
     _published_official_result_row,
+    _result_row_is_environment_failure,
     _report,
     _resolve_args,
     _run_bmoca_method_results,
@@ -288,6 +289,36 @@ def test_result_summary_resolves_native_row_to_unique_command_device() -> None:
     assert rows[0]["device"] == "small5554"
     assert rows[0]["official_validator_used"] is True
     assert rows[0]["official_validator_success"] is True
+
+
+def test_setup_command_failure_is_retryable_environment_failure(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "mobilegpt.log"
+    log.write_text(
+        "TimeoutError: AndroidWorld official app setup exceeded 300 seconds\n",
+        encoding="utf-8",
+    )
+
+    assert _result_row_is_environment_failure(
+        {"status": "command_failed", "validator_success": None},
+        artifact_root=tmp_path / "artifact",
+        task_log=log,
+    ) is True
+
+
+def test_plain_command_failure_remains_method_failure(tmp_path: Path) -> None:
+    log = tmp_path / "mobilegpt.log"
+    log.write_text(
+        "mobilegpt_server_handler_failed\n",
+        encoding="utf-8",
+    )
+
+    assert _result_row_is_environment_failure(
+        {"status": "command_failed", "validator_success": None},
+        artifact_root=tmp_path / "artifact",
+        task_log=log,
+    ) is False
 
 
 def test_t3a_hint_uses_function_store_source_lineage(tmp_path: Path) -> None:
