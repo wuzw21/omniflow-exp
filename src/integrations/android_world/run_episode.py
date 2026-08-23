@@ -2087,6 +2087,23 @@ def _repair_androidworld_chrome_first_run(
                 )
             )
         except ValueError:
+            # The pinned setup IDs are allowed to be stale, but a settled
+            # Chrome page is not an invitation to probe every historical
+            # onboarding label.  Re-read the page once after the ID miss and
+            # leave immediately when no onboarding control is visible.  This
+            # keeps setup bounded on images where the first-run dialog has
+            # already disappeared between the initial snapshot and click.
+            visible_labels = {
+                str(value or "").strip().casefold()
+                for element in get_ui_elements() or ()
+                for value in (
+                    getattr(element, "text", None),
+                    getattr(element, "content_description", None),
+                )
+                if str(value or "").strip()
+            }
+            if not visible_labels.intersection(onboarding_labels):
+                return
             for label in (
                 "Accept & continue",
                 "Accept & Continue",
@@ -2107,11 +2124,15 @@ def _repair_androidworld_chrome_first_run(
                     timeout_sec=2.0,
                 )
             except ValueError:
+                clicked = False
                 for label in ("No thanks", "Not now", "Cancel"):
                     try:
                         controller.click_element(label)
                     except ValueError:
                         continue
+                    clicked = True
+                    break
+                if not clicked:
                     break
             time.sleep(1.0)
     finally:

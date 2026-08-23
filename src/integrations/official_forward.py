@@ -2505,6 +2505,7 @@ def _run_mobilegpt_client(
         ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
         check=False,
     )
+    service_bound = False
     for _ in range(10):
         accessibility_state = _run_adb(
             adb_path,
@@ -2520,8 +2521,15 @@ def _run_mobilegpt_client(
             (service in accessibility_state or normalized_service in accessibility_state)
             and "Bound services:" in accessibility_state
         ):
+            service_bound = True
             break
         time.sleep(1.0)
+    if not service_bound:
+        # Do not broadcast a task to an unbound client.  Without this
+        # precondition the official server accepts one socket connection,
+        # the APK silently misses the broadcast, and the episode waits until
+        # its wall-clock timeout while producing no action or telemetry.
+        raise RuntimeError("mobilegpt_accessibility_service_not_bound")
     time.sleep(2.0)
     target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
     if target_package:
