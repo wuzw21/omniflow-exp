@@ -144,6 +144,7 @@ def parse_model_turn_response(
     turn_index: int,
     display: dict[str, Any] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
+    installed_apps: dict[str, str] | None = None,
 ) -> tuple[ToolCall, dict[str, Any]]:
     if not isinstance(value, dict):
         raise ValueError("model_turn_response_invalid")
@@ -171,7 +172,11 @@ def parse_model_turn_response(
     function_catalog = {function.id: function for function in functions}
     model_visible_tools.update(function_catalog)
     if tool not in model_visible_tools:
-        raise ModelToolCallError(f"model_turn_tool_not_visible:{tool}")
+        raise ModelToolCallError(
+            f"model_turn_tool_not_visible:{tool}",
+            tool_name=tool,
+            arguments=function.get("arguments"),
+        )
     raw_arguments = function.get("arguments")
     if not isinstance(raw_arguments, str):
         raise ModelToolCallError(
@@ -208,6 +213,21 @@ def parse_model_turn_response(
         if tool in function_catalog:
             validate_arguments(function_catalog[tool].input_schema, arguments)
         else:
+            package_name = arguments.get("package_name")
+            installed_packages = {
+                str(package).strip()
+                for package in (installed_apps or {}).values()
+                if str(package).strip()
+            }
+            if (
+                tool == "open_app"
+                and isinstance(package_name, str)
+                and package_name.strip() not in installed_packages
+            ):
+                raise ValueError(
+                    "planner_open_app_package_not_installed:"
+                    f"{package_name.strip()}"
+                )
             arguments, adapter_metadata = adapt_tool_arguments(
                 tool=tool,
                 arguments=arguments,

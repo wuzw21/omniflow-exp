@@ -345,6 +345,7 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
             api_key=planner_api_key,
             base_url=planner_base_url,
             timeout=resolved_planner_timeout,
+            max_steps=context.max_steps,
         )
     build_kwargs: dict[str, Any] = {
         "env": context.env,

@@ -822,6 +822,7 @@ class SequenceCompletions:
 
 
 def _planner_response(tool: str, arguments: dict[str, object]) -> object:
+    arguments = {"summary": f"Use {tool}", **arguments}
     return SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -867,15 +868,15 @@ def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> No
     assert len(completions.requests) == 2
     retry_tools = completions.requests[1]["tools"]
     assert [tool["function"]["name"] for tool in retry_tools] == ["click"]
-    correction = completions.requests[1]["messages"][-1]["content"]
+    correction = completions.requests[1]["messages"][-1]["content"][0]["text"]
     assert "canonical_action_arg_type_invalid:x" in correction
-    assert '"x": [361, 1136]' in correction
+    assert '"x":[361,1136]' in correction
     assert planner.take_metadata()["rejected_tool_calls"] == [
         {
             "turn_index": 1,
             "tool": "click",
             "error": "canonical_action_arg_type_invalid:x",
-            "arguments": {"x": [361, 1136]},
+            "arguments": {"summary": "Use click", "x": [361, 1136]},
         }
     ]
 
@@ -914,13 +915,14 @@ def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
     assert len(completions.requests) == 2
     retry_tools = completions.requests[1]["tools"]
     assert [tool["function"]["name"] for tool in retry_tools] == ["open_app"]
-    correction = completions.requests[1]["messages"][-1]["content"]
+    correction = completions.requests[1]["messages"][-1]["content"][0]["text"]
     assert (
         "planner_open_app_package_not_installed:com.android.filemanager"
         in correction
     )
     assert planner.take_metadata()["rejected_tool_calls"][0]["arguments"] == {
-        "package_name": "com.android.filemanager"
+        "summary": "Use open_app",
+        "package_name": "com.android.filemanager",
     }
 
 
@@ -933,7 +935,7 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Finish"}',
                             )
                         )
                     ]
@@ -966,6 +968,10 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
 
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
+    assert request["max_completion_tokens"] == 512
+    assert request["reasoning_effort"] == "none"
+    assert request["parallel_tool_calls"] is False
+    assert request["extra_body"] == {"enable_thinking": False}
     message_text = request["messages"][1]["content"][0]["text"]
     assert "installed_apps" not in message_text
     assert "com.android.chrome" not in message_text
@@ -992,7 +998,7 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Finish"}',
                             )
                         )
                     ]
@@ -1042,18 +1048,13 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
         )
     )
 
-    payload = json.loads(completions.requests[0]["messages"][1]["content"][0]["text"])
-    assert payload["screen_context"]["recent_actions"][0]["tool"] == "click"
-    assert payload["screen_context"]["execution_history"].startswith("1.")
-    assert payload["screen_context"]["function_execution"][
-        "official_validator_status"
-    ] == "pending"
-    assert payload["screen_context"]["function_execution"]["final_observation"] == {
-        "state_id": "state_after",
-        "package_name": "com.example.shop",
-        "activity_name": "CartActivity",
-    }
-    assert "must not be issued again" in payload["history_policy"]
+    turn_text = completions.requests[0]["messages"][1]["content"][0]["text"]
+    assert "Completed tool-call history:" in turn_text
+    assert "1. [Planner] Clicked the item successfully." in turn_text
+    assert '"tool":"click"' in turn_text
+    assert '"official_validator_status":"pending"' in turn_text
+    assert '"state_id":"state_after"' in turn_text
+    assert "Do not repeat the same action" in turn_text
 
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
@@ -1154,7 +1155,7 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
                         SimpleNamespace(
                             function=SimpleNamespace(
                                 name="finished",
-                                arguments="{}",
+                                arguments='{"summary":"Finish"}',
                             )
                         )
                     ]
@@ -1200,9 +1201,9 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     request = completions.requests[0]
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
-    turn_payload = json.loads(content[0]["text"])
-    assert '"checked":false' in turn_payload["relevant_ui_elements"]
-    assert "Never repeat or toggle" in turn_payload["completion_review"]
+    turn_text = content[0]["text"]
+    assert '"checked":false' in turn_text
+    assert "Never repeat or toggle" in turn_text
 
 
 @pytest.mark.skip(reason="current experiment lifecycle owns method construction")
