@@ -1290,6 +1290,30 @@ def _canonical_function_store(
     return dict(record) if isinstance(record, dict) else None
 
 
+def _validate_function_store_record(
+    record: dict[str, Any],
+    *,
+    task: str,
+) -> tuple[Path, list[dict[str, Any]], dict[str, Any]]:
+    store_path = Path(str(record.get("store_path") or "")).resolve()
+    source_calls = record.get("source_calls")
+    if (
+        not isinstance(source_calls, list)
+        or any(
+            not isinstance(source_call, dict)
+            or not str(source_call.get("function_id") or "").strip()
+            or not isinstance(source_call.get("arguments"), dict)
+            for source_call in source_calls
+        )
+    ):
+        raise ValueError(f"canonical_function_source_calls_missing:{task}")
+    transfer_audit = validate_omniflow_transfer_assets(
+        store_path,
+        require_action_transfer=True,
+    )
+    return store_path, source_calls, transfer_audit
+
+
 def prepare_function_asset(
     *,
     args: argparse.Namespace,
@@ -1299,6 +1323,15 @@ def prepare_function_asset(
     deadline: Deadline,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     existing = _canonical_function_store(args.memory_index, args.task)
+    replaced_invalid_store = ""
+    if existing is not None:
+        try:
+            _validate_function_store_record(existing, task=args.task)
+        except Exception as error:
+            if not getattr(args, "ensure_function", False):
+                raise
+            replaced_invalid_store = f"{type(error).__name__}: {error}"
+            existing = None
     created = False
     creation_report: dict[str, Any] | None = None
     try:
@@ -1403,21 +1436,9 @@ def prepare_function_asset(
                 "events": authoring_trace,
             },
         )
-    store_path = Path(str(existing["store_path"])).resolve()
-    source_calls = existing.get("source_calls")
-    if (
-        not isinstance(source_calls, list)
-        or any(
-            not isinstance(source_call, dict)
-            or not str(source_call.get("function_id") or "").strip()
-            or not isinstance(source_call.get("arguments"), dict)
-            for source_call in source_calls
-        )
-    ):
-        raise ValueError(f"canonical_function_source_calls_missing:{args.task}")
-    transfer_audit = validate_omniflow_transfer_assets(
-        store_path,
-        require_action_transfer=True,
+    store_path, source_calls, transfer_audit = _validate_function_store_record(
+        existing,
+        task=args.task,
     )
     phase = {
         "status": (
@@ -1437,6 +1458,8 @@ def prepare_function_asset(
     if creation_report is not None:
         phase["enhanced"] = creation_report.get("enhanced") is True
         phase["function_ids"] = list(creation_report.get("function_ids") or ())
+    if replaced_invalid_store:
+        phase["replaced_invalid_store"] = replaced_invalid_store
     return existing, {
         **phase,
     }

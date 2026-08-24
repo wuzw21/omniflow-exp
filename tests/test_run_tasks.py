@@ -991,6 +991,88 @@ def test_e2e_function_check_creates_and_validates_missing_store(
     assert phase["transfer_audit"]["complete"] is True
 
 
+def test_e2e_function_check_replaces_invalid_store_through_same_compiler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.ensure_function = True
+    args.formal_model = "GLM-5.1"
+    source_path = tmp_path / "source.run_log.json"
+    source_path.write_text(
+        json.dumps(
+            androidworld_run_log(
+                [{"action_type": "click", "x": 1, "y": 2}],
+                task_name=args.task,
+            )
+        ),
+        encoding="utf-8",
+    )
+    old_store = tmp_path / "old" / "store.json"
+    old_store.parent.mkdir()
+    old_store.write_text("{}", encoding="utf-8")
+    indexed: dict[str, object] = {
+        "value": {
+            "store_path": str(old_store),
+            "source_calls": [{"function_id": "old", "arguments": {}}],
+        }
+    }
+    calls: list[Path] = []
+
+    def load_index(_path: Path) -> dict[str, object]:
+        return {
+            "canonical": {
+                "function_stores": {args.task: indexed["value"]},
+            }
+        }
+
+    def writer(run_log: Path, output_root: Path, **_kwargs: object) -> dict[str, object]:
+        calls.append(run_log)
+        store_path = output_root / "store.json"
+        store_path.parent.mkdir(parents=True)
+        store_path.write_text("{}", encoding="utf-8")
+        indexed["value"] = {
+            "store_path": str(store_path),
+            "source_calls": [{"function_id": "new", "arguments": {}}],
+        }
+        return {
+            "enhanced": True,
+            "function_ids": ["new"],
+            "store_path": str(store_path),
+        }
+
+    def validate(store_path: Path, **_kwargs: object) -> dict[str, object]:
+        if store_path == old_store.resolve():
+            raise ValueError("invalid_old_store")
+        return {"complete": True, "required_state_count": 1}
+
+    monkeypatch.setattr("src.experiment.run_tasks.load_data_index", load_index)
+    monkeypatch.setattr("src.experiment.run_tasks.compile_function_v2", writer)
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.refresh_data_index_from_pointer",
+        lambda **_: {},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.validate_omniflow_transfer_assets",
+        validate,
+    )
+
+    function_store, phase = prepare_function_asset(
+        args=args,
+        source_path=source_path,
+        run_log={},
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(60),
+    )
+
+    assert calls == [source_path]
+    assert function_store["source_calls"] == [
+        {"function_id": "new", "arguments": {}}
+    ]
+    assert phase["status"] == "created"
+    assert "invalid_old_store" in phase["replaced_invalid_store"]
+
+
 def test_function_store_reuses_its_own_valid_source_lineage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
