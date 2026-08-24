@@ -559,7 +559,7 @@ def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
     parser = build_run_task_parser()
     args = parser.parse_args(["result", "--task", "CameraTakeVideo"])
 
-    assert args.planner_timeout_sec == 180.0
+    assert args.planner_timeout_sec == 30.0
 
 
 def test_result_runner_has_no_direct_function_flags() -> None:

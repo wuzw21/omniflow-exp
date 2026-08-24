@@ -27,15 +27,14 @@
 ## 唯一启动命令
 
 ```bash
-ssh 4090 'source /home/zewen/Desktop/omniflow-exp/androidworld-4090-v1.env && cd /home/zewen/Projects/Omni/OmniFlow-exp && bash scripts/exp/run_androidworld.sh --e2e-task TASK_NAME --e2e-method omniflow --e2e-device standard45562:emulator-45562:45562 --e2e-source-seed 111 --e2e-evaluation-seed 113 --control-backend oob --task-deadline-sec 1800'
+ssh 4090 'cd /home/zewen/Projects/OmniFlow-exp && source config/androidworld.env && bash scripts/exp/run_androidworld.sh --e2e-task TASK_NAME --e2e-method omniflow --e2e-device standard45562:emulator-45562:45562 --e2e-source-seed 111 --e2e-evaluation-seed 113 --control-backend androidworld --task-deadline-sec 600'
 ```
 
 将 `TASK_NAME` 和 `--e2e-device` 替换为当前待测任务和一个正式 target。每次只启动一个任务；同一任务的其他 target 仍使用同一条命令逐个执行。
 
 ## 输出和记录
 
-- 原始结果：`/home/zewen/Desktop/omniflow-exp/<TASK_NAME>/`
-- 通过组汇总：`/home/zewen/Desktop/test-omniflow.txt`
+- 原始结果：`/home/zewen/Projects/OmniFlow-exp/data/androidworld/<TASK_NAME>/`
 - 失败任务保留其独立 attempt 目录，不覆盖既有结果。
 - 已完成的 task/device 组跳过，不重复运行。
 

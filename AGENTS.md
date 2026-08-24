@@ -49,6 +49,7 @@
 ## 证据、环境和数据
 
 - 4090 长期部署规则：OmniFlow-exp 的唯一权威工作区固定为 `/home/zewen/Projects/OmniFlow-exp`。代码、`.git`、`.venv`、`data/current.json`、实验资产和结果都在这一工作区内直接修改、验证和运行；Git commit 是唯一版本历史。禁止再创建或从 `local-authoritative`、`current-snapshot`、按日期/任务命名的 checkout、`/data/omniflow-4090/OmniFlow-exp` 或其他复制目录部署和启动实验。旧目录只可作为只读历史证据，不得成为运行入口。所有 4090 命令必须先解析并校验 canonical workspace，路径不一致立即失败。
+- AndroidWorld 时间合同：一个完整 task 的默认和最大 wall deadline 都是 600 秒；正式 OmniFlow Planner 单次模型请求默认最多 30 秒。禁止通过实验命令把整任务放宽到 10 分钟以上。
 - Function v2 按成功 RunLog 动作顺序保存；步骤通过 `source_state_id` 引用 sibling `transfer_states.json`。新跑的正式 AndroidWorld source 默认使用 seed 111。
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。

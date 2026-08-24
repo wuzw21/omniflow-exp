@@ -39,7 +39,7 @@
     },
     "function_enhancement_timeout_sec": 300,
     "bmoca_result_timeout_sec": 600,
-    "task_deadline_sec": 1800,
+    "task_deadline_sec": 600,
     "step_timeout_sec": 60,
     "validator_flush_grace_sec": 300,
     "fixed_task_seed": true,

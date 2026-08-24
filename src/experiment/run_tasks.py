@@ -4832,7 +4832,7 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     if args.appagent_memory_root is not None:
         args.appagent_memory_root = args.appagent_memory_root.expanduser().resolve()
     if args.task_deadline_sec > TASK_DEADLINE_SEC:
-        raise ValueError("task_deadline_exceeds_1800_seconds")
+        raise ValueError("task_deadline_exceeds_600_seconds")
     if args.task_deadline_sec <= 0:
         raise ValueError("task_deadline_must_be_positive")
     if args.max_steps <= 0:

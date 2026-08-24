@@ -239,7 +239,7 @@ def test_setup_uses_all_protocol_devices() -> None:
     assert "--master-progress-root" not in script_text
     assert script_text.count("registered_result_plan_from_memory(") == 0
     assert "-m src.experiment.run_tasks" in script_text
-    assert '(( e2e_task_deadline_sec > 1800 ))' in script_text
+    assert '(( e2e_task_deadline_sec > 600 ))' in script_text
     native_preflight = script_text.split(
         'if [[ "$profile" == "androidworld_native" ]]; then',
         maxsplit=1,
@@ -282,10 +282,10 @@ def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
     )
 
 
-def test_formal_result_runner_allows_slow_vision_requests() -> None:
+def test_formal_result_runner_bounds_vision_requests() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
-    assert '--planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-180}"' in script_text
+    assert '--planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-30}"' in script_text
 
 
 def test_autodroid_online_forces_formal_glm_endpoint_and_temperature() -> None:
@@ -707,7 +707,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
             "--e2e-evaluation-seed",
             "113",
             "--task-deadline-sec",
-            "1800",
+            "600",
             "--dry-run",
         ],
         cwd=REPO,
@@ -739,7 +739,7 @@ def test_e2e_task_dispatches_through_the_only_shell_entry(tmp_path: Path) -> Non
     assert invocation[:2] == ["-m", "src.experiment.run_tasks"]
     assert invocation[invocation.index("--task") + 1] == "BrowserDraw"
     assert "--source-backend" not in invocation
-    assert invocation[invocation.index("--task-deadline-sec") + 1] == "1800"
+    assert invocation[invocation.index("--task-deadline-sec") + 1] == "600"
     assert invocation[invocation.index("--source-device") + 1] == (
         "source5560:emulator-5560:5560"
     )

@@ -6517,7 +6517,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(
             os.environ.get("OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC")
             or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
-            or 180.0
+            or 30.0
         ),
     )
     _add_androidworld_setup_args(result_parser)

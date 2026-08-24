@@ -582,7 +582,7 @@ Options:
   --manual-reuse-source-emulator
                             Reuse a source emulator already prepared for the
                             current manual task instead of reinstalling its app.
-  --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
+  --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 600.
   --attempt-id ID            Internal batch child attempt identifier.
   --refresh-memory          Deduplicate and index all configured RunLogs,
                             method assets, and existing results.
@@ -635,7 +635,7 @@ Examples:
     --e2e-device standard45562:emulator-45562:45562 \
     --e2e-source-seed 111 \
     --e2e-evaluation-seed 113 \
-    --task-deadline-sec 1800
+    --task-deadline-sec 600
 EOF
 }
 
@@ -772,7 +772,7 @@ while [[ "$#" -gt 0 ]]; do
     --task-deadline-sec)
       shift
       if [[ "$#" -eq 0 || -z "$1" ]]; then
-        echo "--task-deadline-sec requires a positive integer no greater than 1800." >&2
+        echo "--task-deadline-sec requires a positive integer no greater than 600." >&2
         exit 2
       fi
       e2e_task_deadline_sec="$1"
@@ -1194,8 +1194,8 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires evaluation seed $formal_task_seed." >&2
     exit 2
   fi
-  if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 1800 )); then
-    echo "--task-deadline-sec must be a positive integer no greater than 1800." >&2
+  if [[ ! "$e2e_task_deadline_sec" =~ ^[1-9][0-9]*$ ]] || (( e2e_task_deadline_sec > 600 )); then
+    echo "--task-deadline-sec must be a positive integer no greater than 600." >&2
     exit 2
   fi
   if [[ -z "$asset_root" || "$asset_root" != /* || -z "$results_root" || "$results_root" != /* ]]; then
@@ -2708,7 +2708,7 @@ command=(
   --task-random-seed "$task_seed"
   --model "$paper_model"
   --planner-provider openai
-  --planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-180}"
+  --planner-timeout-sec "${OMNIFLOW_ANDROIDWORLD_PLANNER_TIMEOUT_SEC:-30}"
 )
 command+=(--method "$method")
 if [[ "$fixed_task_params" != "1" ]]; then
