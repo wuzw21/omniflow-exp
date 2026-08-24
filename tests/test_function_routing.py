@@ -1114,6 +1114,8 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "summary of at most 12 words" in SYSTEM_PROMPT
     assert "Do not emit analysis, chain-of-thought" in SYSTEM_PROMPT
     assert "return only the tool call" in SYSTEM_PROMPT
+    assert "Never call a recalled Function merely because it matches" in SYSTEM_PROMPT
+    assert "finish\nonboarding and navigation" in SYSTEM_PROMPT
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT
     assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
