@@ -210,7 +210,10 @@ def xml_has_complete_application_modal(
     )
     return (
         "android:id/parentPanel" in resource_ids
-        and "android:id/buttonPanel" in resource_ids
+        and (
+            "android:id/buttonPanel" in resource_ids
+            or "android:id/customPanel" in resource_ids
+        )
         and has_action_button
     )
 

@@ -1919,6 +1919,49 @@ def test_observe_treats_complete_application_modal_as_transfer_graph() -> None:
     assert observation.extra["ui_graph_source"] == "androidworld_state_forest"
 
 
+def test_observe_treats_custom_application_modal_with_ime_as_complete_graph() -> None:
+    modal_xml = """\
+<hierarchy>
+  <node package="com.dimowner.audiorecorder" bounds="[18,94][702,636]">
+    <node package="com.dimowner.audiorecorder"
+          resource-id="android:id/parentPanel" bounds="[50,126][670,604]">
+      <node package="com.dimowner.audiorecorder"
+            resource-id="android:id/customPanel" bounds="[50,126][670,604]">
+        <node package="com.dimowner.audiorecorder"
+              resource-id="com.dimowner.audiorecorder:id/input_name"
+              class="android.widget.EditText" text="G367_conference"
+              bounds="[90,257][630,348]" />
+        <node package="com.dimowner.audiorecorder"
+              resource-id="com.dimowner.audiorecorder:id/dialog_positive_btn"
+              class="android.widget.Button" text="Save" clickable="true"
+              bounds="[438,452][614,548]" />
+      </node>
+    </node>
+  </node>
+  <node package="com.google.android.inputmethod.latin"
+        resource-id="android:id/inputArea" bounds="[0,48][720,1184]" />
+</hierarchy>
+"""
+
+    class Env:
+        device_screen_size = (720, 1280)
+        logical_screen_size = (720, 1280)
+        foreground_activity_name = (
+            "com.dimowner.audiorecorder/.app.main.MainActivity"
+        )
+
+        def get_state(self, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is True
+            return _official_state(forest=modal_xml)
+
+    observation = AndroidWorldHost(Env()).observe()
+
+    assert observation.extra["ui_graph_complete"] is True
+    assert observation.extra["ui_graph_source"] == "androidworld_state_forest"
+    assert "G367_conference" in str(observation.xml)
+    assert "Save" in str(observation.xml)
+
+
 def test_observe_can_disable_stabilization_for_diagnostic_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
