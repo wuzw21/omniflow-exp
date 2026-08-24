@@ -867,7 +867,7 @@ class _OpenAICompatibleMultimodalWrapper:
         api_key: str | None = None,
         max_retry: int = 3,
         temperature: float = 0.0,
-        max_tokens: int = 1000,
+        max_tokens: int = 512,
     ) -> None:
         resolved_model = (
             str(model_name or "").strip()
@@ -961,6 +961,8 @@ class _OpenAICompatibleMultimodalWrapper:
             "temperature": self.temperature,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
+            "reasoning_effort": "none",
+            "enable_thinking": False,
         }
         headers = {
             "Content-Type": "application/json",

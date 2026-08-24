@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -23,28 +24,76 @@ from src.integrations.android_world.run_episode import (
     _androidworld_setup_timeout_sec,
     _bounded_androidworld_adb_file_transfer_timeout,
     _ensure_androidworld_a11y_forwarder,
-    _oob_control_accessibility_services,
     _ExperimentAgentAdapter,
-    _patch_androidworld_adb_output_sanitizer,
+    _model_base_url_for_profile,
+    _oob_control_accessibility_services,
+    _OpenAICompatibleMultimodalWrapper,
     _patch_androidworld_adb_controller_install_compat,
+    _patch_androidworld_adb_output_sanitizer,
     _patch_androidworld_apk_install_compat,
     _patch_androidworld_app_launch,
-    _patch_androidworld_current_activity,
     _patch_androidworld_chcon_compat,
     _patch_androidworld_clipboard_read_compat,
-    _patch_androidworld_expense_setup_timeout,
+    _patch_androidworld_current_activity,
     _patch_androidworld_directory_clear,
+    _patch_androidworld_expense_setup_timeout,
     _patch_androidworld_optional_setup_click,
     _prepare_androidworld_episode_apps,
-    _reset_androidworld_file_picker_state,
     _repair_androidworld_chrome_first_run,
+    _reset_androidworld_file_picker_state,
     _result_has_official_validator_conclusion,
     _run_androidworld_setup_apps,
     _runtime_execution_trace,
-    _model_base_url_for_profile,
     _wait_for_androidworld_a11y,
     build_parser,
 )
+
+
+def test_official_androidworld_model_request_uses_bounded_no_thinking_policy(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "model": "test-model",
+                    "choices": [{"message": {"content": "done"}}],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            ).encode()
+
+    def urlopen(request, **_kwargs: object) -> Response:
+        captured.update(json.loads(request.data.decode()))
+        return Response()
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.urllib.request.urlopen",
+        urlopen,
+    )
+    wrapper = _OpenAICompatibleMultimodalWrapper(
+        model_name="test-model",
+        api_key="test-key",
+        max_retry=1,
+    )
+
+    text, _safety, _metadata = wrapper.predict("Choose one action")
+
+    assert text == "done"
+    assert captured["max_tokens"] == 512
+    assert captured["reasoning_effort"] == "none"
+    assert captured["enable_thinking"] is False
 
 
 def test_androidworld_episode_cli_has_no_direct_function_flags() -> None:
