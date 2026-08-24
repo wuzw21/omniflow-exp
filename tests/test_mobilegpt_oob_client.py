@@ -4,6 +4,7 @@ from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
     _dismiss_oob_permission_dialog,
     _oob_action,
+    _server_reported_empty_response,
 )
 
 
@@ -79,3 +80,10 @@ def test_permission_controller_is_dismissed_through_oob() -> None:
     assert oob.actions == [
         {"tool": "click", "args": {"x": 200, "y": 300}},
     ]
+
+
+def test_empty_official_server_response_is_detected() -> None:
+    assert _server_reported_empty_response("Response:\n\n") is True
+    assert _server_reported_empty_response(
+        'Response:\n{"name":"click"}\n'
+    ) is False

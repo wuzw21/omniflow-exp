@@ -166,6 +166,15 @@ def _dismiss_oob_permission_dialog(
     return False
 
 
+def _server_reported_empty_response(server_text: str) -> bool:
+    """Detect the pinned Server's silent ``action is None`` response."""
+
+    marker = str(server_text or "").rfind("Response:")
+    if marker < 0:
+        return False
+    return not str(server_text[marker + len("Response:") :]).strip()
+
+
 def _action_with_bounds(action: dict[str, Any], xml: str) -> dict[str, Any]:
     """Attach the current OOB node bounds to an official index action."""
 
@@ -333,6 +342,8 @@ def _run_mobilegpt_oob_transport(
                             server_text = server_log.read_text(encoding="utf-8", errors="replace")[-12000:]
                             if "Traceback (most recent call last)" in server_text:
                                 raise RuntimeError("mobilegpt_server_handler_failed")
+                            if _server_reported_empty_response(server_text):
+                                raise RuntimeError("mobilegpt_server_no_action")
                             # The pinned Server logs ``finish subtask!!`` when
                             # its official agent has completed the request,
                             # but some versions do not emit the final socket
