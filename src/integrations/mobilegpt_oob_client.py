@@ -234,6 +234,11 @@ def _is_oob_environment_failure(reason: str) -> bool:
     """Classify physical OOB/setup failures separately from planner errors."""
 
     value = str(reason or "").strip()
+    if value.startswith("mobilegpt_oob_action_"):
+        # These failures occur after a valid OOB observation when the official
+        # Planner response cannot be represented as an executable action.
+        # They are method/protocol conclusions, not device or OOB failures.
+        return False
     return value.startswith((
         "oob_",
         "mobilegpt_oob_",
@@ -501,6 +506,10 @@ def _run_mobilegpt_oob_transport(
                     task_finished = True
                     lines.append("[omniflow] Task finished (finish action)")
                     break
+                lines.append(
+                    "[omniflow] OOB planned action="
+                    + json.dumps(action, ensure_ascii=False, sort_keys=True)
+                )
                 _oob_action(
                     oob,
                     action,

@@ -145,6 +145,9 @@ def test_explicit_model_telemetry_reports_an_empty_server_response(tmp_path) -> 
 def test_server_planner_failure_is_not_misclassified_as_oob_environment() -> None:
     assert _is_oob_environment_failure("mobilegpt_server_no_action") is False
     assert _is_oob_environment_failure("mobilegpt_server_handler_failed") is False
+    assert _is_oob_environment_failure("mobilegpt_oob_action_target_missing") is False
+    assert _is_oob_environment_failure("mobilegpt_oob_action_json_invalid") is False
+    assert _is_oob_environment_failure("mobilegpt_oob_action_unsupported:tap") is False
     assert _is_oob_environment_failure("mobilegpt_target_app_not_ready:contacts") is True
 
 
