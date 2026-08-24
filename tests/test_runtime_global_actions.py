@@ -11,7 +11,11 @@ from omniflow.core.model import (
     Observation,
     TransferResult,
 )
-from omniflow.runtime.checker import default_checker
+from omniflow.runtime.checker import (
+    CheckerLibrary,
+    checker_rule_matches,
+    default_checker,
+)
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
@@ -110,6 +114,50 @@ def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None
 
     assert result.success is True
     assert host.actions == [action]
+
+
+def test_default_overlay_checker_ignores_normal_chrome_close_controls() -> None:
+    rule = next(
+        rule
+        for rule in CheckerLibrary.load().rules
+        if rule["id"] == "dismiss_transient_overlay"
+    )
+    action = Action("click", {"x": 500, "y": 500})
+    source = Observation(package_name="com.android.chrome")
+    normal_chrome = Observation(
+        package_name="com.android.chrome",
+        xml=(
+            '<hierarchy>'
+            '<node clickable="true" content-desc="Switch or close tabs" '
+            'resource-id="com.android.chrome:id/tab_switcher_button"/>'
+            '<node clickable="true" content-desc="Close Memory Task tab"/>'
+            '</hierarchy>'
+        ),
+    )
+    explicit_overlay = Observation(
+        package_name="com.android.chrome",
+        xml=(
+            '<hierarchy><node clickable="true" text="Close" '
+            'bounds="[10,10][50,50]"/></hierarchy>'
+        ),
+    )
+
+    assert checker_rule_matches(
+        rule,
+        current=normal_chrome,
+        source=source,
+        function_id="click_button_5_times",
+        step_index=0,
+        action=action,
+    ) is False
+    assert checker_rule_matches(
+        rule,
+        current=explicit_overlay,
+        source=source,
+        function_id="click_button_5_times",
+        step_index=0,
+        action=action,
+    ) is True
 
 
 def test_checker_drains_consecutive_explicit_obstructions_before_function_action(
