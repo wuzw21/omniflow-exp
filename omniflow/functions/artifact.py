@@ -4,21 +4,20 @@ from dataclasses import replace
 import re
 from typing import Any
 
-from jsonschema import Draft202012Validator
-
 from omniflow.core.model import Action, Function, FunctionStep
-from omniflow.core.schemas import (
-    canonicalize_action,
-    load_canonical_action_schema,
-    load_function_schema,
-)
+from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
+FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 
-_FUNCTION_SCHEMA = load_function_schema()
-FUNCTION_ARTIFACT_VERSION = str(
-    _FUNCTION_SCHEMA["properties"]["schema_version"]["const"]
-)
-
-_TOP_LEVEL_FIELDS = set(_FUNCTION_SCHEMA["properties"])
+_TOP_LEVEL_FIELDS = {
+    "schema_version",
+    "function_id",
+    "name",
+    "description",
+    "input_schema",
+    "bindings",
+    "steps",
+    "agent_visible",
+}
 _SOURCE_PATH = re.compile(
     r"^\$\.arguments(?P<tail>(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)$"
 )
@@ -131,24 +130,6 @@ def validate_function_artifact(function: Function) -> None:
             f"function_parameter_required_unknown:{','.join(unknown_required)}"
         )
     _validate_bindings(function)
-    _validate_shared_schema(function.to_dict())
-
-
-def _validate_shared_schema(value: dict[str, Any]) -> None:
-    errors = sorted(
-        Draft202012Validator(_FUNCTION_SCHEMA).iter_errors(value),
-        key=lambda error: tuple(str(item) for item in error.absolute_path),
-    )
-    if not errors:
-        return
-    error = errors[0]
-    location = "$" + "".join(
-        f"[{item}]" if isinstance(item, int) else f".{item}"
-        for item in error.absolute_path
-    )
-    raise ValueError(
-        f"function_schema_invalid:{location}:{error.validator}"
-    )
 
 
 def bind_function(function: Function, arguments: dict[str, Any]) -> Function:
