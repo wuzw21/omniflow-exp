@@ -1055,6 +1055,35 @@ def _configure_mobilegpt_runtime_guards(server_root: Path) -> None:
     parsing_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
+def _configure_mobilegpt_server_port(server_root: Path) -> None:
+    """Make the disposable official Server honor its per-device port.
+
+    The pinned MobileGPT ``main.py`` hard-codes ``12345`` and ignores the
+    environment passed by the launcher.  That is harmless for one device but
+    prevents the scheduler from starting multiple official Servers.  Patch
+    only the staged copy; the upstream Server source remains unchanged.
+    """
+
+    main_path = server_root / "main.py"
+    if not main_path.is_file():
+        return
+    source = main_path.read_text(encoding="utf-8")
+    marker = "MOBILEGPT_SERVER_PORT"
+    if marker in source:
+        return
+    original = (
+        '    server_ip = "0.0.0.0"\n'
+        "    server_port = 12345\n"
+    )
+    replacement = (
+        '    server_ip = os.getenv("MOBILEGPT_SERVER_HOST", "0.0.0.0")\n'
+        '    server_port = int(os.getenv("MOBILEGPT_SERVER_PORT", "12345"))\n'
+    )
+    if original not in source:
+        return
+    main_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
 def _configure_mobilegpt_memory_telemetry(server_root: Path) -> None:
     """Record official Memory recall/Explore decisions in the stats stream."""
 
@@ -1163,6 +1192,7 @@ def _configure_mobilegpt_server(
     utils_path = server_root / "utils" / "utils.py"
     _configure_mobilegpt_telemetry(server_root)
     _configure_mobilegpt_runtime_guards(server_root)
+    _configure_mobilegpt_server_port(server_root)
     _configure_mobilegpt_memory_telemetry(server_root)
     _configure_mobilegpt_finish_transport(server_root)
     configured_threshold = str(

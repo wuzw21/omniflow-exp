@@ -159,6 +159,26 @@ def test_mobilegpt_server_skips_stale_explore_trigger_ui(tmp_path: Path) -> None
     assert "continue" in staged
 
 
+def test_mobilegpt_staged_server_honors_runtime_port(tmp_path: Path) -> None:
+    server = tmp_path / "Server"
+    server.mkdir(parents=True)
+    path = server / "main.py"
+    path.write_text(
+        'import os\n'
+        'def main():\n'
+        '    server_ip = "0.0.0.0"\n'
+        '    server_port = 12345\n'
+        '    return server_ip, server_port\n',
+        encoding="utf-8",
+    )
+
+    official_forward._configure_mobilegpt_server_port(server)
+    staged = path.read_text(encoding="utf-8")
+
+    assert 'os.getenv("MOBILEGPT_SERVER_HOST", "0.0.0.0")' in staged
+    assert 'os.getenv("MOBILEGPT_SERVER_PORT", "12345")' in staged
+
+
 def test_mobilegpt_server_records_memory_recall_and_explore(tmp_path: Path) -> None:
     server = tmp_path / "Server"
     server.mkdir(parents=True)
