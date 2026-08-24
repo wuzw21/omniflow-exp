@@ -603,7 +603,9 @@ def test_omniflow_e2e_command_forwards_oob_backend_to_child(monkeypatch, tmp_pat
 
 def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD", raising=False)
     mobilegpt_root = tmp_path / "MobileGPT"
     (mobilegpt_root / "Server" / "memory").mkdir(parents=True)
     (mobilegpt_root / "Server" / "main.py").write_text("print('server')\n")
