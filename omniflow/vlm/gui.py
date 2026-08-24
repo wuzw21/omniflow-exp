@@ -61,6 +61,8 @@ When calling finished, keep content to one short factual sentence describing onl
 the outcome directly supported by the current screen or previous tool result. Do
 not claim that a RunLog or reusable Function was registered; the host reports the
 real registration state after execution.
+For answer or status goals, return the answer through finished(content) as the
+tool call; never return a bare answer or status as assistant prose.
 For switches and checkboxes, checked=false means off and checked=true means on.
 Never toggle a switch when its checked state already matches the requested goal.
 If a click leaves the state unchanged, do not repeat the same coordinates; ground the
