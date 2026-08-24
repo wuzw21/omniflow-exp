@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from src.integrations import mobilegpt_oob_client as mobilegpt_oob
 from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
@@ -9,7 +11,7 @@ from src.integrations.mobilegpt_oob_client import (
     _oob_action,
     _prelaunch_target_package,
     _require_oob_backend,
-    _server_reported_empty_response,
+    _stats_terminal_reason,
 )
 
 
@@ -122,11 +124,22 @@ def test_target_launch_is_retried_once_when_fresh_boot_overwrites_it(
     ]
 
 
-def test_empty_official_server_response_is_detected() -> None:
-    assert _server_reported_empty_response("Response:\n\n") is True
-    assert _server_reported_empty_response(
-        'Response:\n{"name":"click"}\n'
-    ) is False
+def test_prompt_response_marker_is_not_treated_as_an_empty_server_response(
+    tmp_path,
+) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+
+    assert _stats_terminal_reason(stats) == ""
+
+
+def test_explicit_model_telemetry_reports_an_empty_server_response(tmp_path) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text(
+        json.dumps({"event": "chat_empty_or_invalid", "attempts": 1}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert _stats_terminal_reason(stats) == "mobilegpt_server_no_action"
 
 
 def test_server_planner_failure_is_not_misclassified_as_oob_environment() -> None:

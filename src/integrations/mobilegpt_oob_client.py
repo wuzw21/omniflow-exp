@@ -209,13 +209,25 @@ def _dismiss_oob_permission_dialog(
     return False
 
 
-def _server_reported_empty_response(server_text: str) -> bool:
-    """Detect the pinned Server's silent ``action is None`` response."""
+def _stats_terminal_reason(stats_path: Path | None) -> str:
+    """Read explicit provider telemetry without interpreting prompt text."""
 
-    marker = str(server_text or "").rfind("Response:")
-    if marker < 0:
-        return False
-    return not str(server_text[marker + len("Response:") :]).strip()
+    if stats_path is None or not stats_path.is_file():
+        return ""
+    for line in reversed(
+        stats_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    ):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "chat_empty_or_invalid":
+            return "mobilegpt_server_no_action"
+        if event.get("event") in {"chat_call", "action_sent", "task_finished"}:
+            return ""
+    return ""
 
 
 def _is_oob_environment_failure(reason: str) -> bool:
@@ -364,6 +376,8 @@ def _run_mobilegpt_oob_transport(
     task_finished = False
     oob = OobControlClient(None, adb_serial=serial, adb_path=adb_path)
     server_log = Path(server_log_path).expanduser() if str(server_log_path).strip() else None
+    stats_value = str(os.environ.get("MOBILEGPT_STATS_JSONL") or "").strip()
+    stats_path = Path(stats_value).expanduser() if stats_value else None
     app_ready_timeout_sec = float(os.environ.get("MOBILEGPT_APP_READY_TIMEOUT_SEC", "20") or 20)
     finish_stall_timeout_sec = float(os.environ.get("MOBILEGPT_FINISH_STALL_TIMEOUT_SEC", "8") or 8)
     finish_stall_started: float | None = None
@@ -404,8 +418,9 @@ def _run_mobilegpt_oob_transport(
                             server_text = server_log.read_text(encoding="utf-8", errors="replace")[-12000:]
                             if "Traceback (most recent call last)" in server_text:
                                 raise RuntimeError("mobilegpt_server_handler_failed")
-                            if _server_reported_empty_response(server_text):
-                                raise RuntimeError("mobilegpt_server_no_action")
+                            terminal_reason = _stats_terminal_reason(stats_path)
+                            if terminal_reason:
+                                raise RuntimeError(terminal_reason)
                             # The pinned Server logs ``finish subtask!!`` when
                             # its official agent has completed the request,
                             # but some versions do not emit the final socket
