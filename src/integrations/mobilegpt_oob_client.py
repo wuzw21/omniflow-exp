@@ -175,6 +175,17 @@ def _server_reported_empty_response(server_text: str) -> bool:
     return not str(server_text[marker + len("Response:") :]).strip()
 
 
+def _is_oob_environment_failure(reason: str) -> bool:
+    """Classify physical OOB/setup failures separately from planner errors."""
+
+    value = str(reason or "").strip()
+    return value.startswith((
+        "oob_",
+        "mobilegpt_oob_",
+        "mobilegpt_target_app_",
+    ))
+
+
 def _action_with_bounds(action: dict[str, Any], xml: str) -> dict[str, Any]:
     """Attach the current OOB node bounds to an official index action."""
 
@@ -571,7 +582,7 @@ def run_mobilegpt_oob_client(
                     "success"
                     if reward > 0.5
                     else "environment_failure"
-                    if str(result.get("reason") or "").startswith(("oob_", "mobilegpt_oob_", "mobilegpt_server_"))
+                    if _is_oob_environment_failure(str(result.get("reason") or ""))
                     else "method_failure"
                 ),
                 "actions_executed": int(result.get("actions") or 0),
@@ -586,7 +597,7 @@ def run_mobilegpt_oob_client(
                     "task_finished": bool(result.get("task_finished")),
                 },
                 "environment_failure": reward <= 0.5
-                and str(result.get("reason") or "").startswith(("oob_", "mobilegpt_oob_", "mobilegpt_server_")),
+                and _is_oob_environment_failure(str(result.get("reason") or "")),
                 "failure_reason": str(result.get("reason") or ""),
                 "runtime_integrity_error": str(result.get("reason") or ""),
             }

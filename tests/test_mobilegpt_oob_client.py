@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
     _dismiss_oob_permission_dialog,
+    _is_oob_environment_failure,
     _oob_action,
     _server_reported_empty_response,
 )
@@ -87,3 +88,9 @@ def test_empty_official_server_response_is_detected() -> None:
     assert _server_reported_empty_response(
         'Response:\n{"name":"click"}\n'
     ) is False
+
+
+def test_server_planner_failure_is_not_misclassified_as_oob_environment() -> None:
+    assert _is_oob_environment_failure("mobilegpt_server_no_action") is False
+    assert _is_oob_environment_failure("mobilegpt_server_handler_failed") is False
+    assert _is_oob_environment_failure("mobilegpt_target_app_not_ready:contacts") is True
