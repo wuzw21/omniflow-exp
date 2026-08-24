@@ -230,9 +230,11 @@ def parse_model_turn_response(
                 and isinstance(package_name, str)
                 and package_name.strip() not in installed_packages
             ):
+                allowed_packages = ",".join(sorted(installed_packages))
                 raise ValueError(
                     "planner_open_app_package_not_installed:"
-                    f"{package_name.strip()}"
+                    f"{package_name.strip()}:"
+                    f"allowed_package_name={allowed_packages}"
                 )
             arguments, adapter_metadata = adapt_tool_arguments(
                 tool=tool,

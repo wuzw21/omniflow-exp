@@ -927,6 +927,7 @@ def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
         "planner_open_app_package_not_installed:com.android.filemanager"
         in correction
     )
+    assert "allowed_package_name=com.google.android.documentsui" in correction
     assert planner.take_metadata()["rejected_tool_calls"][0]["arguments"] == {
         "summary": "Use open_app",
         "package_name": "com.android.filemanager",
