@@ -731,6 +731,7 @@ def _integration_model_config(
         environment.setdefault("OPENAI_BASE_URL", base_url)
     try:
         api_key, resolved_base_url = resolve_openai_compatible_config(
+            profile=profile,
             base_url=base_url,
             environment=environment,
         )

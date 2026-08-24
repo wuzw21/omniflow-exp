@@ -122,6 +122,7 @@ def test_formal_model_profile_uses_protocol_base_url_without_env_base_url(
 ) -> None:
     from omniflow.vlm.model_config import resolve_openai_compatible_config
 
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-openai-key")
     monkeypatch.setenv("LLMTHU_API_KEY", "test-key")
     api_key, base_url = resolve_openai_compatible_config(
         profile="llmthu",
