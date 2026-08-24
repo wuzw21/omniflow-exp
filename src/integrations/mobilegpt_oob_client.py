@@ -92,6 +92,11 @@ def _launch_selected_package(
         candidate = target_package
     if not candidate or candidate not in installed:
         raise RuntimeError("mobilegpt_target_app_package_unresolved")
+    # The OOB resident keeps the most recent observation as the action
+    # precondition.  Prime that state before the first open_app action; the
+    # native AndroidWorld host normally does this in its observation/action
+    # lifecycle, while this socket adapter owns that lifecycle directly.
+    oob.observe(wait_to_stabilize=True)
     oob.act({"tool": "open_app", "args": {"package_name": candidate}})
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
     while time.monotonic() < deadline:
@@ -185,6 +190,12 @@ def _oob_action(
         if bounds:
             point = _normalised_point(bounds, display)
             oob.act({"tool": "click", "args": {"x": point[0], "y": point[1]}})
+            # Refresh the OOB action precondition after focusing the field.
+            # This is required by the resident executor before the following
+            # input_text action and does not alter the official planner flow.
+            observe = getattr(oob, "observe", None)
+            if callable(observe):
+                observe(wait_to_stabilize=True)
         oob.act(
             {
                 "tool": "input_text",
