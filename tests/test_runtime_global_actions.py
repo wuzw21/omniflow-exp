@@ -28,18 +28,26 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
 
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     source = Observation(
-        xml='<hierarchy><node text="Search" bounds="[0,0][100,100]"/></hierarchy>',
+        xml=(
+            '<hierarchy><node text="Search" bounds="[0,0][100,100]" '
+            'clickable="true" enabled="true" /></hierarchy>'
+        ),
         package_name="com.example",
+        extra={"display": {"width": 100, "height": 100}},
     )
     current = Observation(
-        xml='<hierarchy><node text="Search" bounds="[0,0][100,100]"/></hierarchy>',
+        xml=(
+            '<hierarchy><node text="Search" bounds="[0,0][100,100]" '
+            'clickable="true" enabled="true" /></hierarchy>'
+        ),
         package_name="com.example",
+        extra={"display": {"width": 100, "height": 100}},
     )
     transferred_sources: list[Observation] = []
 
     async def transfer(action, observation, source_state):
         transferred_sources.append(source_state)
-        return TransferResult(action, reason="mapped")
+        return TransferResult(action, reason="mapped", detail={"score": 0.9})
 
     class Host:
         def get_state(self, _source_state_id):
@@ -80,6 +88,70 @@ def test_function_uses_catalog_state_when_host_state_is_missing(monkeypatch) -> 
 
     assert result.success is True
     assert transferred_sources == [source]
+
+
+def test_function_execution_is_gated_by_transfer_not_page_embedding(monkeypatch) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    source = Observation(
+        xml=(
+            '<hierarchy><node class="android.view.SurfaceView" '
+            'bounds="[0,0][1000,850]" /></hierarchy>'
+        ),
+        package_name="com.example",
+    )
+    current = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" text="Continue" '
+            'bounds="[650,800][950,920]" clickable="true" enabled="true" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 1000, "height": 1000}},
+    )
+    actions: list[Action] = []
+
+    class Host:
+        def act(self, action: Action):
+            actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs: object):
+            return current
+
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.95},
+        )
+
+    function = Function(
+        function_id="continue_form",
+        name="Continue form",
+        description="Continue the current form.",
+        steps=(
+            FunctionStep(0, Action("click", {"x": 500, "y": 500}), "source"),
+        ),
+    )
+
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=Host(),
+            plugins=PluginSet(transfer=transfer),
+            observation=current,
+            state_loader=lambda _state_id: source,
+        )
+    )
+
+    assert result.success is True
+    assert actions == [Action("click", {"x": 800.0, "y": 860.0})]
 
 
 def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None:
@@ -173,14 +245,19 @@ def test_checker_drains_consecutive_explicit_obstructions_before_function_action
             "</hierarchy>"
         ),
         package_name="com.example",
+        extra={"display": {"width": 1000, "height": 1000}},
     )
     target = Observation(
-        xml='<hierarchy><node text="Target" bounds="[0,0][100,100]"/></hierarchy>',
+        xml=(
+            '<hierarchy><node text="Target" bounds="[0,0][1000,1000]" '
+            'clickable="true" enabled="true" /></hierarchy>'
+        ),
         package_name="com.example",
+        extra={"display": {"width": 1000, "height": 1000}},
     )
 
     async def transfer(action, observation, source_state):
-        return TransferResult(action, reason="mapped")
+        return TransferResult(action, reason="mapped", detail={"score": 0.9})
 
     class Host:
         def __init__(self) -> None:

@@ -23,7 +23,6 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
-from omniflow.functions.recall import match_function_page
 from omniflow.runtime.checker import (
     checker_rule_action,
     checker_rule_matches,
@@ -35,7 +34,10 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
-from omniflow.transfer.embedding import PageEncoder
+from omniflow.transfer.admission import (
+    MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE,
+    assess_transfer,
+)
 from omniflow.transfer.runtime import (
     source_semantic_anchor,
     source_semantic_offset,
@@ -48,11 +50,11 @@ _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
 _CHECKER_RECOVERY_MAX_ATTEMPTS = 8
-# OmniTransfer already applies the deployment acceptance floor.  Keep only a
-# minimal sanity floor here so OmniFlow does not reject a valid mapped target a
-# second time merely because its confidence is below a conservative benchmark
-# threshold.
-_ALIGNMENT_MIN_PROBABILITY = 0.0
+# A Function action is executable only when OmniTransfer reports a high-confidence
+# contextual mapping.  The same floor also governs entry recall and resume
+# alignment so a candidate cannot be visible under a weaker policy than the one
+# used for execution.
+_ALIGNMENT_MIN_PROBABILITY = MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE
 _ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
 StateLoader = Callable[[str], Any]
 
@@ -70,7 +72,6 @@ async def execute_function(
     state_loader: StateLoader | None = None,
     checker_rules: tuple[dict[str, Any], ...] = (),
     checker_trigger_counts: dict[str, int] | None = None,
-    page_encoder: PageEncoder | None = None,
 ) -> RunResult:
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
@@ -83,7 +84,6 @@ async def execute_function(
     checker_trigger_counts = (
         checker_trigger_counts if checker_trigger_counts is not None else {}
     )
-    function_page_encoder = page_encoder or PageEncoder()
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         action = function_step.action
@@ -92,28 +92,6 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
-        page_match = match_function_page(
-            source_observation=source_state,
-            current_observation=current,
-            encoder=function_page_encoder,
-        )
-        if page_match["matched"] is not True:
-            reason = str(page_match.get("reason") or "function_page_not_aligned")
-            return RunResult(
-                False,
-                function.id,
-                executed,
-                error=f"function_page_not_aligned:{reason}",
-                final_state=current,
-                detail={
-                    "trace": trace,
-                    "failed_step_index": function_step.step_index,
-                    "next_step_index": function_step.step_index,
-                    "recoverable": True,
-                    "fallback": "online_vlm",
-                    "page_alignment": dict(page_match),
-                },
-            )
         for checker_phase in ("pre_transfer", "pre_action"):
             checker_steps = await _run_shared_checker_phase(
                 checker_phase,
@@ -940,10 +918,15 @@ def default_transfer(
             detail=_transfer_detail(result),
         )
     transfer_detail = _transfer_detail(result)
-    probability = _alignment_probability(transfer_detail)
-    if probability is not None and probability < _ALIGNMENT_MIN_PROBABILITY:
+    mapped_transfer = TransferResult(
+        Action(action.tool, {}),
+        reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
+        detail=transfer_detail,
+    )
+    admission = assess_transfer(mapped_transfer)
+    if not admission.accepted:
         return _recoverable_transfer_failure(
-            "omnitransfer_low_confidence",
+            admission.reason or "omnitransfer_low_confidence",
             transfer_detail,
         )
     try:
@@ -1036,19 +1019,21 @@ def _transfer_swipe(
         params[y_key] = target_y / height * 1000.0
         mapping_modes.append(str(result.get("mapping_mode") or "omnitransfer_mapped"))
         endpoint_details.append(_transfer_detail(result))
-        endpoint_probability = _alignment_probability(endpoint_details[-1])
-        if (
-            endpoint_probability is not None
-            and endpoint_probability < _ALIGNMENT_MIN_PROBABILITY
-        ):
+        endpoint_transfer = TransferResult(
+            Action(action.tool, {}),
+            reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
+            detail=endpoint_details[-1],
+        )
+        endpoint_admission = assess_transfer(endpoint_transfer)
+        if not endpoint_admission.accepted:
             return _recoverable_transfer_failure(
-                "omnitransfer_low_confidence",
+                endpoint_admission.reason or "omnitransfer_low_confidence",
                 {
                     "mapping_mode": str(
                         result.get("mapping_mode") or "omnitransfer_mapped"
                     ),
                     "endpoints": endpoint_details,
-                    "score": endpoint_probability,
+                    "score": endpoint_admission.confidence,
                 },
             )
     reason = mapping_modes[0] if len(set(mapping_modes)) == 1 else "omnitransfer_mapped"
@@ -1174,7 +1159,13 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
         "candidates": candidates,
     }
     if result.get("mapped") is True:
-        for key in ("score", "margin"):
+        for key in (
+            "score",
+            "margin",
+            "pair_confidence",
+            "rank_probability",
+            "null_probability",
+        ):
             try:
                 detail[key] = float(result[key])
             except (KeyError, TypeError, ValueError):
@@ -1184,6 +1175,19 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
                 detail["score"] = float(candidates[0]["score"])
             except (KeyError, TypeError, ValueError):
                 pass
+        for key in (
+            "absolute_contextual_confidence",
+            "pair_confidence",
+            "score",
+        ):
+            try:
+                detail["absolute_contextual_confidence"] = float(result[key])
+                break
+            except (KeyError, TypeError, ValueError):
+                continue
+        target_candidate_id = str(result.get("target_candidate_id") or "").strip()
+        if target_candidate_id:
+            detail["target_candidate_id"] = target_candidate_id
     return detail
 
 
@@ -1219,6 +1223,11 @@ def _element_detail(value: Any) -> dict[str, Any]:
             "content_desc",
             "class",
             "bounds",
+            "clickable",
+            "long_clickable",
+            "editable",
+            "enabled",
+            "visible",
         )
         if raw.get(key) not in (None, "", [])
     }

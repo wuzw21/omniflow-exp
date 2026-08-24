@@ -96,6 +96,7 @@ rg --files -g '*.py' | sort
 | `omniflow/runtime/engine.py` | 一个持久 Planner/Function 生命周期；不增加 method-specific loop |
 | `omniflow/runtime/execution.py` | `execute_function`、`execute_robust_action`、`align_function_resume` 和 OmniTransfer 执行的唯一 owner |
 | `omniflow/transfer/__init__.py` | transfer 导出 |
+| `omniflow/transfer/admission.py` | 唯一 contextual mapping 准入策略；NULL、`0.8` 阈值和目标可执行性在此统一判断 |
 | `omniflow/transfer/embedding.py` | 唯一 active page encoder；canonical `UIGraph` 节点经原生手工 64D 表示和 8-word pooling 得到 512D 页面命中表示 |
 | `omniflow/transfer/runtime.py` | immutable transfer-state catalog 读取和 coverage 检查 |
 | `omniflow/vlm/__init__.py` | VLM 导出 |

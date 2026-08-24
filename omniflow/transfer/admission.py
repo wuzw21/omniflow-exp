@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+import re
+from typing import Any
+import xml.etree.ElementTree as ET
+
+from omniflow.core.model import Observation, TransferResult
+
+
+MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE = 0.8
+_CONTEXTUAL_MAPPING_TOOLS = frozenset({"click", "long_press", "input_text", "swipe"})
+
+
+@dataclass(frozen=True)
+class TransferAdmission:
+    accepted: bool
+    reason: str | None
+    confidence: float | None
+
+
+def assess_transfer(
+    transfer: TransferResult,
+    *,
+    observation: Observation | None = None,
+    minimum_confidence: float = MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE,
+) -> TransferAdmission:
+    """Apply the one fail-closed admission policy for mapped actions."""
+
+    if transfer.action is None:
+        return TransferAdmission(
+            False,
+            transfer.reason or "omnitransfer_null_target",
+            _mapping_confidence(transfer.detail),
+        )
+    if not requires_contextual_mapping(transfer.action.tool):
+        return TransferAdmission(True, None, 1.0)
+    confidence = _mapping_confidence(transfer.detail)
+    if confidence is None:
+        return TransferAdmission(False, "omnitransfer_confidence_missing", None)
+    if confidence < float(minimum_confidence):
+        return TransferAdmission(False, "omnitransfer_low_confidence", confidence)
+    if observation is not None and not _target_is_executable(
+        transfer,
+        observation,
+    ):
+        return TransferAdmission(
+            False,
+            "omnitransfer_target_not_executable",
+            confidence,
+        )
+    return TransferAdmission(True, None, confidence)
+
+
+def requires_contextual_mapping(tool: str) -> bool:
+    return str(tool).strip() in _CONTEXTUAL_MAPPING_TOOLS
+
+
+def _mapping_confidence(detail: dict[str, Any]) -> float | None:
+    raw: Any = None
+    for key in (
+        "absolute_contextual_confidence",
+        "pair_confidence",
+        "score",
+    ):
+        if detail.get(key) is not None:
+            raw = detail[key]
+            break
+    try:
+        confidence = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(confidence):
+        return None
+    return min(1.0, max(0.0, confidence))
+
+
+def _target_is_executable(
+    transfer: TransferResult,
+    observation: Observation,
+) -> bool:
+    action = transfer.action
+    if action is None:
+        return False
+    if action.tool not in {"click", "long_press", "input_text", "swipe"}:
+        return True
+    if action.tool == "swipe":
+        return _canonical_coordinates_valid(action.args, ("x1", "y1", "x2", "y2"))
+    if not _canonical_coordinates_valid(action.args, ("x", "y")):
+        return False
+    point = _raw_point(action.args, observation)
+    if point is None:
+        return False
+    try:
+        root = ET.fromstring(str(observation.xml or ""))
+    except ET.ParseError:
+        return False
+    matching = [
+        element
+        for element in root.iter()
+        if _contains(_bounds(element.attrib.get("bounds")), point)
+    ]
+    if not matching:
+        return False
+    enabled = [
+        element
+        for element in matching
+        if str(element.attrib.get("enabled", "true")).lower() != "false"
+    ]
+    if action.tool == "input_text":
+        return any(
+            str(element.attrib.get("editable", "false")).lower() == "true"
+            or "edittext" in str(element.attrib.get("class") or "").lower()
+            for element in enabled
+        )
+    attribute = "long-clickable" if action.tool == "long_press" else "clickable"
+    return any(
+        str(element.attrib.get(attribute, "false")).lower() == "true"
+        for element in enabled
+    )
+
+
+def _canonical_coordinates_valid(args: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    try:
+        values = [float(args[key]) for key in keys]
+    except (KeyError, TypeError, ValueError):
+        return False
+    return all(math.isfinite(value) and 0.0 <= value <= 1000.0 for value in values)
+
+
+def _raw_point(
+    args: dict[str, Any],
+    observation: Observation,
+) -> tuple[float, float] | None:
+    display = observation.extra.get("display")
+    if not isinstance(display, dict):
+        return None
+    try:
+        width = float(display["width"])
+        height = float(display["height"])
+        x = float(args["x"]) / 1000.0 * width
+        y = float(args["y"]) / 1000.0 * height
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0.0 or height <= 0.0:
+        return None
+    return x, y
+
+
+def _bounds(value: Any) -> tuple[float, float, float, float] | None:
+    values = re.findall(r"-?\d+(?:\.\d+)?", str(value or ""))
+    if len(values) != 4:
+        return None
+    left, top, right, bottom = (float(item) for item in values)
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def _contains(
+    bounds: tuple[float, float, float, float] | None,
+    point: tuple[float, float],
+) -> bool:
+    if bounds is None:
+        return False
+    return bounds[0] <= point[0] <= bounds[2] and bounds[1] <= point[1] <= bounds[3]
+
+
+__all__ = [
+    "MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE",
+    "TransferAdmission",
+    "assess_transfer",
+    "requires_contextual_mapping",
+]

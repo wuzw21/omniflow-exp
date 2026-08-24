@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from omniflow import Action, ActionResult, Function, Observation, OmniFlow, ToolCall
 from omniflow.core.config import OmniFlowConfig, PluginSet
 from omniflow.core.model import FunctionStep, TransferResult
@@ -93,18 +95,34 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
         "camera_page",
     )
 
-    result = recall_functions(
-        "Finish account setup",
-        observation=current,
-        functions=(matching, lexical_but_wrong_page),
-        source_states={
-            "account_page": current,
-            "camera_page": _page(
-                "Camera shutter",
-                "camera_shutter",
-                variant="camera",
-            ),
-        },
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        source_state: Observation | None,
+    ) -> TransferResult:
+        if source_state is not None and "Camera shutter" in str(source_state.xml):
+            return TransferResult(None, reason="omnitransfer_null_target")
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.95},
+        )
+
+    result = asyncio.run(
+        recall_functions(
+            "Finish account setup",
+            observation=current,
+            functions=(matching, lexical_but_wrong_page),
+            source_states={
+                "account_page": current,
+                "camera_page": _page(
+                    "Camera shutter",
+                    "camera_shutter",
+                    variant="camera",
+                ),
+            },
+            transfer=transfer,
+        )
     )
 
     assert [function.id for function in result.functions] == [matching.id]
@@ -120,7 +138,7 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
     ]
     assert decisions[lexical_but_wrong_page.id]["page_match"] is False
     assert decisions[lexical_but_wrong_page.id]["rejection_reason"] == (
-        "function_page_similarity_below_threshold"
+        "omnitransfer_null_target"
     )
     assert result.audit["ranking_weights"] == {
         "page_similarity": PAGE_SIMILARITY_WEIGHT,
@@ -132,7 +150,87 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
     assert GOAL_LEXICAL_WEIGHT > PAGE_SIMILARITY_WEIGHT
 
 
-def test_recall_reads_package_from_xml_for_legacy_states() -> None:
+def test_recall_uses_page_embedding_only_for_ranking_and_hard_gates_on_transfer() -> None:
+    current = _page("Account details", "account_form")
+    function = _function(
+        "finish_account_setup",
+        "Finish account setup",
+        "Finish account setup from this screen.",
+        "camera_page",
+        action=Action("click", {"x": 500.0, "y": 930.0}),
+    )
+
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.93},
+        )
+
+    result = asyncio.run(
+        recall_functions(
+            "Finish account setup",
+            observation=current,
+            functions=(function,),
+            source_states={
+                "camera_page": _page(
+                    "Camera shutter",
+                    "camera_shutter",
+                    variant="camera",
+                ),
+            },
+            transfer=transfer,
+        )
+    )
+
+    assert result.functions == (function,)
+    decision = result.audit["decisions"][0]
+    assert decision["page_match"] is False
+    assert decision["mapping_confidence"] == 0.93
+    assert decision["selected"] is True
+
+
+def test_recall_hides_function_when_first_step_mapping_is_below_point_eight() -> None:
+    current = _page("Account details", "account_form")
+    function = _function(
+        "continue_form",
+        "Continue form",
+        "Continue the current form.",
+        "source_page",
+    )
+
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.79},
+        )
+
+    result = asyncio.run(
+        recall_functions(
+            "Continue form",
+            observation=current,
+            functions=(function,),
+            source_states={"source_page": current},
+            transfer=transfer,
+        )
+    )
+
+    assert result.functions == ()
+    decision = result.audit["decisions"][0]
+    assert decision["mapping_confidence"] == 0.79
+    assert decision["rejection_reason"] == "omnitransfer_low_confidence"
+
+
+def test_package_mismatch_is_diagnostic_and_does_not_override_transfer() -> None:
     source = _page("Account details", "account_form", package="com.example")
     current = _page("Account details", "account_form", package="com.other")
     function = _function(
@@ -142,16 +240,33 @@ def test_recall_reads_package_from_xml_for_legacy_states() -> None:
         "source_page",
     )
 
-    result = recall_functions(
-        "Continue",
-        observation=Observation(xml=current.xml),
-        functions=(function,),
-        source_states={"source_page": Observation(xml=source.xml)},
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            detail={"absolute_contextual_confidence": 0.95},
+        )
+
+    result = asyncio.run(
+        recall_functions(
+            "Continue",
+            observation=Observation(
+                xml=current.xml,
+                extra={"display": {"width": 1000, "height": 1000}},
+            ),
+            functions=(function,),
+            source_states={"source_page": Observation(xml=source.xml)},
+            transfer=transfer,
+        )
     )
 
-    assert result.functions == ()
+    assert result.functions == (function,)
     decision = result.audit["decisions"][0]
-    assert decision["rejection_reason"] == "function_page_package_mismatch"
+    assert decision["page_match"] is False
+    assert decision["mapping_confidence"] == 0.95
 
 
 def test_open_app_function_uses_the_same_page_weighted_score() -> None:
@@ -170,15 +285,17 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
         "other_page",
     )
 
-    result = recall_functions(
-        "Continue",
-        observation=current,
-        functions=(click_function, open_app_function),
-        source_states={
-            "matching_page": current,
-            "other_page": _page("Camera", "shutter", variant="camera"),
-        },
-        limit=1,
+    result = asyncio.run(
+        recall_functions(
+            "Continue",
+            observation=current,
+            functions=(click_function, open_app_function),
+            source_states={
+                "matching_page": current,
+                "other_page": _page("Camera", "shutter", variant="camera"),
+            },
+            limit=1,
+        )
     )
 
     assert result.functions == (open_app_function,)
@@ -197,11 +314,13 @@ def test_missing_page_evidence_prevents_recall() -> None:
         "source_page",
     )
 
-    result = recall_functions(
-        "Continue",
-        observation=Observation(package_name="com.example"),
-        functions=(function,),
-        source_states={"source_page": _page("Form", "form")},
+    result = asyncio.run(
+        recall_functions(
+            "Continue",
+            observation=Observation(package_name="com.example"),
+            functions=(function,),
+            source_states={"source_page": _page("Form", "form")},
+        )
     )
 
     assert result.functions == ()
@@ -209,7 +328,7 @@ def test_missing_page_evidence_prevents_recall() -> None:
     assert decision["page_similarity"] == 0.0
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
     assert decision["page_match"] is False
-    assert decision["rejection_reason"] == "function_page_embedding_missing"
+    assert decision["rejection_reason"] == "function_transfer_unavailable"
 
 
 def test_recall_excludes_functions_without_source_page_evidence() -> None:
@@ -222,18 +341,29 @@ def test_recall_excludes_functions_without_source_page_evidence() -> None:
 
     second = _function("z_second", "Unrelated", "No shared terms.", "missing")
     first = _function("a_first", "Different", "Still unrelated.", "missing")
-    result = recall_functions(
-        "Turn bluetooth on",
-        observation=Observation(),
-        functions=(second, first, function),
-        source_states={"settings_page": None, "missing": None},
-        limit=2,
+    async def transfer(
+        _action: Action,
+        _observation: Observation,
+        source_state: Observation | None,
+    ) -> TransferResult:
+        assert source_state is None
+        return TransferResult(None, reason="omnitransfer_source_state_missing")
+
+    result = asyncio.run(
+        recall_functions(
+            "Turn bluetooth on",
+            observation=Observation(),
+            functions=(second, first, function),
+            source_states={"settings_page": None, "missing": None},
+            limit=2,
+            transfer=transfer,
+        )
     )
 
     assert result.functions == ()
     assert {
         item["rejection_reason"] for item in result.audit["decisions"]
-    } == {"function_source_page_missing"}
+    } == {"omnitransfer_source_state_missing"}
 
 
 class _CheckerRecoveryHost:
@@ -310,10 +440,16 @@ def test_planner_navigates_to_function_page_before_recall(
 
     def transfer(
         action: Action,
-        _observation: Observation,
+        observation: Observation,
         _source_state: Observation | None,
     ) -> TransferResult:
-        return TransferResult(action, reason="test_target_match")
+        if observation.package_name != "com.android.settings":
+            return TransferResult(None, reason="omnitransfer_null_target")
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            reason="test_target_match",
+            detail={"absolute_contextual_confidence": 0.95},
+        )
 
     flow = OmniFlow(
         store.path,
@@ -387,7 +523,34 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
         )
     )
     planner = _ChangingPagePlanner()
-    flow = OmniFlow(store.path, host=_PageChangingHost(), planner=planner)
+    def transfer(
+        action: Action,
+        observation: Observation,
+        source_state: Observation | None,
+    ) -> TransferResult:
+        current_is_camera = "SurfaceView" in str(observation.xml)
+        source_is_camera = "SurfaceView" in str(
+            source_state.xml if source_state is not None else ""
+        )
+        if current_is_camera != source_is_camera:
+            return TransferResult(None, reason="omnitransfer_null_target")
+        point = (
+            {"x": 500.0, "y": 930.0}
+            if current_is_camera
+            else {"x": 800.0, "y": 860.0}
+        )
+        return TransferResult(
+            Action(action.tool, point),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.95},
+        )
+
+    flow = OmniFlow(
+        store.path,
+        host=_PageChangingHost(),
+        planner=planner,
+        config=OmniFlowConfig(plugins=PluginSet(transfer=transfer)),
+    )
 
     result = flow.run("Complete the multi-page task")
 

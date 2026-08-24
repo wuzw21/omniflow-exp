@@ -20,6 +20,7 @@ from omniflow.core.model import (
     Observation,
     StepResult,
 )
+from omniflow.transfer.admission import assess_transfer
 
 _ACTION_SETTLE_SECONDS = 1.0
 
@@ -99,11 +100,15 @@ async def prepare_action(
     if plugins.transfer is None:
         return ActionDecision("block", reason="transfer_not_configured")
     transfer = await _await(plugins.transfer(action, observation, source_state))
-    if transfer.action is None:
+    admission = assess_transfer(transfer, observation=observation)
+    if not admission.accepted:
         return ActionDecision(
             "block",
-            reason=transfer.reason or "transfer_failed",
-            detail=transfer.detail,
+            reason=admission.reason or transfer.reason or "transfer_failed",
+            detail={
+                **dict(transfer.detail),
+                "mapping_confidence": admission.confidence,
+            },
         )
     return ActionDecision(
         "ready",

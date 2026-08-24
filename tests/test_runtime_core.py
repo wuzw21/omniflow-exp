@@ -29,7 +29,15 @@ def test_core_executes_one_transferred_action_and_observes_once(monkeypatch) -> 
         settle_calls.append(seconds)
 
     monkeypatch.setattr(core.asyncio, "sleep", settle)
-    before = Observation(xml="<before/>", package_name="com.example")
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" '
+            'bounds="[200,300][400,500]" clickable="true" enabled="true" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 1000, "height": 1000}},
+    )
     source = Observation(xml="<source/>", package_name="com.example")
     after = Observation(xml="<after/>", package_name="com.example")
     host = RecordingHost(after)
@@ -99,6 +107,82 @@ def test_core_reports_transfer_failure_without_dispatch(monkeypatch) -> None:
     assert result.error == "omnitransfer_failed"
     assert host.actions == []
     assert host.observe_requests == []
+
+
+def test_core_blocks_low_confidence_transfer_without_dispatch(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" text="Click Me" '
+            'bounds="[100,100][300,200]" clickable="true" enabled="true" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+    source = Observation(xml="<hierarchy />", package_name="com.example")
+    host = RecordingHost(Observation(xml="<after/>"))
+
+    async def transfer(
+        _action: Action,
+        _observation: Observation,
+        _source_state: Observation,
+    ) -> TransferResult:
+        return TransferResult(
+            Action("click", {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_mapped",
+            detail={"score": 0.79},
+        )
+
+    result = asyncio.run(
+        core.execute_action(
+            Action("click", {"x": 200, "y": 150}),
+            observation=before,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=source,
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "omnitransfer_low_confidence"
+    assert host.actions == []
+    assert host.observe_requests == []
+
+
+def test_core_blocks_transfer_to_non_executable_target(monkeypatch) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.TextView" text="Counter" '
+            'bounds="[100,100][300,200]" clickable="false" enabled="true" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+    host = RecordingHost(Observation(xml="<after/>"))
+
+    async def transfer(*_args: object) -> TransferResult:
+        return TransferResult(
+            Action("click", {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_mapped",
+            detail={"score": 0.99},
+        )
+
+    result = asyncio.run(
+        core.execute_action(
+            Action("click", {"x": 200, "y": 150}),
+            observation=before,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=Observation(xml="<hierarchy />"),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "omnitransfer_target_not_executable"
+    assert host.actions == []
 
 
 def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:

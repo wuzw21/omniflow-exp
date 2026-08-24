@@ -223,7 +223,6 @@ class OmniFlow:
                     ),
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
-                    page_encoder=self._get_page_encoder(),
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -437,6 +436,11 @@ class OmniFlow:
                 goal,
                 observation=observation,
                 source_states=recall_source_states,
+                exclude_function_ids=(
+                    frozenset({function_session.selected_id})
+                    if function_session.selected_id
+                    else frozenset()
+                ),
             )
             planner_functions = recall_result.functions
             planner_function_catalog = {
@@ -500,6 +504,14 @@ class OmniFlow:
                 except ValueError as error:
                     previous_action_error = str(error)
                     continue
+                current_entry_observation = await self._observe(screenshot=True)
+                if not _same_observation(observation, current_entry_observation):
+                    observation = current_entry_observation
+                    previous_action_error = (
+                        "function_entry_state_changed_after_mapping"
+                    )
+                    continue
+                observation = current_entry_observation
                 replay = await execute_function(
                     function_session.bound,
                     host=self.host,
@@ -512,7 +524,6 @@ class OmniFlow:
                     ),
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
-                    page_encoder=self._get_page_encoder(),
                 )
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
@@ -679,7 +690,6 @@ class OmniFlow:
                         ),
                         checker_rules=self.checker_library.rules,
                         checker_trigger_counts=shared_checker_trigger_counts,
-                        page_encoder=self._get_page_encoder(),
                     )
                     actions_executed += replay.actions_executed
                     replay_trace = list(replay.detail.get("trace") or ())
@@ -766,6 +776,7 @@ class OmniFlow:
         observation: Observation,
         source_states: dict[str, Observation | None],
         limit: int | None = None,
+        exclude_function_ids: frozenset[str] = frozenset(),
     ) -> RecallResult:
         for function in self.store.functions.values():
             if not function.steps:
@@ -793,13 +804,15 @@ class OmniFlow:
         resolved_limit = (
             self.config.runtime.max_function_tools if limit is None else int(limit)
         )
-        return recall_functions(
+        return await recall_functions(
             str(goal),
             observation=observation,
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
             page_encoder=self._get_page_encoder(),
+            transfer=self.plugins.transfer,
+            exclude_function_ids=exclude_function_ids,
         )
 
     def recall(
@@ -816,13 +829,16 @@ class OmniFlow:
             self.config.runtime.max_function_tools if limit is None else int(limit)
         )
         return list(
-            recall_functions(
-                str(goal),
-                observation=Observation.from_value(observation),
-                functions=self.store.functions,
-                source_states=source_states,
-                limit=max(0, int(resolved_limit)),
-                page_encoder=self._get_page_encoder(),
+            asyncio.run(
+                recall_functions(
+                    str(goal),
+                    observation=Observation.from_value(observation),
+                    functions=self.store.functions,
+                    source_states=source_states,
+                    limit=max(0, int(resolved_limit)),
+                    page_encoder=self._get_page_encoder(),
+                    transfer=self.plugins.transfer,
+                )
             ).functions
         )
 

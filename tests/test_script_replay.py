@@ -222,7 +222,11 @@ def test_script_replay_executes_multiple_functions_in_source_order(
     host = AlwaysObstructedHost({"source-0": source})
 
     async def transfer(action, observation, source_state):
-        return TransferResult(action, reason="omnitransfer_mapped")
+        return TransferResult(
+            Action(action.tool, {"x": 200.0, "y": 150.0}),
+            reason="omnitransfer_mapped",
+            detail={"score": 0.999},
+        )
 
     monkeypatch.setattr("omniflow.runtime.execution.default_transfer", transfer)
 

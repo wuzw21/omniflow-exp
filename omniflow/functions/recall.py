@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 import re
 from typing import Any, Mapping
 
 import numpy as np
 
-from omniflow.core.model import Function, Observation
+from omniflow.core.model import Function, Observation, Transfer, TransferResult
+from omniflow.transfer.admission import assess_transfer, requires_contextual_mapping
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
 
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
@@ -21,7 +23,7 @@ class RecallResult:
     audit: dict[str, Any]
 
 
-def recall_functions(
+async def recall_functions(
     goal: str,
     *,
     observation: Observation,
@@ -29,8 +31,10 @@ def recall_functions(
     source_states: Mapping[str, Observation | None],
     limit: int = 8,
     page_encoder: PageEncoder | None = None,
+    transfer: Transfer | None = None,
+    exclude_function_ids: frozenset[str] = frozenset(),
 ) -> RecallResult:
-    """Expose only Functions whose entry page matches the current page."""
+    """Coarsely rank Functions, then expose only first-step transfer matches."""
 
     encoder = page_encoder or PageEncoder()
     current_page = _embed_page(encoder, observation)
@@ -48,15 +52,81 @@ def recall_functions(
             encoder=encoder,
         )
         decisions.append(decision)
-        if function.agent_visible and decision["page_match"] is True:
+        if (
+            function.agent_visible
+            and function.steps
+            and function.id not in exclude_function_ids
+        ):
             candidates.append((float(decision["score"]), function, decision))
 
     ranked = sorted(candidates, key=lambda item: (-item[0], item[1].id))
-    selected = ranked[: max(0, int(limit))]
+    coarse_limit = max(0, int(limit)) * 3
+    coarse = ranked[:coarse_limit]
+    admitted: list[tuple[float, Function, dict[str, Any]]] = []
+    for _score, function, decision in coarse:
+        decision["coarse_selected"] = True
+        source_state_id = function.steps[0].source_state_id
+        source_observation = source_states.get(source_state_id)
+        if not requires_contextual_mapping(function.steps[0].action.tool):
+            transfer_result = TransferResult(function.steps[0].action)
+        elif transfer is None:
+            decision["rejection_reason"] = "function_transfer_unavailable"
+            continue
+        else:
+            try:
+                mapped = await _await(
+                    transfer(
+                        function.steps[0].action,
+                        observation,
+                        source_observation,
+                    )
+                )
+                transfer_result = (
+                    mapped
+                    if isinstance(mapped, TransferResult)
+                    else TransferResult(None, reason="omnitransfer_result_invalid")
+                )
+            except Exception as error:  # noqa: BLE001
+                transfer_result = TransferResult(
+                    None,
+                    reason=f"omnitransfer_error:{error}",
+                )
+        admission = assess_transfer(
+            transfer_result,
+            observation=observation,
+        )
+        decision["mapping_confidence"] = admission.confidence
+        decision["entry_mapping_reason"] = (
+            admission.reason or transfer_result.reason
+        )
+        decision["entry_mapping_target"] = (
+            transfer_result.action.to_dict()
+            if transfer_result.action is not None
+            else None
+        )
+        if not admission.accepted:
+            decision["rejection_reason"] = (
+                admission.reason or "function_entry_mapping_rejected"
+            )
+            continue
+        decision["rejection_reason"] = None
+        admitted.append((_score, function, decision))
+
+    selected = admitted[: max(0, int(limit))]
     selected_ids = {function.id for _score, function, _audit in selected}
     for decision in decisions:
         decision["selected"] = decision["function_id"] in selected_ids
-        if not decision["selected"] and decision["rejection_reason"] is None:
+        if not decision["selected"] and not decision.get("coarse_selected"):
+            decision["rejection_reason"] = (
+                "function_excluded_for_run"
+                if decision["function_id"] in exclude_function_ids
+                else (
+                    "function_not_agent_visible"
+                    if decision.get("agent_visible") is False
+                    else "coarse_candidate_limit"
+                )
+            )
+        elif not decision["selected"] and decision["rejection_reason"] is None:
             decision["rejection_reason"] = "candidate_limit"
 
     return RecallResult(
@@ -82,6 +152,9 @@ def recall_functions(
                 "goal_lexical": GOAL_LEXICAL_WEIGHT,
             },
             "page_similarity_threshold": FUNCTION_PAGE_SIMILARITY_THRESHOLD,
+            "coarse_candidate_function_ids": [
+                function.id for _score, function, _audit in coarse
+            ],
             "candidate_function_ids": [
                 function.id for _score, function, _audit in selected
             ],
@@ -119,6 +192,7 @@ def _score_function(
 
     return {
         "function_id": function.id,
+        "agent_visible": function.agent_visible,
         "source_state_id": source_state_id,
         "page_similarity": page_similarity,
         "page_similarity_threshold": FUNCTION_PAGE_SIMILARITY_THRESHOLD,
@@ -126,10 +200,16 @@ def _score_function(
         "goal_lexical_score": goal_score,
         "score": score,
         "selected": False,
-        "rejection_reason": (
-            None if page_match["matched"] else page_match["reason"]
-        ),
+        "coarse_selected": False,
+        "mapping_confidence": None,
+        "entry_mapping_reason": None,
+        "entry_mapping_target": None,
+        "rejection_reason": None,
     }
+
+
+async def _await(value: Any) -> Any:
+    return await value if inspect.isawaitable(value) else value
 
 
 def match_function_page(

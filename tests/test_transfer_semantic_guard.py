@@ -312,6 +312,7 @@ def test_input_description_resolves_only_the_source_anchor_for_omnitransfer(
                 "text": "Enter the product",
                 "class": "android.widget.EditText",
             },
+            "score": 0.95,
         }
 
     function = SimpleNamespace(
@@ -904,6 +905,40 @@ def test_transfer_abstains_on_low_confidence_mapped_result_for_vlm_fallback(
     assert result.reason == "omnitransfer_low_confidence"
     assert result.detail["fallback"] == "online_vlm"
     assert result.detail["score"] == 0.002186
+
+
+def test_transfer_abstains_when_contextual_confidence_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        execution,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_unified_association_v1",
+            "new_x": 1505.0,
+            "new_y": 621.5,
+            "target_bbox": [802.0, 544.0, 2208.0, 699.0],
+        },
+    )
+
+    result = execution.default_transfer(
+        Action("click", {"x": 500.0, "y": 428.90625}),
+        Observation(
+            xml=TARGET_XML,
+            package_name="com.android.settings",
+            extra={"display": {"width": 2208, "height": 1840}},
+        ),
+        Observation(
+            xml=SOURCE_XML,
+            package_name="com.android.settings",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert result.action is None
+    assert result.reason == "omnitransfer_confidence_missing"
+    assert result.detail["fallback"] == "online_vlm"
 
 
 def test_transfer_passes_generic_source_xml_without_post_mapping_gate(

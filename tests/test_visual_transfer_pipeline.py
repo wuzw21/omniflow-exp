@@ -113,6 +113,7 @@ def test_default_transfer_forwards_source_and_target_screenshots(
             "new_y": 100.0,
             "target_bbox": [40.0, 60.0, 90.0, 140.0],
             "candidates": [{"score": 1.0}],
+            "score": 1.0,
         }
 
     monkeypatch.setattr(execution, "transfer_action", fake_transfer_action)
