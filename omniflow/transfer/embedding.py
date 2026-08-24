@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import sys
 from typing import Any
-import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -236,6 +235,65 @@ class _Element:
     attributes: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _CanonicalPage:
+    """One canonical graph plus its exact poolable node projection."""
+
+    graph: Any | None
+    elements: tuple[_Element, ...]
+    poolable_indices: tuple[int, ...]
+    root_bounds: tuple[int, int, int, int]
+
+
+class _CanonicalPageSchema:
+    """The sole Observation -> page-node schema seam used by page embedding."""
+
+    def __init__(self) -> None:
+        self._graph_from_record = _canonical_omnitransfer_module(
+            "omnitransfer.ui_graph"
+        ).graph_from_record
+
+    def parse(self, observation: Observation) -> _CanonicalPage:
+        xml = str(observation.xml or "")
+        if not xml.strip():
+            return _CanonicalPage(None, (), (), (0, 0, 1000, 1000))
+        graph_id = hashlib.sha256(xml.encode("utf-8")).hexdigest()[:20]
+        try:
+            graph = self._graph_from_record(
+                _omnitransfer_record(observation), graph_id=graph_id
+            )
+        except (SyntaxError, ValueError):
+            return _CanonicalPage(None, (), (), (0, 0, 1000, 1000))
+
+        nodes_by_id = {node.node_id: node for node in graph.nodes}
+        poolable_indices: list[int] = []
+        elements: list[_Element] = []
+        for index, node in enumerate(graph.nodes):
+            bounds = _canonical_bounds(node.bbox)
+            if bounds is None:
+                continue
+            poolable_indices.append(index)
+            elements.append(
+                _Element(
+                    id=str(node.node_id),
+                    parent_id=(
+                        str(node.parent_id) if node.parent_id is not None else None
+                    ),
+                    children_ids=tuple(str(value) for value in node.child_ids),
+                    depth=int(node.depth),
+                    bounds=bounds,
+                    attributes=_canonical_attributes(node, nodes_by_id),
+                )
+            )
+        root_bounds = _root_bounds(tuple(elements))
+        return _CanonicalPage(
+            graph,
+            tuple(elements),
+            tuple(poolable_indices),
+            root_bounds,
+        )
+
+
 class _UnifiedNodeEncoder:
     """Produce learned 64D node descriptors without owning page pooling."""
 
@@ -258,34 +316,16 @@ class _UnifiedNodeEncoder:
         self.checkpoint_sha256 = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
         if self.checkpoint_sha256 != _UNIFIED_NODE_CHECKPOINT_SHA256:
             raise ValueError("omnitransfer_node_checkpoint_checksum_mismatch")
-        source_root = str(root / "src")
-        package_root = root / "src" / "omnitransfer"
-        sys.path[:] = [
-            item
-            for item in sys.path
-            if str(Path(item or ".").resolve()) != source_root
-        ]
-        sys.path.insert(0, source_root)
-        importlib.invalidate_caches()
-        for module_name in tuple(sys.modules):
-            if module_name == "omnitransfer" or module_name.startswith(
-                "omnitransfer."
-            ):
-                module_path = Path(
-                    str(getattr(sys.modules[module_name], "__file__", ""))
-                ).resolve()
-                if package_root not in module_path.parents:
-                    del sys.modules[module_name]
-        learned = importlib.import_module("omnitransfer.learned_matcher")
-        numpy_matcher = importlib.import_module("omnitransfer.numpy_v9_matcher")
-        ui_graph = importlib.import_module("omnitransfer.ui_graph")
+        learned = _canonical_omnitransfer_module("omnitransfer.learned_matcher")
+        numpy_matcher = _canonical_omnitransfer_module(
+            "omnitransfer.numpy_v9_matcher"
+        )
         self._matcher = numpy_matcher.NumpyGeometricAlignmentMatcher.from_checkpoint(
             checkpoint
         )
         if int(self._matcher.config.hidden_dim) != self.dimension:
             raise ValueError("omnitransfer_node_embedding_dimension_mismatch")
         self._encode_graph = learned.encode_graph
-        self._graph_from_record = ui_graph.graph_from_record
         self._visual_inputs = numpy_matcher._visual_inputs
         self.version = (
             f"{self._matcher.config.architecture}:"
@@ -294,14 +334,11 @@ class _UnifiedNodeEncoder:
 
     def encode(
         self,
-        observation: Observation,
-        elements: tuple[_Element, ...],
+        page: _CanonicalPage,
     ) -> np.ndarray:
-        record = _omnitransfer_record(observation)
-        graph_id = hashlib.sha256(
-            str(observation.xml or "").encode("utf-8")
-        ).hexdigest()[:20]
-        graph = self._graph_from_record(record, graph_id=graph_id)
+        graph = page.graph
+        if graph is None:
+            return np.zeros((0, self.dimension), dtype=np.float32)
         encoded = self._encode_graph(
             graph,
             config=self._matcher.config,
@@ -325,19 +362,15 @@ class _UnifiedNodeEncoder:
             visual,
             visual_mask,
         )
-        valid_indices = [
-            index
-            for index, node in enumerate(graph.nodes)
-            if node.bbox is not None
-            and node.bbox[2] > node.bbox[0]
-            and node.bbox[3] > node.bbox[1]
-        ]
-        aligned = np.asarray(vectors[valid_indices], dtype=np.float32)
-        if aligned.shape != (len(elements), self.dimension):
+        all_vectors = np.asarray(vectors, dtype=np.float32)
+        if all_vectors.shape != (len(graph.nodes), self.dimension):
             raise ValueError(
                 "omnitransfer_node_embedding_alignment_failed:"
-                f"elements={len(elements)}:vectors={aligned.shape}"
+                f"nodes={len(graph.nodes)}:vectors={all_vectors.shape}"
             )
+        aligned = np.asarray(all_vectors[list(page.poolable_indices)], dtype=np.float32)
+        if aligned.shape != (len(page.elements), self.dimension):
+            raise ValueError("omnitransfer_poolable_node_projection_failed")
         if not np.all(np.isfinite(aligned)):
             raise ValueError("omnitransfer_node_embedding_unusable")
         return aligned
@@ -350,9 +383,10 @@ class PageEncoder:
 
     def __init__(self, weights: EncoderWeights | None = None):
         self.weights = weights or EncoderWeights.manual_default()
+        self._schema = _CanonicalPageSchema()
         self._node_encoder = _UnifiedNodeEncoder()
         self.checkpoint_sha256 = self._node_encoder.checkpoint_sha256
-        self.version = f"page-vector.v2:{self._node_encoder.version}"
+        self.version = f"page-vector.v3:{self._node_encoder.version}"
 
     @classmethod
     def from_parameters(cls, parameters: np.ndarray) -> PageEncoder:
@@ -370,7 +404,9 @@ class PageEncoder:
             if isinstance(value, str)
             else Observation.from_value(value)
         )
-        elements, root_bounds = _restore_tree(str(observation.xml or ""))
+        page = self._schema.parse(observation)
+        elements = page.elements
+        root_bounds = page.root_bounds
         if not elements:
             return TreeEmbedding(
                 (),
@@ -379,7 +415,7 @@ class PageEncoder:
                 self.version,
                 self.weights.hash,
             )
-        vectors = self._node_encoder.encode(observation, elements)
+        vectors = self._node_encoder.encode(page)
         masks = _slice_masks(elements, root_bounds)
         page_vector = _pool_tree(elements, vectors, masks, self.weights)
         embedded = tuple(
@@ -418,6 +454,27 @@ def _canonical_omnitransfer_root() -> Path:
     return root
 
 
+def _canonical_omnitransfer_module(name: str) -> Any:
+    root = _canonical_omnitransfer_root()
+    source_root = str(root / "src")
+    package_root = root / "src" / "omnitransfer"
+    sys.path[:] = [
+        item
+        for item in sys.path
+        if str(Path(item or ".").resolve()) != source_root
+    ]
+    sys.path.insert(0, source_root)
+    importlib.invalidate_caches()
+    for module_name in tuple(sys.modules):
+        if module_name == "omnitransfer" or module_name.startswith("omnitransfer."):
+            module_path = Path(
+                str(getattr(sys.modules[module_name], "__file__", ""))
+            ).resolve()
+            if package_root not in module_path.parents:
+                del sys.modules[module_name]
+    return importlib.import_module(name)
+
+
 def _omnitransfer_record(observation: Observation) -> dict[str, Any]:
     record: dict[str, Any] = {"xml": str(observation.xml or "")}
     display = observation.extra.get("display")
@@ -451,7 +508,9 @@ def pool_dynamic_page_words(
         if isinstance(value, str)
         else Observation.from_value(value)
     )
-    elements, root_bounds = _restore_tree(str(observation.xml or ""))
+    page = _CanonicalPageSchema().parse(observation)
+    elements = page.elements
+    root_bounds = page.root_bounds
     descriptors = np.asarray(node_descriptors, dtype=np.float32)
     if descriptors.ndim != 2 or descriptors.shape[1] <= 0:
         raise ValueError("page_word_descriptors_must_be_n_by_d")
@@ -482,7 +541,9 @@ def prepare_page_word_inputs(
         if isinstance(value, str)
         else Observation.from_value(value)
     )
-    elements, root_bounds = _restore_tree(str(observation.xml or ""))
+    page = _CanonicalPageSchema().parse(observation)
+    elements = page.elements
+    root_bounds = page.root_bounds
     descriptors = np.asarray(node_descriptors, dtype=np.float32)
     if descriptors.ndim != 2 or descriptors.shape[1] <= 0:
         raise ValueError("page_word_descriptors_must_be_n_by_d")
@@ -542,101 +603,79 @@ def pool_soft_page_words(
     )
 
 
-def _restore_tree(xml_text: str) -> tuple[tuple[_Element, ...], tuple[int, int, int, int]]:
+def _canonical_bounds(value: Any) -> tuple[int, int, int, int] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return (), (0, 0, 1000, 1000)
+        left, top, right, bottom = (round(float(item)) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
 
-    raw: list[dict[str, Any]] = []
 
-    def visit(
-        node: ET.Element,
-        parent_id: str | None,
-        depth: int,
-        in_list: bool,
-        has_siblings: bool,
-    ) -> None:
-        bounds = _bounds(node.attrib.get("bounds"))
-        class_name = str(node.attrib.get("class") or node.tag).rsplit(".", 1)[-1]
-        next_in_list = in_list or any(
-            token in class_name.lower() for token in ("list", "recycler", "grid")
-        )
-        current_parent = parent_id
-        current_depth = depth
-        if bounds is not None:
-            element_id = f"e{len(raw)}"
-            attributes = {
-                "class": class_name,
-                "text": _text(node.attrib.get("text")),
-                "content_description": _text(node.attrib.get("content-desc")),
-                "resource_id": str(node.attrib.get("resource-id") or "").rsplit(
-                    "/", 1
-                )[-1],
-                "clickable": _bool(node.attrib, "clickable"),
-                "long_clickable": _bool(node.attrib, "long-clickable"),
-                "focusable": _bool(node.attrib, "focusable"),
-                "focused": _bool(node.attrib, "focused"),
-                "editable": _bool(node.attrib, "editable")
-                or "edittext" in class_name.lower(),
-                "scrollable": _bool(node.attrib, "scrollable"),
-                "checkable": _bool(node.attrib, "checkable"),
-                "checked": _bool(node.attrib, "checked"),
-                "enabled": _bool(node.attrib, "enabled", default=True),
-                "selected": _bool(node.attrib, "selected"),
-                "visible": _bool(node.attrib, "visible-to-user", default=True),
-                "in_list": next_in_list,
-                "has_siblings": has_siblings,
-                "raw_child_count": len(node),
-            }
-            raw.append(
-                {
-                    "id": element_id,
-                    "parent_id": parent_id,
-                    "depth": depth,
-                    "bounds": bounds,
-                    "attributes": attributes,
-                }
-            )
-            current_parent = element_id
-            current_depth = depth + 1
-        children = list(node)
-        for child in children:
-            visit(
-                child,
-                current_parent,
-                current_depth,
-                next_in_list,
-                len(children) > 1,
-            )
-
-    visit(root, None, 0, False, False)
-    if not raw:
-        return (), (0, 0, 1000, 1000)
-    child_ids: dict[str, list[str]] = {item["id"]: [] for item in raw}
-    for item in raw:
-        parent_id = item["parent_id"]
-        if parent_id in child_ids:
-            child_ids[parent_id].append(item["id"])
-    elements = tuple(
-        _Element(
-            item["id"],
-            item["parent_id"],
-            tuple(child_ids[item["id"]]),
-            item["depth"],
-            item["bounds"],
-            item["attributes"],
-        )
-        for item in raw
+def _root_bounds(elements: tuple[_Element, ...]) -> tuple[int, int, int, int]:
+    if not elements:
+        return 0, 0, 1000, 1000
+    return (
+        min(item.bounds[0] for item in elements),
+        min(item.bounds[1] for item in elements),
+        max(item.bounds[2] for item in elements),
+        max(item.bounds[3] for item in elements),
     )
-    bounds = [item.bounds for item in elements]
-    root_bounds = (
-        min(item[0] for item in bounds),
-        min(item[1] for item in bounds),
-        max(item[2] for item in bounds),
-        max(item[3] for item in bounds),
+
+
+def _canonical_attributes(node: Any, nodes_by_id: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(getattr(node, "metadata", {}) or {})
+    class_name = str(getattr(node, "class_name", "") or "").rsplit(".", 1)[-1]
+    class_key = class_name.lower()
+    editable = bool(getattr(node, "editable", False)) or "edittext" in class_key
+    clickable = bool(getattr(node, "clickable", False))
+
+    parent = nodes_by_id.get(str(getattr(node, "parent_id", "") or ""))
+    has_siblings = bool(parent is not None and len(parent.child_ids) > 1)
+    in_list = False
+    ancestor = node
+    visited: set[str] = set()
+    while ancestor is not None:
+        ancestor_id = str(getattr(ancestor, "node_id", "") or "")
+        if not ancestor_id or ancestor_id in visited:
+            break
+        visited.add(ancestor_id)
+        ancestor_class = str(getattr(ancestor, "class_name", "") or "").lower()
+        if any(token in ancestor_class for token in ("list", "recycler", "grid")):
+            in_list = True
+            break
+        ancestor = nodes_by_id.get(
+            str(getattr(ancestor, "parent_id", "") or "")
+        )
+
+    checkable = bool(metadata.get("checkable", False)) or any(
+        token in class_key for token in ("checkbox", "radiobutton", "switch")
     )
-    return elements, root_bounds
+    return {
+        "class": class_name,
+        "text": _text(getattr(node, "text", "")),
+        "content_description": _text(getattr(node, "content_desc", "")),
+        "resource_id": str(getattr(node, "resource_id", "") or "").rsplit(
+            "/", 1
+        )[-1],
+        "clickable": clickable,
+        "long_clickable": bool(metadata.get("long_clickable", False)),
+        "focusable": bool(metadata.get("focusable", clickable or editable)),
+        "focused": bool(metadata.get("focused", False)),
+        "editable": editable,
+        "scrollable": bool(getattr(node, "scrollable", False)),
+        "checkable": checkable,
+        "checked": bool(metadata.get("checked", False)),
+        "enabled": bool(getattr(node, "enabled", True)),
+        "selected": bool(metadata.get("selected", False)),
+        "visible": bool(metadata.get("visible", True)),
+        "in_list": in_list,
+        "has_siblings": has_siblings,
+        "raw_child_count": len(getattr(node, "child_ids", ()) or ()),
+    }
 
 
 def _embed_elements(
@@ -1084,18 +1123,6 @@ def _column_softmax(values: np.ndarray) -> np.ndarray:
     return exponent / np.sum(exponent, axis=0, keepdims=True)
 
 
-def _bounds(value: Any) -> tuple[int, int, int, int] | None:
-    numbers = [int(item) for item in re.findall(r"-?\d+", str(value or ""))]
-    if len(numbers) != 4 or numbers[2] <= numbers[0] or numbers[3] <= numbers[1]:
-        return None
-    return numbers[0], numbers[1], numbers[2], numbers[3]
-
-
-def _bool(attributes: dict[str, str], key: str, *, default: bool = False) -> bool:
-    value = attributes.get(key)
-    return default if value is None else str(value).lower() == "true"
-
-
 def _text(value: Any) -> str:
     return " ".join(str(value or "").lower().split())
 
@@ -1108,7 +1135,7 @@ __all__ = [
     "SoftPageWordOutput",
     "SoftPageWordWeights",
     "TreeEmbedding",
-    "pool_soft_page_words",
     "pool_dynamic_page_words",
+    "pool_soft_page_words",
     "prepare_page_word_inputs",
 ]
