@@ -928,6 +928,9 @@ def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
         in correction
     )
     assert "allowed_package_name=com.google.android.documentsui" in correction
+    assert "copy one complete allowed_package_name value byte-for-byte" in correction
+    assert len(completions.requests[1]["messages"][-1]["content"]) == 1
+    assert "Relevant UI elements" not in correction
     assert planner.take_metadata()["rejected_tool_calls"][0]["arguments"] == {
         "summary": "Use open_app",
         "package_name": "com.android.filemanager",

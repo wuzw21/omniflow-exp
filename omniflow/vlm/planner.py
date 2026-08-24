@@ -147,9 +147,10 @@ class VLMPlanner:
                     "tool": error.tool_name or None,
                     "arguments": error.arguments,
                 }
-                lightweight_retry = error.code.endswith(
-                    "expected_one_native_tool_call:got_0"
-                )
+                # The state has not changed, and retries expose only the rejected
+                # tool. Re-sending screenshots, projected UI, and skill context
+                # adds tokens without adding evidence needed to repair arguments.
+                lightweight_retry = True
         else:
             raise AssertionError("unreachable")
 

@@ -378,6 +378,13 @@ def _turn_text(
                 ),
             )
         )
+        if validation_error.startswith("planner_open_app_package_not_installed:"):
+            lines.append(
+                "package_name is an opaque identifier: copy one complete "
+                "allowed_package_name value byte-for-byte from the registered "
+                "open_app enum. Never shorten it, remove vendor segments, or "
+                "invent an Android package name."
+            )
         if rejected_tool_call:
             lines.extend(
                 (
