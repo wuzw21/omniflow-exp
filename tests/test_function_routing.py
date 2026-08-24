@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,27 @@ from src.integrations.android_world.agent import (
     _TaskHost,
     build_agent,
 )
+
+
+def test_planner_disables_hidden_openai_transport_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options: dict[str, object] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            options.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    planner = VLMPlanner(
+        model="test-model",
+        api_key="test-key",
+        base_url="https://example.test/v1",
+    )
+
+    planner._build_client()
+
+    assert options["max_retries"] == 0
 
 
 class RecordingHost:

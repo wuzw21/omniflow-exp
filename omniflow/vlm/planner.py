@@ -197,7 +197,10 @@ class VLMPlanner:
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("Install omniflow[llm] to use VLMPlanner") from exc
-        options: dict[str, Any] = {"api_key": self._api_key or "not-required"}
+        options: dict[str, Any] = {
+            "api_key": self._api_key or "not-required",
+            "max_retries": 0,
+        }
         if self._base_url:
             options["base_url"] = self._base_url
         return OpenAI(**options)
