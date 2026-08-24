@@ -344,7 +344,8 @@ class AndroidWorldHost:
             for package in sorted(exposed_packages):
                 if package in catalog_values:
                     continue
-                label = launcher_package_label(package)
+                registered_name = resolve_androidworld_app_name(package, controller)
+                label = launcher_package_label(registered_name)
                 if label in catalog and catalog[label] != package:
                     label = f"{label} ({package})"
                 catalog[label] = package

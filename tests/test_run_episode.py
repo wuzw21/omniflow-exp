@@ -2621,9 +2621,17 @@ def test_androidworld_host_exposes_only_launchable_apps_to_planner(
             else {}
         ),
     )
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.resolve_androidworld_app_name",
+        lambda package, _controller: (
+            "files"
+            if package == "com.google.android.documentsui"
+            else package
+        ),
+    )
 
     assert host.installed_apps() == {
-        "Documentsui": "com.google.android.documentsui",
+        "Files": "com.google.android.documentsui",
         "Settings": "com.android.settings",
     }
 
