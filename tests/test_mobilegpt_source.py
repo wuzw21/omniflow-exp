@@ -307,6 +307,42 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert source_validation["source_method"] == MOBILEGPT_SOURCE_METHOD
 
 
+def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
+    index, source_run_log = _write_source_index(tmp_path / "source")
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory)
+    stats = bundle / "source_stats.jsonl"
+    audit = bundle / "trajectory_audit.json"
+    _write_stats(stats)
+    _write_audit(audit)
+    pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        trajectory_audit=audit,
+        task_name="SystemBluetoothTurnOn",
+        target_package="com.android.settings",
+        target_app="Settings",
+        source_model="",
+    )
+    manifest_path = bundle / MOBILEGPT_MEMORY_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["target_package"] = "android"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="mobilegpt_source_memory_target_package_mismatch",
+    ):
+        mobilegpt_source.validate_mobilegpt_source_memory(
+            index_path=index,
+            task_name="SystemBluetoothTurnOn",
+            memory_root=memory,
+            model="",
+        )
+
+
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     memory = bundle / "memory"

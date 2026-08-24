@@ -195,12 +195,19 @@ def validate_mobilegpt_source_memory(
     memory_index: str | Path | None = None,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
-    source_run_log, compatible_sha256s, _, _ = _source_preflight(item)
+    source_run_log, compatible_sha256s, _, target_info = _source_preflight(item)
     manifest_path = Path(memory_root).expanduser().resolve().parent / MOBILEGPT_MEMORY_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     schema_version = str(manifest.get("schema_version") or "")
     if schema_version != MOBILEGPT_MEMORY_SCHEMA:
         raise ValueError("mobilegpt_source_memory_schema_invalid")
+    expected_target_package = str(target_info.get("target_package") or "").strip()
+    actual_target_package = str(manifest.get("target_package") or "").strip()
+    if actual_target_package != expected_target_package:
+        raise ValueError(
+            "mobilegpt_source_memory_target_package_mismatch:"
+            f"expected={expected_target_package}:actual={actual_target_package}"
+        )
     validated = validate_prepared_memory(
         memory_root,
         task_name=item.task,
