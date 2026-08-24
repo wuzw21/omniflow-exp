@@ -944,6 +944,38 @@ def test_direct_conversion_is_recalled_by_official_page_matcher(
     assert page_index == 0
 
 
+def test_action_generalization_indexes_official_screen_root(tmp_path: Path) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 50, "y": 50}],
+        forests=[
+            '<hierarchy><node text="Delete" clickable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+    transition = _load_runlog_trajectory(source)["transitions"][0]
+
+    def require_indexed_root_children(
+        action: dict,
+        _subtask: dict,
+        screen: str,
+    ) -> dict:
+        root = mobilegpt_module.ET.fromstring(screen)
+        for child in root:
+            int(child.get("index"))
+        return action
+
+    converted, _, _ = _mobilegpt_action_from_runlog(
+        transition,
+        '<div><button index="0" bounds="[0,0][100,100]">Delete</button></div>',
+        task_parameters={},
+        selected_subtask={"name": "delete_recipe", "parameters": {}},
+        generalize_action=require_indexed_root_children,
+    )
+
+    assert converted["name"] == "click"
+
+
 def test_conversion_grounds_input_from_verified_text_change(
     tmp_path: Path,
 ) -> None:

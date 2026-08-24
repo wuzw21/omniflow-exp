@@ -1749,7 +1749,7 @@ def _mobilegpt_action_from_runlog(
                 f"<{matching_parameters[0]}__-1>"
             )
     elif "index" in converted["parameters"] and callable(generalize_action):
-        generalization_screen = f"<hierarchy>{parsed_xml}</hierarchy>"
+        generalization_screen = _mobilegpt_ui_match_xml(parsed_xml)
         selected_parameters = selected_subtask.get("parameters")
         if not isinstance(selected_parameters, dict):
             selected_parameters = {}
