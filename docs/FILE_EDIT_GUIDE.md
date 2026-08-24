@@ -143,7 +143,8 @@ rg --files -g '*.py' | sort
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
-| `src/integrations/official_forward.py` | 唯一外部 baseline forwarder；只准备临时 workspace、设备和官方入口，不实现 parser/controller/action loop |
+| `src/integrations/official_forward.py` | 外部 baseline workspace/Server 准备；MobileGPT 旧 Accessibility client 入口必须硬失败，不能执行物理层 |
+| `src/integrations/mobilegpt_oob_client.py` | MobileGPT 唯一 target client；只实现官方 Server wire adapter，应用启动、observe、act 全部调用 canonical `OobControlClient` |
 | `vendor/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 仅 B-MoCA 外部 replay 合同的共享 runtime 薄适配器；禁止接入 AndroidWorld 方法或私有 mapper/executor |
@@ -156,7 +157,7 @@ rg --files -g '*.py' | sort
 | `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；不得暴露 direct Function、调用序列或测试专用执行模式 |
 | `src/integrations/android_world/methods.py` | 正式方法 adapter registry；OmniFlow adapter 只传 Store、Planner 和 Host 配置，不传 Function intent |
 | `src/integrations/mobilegpt_format.py` | MobileGPT 官方 XML Encoder 的最小转换入口 |
-| `src/integrations/android_world/oob_control.py` | 仅显式选择的 development/source/OOB transport adapter |
+| `src/integrations/android_world/oob_control.py` | AndroidWorld 正式实验唯一物理 transport adapter；ADB 仅用于安装、系统 bootstrap 和 OOB IPC，不得启动目标应用或执行动作 |
 | `src/integrations/android_world/state.py` | native state normalization |
 
 ## 脚本、schema、工具和测试

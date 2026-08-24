@@ -37,14 +37,23 @@ APPAGENT_REQUIRED_MODULES = (
 )
 REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 
-# These are the only device-side services used by the three supported
-# execution paths.  They are enabled together when the device preflight runs;
-# a provider still owns its own protocol and action implementation.
-DEFAULT_ACCESSIBILITY_SERVICES = (
+# OOB is the only physical observation/action service in formal AndroidWorld
+# experiments.  The legacy AndroidWorld forwarder and MobileGPT client may be
+# installed as dependency artifacts, but preflight must actively remove them
+# from the enabled service list so they cannot contend with OOB.
+OOB_ACCESSIBILITY_SERVICE = (
+    "cn.com.omnimind.bot.debug/"
+    "cn.com.omnimind.accessibility.service.AssistsService"
+)
+LEGACY_ACCESSIBILITY_SERVICES = (
     "com.google.androidenv.accessibilityforwarder/com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
-    "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
     "com.example.MobileGPT/.MobileGPTAccessibilityService",
 )
+MANAGED_ACCESSIBILITY_SERVICES = (
+    OOB_ACCESSIBILITY_SERVICE,
+    *LEGACY_ACCESSIBILITY_SERVICES,
+)
+DEFAULT_ACCESSIBILITY_SERVICES = (OOB_ACCESSIBILITY_SERVICE,)
 
 
 @dataclass
@@ -179,11 +188,11 @@ def _installed_accessibility_services(adb: str, serial: str) -> tuple[str, ...]:
 
 
 def configure_default_device_services(adb: str, serial: str) -> dict[str, object]:
-    """Enable every installed accessibility service used by this repository.
+    """Enable OOB and disable every legacy experiment accessibility service.
 
     The operation is idempotent and preserves unrelated user-enabled
-    services.  It intentionally does not install APKs or modify provider
-    source code; missing services are reported for the caller to diagnose.
+    services. It intentionally does not install APKs or modify provider source
+    code; a missing OOB service is reported for the caller to diagnose.
     """
 
     current = _run(
@@ -199,23 +208,28 @@ def configure_default_device_services(adb: str, serial: str) -> dict[str, object
         ],
         timeout=10,
     ).stdout.strip()
-    enabled = [
+    current_enabled = [
         value
         for value in current.split(":")
         if value and value != "null"
     ]
+    managed_identities = {
+        (
+            component.split("/", 1)[0],
+            component.rsplit(".", 1)[-1],
+        )
+        for component in MANAGED_ACCESSIBILITY_SERVICES
+    }
+    enabled = [
+        value
+        for value in current_enabled
+        if (
+            value.split("/", 1)[0],
+            value.rsplit(".", 1)[-1],
+        )
+        not in managed_identities
+    ]
     installed = _installed_accessibility_services(adb, serial)
-    for index, value in enumerate(enabled):
-        package = value.split("/", 1)[0]
-        service_name = value.rsplit(".", 1)[-1]
-        for component in DEFAULT_ACCESSIBILITY_SERVICES:
-            known_package, known_service = component.split("/", 1)
-            if (
-                package == known_package
-                and service_name == known_service.rsplit(".", 1)[-1]
-            ):
-                enabled[index] = component
-                break
     for component in installed:
         if component not in enabled:
             enabled.append(component)

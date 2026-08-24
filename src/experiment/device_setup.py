@@ -21,6 +21,10 @@ import sys
 import time
 from typing import Any, Iterable
 
+from src.experiment.checks import (
+    OOB_ACCESSIBILITY_SERVICE,
+    configure_default_device_services,
+)
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     DEVICES,
@@ -33,23 +37,11 @@ from src.experiment.protocol import (
 
 OOB_PACKAGE = "cn.com.omnimind.bot.debug"
 OOB_ACTIVITY = "cn.com.omnimind.bot.activity.LauncherActivity"
-OOB_ACCESSIBILITY_SERVICE = (
-    "cn.com.omnimind.bot.debug/"
-    "cn.com.omnimind.accessibility.service.AssistsService"
-)
 OOB_REQUIRED_RECEIVERS = {
     ".DebugOmniFlowControlReceiver": "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW",
     ".DebugOmniFlowObserveReceiver": "cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW",
 }
 MOBILEGPT_PACKAGE = "com.example.MobileGPT"
-MOBILEGPT_ACCESSIBILITY_SERVICE = (
-    "com.example.MobileGPT/.MobileGPTAccessibilityService"
-)
-FORWARDER_PACKAGE = "com.google.androidenv.accessibilityforwarder"
-FORWARDER_SERVICE = (
-    "com.google.androidenv.accessibilityforwarder/"
-    "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder"
-)
 _REPORT_PATH: Path | None = None
 
 
@@ -551,14 +543,8 @@ def _configure_device(
     if not a11y_apk.is_file():
         raise RuntimeError(f"accessibility forwarder APK missing: {a11y_apk}")
     _install(adb, serial, a11y_apk)
-    enabled = _adb(adb, serial, "shell", "settings", "get", "secure", "enabled_accessibility_services").stdout.strip()
-    services = [value for value in enabled.split(":") if value and value != "null"]
-    for service in (FORWARDER_SERVICE, OOB_ACCESSIBILITY_SERVICE, MOBILEGPT_ACCESSIBILITY_SERVICE):
-        if service not in services:
-            services.append(service)
-    put = _adb(adb, serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", ":".join(services))
-    enabled_flag = _adb(adb, serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
-    if put.returncode != 0 or enabled_flag.returncode != 0:
+    configured_services = configure_default_device_services(str(adb), serial)
+    if not bool(configured_services.get("settings_write_ok")):
         raise RuntimeError(f"could not enable accessibility services on {serial}")
     start = _adb(adb, serial, "shell", "am", "start", "-n", f"{OOB_PACKAGE}/{OOB_ACTIVITY}")
     if start.returncode != 0:

@@ -40,6 +40,12 @@ MobileGPT and AppAgent leave this native episode path after
 `run_task.py` and are launched from their pinned external checkouts. They are
 formal experiment labels, but not AndroidWorld agent adapters.
 
+MobileGPT 的 pinned Server 只负责 Planner 和 memory 决策。唯一 target client 是
+`src/integrations/mobilegpt_oob_client.py`：目标应用 `open_app`、每次 observe 和每个
+物理 action 全部经过 `OobControlClient`。`official_forward.py` 中退役的官方
+Accessibility client 入口会明确失败；AndroidWorld 只保留 task setup 与官方
+validator，不能接管物理动作。
+
 The boundaries inside this path are intentionally different:
 
 - `run_tasks.py` schedules one task-major attempt and interprets the
@@ -143,7 +149,8 @@ baseline 记录时经过的五个位置：
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
 | `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
-| `official_forward.py` | 如何在统一 task 生命周期中启动官方 MobileGPT/AppAgent/AutoDroid？ | provider memory 转换、官方 agent/action loop |
+| `official_forward.py` | 如何准备 MobileGPT Server workspace，以及转发 AppAgent/AutoDroid？ | MobileGPT target client、provider memory 转换、官方 agent/action loop |
+| `mobilegpt_oob_client.py` | 如何把 MobileGPT Server 决策严格适配到唯一 OOB 物理层？ | memory 转换、Server Planner、AndroidWorld validator 实现 |
 | `checks.py` | 这次运行的依赖、root 设备、已安装 Accessibility 服务和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |

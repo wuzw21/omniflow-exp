@@ -39,9 +39,11 @@ SHA 或对象仓库。不会再
 
 ## 一键安装并启动设备
 
-同一个入口也负责设备 setup；它会安装 OOB、MobileGPT 和 accessibility
-forwarder，启用服务，检查 AndroidWorld/OmniTransfer/AppAgent/MobileGPT 的
-host 环境，并用当前 OOB observe bridge 做最小通信探针：
+同一个入口也负责设备 setup；它会安装 OOB 及所需依赖 APK，但设备上只启用
+OOB Accessibility 服务。MobileGPT client 和 AndroidWorld forwarder 即使作为
+依赖存在也会从 enabled service 列表移除。setup 随后检查
+AndroidWorld/OmniTransfer/AppAgent/MobileGPT 的 host 环境，并用当前 OOB observe
+bridge 做最小通信探针：
 
 ```bash
 PYTHON_BIN=/absolute/.venv/bin/python \
@@ -84,6 +86,8 @@ MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试�
 目标 episode 在连接 MobileGPT Planner 之前，必须先由 OOB `open_app` 启动并验证
 前台包；Planner 只选择后续动作，不能接管或绕过物理启动。Planner 没有返回动作时，
 保留已经完成的 OOB 启动证据，并把空响应单独登记为方法/协议错误。
+正式执行不会安装或启动 MobileGPT Android Accessibility client；直接调用历史
+`official_forward.py --baseline mobilegpt` 会硬失败。
 
 ```bash
 bash scripts/exp/run_androidworld.sh \

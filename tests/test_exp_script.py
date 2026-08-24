@@ -18,7 +18,6 @@ from src.experiment.mobilegpt_contract import (
 )
 from src.experiment.checks import (
     APPAGENT_REQUIRED_MODULES,
-    DEFAULT_ACCESSIBILITY_SERVICES,
     REQUIRED_DISTRIBUTION_VERSIONS,
     configure_default_device_services,
 )
@@ -96,7 +95,18 @@ def test_preflight_accepts_offline_appagent_memory() -> None:
     )
 
 
-def test_device_configuration_enables_all_installed_services(monkeypatch) -> None:
+def test_device_configuration_keeps_only_oob_experiment_service(monkeypatch) -> None:
+    oob_service = (
+        "cn.com.omnimind.bot.debug/"
+        "cn.com.omnimind.accessibility.service.AssistsService"
+    )
+    installed_services = (
+        "com.google.androidenv.accessibilityforwarder/"
+        "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
+        oob_service,
+        "com.example.MobileGPT/.MobileGPTAccessibilityService",
+    )
+
     def fake_run(command, timeout=10):
         if command[-5:] == [
             "shell",
@@ -105,13 +115,13 @@ def test_device_configuration_enables_all_installed_services(monkeypatch) -> Non
             "secure",
             "enabled_accessibility_services",
         ]:
-            output = DEFAULT_ACCESSIBILITY_SERVICES[0]
+            output = ":".join(installed_services)
         elif "dumpsys" in command:
             output = (
                 "Bound services:\n"
-                + "\n".join(DEFAULT_ACCESSIBILITY_SERVICES)
+                + "\n".join(installed_services)
                 + "\nEnabled services:\n"
-                + "\n".join(DEFAULT_ACCESSIBILITY_SERVICES)
+                + "\n".join(installed_services)
                 + "\nCrashed services:{}\nClient list info:\n"
             )
         else:
@@ -122,8 +132,8 @@ def test_device_configuration_enables_all_installed_services(monkeypatch) -> Non
     result = configure_default_device_services("adb", "root-device")
 
     assert result["settings_write_ok"] is True
-    assert result["installed"] == list(DEFAULT_ACCESSIBILITY_SERVICES)
-    assert result["enabled"] == list(DEFAULT_ACCESSIBILITY_SERVICES)
+    assert result["installed"] == [oob_service]
+    assert result["enabled"] == [oob_service]
 
 
 def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
