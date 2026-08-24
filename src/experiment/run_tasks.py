@@ -2895,6 +2895,7 @@ def _report(
         source_seed=source_seed,
         evaluation_seed=evaluation_seed,
         attempt_id=attempt_id,
+        device_models=_e2e_device_models(args),
     )
     prep_model_calls = sum(
         int(phase.get("model_calls") or 0)

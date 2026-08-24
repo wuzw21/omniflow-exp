@@ -400,6 +400,64 @@ def test_concluded_result_keys_maps_historical_label_to_current_device_model(
     ) == {("mobilegpt", "standard45562")}
 
 
+def test_summary_maps_registered_historical_label_to_current_device_model(
+    tmp_path: Path,
+) -> None:
+    memory_index = tmp_path / "data" / "current.json"
+    memory_index.parent.mkdir(parents=True)
+    memory_index.write_text("{}", encoding="utf-8")
+    registered = (
+        memory_index.parent
+        / "androidworld"
+        / ".archive"
+        / "result_registry"
+        / "CameraTakePhoto"
+        / "mobilegpt"
+        / "small5562"
+        / "attempt_001.mobilegpt.small5562"
+        / "registered_result.json"
+    )
+    registered.parent.mkdir(parents=True)
+    registered.write_text(
+        json.dumps(
+            {
+                "task_name": "CameraTakePhoto",
+                "source_seed": 111,
+                "evaluation_seed": 113,
+                "details": [
+                    {
+                        "task_name": "CameraTakePhoto",
+                        "method": "mobilegpt",
+                        "device": "small5562",
+                        "device_serial": "emulator-5562",
+                        "source_seed": 111,
+                        "evaluation_seed": 113,
+                        "official_validator_used": True,
+                        "official_validator_success": False,
+                        "attempt_id": "attempt_001.mobilegpt.small5562",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = summarize_results(
+        memory_index=memory_index,
+        outcomes_root=tmp_path / "outcomes",
+        tasks=("CameraTakePhoto",),
+        methods=("mobilegpt",),
+        devices=("standard45562",),
+        source_seed=111,
+        evaluation_seed=113,
+        attempt_id="attempt_002",
+        device_models={"standard45562": "OmniFlowTargetSmall"},
+    )
+
+    assert report["counts"]["validator_failure"] == 1
+    assert report["counts"]["pending"] == 0
+
+
 def test_environment_repair_retry_ignores_prior_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

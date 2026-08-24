@@ -506,6 +506,41 @@ def _registered_result_rows_from_registry(
     return {key: row for key, (_, row) in rows.items()}
 
 
+def _rows_with_current_device_aliases(
+    rows: Mapping[str, dict[str, Any]],
+    *,
+    device_models: Mapping[str, str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Expose historical result labels under the current physical target label."""
+
+    normalized = dict(rows)
+    if not device_models:
+        return normalized
+    for key, row in rows.items():
+        parts = str(key).rsplit("|", 4)
+        if len(parts) != 5:
+            continue
+        task, method, reported_device, source_seed, evaluation_seed = parts
+        reported_model = canonical_device_model(
+            label=reported_device,
+            serial=str(row.get("device_serial") or ""),
+        )
+        for current_device, expected_model in device_models.items():
+            if reported_model != str(expected_model or ""):
+                continue
+            current_key = "|".join(
+                (
+                    task,
+                    method,
+                    str(current_device),
+                    source_seed,
+                    evaluation_seed,
+                )
+            )
+            normalized.setdefault(current_key, row)
+    return normalized
+
+
 def _outcome_rows(
     outcomes_root: Path,
     *,
@@ -708,6 +743,7 @@ def summarize_results(
     source_seed: int,
     evaluation_seed: int,
     attempt_id: str,
+    device_models: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Summarize immutable result conclusions without creating a second table."""
 
@@ -716,6 +752,10 @@ def summarize_results(
     registry_root = memory_path.parent / "androidworld" / ".archive" / "result_registry"
     for key, row in _registered_result_rows_from_registry(registry_root).items():
         registered.setdefault(key, row)
+    registered = _rows_with_current_device_aliases(
+        registered,
+        device_models=device_models,
+    )
     outcomes = _outcome_rows(
         Path(outcomes_root).expanduser().resolve(),
         attempt_id=attempt_id,
