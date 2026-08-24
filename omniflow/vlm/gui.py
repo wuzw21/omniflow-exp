@@ -130,6 +130,16 @@ def build_model_turn_request(
         vlm_action_tools(include_summary=True),
         display,
     )
+    # A recalled global Function owns startup when its first action is open_app.
+    # Keep the choice in the standard tool-call surface, but do not expose a
+    # competing atomic launcher in the same turn.  If the Function later fails,
+    # the runtime excludes it on the next turn and open_app becomes visible again.
+    if _has_global_startup_function(functions):
+        tools = [
+            tool
+            for tool in tools
+            if tool.get("function", {}).get("name") != "open_app"
+        ]
     tools = constrain_open_app_tool(tools, installed_apps or {})
     tools.extend(function_tools(functions, include_summary=True))
     if retry_tool_name:
@@ -366,6 +376,17 @@ def function_tools(
             }
         )
     return tools
+
+
+def _has_global_startup_function(
+    functions: list[Function] | tuple[Function, ...],
+) -> bool:
+    return any(
+        function.agent_visible
+        and function.steps
+        and function.steps[0].action.tool == "open_app"
+        for function in functions
+    )
 
 
 def _turn_text(

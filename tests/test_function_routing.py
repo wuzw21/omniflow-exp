@@ -1538,6 +1538,41 @@ def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
             assert "com.android.settings" not in serialized
 
 
+def test_global_startup_function_owns_open_app_tool_slot() -> None:
+    function = Function(
+        function_id="complete_task",
+        name="Complete task",
+        description="Open the app and complete the stable workflow prefix.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("open_app", {"package_name": "com.android.documentsui"}),
+                "source-start",
+            ),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    )
+    request = build_model_turn_request(
+        goal="Open the task and continue",
+        model="test-model",
+        state={"xml": "", "display": {"width": 720, "height": 1280}},
+        max_steps=8,
+        turn_index=0,
+        installed_apps={"Files": "com.android.documentsui"},
+        functions=(function,),
+    )
+
+    names = [tool["function"]["name"] for tool in request["tools"]]
+    assert "complete_task" in names
+    assert "open_app" not in names
+
+
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     request = build_model_turn_request(
         goal="Search for a contact",
