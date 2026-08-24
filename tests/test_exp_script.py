@@ -265,6 +265,7 @@ def test_setup_uses_all_protocol_devices() -> None:
 def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
+    assert "profile=profile," in script_text
     assert 'export OPENAI_API_KEY="$selected_model_api_key"' in script_text
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 

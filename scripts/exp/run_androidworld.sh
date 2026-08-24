@@ -445,7 +445,10 @@ from omniflow.vlm.model_config import resolve_openai_compatible_config
 profile = sys.argv[1]
 base_url = sys.argv[2]
 try:
-    api_key, base_url = resolve_openai_compatible_config(base_url=base_url)
+    api_key, base_url = resolve_openai_compatible_config(
+        profile=profile,
+        base_url=base_url,
+    )
 except ValueError as error:
     raise SystemExit(str(error)) from error
 if not api_key or not base_url:
