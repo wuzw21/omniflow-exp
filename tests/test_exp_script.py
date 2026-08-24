@@ -384,16 +384,24 @@ def test_androidworld_defaults_to_pinned_immutable_release_without_fallback(
     assert f"+ android_world_root={dirty_fallback}" not in completed.stderr
 
 
-def test_runtime_env_is_loaded_before_runtime_paths_are_resolved() -> None:
+def test_only_explicit_model_env_is_loaded_before_runtime_paths_are_resolved() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
-    runtime_env = 'runtime_env_file="${OMNIFLOW_RUNTIME_ENV_FILE:-$repo/.env}"'
+    model_env = 'env_file="${OMNIFLOW_ENV_FILE:-}"'
     asset_root = 'asset_root="${OMNIFLOW_EXP_ASSET_ROOT:-$default_asset_root}"'
     python_bin = 'python_bin="${PYTHON_BIN:-$default_python}"'
-    assert runtime_env in script_text
-    assert script_text.index(runtime_env) < script_text.index(asset_root)
-    assert script_text.index(runtime_env) < script_text.index(python_bin)
-    assert 'source "$runtime_env_file"' in script_text
+    assert model_env in script_text
+    assert script_text.index(model_env) < script_text.index(asset_root)
+    assert script_text.index(model_env) < script_text.index(python_bin)
+    assert script_text.count('source "$env_file"') == 1
+    assert "OMNIFLOW_RUNTIME_ENV_FILE" not in script_text
+    assert "LLMTHU_KEY" not in script_text
+    assert '$asset_root/.env' not in script_text
+    assert 'workspace_root/OmniFlow/.env' not in script_text
+    assert (
+        "Experiment model configuration requires one absolute OMNIFLOW_ENV_FILE."
+        in script_text
+    )
 
 
 def test_unified_script_repairs_missing_androidworld_sqlite_fts4_support() -> None:
@@ -607,7 +615,9 @@ def test_experiment_script_uses_explicit_python_override(
     base_python.chmod(0o755)
     script_prefix = tmp_path / "script-prefix.sh"
     script_prefix.write_text(
-        SCRIPT.read_text(encoding="utf-8").split("\nenv_file=", maxsplit=1)[0]
+        SCRIPT.read_text(encoding="utf-8").split(
+            '\nif [[ "$python_bin" != /*', maxsplit=1
+        )[0]
         + "\n",
         encoding="utf-8",
     )

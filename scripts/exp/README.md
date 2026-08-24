@@ -176,7 +176,10 @@ export OMNIFLOW_ENV_FILE=/absolute/model.env
 export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 ```
 
-`model.env` 至少提供 `LLMTHU_API_KEY`。外部 AndroidWorld、Android SDK、
+`model.env` 至少提供 `LLMTHU_API_KEY`。它是入口加载的唯一配置文件，必须通过
+绝对路径 `OMNIFLOW_ENV_FILE` 显式指定；入口不读取仓库 `.env`、第二个 runtime
+env、`LLMTHU_KEY` 或 `LLMTHU_BASE_URL`。正式 endpoint/model 只从 protocol
+解析。外部 AndroidWorld、Android SDK、
 MobileGPT 和 AppAgent 路径由 launcher 的环境变量或机器默认值提供。
 刷新索引时，launcher 默认同时扫描 `data/androidworld` 和其唯一的
 `.archive/result_registry`；因此 scheduler 已注册的正式结果不会因后续

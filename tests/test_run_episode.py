@@ -133,6 +133,20 @@ def test_formal_model_profile_uses_protocol_base_url_without_env_base_url(
     assert base_url == "https://llmapi.paratera.com/v1"
 
 
+def test_formal_model_profile_rejects_retired_credential_aliases() -> None:
+    from omniflow.vlm.model_config import resolve_openai_compatible_config
+
+    with pytest.raises(ValueError, match="model_endpoint_profile_incomplete:llmthu"):
+        resolve_openai_compatible_config(
+            profile="llmthu",
+            base_url="https://llmapi.paratera.com/v1",
+            environment={
+                "LLMTHU_KEY": "retired-key",
+                "LLMTHU_BASE_URL": "https://retired.example/v1",
+            },
+        )
+
+
 def test_system_package_resolves_from_official_registry_when_not_enumerated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4,10 +4,14 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace_root="$(cd "$repo/.." && pwd)"
-runtime_env_file="${OMNIFLOW_RUNTIME_ENV_FILE:-$repo/.env}"
-if [[ -f "$runtime_env_file" ]]; then
+env_file="${OMNIFLOW_ENV_FILE:-}"
+if [[ -n "$env_file" && "$env_file" != /* ]]; then
+  echo "OMNIFLOW_ENV_FILE must be one absolute file: $env_file" >&2
+  exit 2
+fi
+if [[ -n "$env_file" && -f "$env_file" ]]; then
   set -a
-  source "$runtime_env_file"
+  source "$env_file"
   set +a
 fi
 default_asset_root="$repo/data"
@@ -20,15 +24,6 @@ python_bin="${PYTHON_BIN:-$default_python}"
 if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
   echo "Python runtime missing: set PYTHON_BIN to one absolute executable (default: $default_python)." >&2
   exit 2
-fi
-env_file="${OMNIFLOW_ENV_FILE:-${asset_root:+$asset_root/.env}}"
-if [[ -z "${OMNIFLOW_ENV_FILE:-}" || ! -f "$env_file" ]]; then
-  for candidate in "$asset_root/.env" "$workspace_root/OmniFlow/.env" "$workspace_root/OmniFlow-exp/.env"; do
-    if [[ -f "$candidate" ]]; then
-      env_file="$candidate"
-      break
-    fi
-  done
 fi
 source_index_input="${asset_root:+$asset_root/inputs/final_source_index.json}"
 source_index="$source_index_input"
@@ -425,15 +420,6 @@ e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_s
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 setup_device=""
 
-normalize_model_environment() {
-  if [[ -z "${LLMTHU_API_KEY:-}" && -n "${LLMTHU_KEY:-}" ]]; then
-    export LLMTHU_API_KEY="$LLMTHU_KEY"
-  fi
-  if [[ -z "${LLMTHU_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
-    export LLMTHU_KEY="$LLMTHU_API_KEY"
-  fi
-}
-
 select_model_endpoint() {
   local profile="$1"
   local selected_model_config
@@ -619,7 +605,7 @@ Required roots:
   OMNITRANSFER_ROOT         Canonical/versioned OmniTransfer checkout.
 
 Optional runtime overrides:
-  PYTHON_BIN, OMNIFLOW_ENV_FILE, OMNIFLOW_RUNTIME_ENV_FILE,
+  PYTHON_BIN, OMNIFLOW_ENV_FILE,
   OMNIFLOW_MEMORY_MOBILEGPT_ROOTS,
   OMNIFLOW_MEMORY_BASELINE_BATCH_REPORTS,
   OMNIFLOW_ANDROID_SDK_ROOT, OMNIFLOW_JAVA_HOME,
@@ -1042,10 +1028,6 @@ PY
     echo "B-MoCA campaign enhancement requires an absolute OMNIFLOW_ENV_FILE." >&2
     exit 2
   fi
-  set -a
-  source "$env_file"
-  set +a
-  normalize_model_environment
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
   select_model_endpoint "$formal_model_endpoint_profile"
   validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
@@ -1153,10 +1135,6 @@ if [[ "$development_run" -eq 1 ]]; then
     echo "--development-run requires an existing absolute OMNIFLOW_ENV_FILE." >&2
     exit 2
   fi
-  set -a
-  source "$env_file"
-  set +a
-  normalize_model_environment
   select_model_endpoint "$development_model_endpoint_profile"
   validate_experiment_model "$development_model" "$development_model_endpoint_profile"
   configure_model_stack "$development_model"
@@ -1300,10 +1278,6 @@ if [[ -n "$e2e_task" ]]; then
       echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
       exit 2
     fi
-    set -a
-    source "$env_file"
-    set +a
-    normalize_model_environment
     # The formal endpoint must not inherit a developer SOCKS/HTTP proxy.
     # httpx otherwise constructs a proxy transport before the provider call,
     # which makes MobileGPT preparation fail when socksio is not installed.
@@ -1317,10 +1291,6 @@ if [[ -n "$e2e_task" ]]; then
       echo "AutoDroid online requires an existing absolute OMNIFLOW_ENV_FILE." >&2
       exit 2
     fi
-    set -a
-    source "$env_file"
-    set +a
-    normalize_model_environment
     unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
     select_model_endpoint "$formal_model_endpoint_profile"
     validate_experiment_model "$formal_model" "$formal_model_endpoint_profile"
@@ -2275,11 +2245,11 @@ if [[ -e "$output_root" ]]; then
   exit 1
 fi
 
+if [[ -z "$env_file" || ! -f "$env_file" ]]; then
+  echo "Experiment model configuration requires one absolute OMNIFLOW_ENV_FILE." >&2
+  exit 2
+fi
 if [[ "$check_only" -ne 1 ]]; then
-  set -a
-  source "$env_file"
-  set +a
-  normalize_model_environment
   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 fi
 select_model_endpoint "$formal_model_endpoint_profile"

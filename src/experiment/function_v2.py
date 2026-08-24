@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -49,12 +48,6 @@ def compile_function_v2(
         selected_model = str(model or "").strip()
         if not selected_model:
             raise ValueError("function_author_model_required")
-        if os.environ.get("LLMTHU_KEY") and not os.environ.get("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = os.environ["LLMTHU_KEY"]
-        if os.environ.get("LLMTHU_BASE_URL") and not os.environ.get(
-            "OPENAI_BASE_URL"
-        ):
-            os.environ["OPENAI_BASE_URL"] = os.environ["LLMTHU_BASE_URL"]
         options["model"] = selected_model
 
     report = compile_runlog_to_store(run_log, root, **options)

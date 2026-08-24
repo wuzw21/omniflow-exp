@@ -15,6 +15,10 @@ export OMNIFLOW_ENV_FILE=/absolute/model.env
 export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
 ```
 
+模型和运行凭据只从显式的绝对路径 `OMNIFLOW_ENV_FILE` 加载；入口不会再读取
+仓库 `.env`、第二个 runtime env 或旧的 `LLMTHU_KEY` alias。正式 llmthu 配置只需
+提供 `LLMTHU_API_KEY`，endpoint/model 由 protocol 统一选择。
+
 执行一个 task：
 
 ```bash

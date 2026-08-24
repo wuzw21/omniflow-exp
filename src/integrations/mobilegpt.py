@@ -2185,8 +2185,8 @@ def _run_official_mobilegpt_authoring(
             raise MobileGPTConversionError("official_provider_model_adapter_anchor_missing")
         utils_path.write_text(utils_source_updated, encoding="utf-8")
         environment: dict[str, str | None] = {
-            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY") or os.getenv("LLMTHU_API_KEY"),
-            "OPENAI_BASE_URL": os.getenv("OPENAI_BASE_URL") or os.getenv("LLMTHU_BASE_URL"),
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "OPENAI_BASE_URL": os.getenv("OPENAI_BASE_URL"),
             "MOBILEGPT_EMBEDDING_MODEL": embedding_model,
             "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
             "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
