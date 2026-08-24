@@ -890,6 +890,7 @@ def test_direct_conversion_is_recalled_by_official_page_matcher(
         "get_openai_embedding",
         lambda _screen, **_kwargs: [0.25, 0.75],
     )
+    monkeypatch.chdir(tmp_path)
     official_memory = official_memory_manager.Memory(
         "com.example.app",
         "Complete the task.",

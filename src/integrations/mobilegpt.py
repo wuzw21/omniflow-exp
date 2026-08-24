@@ -2521,6 +2521,9 @@ def _run_official_mobilegpt_authoring(
                     if prompt_kind in {"explore", "select", "derive"}
                     else messages
                 )
+                provider_kwargs = dict(kwargs)
+                if semantic_query_provider is not None and prompt_kind != "unknown":
+                    provider_kwargs.setdefault("agent_name", prompt_kind)
                 if prompt_kind in {"explore", "select", "derive"}:
                     _write_event(
                         stats,
@@ -2545,7 +2548,7 @@ def _run_official_mobilegpt_authoring(
                         prompted_messages,
                         model_name=model_name,
                         is_list=is_list,
-                        kwargs=kwargs,
+                        kwargs=provider_kwargs,
                     ),
                     list_items_require_name=is_list,
                 )
@@ -2576,7 +2579,7 @@ def _run_official_mobilegpt_authoring(
                             [*prompted_messages, correction],
                             model_name=model_name,
                             is_list=is_list,
-                            kwargs=kwargs,
+                            kwargs=provider_kwargs,
                         ),
                         list_items_require_name=is_list,
                     )
