@@ -78,7 +78,7 @@ class UIProjection:
     goal_match_count: int
     visual_context_required: bool = False
     visual_candidate_count: int = 0
-    actionable_nodes: tuple[ProjectedNode, ...] = ()
+    nodes: tuple[ProjectedNode, ...] = ()
 
     @property
     def requires_screenshot(self) -> bool:
@@ -168,7 +168,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         )
     candidates = _promote_goal_controls(candidates)
     selected = _select_candidates(candidates, max_nodes=max_nodes)
-    text, actionable_nodes = _render_candidates(selected)
+    text, nodes = _render_candidates(selected)
     return UIProjection(
         text=text or "<none>",
         candidate_count=len(candidates),
@@ -180,7 +180,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         visual_candidate_count=sum(
             1 for item in selected if item.group in {"goal_control", "visual"}
         ),
-        actionable_nodes=actionable_nodes,
+        nodes=nodes,
     )
 
 
@@ -196,13 +196,13 @@ def projected_node_center(
         reference = reference_match.group(0).upper()
         matches = [
             node
-            for node in projection.actionable_nodes
+            for node in projection.nodes
             if node.reference == reference and not node.inside_webview
         ]
     else:
         matches = [
             node
-            for node in projection.actionable_nodes
+            for node in projection.nodes
             if not node.inside_webview
             and target in {_normalized_label(label) for label in node.labels}
         ]
@@ -282,7 +282,7 @@ def _render_candidates(
     candidates: list[_Candidate],
 ) -> tuple[str, tuple[ProjectedNode, ...]]:
     lines: list[str] = []
-    actionable_nodes: list[ProjectedNode] = []
+    nodes: list[ProjectedNode] = []
     visual_reference = 0
     for group in _GROUP_ORDER:
         group_candidates = [item for item in candidates if item.group == group]
@@ -291,27 +291,29 @@ def _render_candidates(
         lines.append(_GROUP_HEADERS[group])
         for item in group_candidates:
             compact = dict(item.compact)
+            reference = ""
             if compact.get("a"):
                 visual_reference += 1
                 reference = f"A{visual_reference:02d}"
                 compact = {"v": reference, **compact}
-                if item.bounds is not None:
-                    actionable_nodes.append(
-                        ProjectedNode(
-                            reference=reference,
-                            labels=tuple(
-                                str(compact[key])
-                                for key in ("t", "d", "h", "c", "r")
-                                if str(compact.get(key) or "").strip()
-                            ),
-                            bounds=item.bounds,
-                            inside_webview=item.inside_webview,
-                        )
+            labels = tuple(
+                str(compact[key])
+                for key in ("t", "d", "h", "c", "r")
+                if str(compact.get(key) or "").strip()
+            )
+            if item.bounds is not None and (reference or labels):
+                nodes.append(
+                    ProjectedNode(
+                        reference=reference,
+                        labels=labels,
+                        bounds=item.bounds,
+                        inside_webview=item.inside_webview,
                     )
+                )
             lines.append(
                 json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
             )
-    return "\n".join(lines), tuple(actionable_nodes)
+    return "\n".join(lines), tuple(nodes)
 
 
 def _webview_elements(root: ET.Element) -> set[int]:

@@ -30,8 +30,9 @@ identity and spatial relationships, and XML as evidence for text and control sta
 UI elements are grouped by priority; global controls come first, and goal_controls
 are actionable visual elements adaptively associated with nearby goal text. The `v`
 field is a stable visual reference for an actionable element at its XML bounds.
-When you choose a projected node identified by `v`, default x and y to the center of
-that node's `b=[left,top][right,bottom]` bounds. For example, a chosen node with bounds
+When you choose a projected native XML node, whether by `v` or its exact label,
+default x and y to the center of that node's `b=[left,top][right,bottom]` bounds.
+For example, a chosen node with bounds
 [0,766][720,878] uses (360,822), not (360,640). This node-center rule does not apply
 to WebView or screenshot-only visual targets without a reliable projected node; locate
 those from the screenshot instead.

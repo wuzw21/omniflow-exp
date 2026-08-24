@@ -1262,7 +1262,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT
     assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
-    assert "When you choose a projected node identified by `v`" in SYSTEM_PROMPT
+    assert "When you choose a projected native XML node" in SYSTEM_PROMPT
     assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
 
@@ -1271,9 +1271,9 @@ def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
     state = {
         "xml": (
             '<hierarchy><node class="android.widget.LinearLayout" '
-            'clickable="true" bounds="[0,766][720,878]">'
+            'bounds="[0,766][720,878]">'
             '<node class="android.widget.TextView" text="Chrome" '
-            'bounds="[80,780][240,850]" /></node></hierarchy>'
+            'bounds="[96,800][209,843]" /></node></hierarchy>'
         ),
         "display": {"width": 720, "height": 1280},
     }
@@ -1307,15 +1307,15 @@ def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
     )
 
     assert tool_call.name == "click"
-    assert tool_call.arguments["x"] == 500
-    assert tool_call.arguments["y"] == pytest.approx(642.1875)
+    assert tool_call.arguments["x"] == pytest.approx(211.8055555556)
+    assert tool_call.arguments["y"] == pytest.approx(641.796875)
     assert metadata["node_grounding"] == {
         "name": "projected_node_center.v1",
-        "reference": "A01",
+        "reference": "",
         "target_description": "Chrome",
-        "bounds": [0, 766, 720, 878],
+        "bounds": [96, 800, 209, 843],
         "original_raw_pixels": {"x": 154, "y": 640},
-        "grounded_raw_pixels": {"x": 360.0, "y": 822.0},
+        "grounded_raw_pixels": {"x": 152.5, "y": 821.5},
     }
 
 
