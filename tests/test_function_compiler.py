@@ -114,6 +114,94 @@ def test_compiler_preserves_focused_input_source_semantics(tmp_path: Path) -> No
     }
 
 
+def test_compiler_restores_omitted_post_input_commit(tmp_path: Path) -> None:
+    form_state = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy><node class="android.widget.EditText" '
+            'text="Enter the product" resource-id="answer" '
+            'bounds="[216,278][615,331]" editable="true" '
+            'focused="true" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "product-form",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+    payload = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "3125"},
+            {"action_type": "click", "x": 600, "y": 900},
+        ],
+        observations=[
+            form_state,
+            androidworld_state("product-entered", width=720, height=1280),
+        ],
+        goal="Enter the product and submit it.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        function_bundle={
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": "source-run",
+            "checker_rules": [],
+            "arguments": {"enter_product": {}},
+            "functions": [
+                {
+                    "schema_version": "omniflow.function.v2",
+                    "function_id": "enter_product",
+                    "name": "Enter product",
+                    "description": "Enter and submit the product.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    "bindings": [],
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "source_state_id": "product-form",
+                            "action": {
+                                "tool": "click",
+                                "args": {"x": 577.083333, "y": 237.890625},
+                            },
+                        },
+                        {
+                            "step_index": 1,
+                            "source_state_id": "product-form",
+                            "action": {
+                                "tool": "input_text",
+                                "args": {
+                                    "target_description": "Enter the product",
+                                    "text": "3125",
+                                },
+                            },
+                        },
+                    ],
+                    "agent_visible": True,
+                }
+            ],
+        },
+        source_states=source_states,
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text(encoding="utf-8"))
+    function = store["functions"]["enter_product"]
+    assert [step["action"]["tool"] for step in function["steps"]] == [
+        "click",
+        "input_text",
+        "click",
+    ]
+    assert function["steps"][2]["source_state_id"] == "product-entered"
+    assert "restored 1 successful post-input commit action" in result["reason"]
+
+
 def test_function_rejects_ungrounded_input_text() -> None:
     with pytest.raises(
         ValueError,

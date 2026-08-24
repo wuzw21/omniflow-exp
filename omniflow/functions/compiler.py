@@ -184,6 +184,8 @@ Actions and args are execution truth. Explicitly preserve meaningful values such
 as input_text.text, open_app.package_name, press_key.key, and wait.duration_ms.
 Every input_text action must also preserve its non-empty source
 target_description so the runtime can derive the source anchor for OmniTransfer.
+Never omit a successful click immediately following input_text when that click
+commits, submits, confirms, or advances the form; keep it in the same Function.
 Use the original RunLog goal plus step metadata.summary, metadata.thinking, and
 metadata.action_description only to explain the work represented by those
 actions. Never replace or contradict the recorded Action with prose.
@@ -316,6 +318,15 @@ checker_rules=[] unless an explicit independently reusable checker rule is suppl
         raise ValueError("function_bundle_source_arguments_invalid")
     if not isinstance(raw_checker_rules, list):
         raise ValueError("function_bundle_checker_rules_invalid")
+    restored_commit_steps = _restore_post_input_commit_steps(
+        raw_functions,
+        facts["steps"],
+    )
+    if restored_commit_steps:
+        authored["reason"] = (
+            f"{authored['reason']} Compiler restored {restored_commit_steps} "
+            "successful post-input commit action(s)."
+        )
     functions = [parse_function_artifact(value) for value in raw_functions]
     checker_rules = [validate_checker_rule(rule) for rule in raw_checker_rules]
     checker_ids = [rule["id"] for rule in checker_rules]
@@ -518,6 +529,69 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
             raise ValueError(f"function_source_state_display_invalid:{state_id}")
         state["display"] = {"width": width, "height": height}
     return state
+
+
+def _restore_post_input_commit_steps(
+    raw_functions: list[Any],
+    source_steps: list[dict[str, Any]],
+) -> int:
+    """Restore an authored-away source click that immediately follows input."""
+    restored = 0
+    for source_step, commit_step in zip(source_steps, source_steps[1:]):
+        source_action = source_step.get("action")
+        commit_action = commit_step.get("action")
+        if not (
+            isinstance(source_action, dict)
+            and source_action.get("tool") == "input_text"
+            and isinstance(commit_action, dict)
+            and commit_action.get("tool") == "click"
+        ):
+            continue
+        commit_state_id = str(commit_step.get("before_state_id") or "").strip()
+        if not commit_state_id:
+            continue
+        if any(
+            isinstance(step, dict)
+            and step.get("source_state_id") == commit_state_id
+            and step.get("action") == commit_action
+            for function in raw_functions
+            if isinstance(function, dict)
+            for step in (
+                function.get("steps")
+                if isinstance(function.get("steps"), list)
+                else ()
+            )
+        ):
+            continue
+
+        input_state_id = str(source_step.get("before_state_id") or "").strip()
+        owner_steps: list[Any] | None = None
+        for function in raw_functions:
+            if not isinstance(function, dict):
+                continue
+            candidate_steps = function.get("steps")
+            if not isinstance(candidate_steps, list) or not candidate_steps:
+                continue
+            last_step = candidate_steps[-1]
+            if (
+                isinstance(last_step, dict)
+                and last_step.get("source_state_id") == input_state_id
+                and isinstance(last_step.get("action"), dict)
+                and last_step["action"].get("tool") == "input_text"
+            ):
+                owner_steps = candidate_steps
+                break
+        if owner_steps is None:
+            continue
+        owner_steps.append(
+            {
+                "step_index": len(owner_steps),
+                "source_state_id": commit_state_id,
+                "action": json.loads(json.dumps(commit_action, ensure_ascii=False)),
+            }
+        )
+        restored += 1
+    return restored
 
 
 def _default_bundle(
