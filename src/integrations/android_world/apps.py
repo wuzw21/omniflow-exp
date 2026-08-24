@@ -27,6 +27,15 @@ def launchable_androidworld_apps(
     return dict(sorted(catalog.items(), key=lambda item: (item[0].casefold(), item[1])))
 
 
+def launcher_package_label(package_name: str) -> str:
+    """Return a deterministic fallback label for a launcher package."""
+
+    package = str(package_name or "").strip()
+    segment = package.rsplit(".", 1)[-1] if package else ""
+    words = re.sub(r"[^A-Za-z0-9]+", " ", segment).strip()
+    return words.title() or package
+
+
 def resolve_androidworld_app_name(package_name: str, controller: object) -> str:
     package = str(package_name or "").strip()
     if not package:
@@ -61,6 +70,7 @@ def resolve_androidworld_package(app_name: str) -> str:
 
 __all__ = [
     "launchable_androidworld_apps",
+    "launcher_package_label",
     "resolve_androidworld_app_name",
     "resolve_androidworld_package",
 ]

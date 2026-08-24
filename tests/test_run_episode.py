@@ -2601,21 +2601,80 @@ def test_androidworld_host_exposes_only_launchable_apps_to_planner(
             "com.android.settings",
             "com.google.android.documentsui",
             "com.google.android.documentsui.overlay",
+            "cn.com.omnimind.bot.debug",
+        },
+    )
+    monkeypatch.setattr(
+        host,
+        "_launchable_packages",
+        lambda: {
+            "com.android.settings",
+            "com.google.android.documentsui",
+            "cn.com.omnimind.bot.debug",
         },
     )
     monkeypatch.setattr(
         "src.integrations.android_world.host.launchable_androidworld_apps",
         lambda packages, _controller: (
-            {"Files": "com.google.android.documentsui"}
-            if "com.google.android.documentsui" in packages
+            {"Settings": "com.android.settings"}
+            if "com.android.settings" in packages
             else {}
         ),
     )
 
     assert host.installed_apps() == {
-        "Files": "com.google.android.documentsui",
+        "Documentsui": "com.google.android.documentsui",
         "Settings": "com.android.settings",
     }
+
+
+def test_androidworld_host_queries_launcher_packages_from_package_manager(
+    monkeypatch,
+) -> None:
+    host_module = sys.modules["src.integrations.android_world.host"]
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                "2 activities found:\n"
+                "  com.google.android.documentsui/com.android.documentsui.LauncherActivity\n"
+                "com.android.settings/.Settings\n"
+                "not-a-component\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(host_module.subprocess, "run", run)
+    host = AndroidWorldHost(
+        SimpleNamespace(),
+        adb_serial="emulator-5560",
+        adb_path="/tmp/androidworld-adb",
+    )
+
+    assert host._launchable_packages() == {
+        "com.android.settings",
+        "com.google.android.documentsui",
+    }
+    assert commands == [
+        [
+            "/tmp/androidworld-adb",
+            "-s",
+            "emulator-5560",
+            "shell",
+            "cmd",
+            "package",
+            "query-activities",
+            "--brief",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+        ]
+    ]
 
 
 def test_androidworld_host_falls_back_to_adb_when_official_package_list_is_empty(

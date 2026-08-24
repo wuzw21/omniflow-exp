@@ -24,6 +24,7 @@ from omniflow.core.androidworld_accessibility import (
 from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.apps import (
     launchable_androidworld_apps,
+    launcher_package_label,
     resolve_androidworld_app_name,
     resolve_androidworld_package,
 )
@@ -35,6 +36,13 @@ from src.integrations.android_world.state import snapshot_androidworld_state
 
 
 _ANDROID_SYSTEM_OPEN_APP_PACKAGES = frozenset({"com.android.settings"})
+_ANDROIDWORLD_NON_TASK_LAUNCHER_PACKAGES = frozenset(
+    {
+        "cn.com.omnimind.bot.debug",
+        "com.example.MobileGPT",
+        "com.google.androidenv.accessibilityforwarder",
+    }
+)
 
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
@@ -320,10 +328,74 @@ class AndroidWorldHost:
     def installed_apps(self) -> dict[str, str]:
         packages = self.installed_packages()
         controller = getattr(self.env, "controller", self.env)
-        catalog = launchable_androidworld_apps(packages, controller)
-        if "com.android.settings" in packages:
+        launcher_packages = self._launchable_packages()
+        if launcher_packages:
+            exposed_packages = (
+                packages.intersection(launcher_packages)
+                - _ANDROIDWORLD_NON_TASK_LAUNCHER_PACKAGES
+            )
+        else:
+            # PackageManager can be unavailable during emulator startup. Keep
+            # the official AndroidWorld registry as the narrow fallback.
+            exposed_packages = packages
+        catalog = launchable_androidworld_apps(exposed_packages, controller)
+        if launcher_packages:
+            catalog_values = set(catalog.values())
+            for package in sorted(exposed_packages):
+                if package in catalog_values:
+                    continue
+                label = launcher_package_label(package)
+                if label in catalog and catalog[label] != package:
+                    label = f"{label} ({package})"
+                catalog[label] = package
+                catalog_values.add(package)
+        if "com.android.settings" in exposed_packages:
             catalog.setdefault("Settings", "com.android.settings")
-        return dict(sorted(catalog.items(), key=lambda item: item[0].casefold()))
+        return dict(
+            sorted(catalog.items(), key=lambda item: (item[0].casefold(), item[1]))
+        )
+
+    def _launchable_packages(self) -> set[str]:
+        command = [self.adb_path]
+        if self.adb_serial:
+            command.extend(["-s", self.adb_serial])
+        command.extend(
+            [
+                "shell",
+                "cmd",
+                "package",
+                "query-activities",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+            ]
+        )
+        try:
+            completed = subprocess.run(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return set()
+        if completed.returncode != 0:
+            return set()
+        packages: set[str] = set()
+        for line in completed.stdout.splitlines():
+            component = line.strip()
+            if "/" not in component:
+                continue
+            package = component.split("/", 1)[0].strip()
+            if package and all(
+                part.replace("_", "").isalnum() for part in package.split(".")
+            ):
+                packages.add(package)
+        return packages
 
     def observe(
         self,
