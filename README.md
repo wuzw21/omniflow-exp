@@ -39,6 +39,9 @@ bash scripts/exp/run_androidworld.sh \
    `transfer_states.json`；
 4. 校验通过后，在指定设备上执行 E2E。
 
+Compiler 可保留一个或多个可复用语义 Function，并确定性保留或补出一个覆盖
+全部 canonical source actions 的普通完整 Function；如果已有 Function 完整覆盖则
+不重复添加。因此一个成功 RunLog 最终生成至少一个 Function，不使用嵌套 schema。
 Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
 observation。source seed 固定为 `111`，
 evaluation seed 固定为 `113`，正式 chat 和视觉模型统一为 `GLM-4.6V`；初始

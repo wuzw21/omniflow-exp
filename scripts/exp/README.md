@@ -221,6 +221,9 @@ bash scripts/exp/run_androidworld.sh --refresh-memory
 
 结果和中间证据写入 `data/`；Function 只通过 `compile_runlog_to_store` 写入
 v2 `store.json` 与 sibling `transfer_states.json`，
+成功 RunLog 可先拆成多个语义 Function，但 compiler 必须确定性保留或补出一个
+覆盖全部 canonical source actions 的普通完整 Function，因此 Store 中 Function
+数量始终大于等于一且不使用嵌套 schema。
 运行时只读取 `data/current.json`。内部实现路径不是额外入口。
 
 失败 source RunLog 的本地逐条重采集、系统提示词、截图和推理证据要求见

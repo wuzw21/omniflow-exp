@@ -34,15 +34,17 @@ def _run_log(step_count: int) -> dict:
     )
 
 
-def test_default_compiler_rejects_one_action_atomic_function(
+def test_default_compiler_registers_one_action_complete_function(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="default_bundle_actions_required"):
-        compile_runlog_to_store(
-            _run_log(1),
-            tmp_path / "output",
-            source_states={"state_0": {"state_id": "state_0"}},
-        )
+    result = compile_runlog_to_store(
+        _run_log(1),
+        tmp_path / "output",
+        source_states={"state_0": {"state_id": "state_0"}},
+    )
+
+    assert result["function_count"] == 1
+    assert result["function_ids"][0].startswith("complete_recorded_")
 
 
 def test_compiler_freezes_only_function_referenced_states(
@@ -385,6 +387,8 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     system_prompt = captured["messages"][0]["content"]
     assert "encode repetition count" in system_prompt
     assert "call it repeatedly" in system_prompt
+    assert "complete canonical source trajectory" in system_prompt
+    assert "do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
     assert captured["max_tokens"] == 4096
     request = json.loads(captured["messages"][1]["content"])
@@ -546,13 +550,76 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     )
 
     store = json.loads(Path(result["store_path"]).read_text())
-    assert result["function_ids"] == ["click_button"]
+    assert result["function_count"] == 2
+    assert result["function_ids"][0] == "click_button"
     function = store["functions"]["click_button"]
     assert function["name"] == "Click the button"
     assert function["description"] == "Click the button to display numbers."
     assert len(function["steps"]) == 1
     assert function["steps"][0]["step_index"] == 0
+    complete_id = result["function_ids"][1]
+    assert complete_id.startswith("complete_recorded_")
+    assert len(store["functions"][complete_id]["steps"]) == 5
     assert "Planner observes after every click" in result["reason"]
+    assert "appended one complete recorded Function" in result["reason"]
+
+
+def test_model_plan_keeps_fragments_and_appends_one_complete_function(
+    tmp_path: Path,
+) -> None:
+    proposal = {
+        "reason": "Keep opening and waiting as separate reusable actions.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "open_settings",
+                    "name": "Open Settings",
+                    "description": "Open the Settings app.",
+                    "source_step_indices": [0],
+                    "parameters": [],
+                },
+                {
+                    "function_id": "wait_for_settings",
+                    "name": "Wait for Settings",
+                    "description": "Wait for the Settings page.",
+                    "source_step_indices": [1],
+                    "parameters": [],
+                },
+            ]
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        _run_log(2),
+        tmp_path / "output",
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    assert result["function_count"] == 3
+    assert result["function_ids"][:2] == ["open_settings", "wait_for_settings"]
+    complete_id = result["function_ids"][2]
+    assert complete_id.startswith("complete_recorded_")
+    store = json.loads(Path(result["store_path"]).read_text())
+    assert [
+        step["action"]["tool"]
+        for step in store["functions"][complete_id]["steps"]
+    ] == ["open_app", "wait"]
 
 
 def test_same_state_click_retry_is_not_treated_as_observation_output() -> None:

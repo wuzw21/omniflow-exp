@@ -119,7 +119,10 @@ RunLog pair 都进入同一去重数据集；失败样本缺少可信目标时�
 
 运行时只读取 `omniflow.function.v2`。Function 步骤按成功 source RunLog 的动作
 顺序保存，每步以唯一 `source_state_id` 引用同目录 `transfer_states.json` 中的
-source observation。Checker 使用独立 `omniflow.checker_store.v1`，规则可跨
+source observation。Compiler 先保留一个或多个语义 Function，再确定性检查是否
+已有 Function 覆盖全部 canonical source actions；没有时补出一个普通完整 Function，
+已有时不重复添加。最终数量为一个或多个，不引入 Function 嵌套或 parent/child
+schema。Checker 使用独立 `omniflow.checker_store.v1`，规则可跨
 Function 共享，触发预算在同一 Function 序列内共享。Store 本身不内联
 observation，也不接受 v3 `transfer_state_ids`。
 

@@ -132,6 +132,9 @@ commits, submits, confirms, or advances the form; keep both in one Function.
 
 Create Functions only for meaningful actions or tightly coupled contiguous groups.
 Do not classify Functions as semantic, full-flow, complete-task, root, or child.
+A deterministic compiler pass separately preserves or appends one ordinary Function
+covering the complete canonical source trajectory, so return one or more reusable
+semantic Functions here and do not invent a nesting or parent/child schema.
 A Function call is atomic: the Planner observes only after its last step. Never
 encode repetition count when the task requires reading changing UI after each
 repeat. Keep one representative action as a one-step Function and let the Planner
@@ -273,10 +276,10 @@ never appear in candidates and can never become Function inputs.
     checker_ids = [rule["id"] for rule in checker_rules]
     if len(checker_ids) != len(set(checker_ids)):
         raise ValueError("function_bundle_duplicate_checker_id")
-    function_ids = [function.id for function in functions]
-    if len(function_ids) != len(set(function_ids)):
+    authored_function_ids = [function.id for function in functions]
+    if len(authored_function_ids) != len(set(authored_function_ids)):
         raise ValueError("function_bundle_duplicate_function_id")
-    if set(arguments_by_function) - set(function_ids):
+    if set(arguments_by_function) - set(authored_function_ids):
         raise ValueError("function_bundle_source_arguments_unknown_function")
     normalized_arguments: dict[str, dict[str, Any]] = {}
     for function in functions:
@@ -286,6 +289,27 @@ never appear in candidates and can never become Function inputs.
         bind_function(function, arguments)
         normalized_arguments[function.id] = dict(arguments)
     arguments_by_function = normalized_arguments
+
+    if not any(
+        _function_covers_source_trajectory(
+            bind_function(function, arguments_by_function[function.id]),
+            facts["steps"],
+        )
+        for function in functions
+    ):
+        complete_artifact = _complete_function_artifact(
+            facts,
+            existing_function_ids={function.id for function in functions},
+        )
+        complete_function = parse_function_artifact(complete_artifact)
+        functions.append(complete_function)
+        arguments_by_function[complete_function.id] = {}
+        authored["reason"] = (
+            f"{authored['reason']} Compiler appended one complete recorded "
+            "Function covering every canonical source action."
+        )
+
+    function_ids = [function.id for function in functions]
 
     if source_states is not None and state_loader is not None:
         raise ValueError("function_source_state_provider_ambiguous")
@@ -803,8 +827,27 @@ def _default_bundle(
     recovery_examples: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     source_steps = list(facts.get("steps") or ())
-    if len(source_steps) < 2:
+    if not source_steps:
         return None
+    function = _complete_function_artifact(facts)
+    function_id = function["function_id"]
+    return {
+        "schema_version": "omniflow.function-bundle.v2",
+        "run_id": facts["run_id"],
+        "arguments": {function_id: {}},
+        "checker_rules": [],
+        "functions": [function],
+    }
+
+
+def _complete_function_artifact(
+    facts: dict[str, Any],
+    *,
+    existing_function_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    source_steps = list(facts.get("steps") or ())
+    if not source_steps:
+        raise ValueError("complete_function_source_actions_required")
     steps = [
         {
             "step_index": index,
@@ -821,27 +864,39 @@ def _default_bundle(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()[:12]
-    function_id = f"recorded_{digest}"
+    base_function_id = f"complete_recorded_{digest}"
+    used_ids = existing_function_ids or set()
+    function_id = base_function_id
+    suffix = 2
+    while function_id in used_ids:
+        function_id = f"{base_function_id}_{suffix}"
+        suffix += 1
+    goal = str(facts["goal"])
     return {
-        "schema_version": "omniflow.function-bundle.v2",
-        "run_id": facts["run_id"],
-        "arguments": {function_id: {}},
-        "checker_rules": [],
-        "functions": [
-            {
-                "schema_version": "omniflow.function.v2",
-                "function_id": function_id,
-                "name": str(facts["goal"])[:120],
-                "description": f"Replay the recorded workflow: {facts['goal']}",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                    "additionalProperties": False,
-                },
-                "bindings": [],
-                "steps": steps,
-                "agent_visible": True,
-            }
-        ],
+        "schema_version": "omniflow.function.v2",
+        "function_id": function_id,
+        "name": goal[:120],
+        "description": f"Execute the complete recorded workflow: {goal}",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        "bindings": [],
+        "steps": steps,
+        "agent_visible": True,
     }
+
+
+def _function_covers_source_trajectory(
+    function: Any,
+    source_steps: list[dict[str, Any]],
+) -> bool:
+    if len(function.steps) != len(source_steps):
+        return False
+    return all(
+        function_step.source_state_id == str(source_step["before_state_id"])
+        and function_step.action.to_dict() == source_step["action"]
+        for function_step, source_step in zip(function.steps, source_steps, strict=True)
+    )
