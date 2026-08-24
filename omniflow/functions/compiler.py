@@ -155,7 +155,10 @@ Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
           {
             "step_index": 0,
             "source_state_id": "copy the matching before_state_id",
-            "action": {"tool": "input_text", "args": {"text": ""}}
+            "action": {
+              "tool": "input_text",
+              "args": {"target_description": "Name field", "text": ""}
+            }
           }
         ],
         "agent_visible": true
@@ -179,6 +182,8 @@ evidence-based explanation.
 
 Actions and args are execution truth. Explicitly preserve meaningful values such
 as input_text.text, open_app.package_name, press_key.key, and wait.duration_ms.
+Every input_text action must also preserve its non-empty source
+target_description so the runtime can derive the source anchor for OmniTransfer.
 Use the original RunLog goal plus step metadata.summary, metadata.thinking, and
 metadata.action_description only to explain the work represented by those
 actions. Never replace or contradict the recorded Action with prose.

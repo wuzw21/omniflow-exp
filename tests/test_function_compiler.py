@@ -7,6 +7,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.artifact import parse_function_artifact
 from omniflow.runlog import import_run_log_evidence
 
 
@@ -111,6 +112,39 @@ def test_compiler_preserves_focused_input_source_semantics(tmp_path: Path) -> No
             "text": "3125",
         },
     }
+
+
+def test_function_rejects_ungrounded_input_text() -> None:
+    with pytest.raises(
+        ValueError,
+        match="function_input_target_description_required:0",
+    ):
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "enter_product",
+                "name": "Enter product",
+                "description": "Enter the computed product.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "bindings": [],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "product-form",
+                        "action": {
+                            "tool": "input_text",
+                            "args": {"text": "3125"},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
 
 
 def test_compiler_registers_source_call_for_argumentless_authored_function(
