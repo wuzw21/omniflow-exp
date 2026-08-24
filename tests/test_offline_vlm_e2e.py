@@ -172,14 +172,13 @@ def _response(tool: str, arguments: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_offline_vlm_task_runs_unknown_tool_recovery_action_and_completion(
+def test_offline_vlm_task_runs_action_and_completion_without_retry(
     monkeypatch,
     tmp_path,
 ) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     responses = iter(
         [
-            _response("tools_search", {"query": "手机操作"}),
             _response(
                 "click",
                 {
@@ -214,7 +213,7 @@ def test_offline_vlm_task_runs_unknown_tool_recovery_action_and_completion(
     assert result.actions_executed == 1
     assert [action.tool for action in host.actions] == ["click"]
     assert result.detail["done_reason"] == "finished"
-    assert len(requests) == 3
+    assert len(requests) == 2
     assert all(request["max_tokens"] == 512 for request in requests)
     assert all("max_completion_tokens" not in request for request in requests)
     assert all(request["reasoning_effort"] == "none" for request in requests)
@@ -234,7 +233,4 @@ def test_offline_vlm_task_runs_unknown_tool_recovery_action_and_completion(
         }
         for request in requests
     )
-    assert (
-        result.detail["planner_diagnostics"]["rejected_tool_calls"][0]["tool"]
-        == "tools_search"
-    )
+    assert "planner_diagnostics" not in result.detail

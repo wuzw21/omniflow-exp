@@ -21,7 +21,12 @@ from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
-from omniflow.vlm.gui import SYSTEM_PROMPT, build_model_turn_request, function_tools
+from omniflow.vlm.gui import (
+    SYSTEM_PROMPT,
+    ModelToolCallError,
+    build_model_turn_request,
+    function_tools,
+)
 from omniflow.vlm.planner import VLMPlanner
 from src.integrations.android_world.agent import (
     _TaskHost,
@@ -960,7 +965,7 @@ def _planner_response(tool: str, arguments: dict[str, object]) -> object:
     )
 
 
-def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> None:
+def test_vlm_planner_does_not_retry_invalid_coordinates() -> None:
     completions = SequenceCompletions(
         [
             _planner_response("click", {"x": [361, 1136]}),
@@ -972,23 +977,14 @@ def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> No
         client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
     )
 
-    planned = asyncio.run(
-        planner.one_step_tool_call(
-            "Open Downloads",
-            Observation(extra={"display": {"width": 720, "height": 1280}}),
+    with pytest.raises(ModelToolCallError, match="canonical_action_arg_type_invalid:x"):
+        asyncio.run(
+            planner.one_step_tool_call(
+                "Open Downloads",
+                Observation(extra={"display": {"width": 720, "height": 1280}}),
+            )
         )
-    )
-
-    assert planned == ToolCall(
-        "click",
-        {"x": pytest.approx(501.3888888888889), "y": 887.5},
-    )
-    assert len(completions.requests) == 2
-    retry_tools = completions.requests[1]["tools"]
-    assert [tool["function"]["name"] for tool in retry_tools] == ["click"]
-    correction = completions.requests[1]["messages"][-1]["content"][0]["text"]
-    assert "canonical_action_arg_type_invalid:x" in correction
-    assert '"x":[361,1136]' in correction
+    assert len(completions.requests) == 1
     assert planner.take_metadata()["rejected_tool_calls"] == [
         {
             "turn_index": 1,
@@ -999,7 +995,7 @@ def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> No
     ]
 
 
-def test_vlm_planner_blank_tool_retry_keeps_screenshot_and_ui_context() -> None:
+def test_vlm_planner_does_not_retry_blank_tool() -> None:
     completions = SequenceCompletions(
         [
             _planner_response("", {}),
@@ -1019,20 +1015,14 @@ def test_vlm_planner_blank_tool_retry_keeps_screenshot_and_ui_context() -> None:
         extra={"display": {"width": 400, "height": 800}},
     )
 
-    planned = asyncio.run(
-        planner.one_step_tool_call("Click the Click Me button", observation)
-    )
-
-    assert planned == ToolCall("click", {"x": 500.0, "y": 187.5})
-    retry_content = completions.requests[1]["messages"][-1]["content"]
-    assert any(item["type"] == "image_url" for item in retry_content)
-    retry_text = retry_content[0]["text"]
-    assert "Relevant UI elements" in retry_text
-    assert "Click Me" in retry_text
-    assert len(completions.requests[1]["tools"]) > 1
+    with pytest.raises(ModelToolCallError, match="model_turn_tool_not_visible"):
+        asyncio.run(
+            planner.one_step_tool_call("Click the Click Me button", observation)
+        )
+    assert len(completions.requests) == 1
 
 
-def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
+def test_vlm_planner_does_not_retry_invalid_open_app_package() -> None:
     completions = SequenceCompletions(
         [
             _planner_response(
@@ -1051,30 +1041,18 @@ def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
     )
     installed_apps = {"Files": "com.google.android.documentsui"}
 
-    planned = asyncio.run(
-        planner.one_step_tool_call(
-            "Open Downloads in Files",
-            Observation(extra={"display": {"width": 720, "height": 1280}}),
-            installed_apps=installed_apps,
+    with pytest.raises(
+        ModelToolCallError,
+        match="planner_open_app_package_not_installed",
+    ):
+        asyncio.run(
+            planner.one_step_tool_call(
+                "Open Downloads in Files",
+                Observation(extra={"display": {"width": 720, "height": 1280}}),
+                installed_apps=installed_apps,
+            )
         )
-    )
-
-    assert planned == ToolCall(
-        "open_app",
-        {"package_name": "com.google.android.documentsui"},
-    )
-    assert len(completions.requests) == 2
-    retry_tools = completions.requests[1]["tools"]
-    assert [tool["function"]["name"] for tool in retry_tools] == ["open_app"]
-    correction = completions.requests[1]["messages"][-1]["content"][0]["text"]
-    assert (
-        "planner_open_app_package_not_installed:com.android.filemanager"
-        in correction
-    )
-    assert "allowed_package_name=com.google.android.documentsui" in correction
-    assert "copy one complete allowed_package_name value byte-for-byte" in correction
-    assert len(completions.requests[1]["messages"][-1]["content"]) == 1
-    assert "Relevant UI elements" not in correction
+    assert len(completions.requests) == 1
     assert planner.take_metadata()["rejected_tool_calls"][0]["arguments"] == {
         "summary": "Use open_app",
         "package_name": "com.android.filemanager",

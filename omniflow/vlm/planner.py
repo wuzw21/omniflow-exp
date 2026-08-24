@@ -14,7 +14,7 @@ from omniflow.vlm.guidance import resolve_step_guidance
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 
-_MODEL_TOOL_CALL_ATTEMPTS = 2
+_MODEL_TOOL_CALL_ATTEMPTS = 1
 ModelTurnTransport = Callable[[dict[str, Any]], dict[str, Any]]
 MetadataSink = Callable[[dict[str, Any]], None]
 
