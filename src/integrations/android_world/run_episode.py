@@ -2302,6 +2302,11 @@ def _run_androidworld_setup_apps(
             setup_env,
             app_list=tuple(setup_apps),
         )
+        _repair_androidworld_chrome_first_run(
+            setup_env,
+            setup_module=setup_module,
+            setup_apps=setup_apps,
+        )
         _repair_androidworld_setup_postconditions(
             setup_env,
             setup_module=setup_module,

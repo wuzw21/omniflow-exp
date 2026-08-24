@@ -1011,6 +1011,41 @@ def test_androidworld_chrome_setup_falls_back_to_semantic_labels(monkeypatch) ->
     assert calls[-1] == ("close", "chrome")
 
 
+def test_androidworld_setup_repairs_chrome_before_snapshot(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class ChromeApp:
+        app_name = "chrome"
+
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode._repair_androidworld_chrome_first_run",
+        lambda *_args, **_kwargs: calls.append("repair_chrome"),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode._repair_androidworld_setup_postconditions",
+        lambda *_args, **_kwargs: calls.append("repair_postconditions"),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode._prepare_androidworld_episode_apps",
+        lambda *_args, **_kwargs: calls.append("snapshot"),
+    )
+
+    _run_androidworld_setup_apps(
+        SimpleNamespace(controller=SimpleNamespace()),
+        setup_module=SimpleNamespace(
+            setup_apps=lambda *_args, **_kwargs: calls.append("official_setup")
+        ),
+        setup_apps=(ChromeApp,),
+    )
+
+    assert calls == [
+        "official_setup",
+        "repair_chrome",
+        "repair_postconditions",
+        "snapshot",
+    ]
+
+
 def test_androidworld_browser_setup_clears_file_picker_filters() -> None:
     calls: list[tuple[str, str]] = []
 
