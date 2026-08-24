@@ -222,7 +222,8 @@ bash scripts/exp/run_androidworld.sh --refresh-memory
 结果和中间证据写入 `data/`；Function 只通过 `compile_runlog_to_store` 写入
 v2 `store.json` 与 sibling `transfer_states.json`，
 成功 RunLog 由 authoring Agent 先拆成零个或多个语义 Function，再生成恰好一个
-覆盖全部 canonical source actions、提升语义参数和 bindings 的普通完整 Function；
+覆盖全部 canonical 主流程 source actions、提升语义参数和 bindings 的普通完整
+Function；标为 checker 的 source actions 在 authoring 前已从主流程剥离，
 compiler 只做硬校验，不机械拼接。因此 Store 中 Function 数量始终大于等于一且
 不使用嵌套 schema。
 运行时只读取 `data/current.json`。内部实现路径不是额外入口。

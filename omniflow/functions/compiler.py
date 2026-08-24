@@ -126,7 +126,8 @@ all of them and materializes canonical omniflow.function.v2 artifacts from the
 selected immutable source actions.
 
 Inspect source_run in source_step_index order. The reason must account for every
-source index. Within one Function, source_step_indices must be strictly increasing
+source index. Actions already marked origin=checker were removed before this plan;
+do not reconstruct them in the main flow. Within one Function, source_step_indices must be strictly increasing
 and contiguous. Never omit a click immediately following input_text when that click
 commits, submits, confirms, or advances the form; keep both in one Function.
 

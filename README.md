@@ -40,7 +40,8 @@ bash scripts/exp/run_androidworld.sh \
 4. 校验通过后，在指定设备上执行 E2E。
 
 Authoring Agent 可先生成零个或多个可复用语义 Function，再生成恰好一个覆盖全部
-canonical source actions 的普通完整 Function。完整 Function 由 Agent 合并语义、
+canonical 主流程 source actions 的普通完整 Function；标为 checker 的 source actions
+在 authoring 前已从主流程剥离。完整 Function 由 Agent 合并语义、
 参数 schema 与 bindings，compiler 只做完整覆盖和参数提升硬校验；不使用嵌套
 schema。因此一个成功 RunLog 最终生成至少一个 Function。
 Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
