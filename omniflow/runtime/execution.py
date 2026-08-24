@@ -23,7 +23,11 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
-from omniflow.runtime.checker import default_checker_trigger, match_checker_rule
+from omniflow.runtime.checker import (
+    checker_rule_action,
+    checker_rule_matches,
+    default_checker_trigger,
+)
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
 )
@@ -61,6 +65,8 @@ async def execute_function(
     resume_metadata: dict[str, Any] | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
+    checker_rules: tuple[dict[str, Any], ...] = (),
+    checker_trigger_counts: dict[str, int] | None = None,
 ) -> RunResult:
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
@@ -70,6 +76,9 @@ async def execute_function(
     )
     executed = 0
     trace: list[dict[str, Any]] = []
+    checker_trigger_counts = (
+        checker_trigger_counts if checker_trigger_counts is not None else {}
+    )
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         action = function_step.action
@@ -78,6 +87,43 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
+        for checker_phase in ("pre_transfer", "pre_action"):
+            checker_steps = await _run_shared_checker_phase(
+                checker_phase,
+                rules=checker_rules,
+                trigger_counts=checker_trigger_counts,
+                function=function,
+                function_step_index=function_step.step_index,
+                action=action,
+                observation=current,
+                source_state=source_state,
+                host=host,
+                installed_packages=installed_packages,
+            )
+            for checker_step in checker_steps:
+                executed += checker_step.actions_executed
+                trace.extend(
+                    await record_execution(
+                        host,
+                        checker_step,
+                        trace_start_index=int(trace_start_index) + len(trace),
+                        metadata={"function_step_index": function_step.step_index},
+                    )
+                )
+                current = checker_step.after or checker_step.before or current
+                if not checker_step.success:
+                    return RunResult(
+                        False,
+                        function.id,
+                        executed,
+                        error=checker_step.error,
+                        final_state=current,
+                        detail={
+                            "trace": trace,
+                            "failed_step_index": function_step.step_index,
+                            "next_step_index": function_step.step_index,
+                        },
+                    )
         step = await execute_robust_action(
             action,
             observation=current,
@@ -117,6 +163,42 @@ async def execute_function(
                     "next_step_index": function_step.step_index,
                 },
             )
+        post_checker_steps = await _run_shared_checker_phase(
+            "post_action",
+            rules=checker_rules,
+            trigger_counts=checker_trigger_counts,
+            function=function,
+            function_step_index=function_step.step_index,
+            action=action,
+            observation=current,
+            source_state=source_state,
+            host=host,
+            installed_packages=installed_packages,
+        )
+        for checker_step in post_checker_steps:
+            executed += checker_step.actions_executed
+            trace.extend(
+                await record_execution(
+                    host,
+                    checker_step,
+                    trace_start_index=int(trace_start_index) + len(trace),
+                    metadata={"function_step_index": function_step.step_index},
+                )
+            )
+            current = checker_step.after or checker_step.before or current
+            if not checker_step.success:
+                return RunResult(
+                    False,
+                    function.id,
+                    executed,
+                    error=checker_step.error,
+                    final_state=current,
+                    detail={
+                        "trace": trace,
+                        "failed_step_index": function_step.step_index,
+                        "next_step_index": function_step.step_index + 1,
+                    },
+                )
     return RunResult(
         True,
         function.id,
@@ -296,44 +378,6 @@ async def execute_robust_action(
     executed_steps: list[StepResult] = []
     recovery_action: Action | None = None
     recovery_trigger: str | None = None
-    try:
-        recovery = match_checker_rule(
-            CheckerContext(source_state, observation, action),
-            function.checker_rules if function is not None else (),
-        )
-        if recovery is not None:
-            recovery_trigger = recovery.trigger
-            recovery_source_state = await _load_state(
-                host,
-                recovery.source_state_id,
-                state_loader=state_loader,
-            )
-            recovery_decision = await prepare_action(
-                recovery.action,
-                observation=observation,
-                plugins=plugins,
-                source_state=recovery_source_state,
-            )
-            if recovery_decision.kind == "block" or recovery_decision.action is None:
-                return StepResult(
-                    False,
-                    action=action,
-                    before=observation,
-                    error=f"checker_recovery_failed:{recovery_decision.reason or 'blocked'}",
-                    origin="blocked",
-                    function_id=function_id,
-                    detail=recovery_decision.detail,
-                )
-            recovery_action = recovery_decision.action
-    except Exception as error:  # noqa: BLE001
-        return StepResult(
-            False,
-            action=action,
-            before=observation,
-            error=f"checker_failed:{error}",
-            origin="blocked",
-            function_id=function_id,
-        )
     checker = plugins.checker
     if recovery_action is None and checker is not None:
         try:
@@ -462,6 +506,81 @@ async def execute_robust_action(
         actions_executed=sum(item.actions_executed for item in executed_steps),
         executed_steps=tuple(executed_steps),
     )
+
+
+async def _run_shared_checker_phase(
+    phase: str,
+    *,
+    rules: tuple[dict[str, Any], ...],
+    trigger_counts: dict[str, int],
+    function: Function,
+    function_step_index: int,
+    action: Action,
+    observation: Observation,
+    source_state: Observation | None,
+    host: Host,
+    installed_packages: frozenset[str] | None,
+) -> list[StepResult]:
+    effects: list[StepResult] = []
+    current = observation
+    step_counts: dict[str, int] = {}
+    ordered = sorted(
+        (rule for rule in rules if str(rule.get("phase") or "pre_transfer") == phase),
+        key=lambda rule: (-int(rule.get("priority") or 0), str(rule.get("id") or "")),
+    )
+    for _ in range(_CHECKER_RECOVERY_MAX_ATTEMPTS):
+        selected: tuple[dict[str, Any], Action] | None = None
+        for rule in ordered:
+            rule_id = str(rule.get("id") or "")
+            budget = rule.get("budget") if isinstance(rule.get("budget"), dict) else {}
+            run_limit = int(budget.get("max_triggers_per_run", 1))
+            step_limit = int(budget.get("max_triggers_per_step", run_limit))
+            if trigger_counts.get(rule_id, 0) >= run_limit:
+                continue
+            if step_counts.get(rule_id, 0) >= step_limit:
+                continue
+            if not checker_rule_matches(
+                rule,
+                current=current,
+                source=source_state,
+                function_id=function.id,
+                step_index=function_step_index,
+                action=action,
+            ):
+                continue
+            recovery_action = checker_rule_action(
+                rule,
+                current=current,
+                source=source_state,
+            )
+            if recovery_action is not None and _recovery_action_available(
+                recovery_action, installed_packages
+            ):
+                selected = rule, recovery_action
+                break
+        if selected is None:
+            break
+        rule, recovery_action = selected
+        rule_id = str(rule["id"])
+        checker_step = replace(
+            await _dispatch_prepared(
+                recovery_action,
+                observation=current,
+                host=host,
+                installed_packages=installed_packages,
+            ),
+            origin="checker",
+            function_id=function.id,
+            checker_trigger=rule_id,
+            detail={"checker_id": rule_id, "checker_phase": phase},
+        )
+        effects.append(checker_step)
+        trigger_counts[rule_id] = trigger_counts.get(rule_id, 0) + 1
+        step_counts[rule_id] = step_counts.get(rule_id, 0) + 1
+        current = checker_step.after or current
+        if not checker_step.success:
+            break
+    return effects
 
 
 async def prepare_action(

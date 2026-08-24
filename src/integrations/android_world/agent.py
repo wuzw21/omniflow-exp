@@ -16,13 +16,13 @@ from omniflow import (
     RuntimeSettings,
 )
 from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
-from omniflow.core.model import ToolCall
 from omniflow.core.trajectory import state_id
+from omniflow.runtime.sequence import run_function_sequence
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
+    capture_transfer_state as _transfer_state,
     load_transfer_state_catalog,
     transfer_state_coverage,
-    capture_transfer_state as _transfer_state,
 )
 from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
@@ -93,6 +93,7 @@ def build_agent(
     performance_metrics: PerformanceMetrics | None = None,
     direct_function_id: str = "",
     direct_function_arguments: dict[str, Any] | None = None,
+    direct_function_calls: list[dict[str, Any]] | None = None,
     allow_empty_store: bool = False,
 ) -> OmniFlow | SimpleNamespace:
     if env is None:
@@ -179,23 +180,44 @@ def build_agent(
     flow.env = env
     flow.transition_pause = None
 
+    if direct_function_calls is not None and not isinstance(
+        direct_function_calls, list
+    ):
+        raise ValueError("direct_function_calls_must_be_array")
+    direct_calls = [dict(call) for call in (direct_function_calls or ())]
     direct_id = str(direct_function_id or "").strip()
+    if direct_id and direct_calls:
+        raise ValueError("direct_function_selection_ambiguous")
     if direct_id:
         if direct_function_arguments is not None and not isinstance(
             direct_function_arguments, dict
         ):
             raise ValueError("direct_function_arguments_must_be_object")
-        if flow.store.get_function(direct_id) is None:
-            raise ValueError(f"direct_function_not_found:{direct_id}")
-        direct_arguments = dict(direct_function_arguments or {})
+        direct_calls = [
+            {
+                "function_id": direct_id,
+                "arguments": dict(direct_function_arguments or {}),
+            }
+        ]
+    for call in direct_calls:
+        if set(call) != {"function_id", "arguments"}:
+            raise ValueError("direct_function_call_invalid")
+        function_id = str(call.get("function_id") or "").strip()
+        arguments = call.get("arguments")
+        if not function_id or not isinstance(arguments, dict):
+            raise ValueError("direct_function_call_invalid")
+        if flow.store.get_function(function_id) is None:
+            raise ValueError(f"direct_function_not_found:{function_id}")
 
+    if direct_calls:
         def run_direct_function(
             _goal: str,
             *,
             experiment: Experiment | str | None = None,
         ) -> RunResult:
-            return flow.call_tool(
-                ToolCall(direct_id, dict(direct_arguments)),
+            return run_function_sequence(
+                flow,
+                direct_calls,
                 experiment=experiment,
             )
 

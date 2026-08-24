@@ -165,6 +165,27 @@ def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
     assert captured["direct_function_arguments"] == {"target": "Alarm"}
 
 
+def test_direct_function_sequence_is_forwarded_to_androidworld_agent() -> None:
+    captured: dict[str, object] = {}
+    calls = [
+        {"function_id": "open_page", "arguments": {}},
+        {"function_id": "click_number", "arguments": {"number": "2"}},
+    ]
+
+    context = MethodAdapterContext(
+        selector="omniflow",
+        env=SimpleNamespace(),
+        store_path="store.json",
+        adb_serial="emulator-5554",
+        direct_function_calls=calls,
+        build_omniflow_agent=lambda **options: captured.update(options) or object(),
+    )
+
+    default_method_adapter_registry().build(context)
+
+    assert captured["direct_function_calls"] == calls
+
+
 def test_direct_function_keeps_online_planner_for_transfer_fallback(monkeypatch) -> None:
     planner_options: dict[str, object] = {}
 

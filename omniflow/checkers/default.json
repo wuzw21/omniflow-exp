@@ -1,0 +1,49 @@
+{
+  "schema_version": "omniflow.checker_store.v1",
+  "checker_rules": [
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "permission_allow",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "condition": {"xpath_exists": "//node[(contains(@package,'permissioncontroller') or contains(@resource-id,'permissioncontroller') or contains(@resource-id,'packageinstaller'))]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'allow') or contains(@text,'允许') or contains(@text,'确定') or contains(@resource-id,'permission_allow_button') or contains(@resource-id,'allow_button') or contains(@resource-id,'button1'))]"},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 100,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "dismiss_transient_overlay",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "condition": {"xpath_exists": "//node[@clickable='true' and (contains(@text,'跳过') or contains(@text,'关闭') or contains(@text,'稍后') or contains(@text,'以后') or contains(@text,'取消') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'not now') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close') or contains(@resource-id,'skip') or contains(@resource-id,'close') or contains(@resource-id,'cancel'))]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (contains(@text,'跳过') or contains(@text,'关闭') or contains(@text,'稍后') or contains(@text,'以后') or contains(@text,'取消') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'not now') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close') or contains(@resource-id,'skip') or contains(@resource-id,'close') or contains(@resource-id,'cancel'))]"},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 90,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "package_mismatch_recovery",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "condition": {"package_mismatch": true},
+      "action": {"action": "open_app"},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 10,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "hide_keyboard_if_obscuring",
+      "enabled": true,
+      "phase": "pre_action",
+      "condition": {"keyboard_obscuring": true},
+      "action": {"action": "hide_keyboard"},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 100,
+      "source": "runtime_policy"
+    }
+  ]
+}

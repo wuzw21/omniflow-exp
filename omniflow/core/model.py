@@ -152,7 +152,6 @@ class Function:
     schema_version: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
     bindings: tuple[dict[str, str], ...] = ()
-    checker_rules: tuple[dict[str, Any], ...] = ()
     agent_visible: bool = True
 
     @classmethod
@@ -180,7 +179,6 @@ class Function:
                 for binding in value.get("bindings") or ()
                 if isinstance(binding, dict)
             ),
-            checker_rules=tuple(value.get("checker_rules") or ()),
             agent_visible=value.get("agent_visible") is True,
         )
 
@@ -193,7 +191,6 @@ class Function:
             "input_schema": dict(self.input_schema),
             "bindings": [dict(binding) for binding in self.bindings],
             "steps": [step.to_dict() for step in self.steps],
-            "checker_rules": list(self.checker_rules),
             "agent_visible": self.agent_visible,
         }
 

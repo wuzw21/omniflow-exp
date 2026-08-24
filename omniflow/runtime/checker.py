@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import importlib
 import json
 import math
+from pathlib import Path
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -13,7 +14,11 @@ from omniflow.core.model import Action, CheckerContext
 from omniflow.core.schemas import canonicalize_action
 from omniflow.transfer.runtime import load_omnitransfer
 
-_RULE_FIELDS = {"schema_version", "trigger", "source_state_id", "action"}
+CHECKER_STORE_VERSION = "omniflow.checker_store.v1"
+DEFAULT_CHECKER_LIBRARY_PATH = (
+    Path(__file__).resolve().parents[1] / "checkers" / "default.json"
+)
+_LEGACY_RULE_FIELDS = {"schema_version", "trigger", "source_state_id", "action"}
 _TRIGGER_HELPERS = {
     "activity_is",
     "content_desc_contains",
@@ -64,8 +69,91 @@ class CheckerRecovery:
     trigger: str
 
 
+@dataclass(frozen=True)
+class CheckerLibrary:
+    rules: tuple[dict[str, Any], ...] = ()
+
+    @classmethod
+    def load(cls, path: str | Path | None = None) -> "CheckerLibrary":
+        merged: dict[str, dict[str, Any]] = {}
+        for candidate in (DEFAULT_CHECKER_LIBRARY_PATH, Path(path) if path else None):
+            if candidate is None or not candidate.is_file():
+                continue
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("checker_store_must_be_object")
+            version = payload.get("schema_version")
+            if version not in (None, CHECKER_STORE_VERSION):
+                raise ValueError("unsupported_checker_store_version")
+            raw_rules = payload.get("checker_rules")
+            if not isinstance(raw_rules, list):
+                raise ValueError("checker_store_rules_must_be_array")
+            for raw_rule in raw_rules:
+                rule = validate_checker_rule(raw_rule)
+                merged[rule["id"]] = rule
+        return cls(tuple(merged.values()))
+
+    def save(self, path: str | Path) -> None:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": CHECKER_STORE_VERSION,
+            "checker_rules": [dict(rule) for rule in self.rules],
+        }
+        temporary = destination.with_suffix(f"{destination.suffix}.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(destination)
+
+
 def validate_checker_rule(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != _RULE_FIELDS:
+    if not isinstance(value, dict):
+        raise ValueError("checker_rule_contract_invalid")
+    rule_id = str(value.get("id") or "").strip()
+    if not rule_id:
+        raise ValueError("checker_rule_id_required")
+    version = value.get("schema_version", "omniflow.checker_rule.v1")
+    if version != "omniflow.checker_rule.v1":
+        raise ValueError("unsupported_checker_rule_version")
+    phase = str(value.get("phase") or "pre_transfer").strip()
+    if phase not in {"pre_transfer", "pre_action", "post_action"}:
+        raise ValueError("checker_rule_phase_invalid")
+    condition = value.get("condition", value.get("when"))
+    action = value.get("action", value.get("then"))
+    condition = _normalize_library_condition(condition)
+    action = _normalize_library_action(action)
+    scope = value.get("scope") or {}
+    budget = value.get("budget") or {}
+    if not isinstance(scope, dict):
+        raise ValueError("checker_rule_scope_invalid")
+    if not isinstance(budget, dict):
+        raise ValueError("checker_rule_budget_invalid")
+    normalized_budget: dict[str, int] = {}
+    for name in ("max_triggers_per_run", "max_triggers_per_step", "cooldown_ms"):
+        if name not in budget:
+            continue
+        raw = budget[name]
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            raise ValueError(f"checker_rule_budget_invalid:{name}")
+        normalized_budget[name] = raw
+    return {
+        "schema_version": "omniflow.checker_rule.v1",
+        "id": rule_id,
+        "enabled": value.get("enabled") is not False,
+        "phase": phase,
+        "scope": json.loads(json.dumps(scope, ensure_ascii=False)),
+        "condition": condition,
+        "action": action,
+        "budget": normalized_budget,
+        "priority": int(value.get("priority") or 0),
+        "source": str(value.get("source") or "runtime_policy"),
+    }
+
+
+def validate_legacy_checker_rule(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _LEGACY_RULE_FIELDS:
         raise ValueError("checker_rule_contract_invalid")
     if value.get("schema_version") != "omniflow.checker_rule.v1":
         raise ValueError("unsupported_checker_rule_version")
@@ -91,7 +179,7 @@ def match_checker_rule(
 ) -> CheckerRecovery | None:
     facts = _TriggerFacts(context.current)
     for raw_rule in rules:
-        rule = validate_checker_rule(raw_rule)
+        rule = validate_legacy_checker_rule(raw_rule)
         if _evaluate_trigger(rule["trigger"], facts):
             return CheckerRecovery(
                 Action.from_value(rule["action"]),
@@ -99,6 +187,194 @@ def match_checker_rule(
                 rule["trigger"],
             )
     return None
+
+
+def checker_rule_matches(
+    rule: dict[str, Any],
+    *,
+    current: Any,
+    source: Any | None,
+    function_id: str,
+    step_index: int,
+    action: Action,
+) -> bool:
+    normalized = validate_checker_rule(rule)
+    if not normalized["enabled"] or not _scope_matches(
+        normalized["scope"],
+        current=current,
+        function_id=function_id,
+        step_index=step_index,
+        action=action,
+    ):
+        return False
+    condition = normalized["condition"]
+    kind = condition["type"]
+    if kind == "package_mismatch":
+        source_package = _normalize(getattr(source, "package_name", ""))
+        current_package = _normalize(getattr(current, "package_name", ""))
+        return bool(
+            source_package
+            and current_package
+            and source_package != current_package
+            and not _is_transient_package(source_package)
+            and not _is_transient_package(current_package)
+        )
+    if kind == "keyboard_obscuring":
+        extra = getattr(current, "extra", {}) or {}
+        if extra.get("keyboard_visible") is True or extra.get("ime_visible") is True:
+            return True
+        package_name = _normalize(getattr(current, "package_name", ""))
+        return "inputmethod" in package_name
+    xpath = str(condition.get("xpath") or "")
+    return bool(_xpath_nodes(str(getattr(current, "xml", "") or ""), xpath))
+
+
+def checker_rule_action(
+    rule: dict[str, Any],
+    *,
+    current: Any,
+    source: Any | None,
+) -> Action | None:
+    normalized = validate_checker_rule(rule)
+    specification = normalized["action"]
+    kind = specification["type"]
+    if kind == "open_app":
+        package_name = str(specification.get("package_name") or "").strip()
+        if not package_name and source is not None:
+            package_name = str(getattr(source, "package_name", "") or "").strip()
+        return Action("open_app", {"package_name": package_name}) if package_name else None
+    if kind == "hide_keyboard":
+        return Action("press_key", {"key": "back"})
+    if kind == "wait":
+        return Action("wait", {"duration_ms": int(specification.get("wait_ms") or 0)})
+    if kind != "click":
+        return None
+    nodes = _xpath_nodes(
+        str(getattr(current, "xml", "") or ""),
+        str(specification.get("target_xpath") or ""),
+    )
+    if len(nodes) != 1:
+        return None
+    bounds = _parse_bounds(nodes[0].get("bounds"))
+    display = (getattr(current, "extra", {}) or {}).get("display")
+    if bounds is None or not isinstance(display, dict):
+        return None
+    try:
+        width = float(display["width"])
+        height = float(display["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return Action(
+        "click",
+        {
+            "x": (bounds[0] + bounds[2]) / 2.0 / width * 1000.0,
+            "y": (bounds[1] + bounds[3]) / 2.0 / height * 1000.0,
+        },
+    )
+
+
+def _normalize_library_condition(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = {"type": value}
+    if not isinstance(value, dict):
+        raise ValueError("checker_rule_condition_invalid")
+    if value.get("type"):
+        kind = str(value["type"])
+    elif value.get("xpath_exists"):
+        kind = "xpath_exists"
+    elif value.get("target_covered_by_xpath"):
+        kind = "target_covered_by_xpath"
+    elif value.get("keyboard_obscuring") is True or value.get("keyboard_obscures_target") is True:
+        kind = "keyboard_obscuring"
+    elif value.get("package_mismatch") is True:
+        kind = "package_mismatch"
+    else:
+        raise ValueError("checker_rule_condition_invalid")
+    if kind not in {"xpath_exists", "target_covered_by_xpath", "keyboard_obscuring", "package_mismatch"}:
+        raise ValueError("checker_rule_condition_invalid")
+    result = {"type": kind}
+    if kind in {"xpath_exists", "target_covered_by_xpath"}:
+        xpath = str(
+            value.get("xpath")
+            or value.get("xpath_exists")
+            or value.get("target_covered_by_xpath")
+            or ""
+        ).strip()
+        if not xpath:
+            raise ValueError("checker_rule_xpath_required")
+        result["xpath"] = xpath
+    return result
+
+
+def _normalize_library_action(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = {"type": value}
+    if not isinstance(value, dict):
+        raise ValueError("checker_rule_action_invalid")
+    kind = str(value.get("type") or value.get("action") or "").strip()
+    if kind not in {"click", "hide_keyboard", "open_app", "wait"}:
+        raise ValueError("checker_rule_action_invalid")
+    result: dict[str, Any] = {"type": kind}
+    if kind == "click":
+        target_xpath = str(value.get("target_xpath") or "").strip()
+        if not target_xpath:
+            raise ValueError("checker_rule_target_xpath_required")
+        result["target_xpath"] = target_xpath
+    if kind == "open_app" and str(value.get("package_name") or "").strip():
+        result["package_name"] = str(value["package_name"]).strip()
+    if kind == "wait":
+        result["wait_ms"] = int(value.get("wait_ms") or 0)
+    return result
+
+
+def _scope_matches(
+    scope: dict[str, Any],
+    *,
+    current: Any,
+    function_id: str,
+    step_index: int,
+    action: Action,
+) -> bool:
+    checks = {
+        "function_ids": function_id,
+        "step_indexes": step_index,
+        "action_types": action.tool,
+        "package_names": str(getattr(current, "package_name", "") or ""),
+    }
+    for name, actual in checks.items():
+        expected = scope.get(name)
+        if expected is None:
+            continue
+        values = expected if isinstance(expected, list) else [expected]
+        if actual not in values:
+            return False
+    return True
+
+
+def _xpath_nodes(xml: str, xpath: str) -> list[Any]:
+    if not xml or not xpath:
+        return []
+    try:
+        from lxml import etree
+
+        root = etree.fromstring(xml.encode("utf-8"))
+        return [node for node in root.xpath(xpath) if hasattr(node, "get")]
+    except Exception:
+        return []
+
+
+def _parse_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    match = re.fullmatch(
+        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
+        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]",
+        str(value or ""),
+    )
+    if match is None:
+        return None
+    left, top, right, bottom = map(float, match.groups())
+    return (left, top, right, bottom) if right > left and bottom > top else None
 
 
 def default_checker(context: CheckerContext) -> Action | None:

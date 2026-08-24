@@ -92,7 +92,7 @@ rg --files -g '*.py' | sort
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |
 | `omniflow/runtime/__init__.py` | runtime 导出 |
 | `omniflow/runtime/core.py` | 单个 canonical action primitive |
-| `omniflow/runtime/checker.py` | v1 trigger DSL、Function-local recovery rule 和 deterministic checker |
+| `omniflow/runtime/checker.py` | 独立共享 checker library、rule validation 和 deterministic recovery |
 | `omniflow/runtime/engine.py` | 一个持久 Planner/Function 生命周期；不增加 method-specific loop |
 | `omniflow/runtime/execution.py` | `execute_function`、`execute_robust_action`、`align_function_resume` 和 OmniTransfer 执行的唯一 owner |
 | `omniflow/transfer/__init__.py` | transfer 导出 |

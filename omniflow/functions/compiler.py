@@ -6,10 +6,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from omniflow.core.schemas import canonicalize_action
 from omniflow.core.trajectory import canonicalize_run_log, state_id
 from omniflow.runlog import project_androidworld_step_actions
-from omniflow.runtime.checker import validate_checker_rule
+from omniflow.runtime.checker import CheckerLibrary, validate_checker_rule
 
 
 def compile_runlog_to_store(
@@ -119,10 +118,10 @@ def compile_runlog_to_store(
 Return exactly {"reason": string, "bundle": object|null}.
 
 The bundle must use schema_version "omniflow.function-bundle.v2" and contain
-run_id, arguments, and one or more ordinary
+run_id, arguments, checker_rules, and one or more ordinary
 "omniflow.function.v2" Functions. Every Function contains exactly
 schema_version, function_id, name, description, input_schema, bindings, steps,
-checker_rules, and agent_visible.
+and agent_visible. Checker rules belong only to the bundle-level shared library.
 
 Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
 {
@@ -130,6 +129,7 @@ Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
   "bundle": {
     "schema_version": "omniflow.function-bundle.v2",
     "run_id": "copy the supplied run_id exactly",
+    "checker_rules": [],
     "arguments": {
       "enter_requested_name": {"name": "Alice"}
     },
@@ -158,7 +158,6 @@ Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
             "action": {"tool": "input_text", "args": {"text": ""}}
           }
         ],
-        "checker_rules": [],
         "agent_visible": true
       }
     ]
@@ -211,8 +210,8 @@ evidence. Coordinate fields in the supplied facts are already normalized to
 0..1000. Copy each supplied canonical action without adding fields. Return
 bundle=null only when no safe reusable action-grounded Function exists.
 
-This compilation prompt does not author recovery behavior.
-Set checker_rules=[] in every generated Function.
+This compilation prompt does not author recovery behavior. Set the bundle-level
+checker_rules=[] unless an explicit independently reusable checker rule is supplied.
 """
     )
     selected_model = str(model or "").strip() or None
@@ -296,6 +295,7 @@ Set checker_rules=[] in every generated Function.
         "run_id",
         "arguments",
         "functions",
+        "checker_rules",
     }:
         raise ValueError("function_bundle_contract_invalid")
     if bundle.get("schema_version") != "omniflow.function-bundle.v2":
@@ -304,12 +304,18 @@ Set checker_rules=[] in every generated Function.
         raise ValueError("function_bundle_run_id_mismatch")
     raw_functions = bundle.get("functions")
     arguments_by_function = bundle.get("arguments")
+    raw_checker_rules = bundle.get("checker_rules")
     if not isinstance(raw_functions, list) or not raw_functions:
         raise ValueError("function_bundle_functions_required")
     if not isinstance(arguments_by_function, dict):
         raise ValueError("function_bundle_source_arguments_invalid")
+    if not isinstance(raw_checker_rules, list):
+        raise ValueError("function_bundle_checker_rules_invalid")
     functions = [parse_function_artifact(value) for value in raw_functions]
-    _validate_checker_evidence(functions, recovery_examples)
+    checker_rules = [validate_checker_rule(rule) for rule in raw_checker_rules]
+    checker_ids = [rule["id"] for rule in checker_rules]
+    if len(checker_ids) != len(set(checker_ids)):
+        raise ValueError("function_bundle_duplicate_checker_id")
     function_ids = [function.id for function in functions]
     if len(function_ids) != len(set(function_ids)):
         raise ValueError("function_bundle_duplicate_function_id")
@@ -381,6 +387,8 @@ Set checker_rules=[] in every generated Function.
     store = FunctionStore(store_path)
     for function in functions:
         store.put_function(function)
+    checker_store_path = root / "checker_store.json"
+    CheckerLibrary(tuple(checker_rules)).save(checker_store_path)
     transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
     transfer_state_catalog_path.write_text(
         json.dumps(
@@ -408,10 +416,21 @@ Set checker_rules=[] in every generated Function.
             else None
         ),
         "store_path": str(store_path),
+        "checker_store_path": str(checker_store_path),
+        "checker_count": len(checker_rules),
         "transfer_state_catalog": str(transfer_state_catalog_path),
         "transfer_state_count": len(frozen_states),
         "function_ids": function_ids,
         "function_count": len(function_ids),
+        "source_calls": [
+            {
+                "function_id": function_id,
+                "arguments": json.loads(
+                    json.dumps(arguments_by_function[function_id], ensure_ascii=False)
+                ),
+            }
+            for function_id in function_ids
+        ],
         "source_arguments": json.loads(
             json.dumps(arguments_by_function, ensure_ascii=False)
         ),
@@ -426,7 +445,7 @@ Set checker_rules=[] in every generated Function.
 def _referenced_source_state_ids(functions: list[Any]) -> list[str]:
     state_ids: list[str] = []
     for function in functions:
-        for item in (*function.steps, *function.checker_rules):
+        for item in function.steps:
             if isinstance(item, dict):
                 state_id = str(item.get("source_state_id") or "").strip()
             else:
@@ -496,47 +515,6 @@ def _normalize_source_state(value: Any, expected_state_id: str) -> dict[str, Any
     return state
 
 
-def _validate_checker_evidence(
-    functions: list[Any],
-    recovery_examples: list[dict[str, Any]],
-) -> None:
-    evidence = [
-        {
-            "source_state_id": str(example.get("source_state_id") or ""),
-            "action": json.dumps(
-                canonicalize_action(example.get("action"), replayable_only=True),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            "trigger": str(example.get("trigger") or "").strip(),
-        }
-        for example in recovery_examples
-    ]
-    for function in functions:
-        for rule in function.checker_rules:
-            source_state_id = str(rule.get("source_state_id") or "")
-            action = json.dumps(
-                canonicalize_action(rule.get("action"), replayable_only=True),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            matches = [
-                example
-                for example in evidence
-                if example["source_state_id"] == source_state_id
-                and example["action"] == action
-            ]
-            if not matches:
-                raise ValueError("function_checker_rule_missing_recovery_evidence")
-            captured_triggers = {
-                example["trigger"] for example in matches if example["trigger"]
-            }
-            if captured_triggers and rule.get("trigger") not in captured_triggers:
-                raise ValueError("function_checker_rule_trigger_mismatch")
-
-
 def _default_bundle(
     facts: dict[str, Any],
     recovery_examples: list[dict[str, Any]],
@@ -561,22 +539,11 @@ def _default_bundle(
         ).encode()
     ).hexdigest()[:12]
     function_id = f"recorded_{digest}"
-    checker_rules = [
-        validate_checker_rule(
-            {
-                "schema_version": "omniflow.checker_rule.v1",
-                "trigger": example["trigger"],
-                "source_state_id": example["source_state_id"],
-                "action": example["action"],
-            }
-        )
-        for example in recovery_examples
-        if str(example.get("trigger") or "").strip()
-    ]
     return {
         "schema_version": "omniflow.function-bundle.v2",
         "run_id": facts["run_id"],
         "arguments": {function_id: {}},
+        "checker_rules": [],
         "functions": [
             {
                 "schema_version": "omniflow.function.v2",
@@ -591,7 +558,6 @@ def _default_bundle(
                 },
                 "bindings": [],
                 "steps": steps,
-                "checker_rules": checker_rules,
                 "agent_visible": True,
             }
         ],

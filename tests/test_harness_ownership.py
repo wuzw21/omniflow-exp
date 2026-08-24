@@ -25,7 +25,6 @@ def _function() -> Function:
             },
             "bindings": [],
             "steps": [],
-            "checker_rules": [],
             "agent_visible": True,
         }
     )

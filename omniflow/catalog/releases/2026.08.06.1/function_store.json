@@ -14,7 +14,9 @@
             "description": "Exact beverage to search, for example 拿铁、美式 or matcha latte."
           }
         },
-        "required": ["beverage"],
+        "required": [
+          "beverage"
+        ],
         "additionalProperties": false
       },
       "bindings": [
@@ -28,31 +30,90 @@
         }
       ],
       "steps": [
-        {"step_index": 0, "source_state_id": "state_7068c11b9ff19775f347", "action": {"tool": "click", "args": {"x": 566.7733651620371, "y": 132.55109690656568}}},
-        {"step_index": 1, "source_state_id": "state_c46b67d3381bfcf6d080", "action": {"tool": "input_text", "args": {"text": "拿铁"}}},
-        {"step_index": 2, "source_state_id": "state_8616e94aca1f6d64a1ef", "action": {"tool": "press_key", "args": {"key": "enter"}}},
-        {"step_index": 3, "source_state_id": "state_7d57d94982df9f9db8b9", "action": {"tool": "click", "args": {"x": 472.08930121527777, "y": 336.3682396885522}}},
-        {"step_index": 4, "source_state_id": "state_ddd413e28ea46ade6a7c", "action": {"tool": "click", "args": {"x": 597.2222222222222, "y": 78.28282828282829}}},
-        {"step_index": 5, "source_state_id": "state_f422c376c4d81d0edfed", "action": {"tool": "input_text", "args": {"text": "拿铁"}}},
-        {"step_index": 6, "source_state_id": "state_5bedc2bed36162f6606f", "action": {"tool": "press_key", "args": {"key": "enter"}}},
-        {"step_index": 7, "source_state_id": "state_6f16ebacd2485512bbd1", "action": {"tool": "click", "args": {"x": 861.1129195601852, "y": 323.5537339541246}}}
-      ],
-      "checker_rules": [
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "package_is(\"cn.com.omnimind.bot\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "package_is(\"cn.com.omnimind.bot.debug\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "package_is(\"com.android.launcher\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "package_is(\"com.heytap.browser\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "package_is(\"com.android.chrome\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "xml_contains(\"网络开小差\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "xml_contains(\"加载失败\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "xml_contains(\"重新加载\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "xml_contains(\"页面不存在\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "open_app", "args": {"package_name": "com.sankuai.meituan"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "text_contains(\"以后再说\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "text_contains(\"暂不\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "text_contains(\"not now\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "text_contains(\"no thanks\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "content_desc_contains(\"关闭广告\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}},
-        {"schema_version": "omniflow.checker_rule.v1", "trigger": "text_contains(\"跳过广告\")", "source_state_id": "builtin_checker_anchor", "action": {"tool": "press_key", "args": {"key": "back"}}}
+        {
+          "step_index": 0,
+          "source_state_id": "state_7068c11b9ff19775f347",
+          "action": {
+            "tool": "click",
+            "args": {
+              "x": 566.7733651620371,
+              "y": 132.55109690656568
+            }
+          }
+        },
+        {
+          "step_index": 1,
+          "source_state_id": "state_c46b67d3381bfcf6d080",
+          "action": {
+            "tool": "input_text",
+            "args": {
+              "text": "拿铁"
+            }
+          }
+        },
+        {
+          "step_index": 2,
+          "source_state_id": "state_8616e94aca1f6d64a1ef",
+          "action": {
+            "tool": "press_key",
+            "args": {
+              "key": "enter"
+            }
+          }
+        },
+        {
+          "step_index": 3,
+          "source_state_id": "state_7d57d94982df9f9db8b9",
+          "action": {
+            "tool": "click",
+            "args": {
+              "x": 472.08930121527777,
+              "y": 336.3682396885522
+            }
+          }
+        },
+        {
+          "step_index": 4,
+          "source_state_id": "state_ddd413e28ea46ade6a7c",
+          "action": {
+            "tool": "click",
+            "args": {
+              "x": 597.2222222222222,
+              "y": 78.28282828282829
+            }
+          }
+        },
+        {
+          "step_index": 5,
+          "source_state_id": "state_f422c376c4d81d0edfed",
+          "action": {
+            "tool": "input_text",
+            "args": {
+              "text": "拿铁"
+            }
+          }
+        },
+        {
+          "step_index": 6,
+          "source_state_id": "state_5bedc2bed36162f6606f",
+          "action": {
+            "tool": "press_key",
+            "args": {
+              "key": "enter"
+            }
+          }
+        },
+        {
+          "step_index": 7,
+          "source_state_id": "state_6f16ebacd2485512bbd1",
+          "action": {
+            "tool": "click",
+            "args": {
+              "x": 861.1129195601852,
+              "y": 323.5537339541246
+            }
+          }
+        }
       ],
       "agent_visible": true
     }

@@ -22,6 +22,7 @@ dependencies = [
     "ipython>=8",
     "json-repair==0.61.7",
     "jsonschema>=4.23",
+    "lxml>=5",
     "matplotlib>=3.6",
     "numpy==1.26.4",
     "openai>=1.99.9",
@@ -61,8 +62,9 @@ include-package-data = false
     "schemas/oob/README.md",
     "schemas/oob/oob_canonical_actions.v1.json",
     "schemas/oob/omniflow_run_log.v1.json",
-  "schemas/oob/omniflow_checker_rule.v1.json",
-    "schemas/oob/omniflow_function.v3.json",
+    "schemas/oob/omniflow_checker_rule.v1.json",
+    "schemas/oob/omniflow_checker_store.v1.json",
+    "schemas/oob/omniflow_function.v2.json",
     "schemas/oob/omniflow_android_bridge.v2.json",
 ]
 

@@ -13,7 +13,7 @@ from runlog_fixtures import androidworld_run_log
 
 from src.experiment.run_task import (
     DeviceTarget,
-    _canonical_function_source_call,
+    _canonical_function_source_calls,
     _resolve_mobilegpt_target_package,
     _mobilegpt_server_task_app,
     bind_function_arguments_to_task_params,
@@ -593,6 +593,36 @@ def test_e2e_command_exposes_direct_function_with_fallback_planner(
     assert spec.argv[spec.argv.index("--planner-timeout-sec") + 1] == "45.0"
 
 
+def test_e2e_command_exposes_ordered_function_sequence(tmp_path: Path) -> None:
+    item = CanonicalRunLog(
+        task="BrowserMultiply",
+        goal="Multiply the displayed numbers",
+        params={"seed": 111},
+        source_run_log=tmp_path / "source.run_log.json",
+        replay_seed=111,
+        step_count=2,
+        meta={},
+    )
+    calls = [
+        {"function_id": "open_page", "arguments": {}},
+        {"function_id": "click_number", "arguments": {"number": "2"}},
+    ]
+
+    spec = build_task_command(
+        item,
+        android_world_root=tmp_path / "android-world",
+        output_root=tmp_path / "data",
+        store_path=tmp_path / "function_store.json",
+        function_calls=calls,
+    )
+
+    assert spec.metadata["mode"] == "direct_function_e2e"
+    assert spec.metadata["function_calls"] == calls
+    assert json.loads(
+        spec.argv[spec.argv.index("--function-calls-json") + 1]
+    ) == calls
+
+
 def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -605,26 +635,31 @@ def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
     assert args.planner_timeout_sec == 180.0
 
 
-def test_canonical_function_source_call_selects_store_source_call(
+def test_canonical_function_source_calls_select_store_source_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     class FakeStore:
         load_errors = {}
-        source_calls = [{"function_id": "take_photo", "arguments": {}}]
-
         def __init__(self, _path: Path) -> None:
             pass
 
         def get_function(self, function_id: str):
-            return object() if function_id == "take_photo" else None
+            return object() if function_id in {"open_camera", "take_photo"} else None
 
     monkeypatch.setattr("src.experiment.run_task.FunctionStore", FakeStore)
-
-    assert _canonical_function_source_call(tmp_path / "function_store.json") == (
-        "take_photo",
-        {},
+    monkeypatch.setattr(
+        "src.experiment.run_task.load_v2_source_calls",
+        lambda _path: [
+            {"function_id": "open_camera", "arguments": {}},
+            {"function_id": "take_photo", "arguments": {"lens": "rear"}},
+        ],
     )
+
+    assert _canonical_function_source_calls(tmp_path / "function_store.json") == [
+        {"function_id": "open_camera", "arguments": {}},
+        {"function_id": "take_photo", "arguments": {"lens": "rear"}},
+    ]
 
 
 def test_function_arguments_bind_only_declared_dynamic_task_params() -> None:
@@ -3044,7 +3079,7 @@ def test_appagent_pipeline_does_not_use_or_refresh_function_store(
     assert refresh_called is False
 
 
-def test_pipeline_qualifies_one_source_function_before_target_workers(
+def test_pipeline_qualifies_source_function_sequence_before_target_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3078,7 +3113,7 @@ def test_pipeline_qualifies_one_source_function_before_target_workers(
 
     def qualify(**kwargs: object) -> dict[str, object]:
         events.append("qualify")
-        assert kwargs["source_call"] == source_call
+        assert kwargs["source_calls"] == [source_call]
         return {
             "status": "qualified",
             "qualified": True,
@@ -3145,10 +3180,9 @@ def test_cached_source_function_qualification_requires_matching_function_identit
                 "source_run_log": str(source_path),
                 "store_path": str(store_path),
                 "function_id": "create_note",
-                "source_call": {
-                    "function_id": "create_note",
-                    "arguments": {},
-                },
+                "source_calls": [
+                    {"function_id": "create_note", "arguments": {}}
+                ],
                 "model_calls": 0,
                 "fallback_steps": 0,
             }
@@ -3160,7 +3194,7 @@ def test_cached_source_function_qualification_requires_matching_function_identit
         args=args,
         source_path=source_path,
         function_store={"store_path": str(store_path)},
-        source_call={"function_id": "create_note", "arguments": {}},
+        source_calls=[{"function_id": "create_note", "arguments": {}}],
     )
 
     assert cached is not None
@@ -3194,10 +3228,12 @@ def test_cached_source_function_qualification_ignores_other_function_store(
                 "source_run_log": str(source_path),
                 "store_path": str(tmp_path / "old-store.json"),
                 "function_id": "open_brightness_settings",
-                "source_call": {
-                    "function_id": "open_brightness_settings",
-                    "arguments": {},
-                },
+                "source_calls": [
+                    {
+                        "function_id": "open_brightness_settings",
+                        "arguments": {},
+                    }
+                ],
                 "model_calls": 0,
                 "fallback_steps": 0,
             }
@@ -3209,10 +3245,12 @@ def test_cached_source_function_qualification_ignores_other_function_store(
         args=args,
         source_path=source_path,
         function_store={"store_path": str(store_path)},
-        source_call={
-            "function_id": "set_brightness_to_minimum",
-            "arguments": {},
-        },
+        source_calls=[
+            {
+                "function_id": "set_brightness_to_minimum",
+                "arguments": {},
+            }
+        ],
     ) is None
 
 
@@ -3392,10 +3430,9 @@ def test_source_function_qualification_requires_zero_model_and_fallback(
             "store_path": str(store),
             "transfer_states_sha256": "a" * 64,
         },
-        source_call={"function_id": "draw", "arguments": {}},
+        source_calls=[{"function_id": "draw", "arguments": {}}],
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
-        round_index=1,
     )
 
     assert result["qualified"] is expected
@@ -3451,10 +3488,9 @@ def test_source_function_qualification_does_not_require_whole_task_validator(
         source_path=source,
         run_log={"task_parameters": {}},
         function_store={"store_path": str(store), "transfer_states_sha256": "a" * 64},
-        source_call={"function_id": "draw", "arguments": {}},
+        source_calls=[{"function_id": "draw", "arguments": {}}],
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
-        round_index=1,
     )
 
     assert result["official_validator_success"] is False
@@ -3462,7 +3498,7 @@ def test_source_function_qualification_does_not_require_whole_task_validator(
     assert result["qualified"] is False
 
 
-def test_source_function_qualification_uses_one_complete_function(
+def test_source_function_qualification_uses_ordered_function_sequence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3509,7 +3545,10 @@ def test_source_function_qualification_uses_one_complete_function(
         "src.experiment.run_tasks.run_logged_command",
         runner,
     )
-    source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
+    source_calls = [
+        {"function_id": "open_note_app", "arguments": {}},
+        {"function_id": "create_note", "arguments": {"name": "note"}},
+    ]
 
     result = qualify_source_function(
         args=args,
@@ -3519,19 +3558,18 @@ def test_source_function_qualification_uses_one_complete_function(
             "store_path": str(store),
             "transfer_states_sha256": "a" * 64,
         },
-        source_call=source_call,
+        source_calls=source_calls,
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
-        round_index=1,
     )
 
     assert result["qualified"] is True
-    assert result["qualification_scope"] == "atomic_function_replay"
-    assert result["source_call"] == source_call
+    assert result["qualification_scope"] == "function_sequence_replay"
+    assert result["source_calls"] == source_calls
     assert len(captured) == 1
     command = captured[0]
-    call_index = command.index("--function-id") + 1
-    assert command[call_index] == source_call["function_id"]
+    calls_index = command.index("--function-calls-json") + 1
+    assert json.loads(command[calls_index]) == source_calls
 
 
 def test_source_qualification_requires_official_validator(
@@ -3584,10 +3622,9 @@ def test_source_qualification_requires_official_validator(
             "store_path": str(store),
             "transfer_states_sha256": "a" * 64,
         },
-        source_call={"function_id": "create_note", "arguments": {}},
+        source_calls=[{"function_id": "create_note", "arguments": {}}],
         attempt_root=tmp_path / "attempt",
         deadline=Deadline(10),
-        round_index=1,
     )
 
     assert result["function_replay_success"] is True

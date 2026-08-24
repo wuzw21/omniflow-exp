@@ -11,8 +11,10 @@ in both repositories must remain byte-for-byte identical.
 - `omniflow_function.v2.json`: reusable Functions with `function_id`,
   `input_schema`, `bindings`, and `steps`; each step references
   `source_state_id`.
-- `omniflow_checker_rule.v1.json`: optional offline-learned replay rules with
-  exactly `schema_version/trigger/source_state_id/action`.
+- `omniflow_checker_rule.v1.json`: one independently reusable shared checker
+  rule with scope, phase, condition, action, budget, and priority.
+- `omniflow_checker_store.v1.json`: the checker library stored separately from
+  all Functions and shared across an ordered Function sequence.
 - `omniflow_android_bridge.v2.json`: the Android/Python Bridge API.
 
 Current collectors persist `screenshot/xml`; older AndroidWorld/OOB collectors
@@ -34,15 +36,10 @@ touch capture performs its raw-pixel-to-canonical conversion when the Action is
 created. Screenshot transport resizing never changes the declared VLM coordinate
 frame.
 
-Checker rules are generated only during offline RunLog enhancement from an
-explicit successful recovery step. The recovery step is omitted from the main
-Function path; its `before_state_id` and canonical Action become the rule's
-`source_state_id` and `action`. The Agent derives only the restricted Python
-`trigger` justified by that evidence. A built-in deterministic recovery may
-record `metadata.checker_trigger`; the fast compiler copies that verified
-trigger and writes the Checker during the same conversion. Runtime executes at most one matching
-recovery Action through OmniTransfer, observes again, then retries the original
-Action. Missing evidence produces no Checker.
+Checker rules live in an independent library, never inside a Function. They may
+be global or scoped by Function, step, action type, or package. Runtime evaluates
+the configured phase around every Function action and shares trigger budgets
+across all Function calls in one sequence.
 
 Android writers persist the canonical five truth fields plus optional
 `metadata` directly. Kotlin storage validates the shared contract before every
@@ -58,17 +55,19 @@ Canonical action constraints include:
 - Every RunLog and Function action passes through the same schema-driven
   canonical action converter before persistence.
 - The converter keeps only arguments whose schema entry does not set
-  `persisted: false`; runtime grounding hints such as `target_description`,
-  node ids, resource ids, screenshots, and target evidence are never saved.
+  `persisted: false`. `target_description` is persisted only for `click` and
+  `input_text` as parameterizable source-action semantics consumed by the one
+  canonical OmniTransfer mapper. Node ids, resource ids, screenshots, and
+  target evidence are never saved.
 - There is no separate forbidden-field list or compiler cleanup list.
 - Unsupported tools, invalid persisted values, and missing required persisted
   arguments fail conversion; all other non-persisted input is omitted.
 
 The only saved arguments are:
 
-- `click`: `x`, `y`.
+- `click`: `target_description`, `x`, `y`.
 - `long_press`: `x`, `y`, optional `duration_ms`.
-- `input_text`: `text`.
+- `input_text`: `target_description`, `text`.
 - `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms`.
 - `open_app`: `package_name`.
 - `press_key`: `key`.

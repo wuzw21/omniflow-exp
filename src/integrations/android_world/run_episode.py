@@ -4782,6 +4782,7 @@ def _build_launch_agent(
     performance_metrics: PerformanceMetrics | None = None,
     direct_function_id: str = "",
     direct_function_arguments: dict[str, Any] | None = None,
+    direct_function_calls: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -4824,6 +4825,7 @@ def _build_launch_agent(
             performance_metrics=performance_metrics,
             direct_function_id=direct_function_id,
             direct_function_arguments=direct_function_arguments,
+            direct_function_calls=direct_function_calls,
             build_omniflow_agent=build_agent,
             apply_fixed_replay=_apply_fixed_replay,
             build_official_agent=_build_official_androidworld_agent,
@@ -4971,6 +4973,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--function-id", default="")
     parser.add_argument("--function-arguments-json", default="{}")
+    parser.add_argument("--function-calls-json", default="[]")
     return parser
 
 
@@ -5245,6 +5248,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     direct_function_arguments = json.loads(args.function_arguments_json or "{}")
     if not isinstance(direct_function_arguments, dict):
         raise ValueError("--function-arguments-json must decode to an object")
+    direct_function_calls = json.loads(args.function_calls_json or "[]")
+    if not isinstance(direct_function_calls, list) or not all(
+        isinstance(call, dict) for call in direct_function_calls
+    ):
+        raise ValueError("--function-calls-json must decode to an array of objects")
     env = None
     adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
@@ -5391,6 +5399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             performance_metrics=performance_metrics,
             direct_function_id=str(args.function_id or "").strip(),
             direct_function_arguments=direct_function_arguments,
+            direct_function_calls=[dict(call) for call in direct_function_calls],
         )
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())

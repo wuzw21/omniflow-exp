@@ -64,7 +64,7 @@ The boundaries inside this path are intentionally different:
 ```text
 OmniFlow.run()
   -> Planner / Function selection
-  -> Function-local checker evaluation
+  -> shared checker-library evaluation
   -> execute_function / execute_robust_action
   -> OmniTransfer candidate mapping and target execution
   -> align_function_resume after fallback progress
@@ -82,12 +82,12 @@ node-id、坐标直通分支都违反这个接口。
 重放和零 model-call 验证；它不应被删除，也不应拥有自己的 mapper、executor、
 resume state 或结果格式。
 
-当前保留的复用点是 `src/integrations/script_replay.py`：它只选择一个完整
-Function，随后调用 `agent_instance.call_tool()` / canonical runtime，测试中
+当前保留的复用点是 `src/integrations/script_replay.py`：它按 compiler report
+顺序选择一个或多个 Function，随后调用 canonical runtime，测试中
 必须能证明它没有私有 action mapping。AndroidWorld source qualification
-通过 `build_task_command(function_id=..., function_arguments=...)` 进入同一
-launcher；`methods.py` 把这个意图交给 `agent.py`，由正常 `step()` cycle
-注入 `ToolCall`。因此 direct replay 和普通 `OmniFlow.run()` 共享 Host、
+通过 `build_task_command(function_calls=...)` 进入同一 launcher；`methods.py`
+把这个意图交给 `agent.py`，由正常 `step()` cycle 顺序执行这些调用。因此
+direct replay 和普通 `OmniFlow.run()` 共享 Host、
 OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入口不同而产生
 第二个 executor。
 
@@ -108,9 +108,9 @@ OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入�
 
 运行时只读取 `omniflow.function.v2`。Function 步骤按成功 source RunLog 的动作
 顺序保存，每步以唯一 `source_state_id` 引用同目录 `transfer_states.json` 中的
-source observation。Checker 使用 `omniflow.checker_rule.v1` 的
-`schema_version/trigger/source_state_id/action` 合同，并且只属于注册它的
-Function。Store 本身不内联 observation，也不接受 v3 `transfer_state_ids`。
+source observation。Checker 使用独立 `omniflow.checker_store.v1`，规则可跨
+Function 共享，触发预算在同一 Function 序列内共享。Store 本身不内联
+observation，也不接受 v3 `transfer_state_ids`。
 
 ## 5. 当前精简候选与保留决定
 

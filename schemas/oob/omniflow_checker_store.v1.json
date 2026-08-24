@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/oob/omniflow_checker_store.v1.json",
+  "title": "OmniFlow Shared Checker Library",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "checker_rules"],
+  "properties": {
+    "schema_version": {"const": "omniflow.checker_store.v1"},
+    "checker_rules": {"type": "array", "items": {"$ref": "omniflow_checker_rule.v1.json"}}
+  }
+}

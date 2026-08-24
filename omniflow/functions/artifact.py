@@ -6,8 +6,6 @@ from typing import Any
 
 from omniflow.core.model import Action, Function, FunctionStep
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
-from omniflow.runtime.checker import validate_checker_rule
-
 FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 
 _TOP_LEVEL_FIELDS = {
@@ -18,7 +16,6 @@ _TOP_LEVEL_FIELDS = {
     "input_schema",
     "bindings",
     "steps",
-    "checker_rules",
     "agent_visible",
 }
 _SOURCE_PATH = re.compile(
@@ -72,9 +69,6 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
         )
     canonical_value = dict(value)
     canonical_value["steps"] = canonical_steps
-    canonical_value["checker_rules"] = _canonical_checker_rules(
-        value.get("checker_rules")
-    )
     function = Function.from_dict(canonical_value)
     validate_function_artifact(function)
     return function
@@ -216,12 +210,6 @@ def _validate_bindings(function: Function) -> None:
     )
     if unbound:
         raise ValueError(f"function_required_parameters_unbound:{','.join(unbound)}")
-
-
-def _canonical_checker_rules(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ValueError("function_checker_rules_must_be_array")
-    return [validate_checker_rule(rule) for rule in value]
 
 
 def _tokens(tail: str) -> list[str | int]:

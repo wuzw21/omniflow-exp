@@ -74,13 +74,37 @@ def compile_function_v2(
 
 
 def load_v2_source_calls(store_path: str | Path) -> list[dict[str, Any]]:
-    """Load source invocations from the v2 compiler report beside a Store."""
+    """Load ordered source invocations from old or new v2 compiler reports."""
 
     store = Path(store_path).expanduser().resolve()
     report_path = store.with_name("compile_report.json")
     if not report_path.is_file():
         raise FileNotFoundError(f"function_compile_report_missing:{report_path}")
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    raw_calls = report.get("source_calls")
+    if raw_calls is not None:
+        if not isinstance(raw_calls, list) or not raw_calls:
+            raise ValueError("function_compile_source_calls_invalid")
+        calls: list[dict[str, Any]] = []
+        for call in raw_calls:
+            if not isinstance(call, dict) or set(call) != {
+                "function_id",
+                "arguments",
+            }:
+                raise ValueError("function_compile_source_calls_invalid")
+            function_id = str(call.get("function_id") or "").strip()
+            arguments = call.get("arguments")
+            if not function_id or not isinstance(arguments, dict):
+                raise ValueError("function_compile_source_calls_invalid")
+            calls.append(
+                {"function_id": function_id, "arguments": dict(arguments)}
+            )
+        if len({call["function_id"] for call in calls}) != len(calls):
+            raise ValueError("function_compile_source_calls_invalid")
+        return calls
+
+    # Older collectors persisted only this insertion-ordered mapping. Keep it
+    # readable because experiment archives contain both report variants.
     arguments_by_function = report.get("source_arguments")
     if not isinstance(arguments_by_function, dict):
         raise ValueError("function_compile_source_arguments_invalid")

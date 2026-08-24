@@ -31,7 +31,6 @@ def _function() -> dict:
                 },
             }
         ],
-        "checker_rules": [],
         "agent_visible": True,
     }
 
@@ -137,10 +136,10 @@ def test_save_function_compiles_run_log_without_model_and_saves_once(tmp_path) -
         },
     )
 
-    assert set(result) == {"success", "function_id", "function", "error"}
+    assert set(result) == {"success", "function_ids", "functions", "error"}
     assert result["success"] is True
-    assert result["function"]["name"] == "Open Settings and wait."
-    assert writes == [result["function"]]
+    assert result["functions"][0]["name"] == "Open Settings and wait."
+    assert writes == result["functions"]
 
 
 def test_save_function_accepts_run_log_object_or_file(tmp_path) -> None:
@@ -212,54 +211,66 @@ def test_save_function_accepts_agent_authored_semantic_function(tmp_path) -> Non
 
     assert result == {
         "success": True,
-        "function_id": "open_settings",
-        "function": semantic,
+        "function_ids": ["open_settings"],
+        "functions": [semantic],
         "error": None,
     }
 
 
-def test_agent_enhancement_generates_checker_from_runlog_evidence() -> None:
-    checker_action = {
-        "tool": "click",
-        "args": {
-            "target_description": "Dismiss the temporary prompt",
-            "x": 500,
-            "y": 500,
-        },
-    }
-    checker_rule = {
-        "schema_version": "omniflow.checker_rule.v1",
-        "trigger": 'xml_contains("not now")',
-        "source_state_id": "state-checker",
-        "action": checker_action,
-    }
+def test_agent_enhancement_parameterizes_click_target_description() -> None:
+    function = _function()
+    function["steps"] = [
+        {
+            "step_index": 0,
+            "source_state_id": "state-number",
+            "action": {
+                "tool": "click",
+                "args": {
+                    "target_description": "2",
+                    "x": 500,
+                    "y": 500,
+                },
+            },
+        }
+    ]
     run_log = {
-        "run_id": "run-with-checker",
+        "run_id": "run-with-number",
         "steps": [
             {
-                "before_state_id": "state-checker",
-                "action": checker_action,
+                "before_state_id": "state-number",
+                "action": function["steps"][0]["action"],
                 "result": {"success": True},
-                "metadata": {
-                    "origin": "checker",
-                    "checker_trigger": 'xml_contains("not now")',
-                },
             }
         ],
     }
 
     enhanced, changes, status = enhance_function(
-        _function(),
+        function,
         run_log,
-        lambda _prompt: json.dumps({"checker_rules": [checker_rule]}),
-        instruction="Add only evidence-backed recovery conditions.",
+        lambda _prompt: json.dumps(
+            {
+                "parameters": [
+                    {
+                        "name": "number",
+                        "description": "Visible number to click",
+                        "step_index": 0,
+                        "arg_name": "target_description",
+                    }
+                ]
+            }
+        ),
     )
 
-    assert enhanced["checker_rules"] == [
+    assert enhanced["input_schema"]["properties"]["number"] == {
+        "type": "string",
+        "description": "Visible number to click",
+    }
+    assert enhanced["bindings"] == [
         {
-            **checker_rule,
-            "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+            "source": "$.arguments.number",
+            "target": "$.steps[0].action.args.target_description",
         }
     ]
-    assert {"part": "function", "field": "checker_rules"} in changes
+    assert enhanced["steps"][0]["action"]["args"]["target_description"] == ""
+    assert {"part": "function", "field": "parameters"} in changes
     assert status == "enhanced"

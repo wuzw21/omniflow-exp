@@ -22,7 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from src.experiment.function_v2 import compile_function_v2
 from src.experiment.run_task import (
-    _canonical_function_source_call,
+    _canonical_function_source_calls,
     bind_function_arguments_to_task_params,
     build_task_command,
     build_replay_command,
@@ -1475,10 +1475,9 @@ def qualify_source_function(
     source_path: Path,
     run_log: dict[str, Any],
     function_store: dict[str, Any],
-    source_call: dict[str, Any],
+    source_calls: list[dict[str, Any]],
     attempt_root: Path,
     deadline: Deadline,
-    round_index: int,
 ) -> dict[str, Any]:
     source_label, source_serial, source_console_port = args.source_device
     store_path = Path(str(function_store["store_path"])).resolve()
@@ -1513,11 +1512,10 @@ def qualify_source_function(
         perform_emulator_setup=_perform_androidworld_emulator_setup(),
         store_path=store_path,
         omnitransfer_root=args.omnitransfer_root,
-        function_id=str(source_call["function_id"]),
-        function_arguments=dict(source_call["arguments"]),
+        function_calls=[dict(source_call) for source_call in source_calls],
         python_executable=str(args.python_bin),
         repo_root=args.repo,
-        run_dir_suffix=f"round_{round_index:02d}",
+        run_dir_suffix="function_sequence",
     )
     if command_spec.output_path is None:
         raise RuntimeError("function_qualification_output_path_required")
@@ -1546,16 +1544,21 @@ def qualify_source_function(
     canonical = canonical if isinstance(canonical, dict) else {}
     result.update(
         {
-            "qualification_scope": "atomic_function_replay",
+            "qualification_scope": "function_sequence_replay",
             "official_validator_success": _official_success(row),
             "function_replay_success": _function_replay_success(row),
             "model_calls": int(row.get("model_calls") or 0),
             "fallback_steps": int(row.get("fallback_steps") or 0),
             "task_run_status": str(canonical.get("status") or ""),
-            "function_id": str(row.get("function_id") or source_call["function_id"]),
+            "function_id": str(
+                row.get("function_id") or source_calls[-1]["function_id"]
+            ),
+            "function_ids": [
+                str(source_call["function_id"]) for source_call in source_calls
+            ],
             "source_run_log": str(source_path),
             "store_path": str(store_path),
-            "source_call": source_call,
+            "source_calls": [dict(source_call) for source_call in source_calls],
         }
     )
     result["qualified"] = bool(
@@ -1574,13 +1577,16 @@ def _cached_source_function_qualification(
     args: argparse.Namespace,
     source_path: Path,
     function_store: dict[str, Any],
-    source_call: dict[str, Any],
+    source_calls: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     store_path = Path(str(function_store["store_path"])).resolve()
-    expected_source_call = {
-        "function_id": str(source_call.get("function_id") or ""),
-        "arguments": dict(source_call.get("arguments") or {}),
-    }
+    expected_source_calls = [
+        {
+            "function_id": str(source_call.get("function_id") or ""),
+            "arguments": dict(source_call.get("arguments") or {}),
+        }
+        for source_call in source_calls
+    ]
     candidates = sorted(
         (
             path
@@ -1605,9 +1611,7 @@ def _cached_source_function_qualification(
             == source_path.resolve()
             and Path(str(qualification.get("store_path") or "")).resolve()
             == store_path
-            and str(qualification.get("function_id") or "")
-            == expected_source_call["function_id"]
-            and qualification.get("source_call") == expected_source_call
+            and qualification.get("source_calls") == expected_source_calls
         ):
             return {
                 **qualification,
@@ -1656,7 +1660,15 @@ def _validate_prepared_mobilegpt_memory(
     if (
         digest != str(memory_record.get("sha256") or "")
         or file_count != int(memory_record.get("file_count") or -1)
-        or inventory.get("native_memory_complete") is not True
+        # RunLog-authored MobileGPT memories are task-local official memory
+        # trees, but they intentionally contain the official XML screen
+        # artifacts only.  Screenshots are not part of MobileGPT's memory
+        # protocol and are therefore not required for a source memory to be
+        # executable.  The source owner seals this as
+        # ``virtual_source_memory_complete``; requiring the stricter
+        # screenshot-bearing ``native_memory_complete`` here rejected valid
+        # official memories before target execution.
+        or inventory.get("virtual_source_memory_complete") is not True
         or not inventory.get("has_useful_actions")
     ):
         raise ValueError(f"mobilegpt_source_memory_content_invalid:{manifest_path}")
@@ -2571,17 +2583,23 @@ def _androidworld_result_command(
             # test or whose official task requires externally supplied params.
             evaluation_params = None
     if method == "omniflow" and store_path is not None and store_path.is_file():
-        _function_id, source_arguments = _canonical_function_source_call(store_path)
+        source_calls = _canonical_function_source_calls(store_path)
         if evaluation_params is None:
             evaluation_params = _generate_missing_androidworld_task_params(
                 task=str(args.task),
                 source_seed=_e2e_evaluation_seed(args),
             )
-        bound_arguments = bind_function_arguments_to_task_params(
-            source_arguments,
-            evaluation_params,
-            _function_source_task_params(store_path),
-        )
+        bound_function_calls = [
+            {
+                "function_id": source_call["function_id"],
+                "arguments": bind_function_arguments_to_task_params(
+                    source_call["arguments"],
+                    evaluation_params,
+                    _function_source_task_params(store_path),
+                ),
+            }
+            for source_call in source_calls
+        ]
     if evaluation_params is None and not FIXED_TASK_PARAMS and method != "autodroid":
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
     elif evaluation_params is not None:
@@ -2603,8 +2621,12 @@ def _androidworld_result_command(
     ):
         command.extend(
             (
-                "--function-arguments-json",
-                json.dumps(bound_arguments, ensure_ascii=False, separators=(",", ":")),
+                "--function-calls-json",
+                json.dumps(
+                    bound_function_calls,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
             )
         )
     if method == "appagent":
@@ -3124,7 +3146,7 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
             "status": "created",
             "enhanced": conversion["enhanced"],
             "function_ids": conversion["function_ids"],
-            "source_calls": conversion["source_arguments"],
+            "source_calls": conversion["source_calls"],
             "store_path": str(store_path),
             "transfer_audit": transfer_audit,
         }
@@ -3181,9 +3203,7 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
 
         replay_attempt_id = f"{attempt_id}.function_replay.{label}"
         replay_root = attempt_root / "replay" / label
-        source_call = conversion["source_arguments"]
-        function_id = str(next(iter(source_call)))
-        function_arguments = dict(source_call[function_id])
+        source_calls = [dict(call) for call in conversion["source_calls"]]
         item = CanonicalRunLog(
             task=args.task,
             goal=str(run_log.get("goal") or args.task),
@@ -3212,8 +3232,7 @@ def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
             perform_emulator_setup=True,
             store_path=store_path,
             omnitransfer_root=args.omnitransfer_root,
-            function_id=function_id,
-            function_arguments=function_arguments,
+            function_calls=source_calls,
             python_executable=str(args.python_bin),
             repo_root=args.repo,
             run_dir_suffix="source_collection",
@@ -3895,32 +3914,24 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         try:
-            qualifications: list[dict[str, Any]] = []
-            for source_call_index, source_call in enumerate(source_calls, start=1):
-                qualification = _cached_source_function_qualification(
+            qualification = _cached_source_function_qualification(
+                args=args,
+                source_path=source_path,
+                function_store=function_store,
+                source_calls=source_calls,
+            )
+            if qualification is None:
+                qualification = qualify_source_function(
                     args=args,
                     source_path=source_path,
+                    run_log=run_log,
                     function_store=function_store,
-                    source_call=source_call,
+                    source_calls=source_calls,
+                    attempt_root=attempt_root,
+                    deadline=deadline,
                 )
-                if qualification is None:
-                    qualification = qualify_source_function(
-                        args=args,
-                        source_path=source_path,
-                        run_log=run_log,
-                        function_store=function_store,
-                        source_call=source_call,
-                        attempt_root=attempt_root,
-                        deadline=deadline,
-                        round_index=source_call_index,
-                    )
-                qualifications.append(qualification)
-                if not qualification["qualified"]:
-                    break
-            all_qualified = (
-                len(qualifications) == len(source_calls)
-                and all(item.get("qualified") is True for item in qualifications)
-            )
+            qualifications = [qualification]
+            all_qualified = qualification.get("qualified") is True
             phases["source_qualification"] = {
                 "status": "qualified" if all_qualified else "failed",
                 "qualified": all_qualified,

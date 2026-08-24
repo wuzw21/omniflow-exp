@@ -23,6 +23,7 @@ from omniflow.core.schemas import canonicalize_action
 from omniflow.functions.artifact import bind_function
 from omniflow.functions.recall import RecallResult, recall_functions
 from omniflow.functions.store import FunctionStore
+from omniflow.runtime.checker import CheckerLibrary
 from omniflow.runtime.execution import (
     align_function_resume,
     execute_function,
@@ -90,6 +91,9 @@ class OmniFlow:
             seed_functions=(catalog.functions.values() if catalog is not None else ()),
             replace_seeded=catalog is not None,
         )
+        self.checker_library = CheckerLibrary.load(
+            Path(store_path).expanduser().resolve().with_name("checker_store.json")
+        )
         self.host = host
         self.planner = planner
         self.function_router = function_router
@@ -115,6 +119,7 @@ class OmniFlow:
         direct_tool_call: ToolCall | None,
         *,
         experiment: Experiment | str | None = None,
+        checker_trigger_counts: dict[str, int] | None = None,
     ) -> RunResult:
         goal = str(goal).strip()
         if self.host is None:
@@ -132,6 +137,9 @@ class OmniFlow:
         last_error = "tool_not_selected"
         llm_usage: dict[str, Any] = {}
         function_session = _FunctionSession()
+        shared_checker_trigger_counts = (
+            checker_trigger_counts if checker_trigger_counts is not None else {}
+        )
         observation = await self._observe(screenshot=False)
         planner_functions: tuple[Function, ...] = ()
         planner_function_catalog: dict[str, Function] = {}
@@ -211,6 +219,8 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
+                    checker_rules=self.checker_library.rules,
+                    checker_trigger_counts=shared_checker_trigger_counts,
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -497,6 +507,8 @@ class OmniFlow:
                     state_loader=(
                         self.catalog.get_state if self.catalog is not None else None
                     ),
+                    checker_rules=self.checker_library.rules,
+                    checker_trigger_counts=shared_checker_trigger_counts,
                 )
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
@@ -661,6 +673,8 @@ class OmniFlow:
                         state_loader=(
                             self.catalog.get_state if self.catalog is not None else None
                         ),
+                        checker_rules=self.checker_library.rules,
+                        checker_trigger_counts=shared_checker_trigger_counts,
                     )
                     actions_executed += replay.actions_executed
                     replay_trace = list(replay.detail.get("trace") or ())
@@ -719,11 +733,13 @@ class OmniFlow:
         tool_call: ToolCall | dict[str, Any],
         *,
         experiment: Experiment | str | None = None,
+        checker_trigger_counts: dict[str, int] | None = None,
     ) -> RunResult:
         return await self._execute(
             "",
             ToolCall.from_value(tool_call),
             experiment=experiment,
+            checker_trigger_counts=checker_trigger_counts,
         )
 
     async def arun(
@@ -808,12 +824,17 @@ class OmniFlow:
         tool_call: ToolCall | dict[str, Any],
         *,
         experiment: Experiment | str | None = None,
+        checker_trigger_counts: dict[str, int] | None = None,
     ) -> RunResult:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(
-                self.acall_tool(tool_call, experiment=experiment)
+                self.acall_tool(
+                    tool_call,
+                    experiment=experiment,
+                    checker_trigger_counts=checker_trigger_counts,
+                )
             )
         raise RuntimeError(
             "OmniFlow.call_tool cannot run inside an event loop; await acall_tool"

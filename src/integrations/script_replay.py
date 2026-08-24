@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from omniflow.core.config import Experiment, OmniFlowConfig, RuntimeSettings
-from omniflow.core.model import RunResult, ToolCall
+from omniflow.core.model import RunResult
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
+from omniflow.runtime.sequence import run_function_sequence
 from src.experiment.function_v2 import load_v2_source_calls
 
 
@@ -17,7 +18,7 @@ def run_script_replay(
     store_path: str | Path,
     host: Any,
 ) -> RunResult:
-    """Select the complete Function and execute it through OmniFlow once."""
+    """Execute the compiler-authored Function calls in order through OmniFlow."""
 
     store = FunctionStore(Path(store_path).expanduser().resolve())
     if store.load_errors:
@@ -28,15 +29,16 @@ def run_script_replay(
                 for function_id, error in sorted(store.load_errors.items())
             )
         )
-    visible = store.list_functions(include_hidden=False, limit=500)
     source_calls = load_v2_source_calls(store_path)
-    if len(visible) != 1 or len(source_calls) != 1:
-        raise ValueError("script_replay_single_function_required")
-    complete = visible[0]
-    source_call = source_calls[0]
-    if source_call["function_id"] != complete.id:
-        raise ValueError("script_replay_source_call_function_mismatch")
-    arguments = source_call["arguments"]
+    if not source_calls:
+        raise ValueError("script_replay_function_calls_required")
+    for source_call in source_calls:
+        function_id = str(source_call.get("function_id") or "").strip()
+        function = store.get_function(function_id)
+        if function is None or not function.agent_visible:
+            raise ValueError(
+                f"script_replay_source_call_function_missing:{function_id}"
+            )
 
     flow = OmniFlow(
         store_path,
@@ -46,8 +48,9 @@ def run_script_replay(
             runtime=RuntimeSettings(max_fallback_steps=0),
         ),
     )
-    return flow.call_tool(
-        ToolCall(complete.id, arguments),
+    return run_function_sequence(
+        flow,
+        source_calls,
         experiment=Experiment(name="bmoca"),
     )
 

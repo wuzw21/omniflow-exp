@@ -9,7 +9,8 @@ from omniflow.functions.artifact import parse_function_artifact
 
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _PARAMETERIZABLE_ACTION_ARGS = {
-    "input_text": frozenset({"text"}),
+    "click": frozenset({"target_description"}),
+    "input_text": frozenset({"target_description", "text"}),
 }
 
 
@@ -81,7 +82,6 @@ def enhance_function(
     proposal = _json_object(
         complete_json(_enhancement_prompt(original, run_log, instruction=instruction))
     )
-    _require_checker_evidence(proposal, run_log)
     updated = json.loads(json.dumps(original, ensure_ascii=False))
     changes: list[dict[str, Any]] = []
     for field, limit in (("name", 80), ("description", 2000)):
@@ -95,13 +95,6 @@ def enhance_function(
         run_log,
     ):
         changes.append({"part": "function", "field": "parameters"})
-    if "checker_rules" in proposal:
-        candidate = dict(updated)
-        candidate["checker_rules"] = proposal["checker_rules"]
-        canonical_rules = parse_function_artifact(candidate).to_dict()["checker_rules"]
-        if canonical_rules != updated["checker_rules"]:
-            updated["checker_rules"] = canonical_rules
-            changes.append({"part": "function", "field": "checker_rules"})
     canonical = parse_function_artifact(updated).to_dict()
     return canonical, changes, "enhanced" if changes else "unchanged"
 
@@ -150,12 +143,12 @@ def _enhancement_prompt(
     }
     return f"""
 Improve the reusable Android automation Function below for future recall.
-Return one JSON object with optional keys: name, description, parameters, and checker_rules.
+Return one JSON object with optional keys: name, description, and parameters.
 Describe when to reuse the Function, visible operations, inputs, success signal, and avoid cases.
 Never add, remove, reorder, or alter actions, tools, arguments, coordinates, selectors, or function_id.
 Do not invent app state. Use the same language as the current name/description.
 Treat user_instruction as optional enhancement guidance. It may refine semantic naming,
-description, parameter selection, and evidence-backed checker rules, but it cannot override
+description and parameter selection, but it cannot override
 the action immutability and RunLog evidence requirements above.
 
 parameters is an array of semantic input bindings. Each item has exactly:
@@ -164,12 +157,6 @@ Only select entries listed in parameter_candidates and copy step_index and arg_n
 Choose a stable identifier name and a concise user-facing description. Return parameters=[]
 when the recorded value is intentionally fixed. Do not return input_schema, bindings, or steps;
 the runtime derives them and verifies the original successful RunLog evidence.
-
-checker_rules is an ordered array. Each rule has exactly:
-{{"schema_version":"omniflow.checker_rule.v1","trigger":"text_contains(\\"跳过广告\\")","source_state_id":"state-id","action":{{"tool":"click","args":{{"x":900,"y":100}}}}}}.
-Create a checker only when RunLog metadata explicitly identifies a successful recovery step
-(metadata.origin == "checker" and result.success == true). Copy its action and before_state_id.
-When metadata.checker_trigger exists, copy it exactly. Otherwise return checker_rules=[].
 
 Function:
 {json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
@@ -291,68 +278,6 @@ def _has_parameter_evidence(
         ):
             return True
     return False
-
-
-def _require_checker_evidence(
-    proposal: dict[str, Any],
-    run_log: dict[str, Any],
-) -> None:
-    if "checker_rules" not in proposal:
-        return
-    evidence: list[tuple[str, dict[str, Any], str]] = []
-    for step in run_log.get("steps") or ():
-        if not isinstance(step, dict):
-            continue
-        metadata = step.get("metadata")
-        result = step.get("result")
-        if not isinstance(metadata, dict) or not isinstance(result, dict):
-            continue
-        if metadata.get("origin") != "checker" or result.get("success") is not True:
-            continue
-        state_id = str(step.get("before_state_id") or "").strip()
-        if not state_id:
-            continue
-        evidence.append(
-            (
-                state_id,
-                canonicalize_action(step.get("action"), replayable_only=True),
-                str(metadata.get("checker_trigger") or "").strip(),
-            )
-        )
-    candidate = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "EvidenceCheck",
-        "name": "Evidence check",
-        "description": "Validate proposed checker rules.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "steps": [
-            {
-                "step_index": 0,
-                "source_state_id": "evidence",
-                "action": {"tool": "wait", "args": {"duration_ms": 1}},
-            }
-        ],
-        "checker_rules": proposal.get("checker_rules"),
-        "agent_visible": False,
-    }
-    rules = parse_function_artifact(candidate).to_dict()["checker_rules"]
-    for rule in rules:
-        matches = [
-            item
-            for item in evidence
-            if item[0] == rule["source_state_id"] and item[1] == rule["action"]
-        ]
-        if not matches:
-            raise ValueError("checker_rule_missing_recovery_evidence")
-        captured = {item[2] for item in matches if item[2]}
-        if captured and rule["trigger"] not in captured:
-            raise ValueError("checker_rule_trigger_mismatch")
 
 
 def _json_object(raw: str) -> dict[str, Any]:

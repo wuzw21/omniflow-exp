@@ -462,6 +462,7 @@ class JsonLineBridge:
                     function_bundle = {
                         "schema_version": "omniflow.function-bundle.v2",
                         "run_id": run_id,
+                        "checker_rules": [],
                         "arguments": {
                             function_id: dict(supplied_arguments or {})
                         },
@@ -484,25 +485,30 @@ class JsonLineBridge:
                     **compile_options,
                 )
                 compiled = OmniFlow(Path(output_root) / "store.json")
-                function_id = next(iter(report["function_ids"]), "")
-                function = compiled.store.get_function(function_id)
+                functions = [
+                    function
+                    for function_id in report["function_ids"]
+                    if (function := compiled.store.get_function(function_id)) is not None
+                ]
         except ValueError as error:
             return _save_compile_error(error)
-        if function is None:
+        if not functions:
             return _save_error(
                 "RUN_LOG_NO_REPLAYABLE_STEPS",
                 "RunLog has no replayable steps",
             )
 
-        value = function.to_dict()
-        if "agent_visible" in body:
-            value["agent_visible"] = body.get("agent_visible") is True
-        try:
-            value = parse_function_artifact(value).to_dict()
-        except ValueError as error:
-            return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
-        saved = self.flow.store.put_function(value)
-        return _save_success(saved)
+        saved_functions: list[Function] = []
+        for function in functions:
+            value = function.to_dict()
+            if "agent_visible" in body:
+                value["agent_visible"] = body.get("agent_visible") is True
+            try:
+                value = parse_function_artifact(value).to_dict()
+            except ValueError as error:
+                return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
+            saved_functions.append(self.flow.store.put_function(value))
+        return _save_many_success(saved_functions)
 
     def host_call(self, request_id: str, method: str, payload: dict[str, Any]) -> Any:
         self._host_call_index += 1
@@ -898,6 +904,15 @@ def _save_success(function: Function) -> dict[str, Any]:
         "success": True,
         "function_id": function.function_id,
         "function": function.to_dict(),
+        "error": None,
+    }
+
+
+def _save_many_success(functions: list[Function]) -> dict[str, Any]:
+    return {
+        "success": True,
+        "function_ids": [function.function_id for function in functions],
+        "functions": [function.to_dict() for function in functions],
         "error": None,
     }
 

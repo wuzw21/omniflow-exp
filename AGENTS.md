@@ -26,7 +26,8 @@
 - 页面编码只用 `omniflow/transfer/page_embedding.py` 和协议指定 checkpoint。
 - 映射失败是明确的 transfer failure，回到正常 Planner/VLM fallback；绝不执行 source 坐标。
 - 禁止 resource-id/node-id lookup、坐标 passthrough、第二 page encoder、第二 action mapper。
-- Function checker 是 Function-local v1 registration；匹配 trigger 后通过 OmniTransfer 执行 recovery，再重试原动作。
+- checker 是独立共享库，可跨 Function 使用；一个 RunLog 可注册并按顺序执行多个 Function。
+- `click.target_description` 和 `input_text.target_description` 可绑定为 Function 参数，只作为 source-action 语义交给统一 OmniTransfer；禁止新增 target-side 文本查找器。
 
 ## 证据、环境和数据
 
@@ -40,7 +41,7 @@
 - 10-cell 历史结果、测试结果和表格不能因目录迁移而丢失；合并到仓库时必须保留原始文件、来源路径、文件时间和 SHA-256 等 provenance，并去重而不是覆盖冲突版本。
 - 桌面端 10-cell 归档是历史证据源，不是运行时选择器；归档副本放在 `data/`，运行时仍只读取注册的资产和 `data/current.json`。
 - 旧适配层和历史输入可按只读迁移路径保留；不要为了兼容重新加 alias、旧 writer、旧 index 或旧 runner。
-- 单 Function 直跑是有价值的旁路，但必须复用共同 Host、OmniTransfer、checker、证据封存和结果路径；不要删除它，也不要复制执行实现。
+- 单/多 Function 直跑必须复用共同 Host、OmniTransfer、共享 checker、证据封存和结果路径；不要复制执行实现。
 
 ## 通用数据目录合同
 

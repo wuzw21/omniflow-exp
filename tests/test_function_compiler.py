@@ -59,6 +59,9 @@ def test_compiler_freezes_only_function_referenced_states(
     assert set(catalog["states"]) == {"state_0", "state_1"}
     assert result["transfer_state_count"] == 2
     assert result["source_arguments"] == {result["function_ids"][0]: {}}
+    assert result["source_calls"] == [
+        {"function_id": result["function_ids"][0], "arguments": {}}
+    ]
     assert result["model_calls"] == 0
     assert result["prompt_tokens"] == 0
     assert result["completion_tokens"] == 0
@@ -74,6 +77,7 @@ def test_compiler_registers_source_call_for_argumentless_authored_function(
         function_bundle={
             "schema_version": "omniflow.function-bundle.v2",
             "run_id": "source-run",
+            "checker_rules": [],
             "arguments": {},
             "functions": [
                 {
@@ -108,7 +112,6 @@ def test_compiler_registers_source_call_for_argumentless_authored_function(
                             },
                         },
                     ],
-                    "checker_rules": [],
                     "agent_visible": True,
                 }
             ],
@@ -120,3 +123,6 @@ def test_compiler_registers_source_call_for_argumentless_authored_function(
     )
 
     assert result["source_arguments"] == {"open_settings": {}}
+    assert result["source_calls"] == [
+        {"function_id": "open_settings", "arguments": {}}
+    ]

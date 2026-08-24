@@ -338,7 +338,6 @@ def _function(
                 "required": [],
                 "additionalProperties": False,
             },
-            checker_rules=(),
             agent_visible=True,
     )
 
