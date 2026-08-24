@@ -73,6 +73,65 @@ def test_compiler_marks_answer_as_planner_handoff(tmp_path: Path) -> None:
     ]
 
 
+def test_compiler_restores_omitted_essential_complete_action(
+    tmp_path: Path,
+) -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.settings"},
+            {"action_type": "click", "x": 300, "y": 400},
+            {"action_type": "navigate_back"},
+        ],
+        observations=[
+            androidworld_state("state_0"),
+            androidworld_state("state_1"),
+            androidworld_state("state_2"),
+        ],
+        goal="Open settings, change the setting, and return.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Keep the startup and return actions.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "complete_settings",
+                "name": "Complete settings",
+                "description": "Open settings and return.",
+                "source_step_indices": [0, 2],
+                "parameters": [],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = store["functions"]["complete_settings"]
+    assert [step["action"]["tool"] for step in function["steps"]] == [
+        "open_app",
+        "click",
+        "press_key",
+    ]
+    assert "restored omitted executable source steps" in result["reason"]
+
+
 def test_compiler_freezes_only_function_referenced_states(
     tmp_path: Path,
 ) -> None:
