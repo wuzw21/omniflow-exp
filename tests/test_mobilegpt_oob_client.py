@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from src.integrations import mobilegpt_oob_client as mobilegpt_oob
 from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
     _dismiss_oob_permission_dialog,
     _is_oob_environment_failure,
+    _launch_selected_package,
     _oob_action,
     _server_reported_empty_response,
 )
@@ -20,6 +22,13 @@ class _FakeOob:
 
 class _PermissionOob(_FakeOob):
     pass
+
+
+class _LaunchOob(_FakeOob):
+    def observe(self, *, wait_to_stabilize: bool = False) -> dict:
+        del wait_to_stabilize
+        package = "com.android.camera2" if len(self.actions) >= 2 else "android"
+        return {"package_name": package, "xml": "<hierarchy />"}
 
 
 def test_official_index_action_is_mapped_to_current_oob_bounds() -> None:
@@ -80,6 +89,34 @@ def test_permission_controller_is_dismissed_through_oob() -> None:
     assert _dismiss_oob_permission_dialog(oob, snapshot) is True
     assert oob.actions == [
         {"tool": "click", "args": {"x": 200, "y": 300}},
+    ]
+
+
+def test_target_launch_is_retried_once_when_fresh_boot_overwrites_it(
+    monkeypatch,
+) -> None:
+    oob = _LaunchOob()
+    ticks = iter((0.0, 0.1, 0.6, 0.7, 1.1, 1.2))
+    monkeypatch.setattr(
+        mobilegpt_oob,
+        "_installed_packages",
+        lambda _adb, _serial: ["com.android.camera2"],
+    )
+    monkeypatch.setattr(mobilegpt_oob.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(mobilegpt_oob.time, "sleep", lambda _seconds: None)
+
+    selected = _launch_selected_package(
+        oob,
+        "adb",
+        "emulator-45562",
+        "com.android.camera2",
+        timeout_sec=1.0,
+    )
+
+    assert selected == "com.android.camera2"
+    assert oob.actions == [
+        {"tool": "open_app", "args": {"package_name": "com.android.camera2"}},
+        {"tool": "open_app", "args": {"package_name": "com.android.camera2"}},
     ]
 
 

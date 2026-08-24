@@ -27,7 +27,7 @@
 ## 唯一启动命令
 
 ```bash
-ssh 4090 'cd /home/zewen/Projects/OmniFlow-exp && source config/androidworld.env && bash scripts/exp/run_androidworld.sh --e2e-task TASK_NAME --e2e-method omniflow --e2e-device standard45562:emulator-45562:45562 --e2e-source-seed 111 --e2e-evaluation-seed 113 --control-backend androidworld --task-deadline-sec 600'
+ssh 4090 'cd /home/zewen/Projects/OmniFlow-exp && source config/androidworld.env && bash scripts/exp/run_androidworld.sh --e2e-task TASK_NAME --e2e-method omniflow --e2e-device standard45562:emulator-45562:45562 --e2e-source-seed 111 --e2e-evaluation-seed 113 --control-backend oob --task-deadline-sec 600'
 ```
 
 将 `TASK_NAME` 和 `--e2e-device` 替换为当前待测任务和一个正式 target。每次只启动一个任务；同一任务的其他 target 仍使用同一条命令逐个执行。

@@ -98,8 +98,15 @@ def _launch_selected_package(
     # lifecycle, while this socket adapter owns that lifecycle directly.
     oob.observe(wait_to_stabilize=True)
     oob.act({"tool": "open_app", "args": {"package_name": candidate}})
-    deadline = time.monotonic() + max(1.0, float(timeout_sec))
-    while time.monotonic() < deadline:
+    launch_budget = max(1.0, float(timeout_sec))
+    started = time.monotonic()
+    deadline = started + launch_budget
+    relaunch_at = started + launch_budget / 2.0
+    relaunched = False
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            break
         snapshot = oob.observe(wait_to_stabilize=True)
         observed = str(snapshot.get("package_name") or "").strip()
         if observed == candidate:
@@ -107,6 +114,13 @@ def _launch_selected_package(
         if _dismiss_oob_permission_dialog(oob, snapshot):
             time.sleep(0.25)
             continue
+        # A freshly booted emulator can finish its own launcher transition
+        # after the first OOB open_app action and overwrite that launch.  Retry
+        # the same OOB action once inside the bounded startup handshake.  This
+        # never falls back to adb, AndroidWorld actions, or MobileGPT's client.
+        if not relaunched and now >= relaunch_at:
+            oob.act({"tool": "open_app", "args": {"package_name": candidate}})
+            relaunched = True
         time.sleep(0.25)
     raise RuntimeError(
         "mobilegpt_target_app_not_ready:"

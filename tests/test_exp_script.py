@@ -278,6 +278,23 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 
 
+def test_androidworld_public_launcher_requires_oob_physical_backend() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-oob}"'
+        in script_text
+    )
+    assert (
+        'if [[ "$execution_environment" == "androidworld" && '
+        '"$control_backend" != "oob" ]]'
+        in script_text
+    )
+    assert '"$1" != "oob"' in script_text
+    assert "--control-backend requires oob for AndroidWorld experiments." in script_text
+    assert "AndroidWorld execution requires the OOB physical backend." in script_text
+
+
 def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
     protocol = json.loads(
         (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")

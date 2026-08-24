@@ -185,10 +185,10 @@ preflight="$repo/src/experiment/checks.py"
 selected_method_arg=""
 selected_device_arg=""
 selected_supplemental_method_arg="${OMNIFLOW_ANDROIDWORLD_SUPPLEMENTAL_METHOD:-}"
-# AndroidWorld experiments use the repository's OOB observe/act transport by
-# default.  Native AndroidWorld I/O remains an explicit diagnostic override;
-# it must not silently become the formal experiment backend.
-control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
+# AndroidWorld experiments use the repository's OOB physical transport for
+# app launch, observation, and action.  This is a hard experiment contract;
+# AndroidWorld still owns setup and validation, never physical agent I/O.
+control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-oob}"
 require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"
 configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
@@ -565,8 +565,8 @@ Options:
                             Currently only autodroid is supported.
   --device LABEL:SERIAL:PORT
                             Run one target in the single-result runner.
-  --control-backend NAME    Use androidworld (default) or explicit oob transport
-                            for bounded development/source/E2E runs.
+  --control-backend NAME    Physical observe/act backend. Formal AndroidWorld
+                            execution requires oob (default).
   --tasks TASK1,TASK2,...   Select an ordered task-major subset. Implies
                             --all-tasks during experiment execution.
   --e2e-task TASK           Run one bounded single-method, single-device E2E.
@@ -707,8 +707,8 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --control-backend)
       shift
-      if [[ "$#" -eq 0 || ( "$1" != "androidworld" && "$1" != "oob" ) ]]; then
-        echo "--control-backend requires androidworld or oob." >&2
+      if [[ "$#" -eq 0 || "$1" != "oob" ]]; then
+        echo "--control-backend requires oob for AndroidWorld experiments." >&2
         exit 2
       fi
       control_backend="$1"
@@ -853,6 +853,10 @@ if [[ -n "$setup_device" ]]; then
   fi
   cd "$repo"
   exec "${setup_command[@]}"
+fi
+if [[ "$execution_environment" == "androidworld" && "$control_backend" != "oob" ]]; then
+  echo "AndroidWorld execution requires the OOB physical backend." >&2
+  exit 2
 fi
 if [[ "$control_backend" == "oob" && "$execution_environment" != "androidworld" ]]; then
   echo "--control-backend oob is only supported for AndroidWorld." >&2

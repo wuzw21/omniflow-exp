@@ -24,6 +24,11 @@
   OmniTransfer 若作为外部依赖，必须通过权威 checkout 的固定配置显式引用，
   不能从另一份 OmniFlow checkout 偷渡运行时代码或数据。
 - 唯一公开入口是 `scripts/exp/run_androidworld.sh`。
+- AndroidWorld 所有正式实验的应用启动、observe 和 act 物理层必须且只能走
+  OmniFlow OOB；禁止使用 AndroidWorld native action、ADB/monkey 启动或
+  MobileGPT/AppAgent 自带 Accessibility client。AndroidWorld 仍负责统一 setup
+  和官方 validator；外部方法只保留其 Planner/Executor 决策逻辑。唯一启动器
+  对非 OOB 后端必须在实验开始前硬失败，不能依赖临时 env 才保证这条合同。
 - 唯一 task + method + device 调度器是 `src/experiment/run_tasks.py`。
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
