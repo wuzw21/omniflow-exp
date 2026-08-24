@@ -23,6 +23,7 @@ from omniflow.core.androidworld_accessibility import (
 )
 from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.apps import (
+    launchable_androidworld_apps,
     resolve_androidworld_app_name,
     resolve_androidworld_package,
 )
@@ -315,6 +316,14 @@ class AndroidWorldHost:
                     if line.strip().startswith("package:")
                 )
         return packages.union(_ANDROID_SYSTEM_OPEN_APP_PACKAGES)
+
+    def installed_apps(self) -> dict[str, str]:
+        packages = self.installed_packages()
+        controller = getattr(self.env, "controller", self.env)
+        catalog = launchable_androidworld_apps(packages, controller)
+        if "com.android.settings" in packages:
+            catalog.setdefault("Settings", "com.android.settings")
+        return dict(sorted(catalog.items(), key=lambda item: item[0].casefold()))
 
     def observe(
         self,

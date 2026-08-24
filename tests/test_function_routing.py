@@ -996,6 +996,11 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
                 "com.android.chrome",
                 "com.android.settings",
             ]
+            assert (
+                function["parameters"]["properties"]["package_name"]["description"]
+                == "Exact installed launchable package. Runtime app mapping: "
+                "Chrome=com.android.chrome, Settings=com.android.settings"
+            )
         else:
             assert "com.android.chrome" not in serialized
             assert "com.android.settings" not in serialized

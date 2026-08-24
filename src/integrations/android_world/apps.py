@@ -1,5 +1,31 @@
 from __future__ import annotations
 
+import re
+from typing import Iterable
+
+
+def launchable_androidworld_apps(
+    installed_packages: Iterable[str],
+    controller: object,
+) -> dict[str, str]:
+    """Return only official AndroidWorld apps that have launchable activities."""
+
+    from android_world.env import adb_utils
+
+    installed = {
+        str(package).strip() for package in installed_packages if str(package).strip()
+    }
+    catalog: dict[str, str] = {}
+    for app_name in sorted(adb_utils.get_all_apps(controller)):
+        activity = str(adb_utils.get_adb_activity(app_name) or "").strip()
+        package = activity.split("/", 1)[0].strip()
+        if not package or package not in installed:
+            continue
+        label = re.sub(r"[_-]+", " ", str(app_name)).strip().title()
+        if label:
+            catalog[label] = package
+    return dict(sorted(catalog.items(), key=lambda item: (item[0].casefold(), item[1])))
+
 
 def resolve_androidworld_app_name(package_name: str, controller: object) -> str:
     package = str(package_name or "").strip()
@@ -33,4 +59,8 @@ def resolve_androidworld_package(app_name: str) -> str:
     return ""
 
 
-__all__ = ["resolve_androidworld_app_name", "resolve_androidworld_package"]
+__all__ = [
+    "launchable_androidworld_apps",
+    "resolve_androidworld_app_name",
+    "resolve_androidworld_package",
+]

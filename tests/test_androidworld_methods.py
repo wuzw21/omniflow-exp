@@ -216,7 +216,7 @@ def test_androidworld_complexity_budget_cannot_raise_omniflow_step_cap(
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",
@@ -254,7 +254,7 @@ def test_androidworld_complexity_budget_can_lower_omniflow_step_cap(
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",
@@ -317,7 +317,7 @@ def test_androidworld_step_runs_one_complete_omniflow_cycle(
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",
@@ -366,7 +366,7 @@ def test_androidworld_agent_has_no_direct_function_interface(
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",
@@ -416,7 +416,7 @@ def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",
@@ -465,7 +465,7 @@ def test_androidworld_stops_after_a_fatal_planner_failure(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.AndroidWorldHost",
-        lambda *_args, **_kwargs: SimpleNamespace(installed_packages=lambda: set()),
+        lambda *_args, **_kwargs: SimpleNamespace(installed_apps=lambda: {}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.load_transfer_state_catalog",

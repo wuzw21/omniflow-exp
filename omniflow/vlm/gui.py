@@ -458,9 +458,10 @@ def constrain_open_app_tool(
     tools: list[dict[str, Any]],
     installed_apps: dict[str, str],
 ) -> list[dict[str, Any]]:
+    candidates = _installed_app_candidates(installed_apps)
     packages = list(
         dict.fromkeys(
-            package for _label, package in _installed_app_candidates(installed_apps)
+            package for _label, package in candidates
         )
     )
     constrained: list[dict[str, Any]] = []
@@ -481,6 +482,13 @@ def constrain_open_app_tool(
         if not isinstance(package_schema, dict):
             raise ValueError("open_app_package_schema_missing")
         package_schema["enum"] = packages
+        label_mapping = ", ".join(
+            f"{label}={package}" for label, package in candidates
+        )
+        package_schema["description"] = (
+            "Exact installed launchable package. Runtime app mapping: "
+            f"{label_mapping}"
+        )
         constrained.append(tool)
     return constrained
 

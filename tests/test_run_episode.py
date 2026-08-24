@@ -2590,6 +2590,34 @@ def test_androidworld_host_exposes_system_settings_as_installed(monkeypatch) -> 
     assert packages == {"com.example.app", "com.android.settings"}
 
 
+def test_androidworld_host_exposes_only_launchable_apps_to_planner(
+    monkeypatch,
+) -> None:
+    host = AndroidWorldHost(SimpleNamespace(controller=object()))
+    monkeypatch.setattr(
+        host,
+        "installed_packages",
+        lambda: {
+            "com.android.settings",
+            "com.google.android.documentsui",
+            "com.google.android.documentsui.overlay",
+        },
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.launchable_androidworld_apps",
+        lambda packages, _controller: (
+            {"Files": "com.google.android.documentsui"}
+            if "com.google.android.documentsui" in packages
+            else {}
+        ),
+    )
+
+    assert host.installed_apps() == {
+        "Files": "com.google.android.documentsui",
+        "Settings": "com.android.settings",
+    }
+
+
 def test_androidworld_host_falls_back_to_adb_when_official_package_list_is_empty(
     monkeypatch,
 ) -> None:
