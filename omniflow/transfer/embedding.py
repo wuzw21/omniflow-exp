@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -306,13 +307,18 @@ class _UnifiedNodeEncoder:
             config=self._matcher.config,
             feature_schema_id=self._matcher.feature_schema_id,
         )
-        visual, visual_mask = self._visual_inputs(
-            graph,
-            patch_size=self._matcher.config.visual_patch_size,
-            canvas_size=self._matcher.config.visual_canvas_size,
-            visual_encoder=self._matcher.config.visual_encoder,
-            context_scale=self._matcher.config.visual_context_scale,
-        )
+        visual_parameters = inspect.signature(self._visual_inputs).parameters
+        visual_kwargs: dict[str, Any] = {
+            "patch_size": self._matcher.config.visual_patch_size,
+            "canvas_size": self._matcher.config.visual_canvas_size,
+        }
+        if "visual_encoder" in visual_parameters:
+            visual_kwargs["visual_encoder"] = self._matcher.config.visual_encoder
+        if "context_scale" in visual_parameters:
+            visual_kwargs["context_scale"] = getattr(
+                self._matcher.config, "visual_context_scale", 3.0
+            )
+        visual, visual_mask = self._visual_inputs(graph, **visual_kwargs)
         vectors, _modalities = self._matcher._encode_nodes(
             np.asarray(encoded.token_ids, dtype=np.int64),
             np.asarray(encoded.numeric_features, dtype=np.float32),
