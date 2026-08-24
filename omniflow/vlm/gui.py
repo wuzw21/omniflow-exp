@@ -33,7 +33,9 @@ are raw pixels in the current original Display coordinate frame, never normalize
 0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
 resized for transport, but its coordinates must still refer to the original
 Display. Every tool call
-must include a concise summary explaining why that action is the best next step.
+must include a summary of at most 12 words naming only the immediate action.
+Do not emit analysis, chain-of-thought, reasoning, thinking, rationale, or prose.
+Make the decision directly from current evidence and return only the tool call.
 Every coordinate is one scalar raw-pixel number, never an array, object, string,
 boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
