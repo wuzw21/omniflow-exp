@@ -370,6 +370,36 @@ def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) 
     assert concluded == {("mobilegpt", "fold5564")}
 
 
+def test_concluded_result_keys_maps_historical_label_to_current_device_model(
+    tmp_path: Path,
+) -> None:
+    outcomes_root = tmp_path / "outcomes"
+    record_result_outcome(
+        outcomes_root=outcomes_root,
+        task_name="CameraTakePhoto",
+        method="mobilegpt",
+        device="small5562",
+        device_serial="emulator-5562",
+        attempt_id="attempt_001",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+        official_validator_used=True,
+        official_validator_success=False,
+    )
+
+    assert concluded_result_keys(
+        outcomes_root=outcomes_root,
+        task_name="CameraTakePhoto",
+        methods=("mobilegpt",),
+        devices=("standard45562",),
+        source_seed=111,
+        evaluation_seed=113,
+        device_models={"standard45562": "OmniFlowTargetSmall"},
+    ) == {("mobilegpt", "standard45562")}
+
+
 def test_environment_repair_retry_ignores_prior_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

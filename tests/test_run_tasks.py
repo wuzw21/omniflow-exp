@@ -41,7 +41,6 @@ from src.experiment.run_tasks import (
     _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
-    _mobilegpt_registered_conclusion_is_reusable,
     _next_source_attempt_id,
     _next_pipeline_attempt_id,
     _parse_source_device,
@@ -240,7 +239,7 @@ def test_concluded_results_reruns_existing_omniflow_cell(
     ) == set()
 
 
-def test_concluded_results_reruns_mobilegpt_failure_with_legacy_memory(
+def test_concluded_results_reuses_mobilegpt_method_failure_without_memory_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -259,69 +258,11 @@ def test_concluded_results_reruns_mobilegpt_failure_with_legacy_memory(
             "pending": [],
         },
     )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._mobilegpt_registered_conclusion_is_reusable",
-        lambda **_kwargs: False,
-    )
-
     assert _concluded_results(
         args,
         args.results_root / "androidworld" / ".archive" / "outcomes" / "formal",
         "attempt_002",
-    ) == set()
-
-
-def test_mobilegpt_failure_is_reusable_only_with_authoritative_memory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registry_root = tmp_path / "result_registry"
-    result_root = (
-        registry_root
-        / "CameraTakePhoto"
-        / "mobilegpt"
-        / "small5554"
-        / "attempt_001.mobilegpt.small5554"
-    )
-    result_root.mkdir(parents=True)
-    target_memory = tmp_path / "target_memory"
-    target_memory.mkdir()
-    source_memory = tmp_path / "source_bundle" / "memory"
-    source_memory.mkdir(parents=True)
-    (target_memory / "memory_manifest.json").write_text(
-        json.dumps({"artifacts": {"source_memory_root": str(source_memory)}}),
-        encoding="utf-8",
-    )
-    (result_root / "registered_result.json").write_text(
-        json.dumps(
-            {
-                "task_name": "CameraTakePhoto",
-                "source_seed": SOURCE_SEED,
-                "evaluation_seed": 113,
-                "details": [
-                    {
-                        "method": "mobilegpt",
-                        "device": "small5554",
-                        "official_validator_success": False,
-                        "memory_root": str(target_memory),
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._validate_prepared_mobilegpt_memory",
-        lambda *_args, **_kwargs: {"runlog_teacher_alignment": True},
-    )
-
-    assert _mobilegpt_registered_conclusion_is_reusable(
-        registry_root=registry_root,
-        task_name="CameraTakePhoto",
-        device="small5554",
-        source_seed=SOURCE_SEED,
-        evaluation_seed=113,
-    )
+    ) == {("mobilegpt", "small5554")}
 
 
 def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> None:

@@ -12,6 +12,8 @@ import shutil
 import tempfile
 from typing import Any, Iterable, Mapping
 
+from src.experiment.androidworld_paths import canonical_device_model
+
 from src.experiment.mobilegpt_contract import MOBILEGPT_SUPPORTED_SOURCE_METHODS
 from src.experiment.paths import safe_component, sha256_file
 from src.experiment.result_schema import (
@@ -351,7 +353,20 @@ def concluded_result_keys(
     for outcome_path in sorted(task_root.rglob("outcome.json")):
         payload = _json_object(outcome_path)
         method = str(payload.get("method") or "")
-        device = str(payload.get("device") or "")
+        reported_device = str(payload.get("device") or "")
+        device = reported_device
+        if device not in accepted_devices and device_models:
+            reported_model = canonical_device_model(
+                label=reported_device,
+                serial=str(payload.get("device_serial") or ""),
+            )
+            model_matches = [
+                label
+                for label in accepted_devices
+                if str(device_models.get(label) or "") == reported_model
+            ]
+            if len(model_matches) == 1:
+                device = model_matches[0]
         if (
             payload.get("schema_version") not in {SCHEMA_VERSION, LEGACY_SCHEMA_VERSION}
             or payload.get("immutable") is not True

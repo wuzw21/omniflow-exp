@@ -1758,11 +1758,10 @@ def _concluded_results(
         # the new scheduler attempt and must not hide cells completed or
         # method-failed in earlier attempts.
         attempt_id=None,
-        # The canonical device label is already validated against the current
-        # protocol device list. Legacy outcomes may not carry model metadata;
-        # do not re-run those cells merely because their evidence predates the
-        # device_model/avd fields.
-        device_models=None,
+        # Historical result labels are mapped to the current formal labels by
+        # physical AVD model.  Missing device_model fields remain acceptable;
+        # explicit contradictory model evidence is still rejected.
+        device_models=_e2e_device_models(args),
     )
     # A formal cell is reusable across pipeline attempts only when its
     # immutable registration contains an official validator conclusion.  This
@@ -1803,19 +1802,6 @@ def _concluded_results(
             device_models=_e2e_device_models(args),
         )
         concluded.update(indexed["completed"])
-    if "mobilegpt" in methods:
-        concluded = {
-            item
-            for item in concluded
-            if item[0] != "mobilegpt"
-            or _mobilegpt_registered_conclusion_is_reusable(
-                registry_root=registry_root,
-                task_name=args.task,
-                device=item[1],
-                source_seed=source_seed,
-                evaluation_seed=evaluation_seed,
-            )
-        }
     # External baselines are reusable evidence; OmniFlow is actively
     # corrected in the final campaign and must receive a fresh attempt.
     if "omniflow" in methods and os.environ.get(
@@ -1823,68 +1809,6 @@ def _concluded_results(
     ).strip().lower() in {"1", "true", "yes"}:
         concluded = {item for item in concluded if item[0] != "omniflow"}
     return concluded
-
-
-def _mobilegpt_registered_conclusion_is_reusable(
-    *,
-    registry_root: Path,
-    task_name: str,
-    device: str,
-    source_seed: int,
-    evaluation_seed: int,
-) -> bool:
-    """Keep passes, or failures backed by strongly validated source memory."""
-
-    result_root = registry_root / task_name / "mobilegpt" / device
-    for path in sorted(result_root.glob("*/registered_result.json"), reverse=True):
-        try:
-            summary = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if (
-            str(summary.get("task_name") or "") != task_name
-            or int(summary.get("source_seed") or -1) != int(source_seed)
-            or int(summary.get("evaluation_seed") or -1) != int(evaluation_seed)
-        ):
-            continue
-        details = summary.get("details")
-        if not isinstance(details, list):
-            continue
-        for detail in details:
-            if not isinstance(detail, dict) or (
-                str(detail.get("method") or "") != "mobilegpt"
-                or str(detail.get("device") or "") != device
-            ):
-                continue
-            if detail.get("official_validator_success") is True:
-                return True
-            memory_root_text = str(detail.get("memory_root") or "").strip()
-            if not memory_root_text:
-                continue
-            method_manifest_path = (
-                Path(memory_root_text).expanduser().resolve() / "memory_manifest.json"
-            )
-            try:
-                method_manifest = json.loads(
-                    method_manifest_path.read_text(encoding="utf-8")
-                )
-                source_memory_root = Path(
-                    str(
-                        method_manifest.get("artifacts", {}).get(
-                            "source_memory_root"
-                        )
-                        or ""
-                    )
-                ).expanduser().resolve()
-                validation = _validate_prepared_mobilegpt_memory(
-                    source_memory_root,
-                    task_name=task_name,
-                )
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-            if validation.get("runlog_teacher_alignment") is True:
-                return True
-    return False
 
 
 def _e2e_methods(args: argparse.Namespace) -> tuple[str, ...]:
