@@ -50,6 +50,7 @@ class _FunctionSession:
     completed: Function | None = None
     resume_events: list[dict[str, Any]] = field(default_factory=list)
     resume_trigger: str | None = None
+    excluded_ids: set[str] = field(default_factory=set)
 
     @property
     def failed_id(self) -> str | None:
@@ -57,12 +58,20 @@ class _FunctionSession:
 
     def mark_completed(self) -> None:
         self.completed = self.bound
+        if (
+            self.bound is not None
+            and self.bound.steps
+            and self.bound.steps[0].action.tool == "open_app"
+        ):
+            self.excluded_ids.add(self.bound.id)
         self.failed = False
         self.failed_step_index = None
         self.fallback_observations.clear()
         self.resume_trigger = None
 
     def mark_failed(self, replay: RunResult, observation: Observation) -> None:
+        if self.selected_id is not None:
+            self.excluded_ids.add(self.selected_id)
         self.failed = True
         self.failed_step_index = _optional_step_index(
             replay.detail.get("failed_step_index")
@@ -436,11 +445,7 @@ class OmniFlow:
                 goal,
                 observation=observation,
                 source_states=recall_source_states,
-                exclude_function_ids=(
-                    frozenset({function_session.selected_id})
-                    if function_session.selected_id
-                    else frozenset()
-                ),
+                exclude_function_ids=frozenset(function_session.excluded_ids),
             )
             planner_functions = recall_result.functions
             planner_function_catalog = {

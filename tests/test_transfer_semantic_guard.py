@@ -631,6 +631,20 @@ def test_transfer_promotes_repeated_overflow_to_named_parent_row() -> None:
     ) == (1.2692307692307692, 0.7857142857142857)
 
 
+def test_transfer_does_not_anchor_a_row_click_to_a_distant_child_label() -> None:
+    xml = """\
+<hierarchy width="720" height="1280">
+  <node class="androidx.cardview.widget.CardView" clickable="true"
+        bounds="[48,466][352,873]">
+    <node id="title" class="android.widget.TextView" text="task.html"
+          resource-id="android:id/title" bounds="[148,786][263,824]" />
+  </node>
+</hierarchy>
+"""
+
+    assert transfer_runtime.source_semantic_anchor(xml, (200.0, 650.0)) == ""
+
+
 def test_transfer_restores_legacy_flat_source_hierarchy(monkeypatch) -> None:
     request = {}
 

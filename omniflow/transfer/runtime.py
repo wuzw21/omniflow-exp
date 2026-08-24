@@ -632,6 +632,8 @@ def source_semantic_anchor(
             and _bounds_area(bounds) < source_area
         ):
             continue
+        if bounds is not None and not _bounds_reaches_point(bounds, point):
+            continue
         resource_tail = str(element.attrib.get("resource-id") or "").rsplit(
             "/", 1
         )[-1]
@@ -850,6 +852,20 @@ def _bounds_contains(
         and outer[1] <= inner[1]
         and outer[2] >= inner[2]
         and outer[3] >= inner[3]
+    )
+
+
+def _bounds_reaches_point(
+    bounds: tuple[float, float, float, float],
+    point: tuple[float, float],
+) -> bool:
+    # OmniTransfer accepts semantic anchor offsets in [-1, 2].  A farther label
+    # cannot represent this click; let its containing actionable node anchor it.
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    return (
+        bounds[0] - width <= point[0] <= bounds[2] + width
+        and bounds[1] - height <= point[1] <= bounds[3] + height
     )
 
 

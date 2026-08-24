@@ -222,6 +222,306 @@ class SequencePlanner(FinishingPlanner):
         return self.responses.pop(0)
 
 
+class _OfflineMultiplyHost:
+    numbers = (2, 3, 4, 5, 1)
+
+    def __init__(self) -> None:
+        self.opened = False
+        self.click_count = 0
+        self.entered_product: str | None = None
+        self.submitted = False
+        self.actions: list[Action] = []
+
+    def observe(self, **kwargs: object) -> Observation:
+        if not self.opened:
+            xml = (
+                '<hierarchy><node text="Home" bounds="[0,0][1000,1000]" />'
+                "</hierarchy>"
+            )
+            package = "com.android.launcher"
+        elif self.click_count < len(self.numbers):
+            visible_number = (
+                "Ready"
+                if self.click_count == 0
+                else str(self.numbers[self.click_count - 1])
+            )
+            xml = (
+                '<hierarchy><node text="Click Me" bounds="[350,200][650,400]" '
+                'clickable="true" enabled="true" />'
+                f'<node text="{visible_number}" bounds="[350,450][650,550]" />'
+                "</hierarchy>"
+            )
+            package = "com.android.chrome"
+        elif self.submitted:
+            xml = (
+                '<hierarchy><node text="Success" bounds="[0,0][1000,1000]" />'
+                "</hierarchy>"
+            )
+            package = "com.android.chrome"
+        else:
+            xml = (
+                '<hierarchy><node class="android.widget.EditText" '
+                'resource-id="product" bounds="[200,500][800,650]" '
+                'editable="true" enabled="true" focused="true" />'
+                '<node text="Submit" bounds="[350,700][650,900]" '
+                'clickable="true" enabled="true" /></hierarchy>'
+            )
+            package = "com.android.chrome"
+        return Observation(
+            xml=xml,
+            package_name=package,
+            activity_name="MainActivity",
+            image_base64="offline" if kwargs.get("screenshot") else None,
+            extra={
+                "state_id": (
+                    f"target_{self.click_count}_{self.entered_product}_{self.submitted}"
+                ),
+                "display": {"width": 1000, "height": 1000},
+            },
+        )
+
+    def act(self, action: Action) -> ActionResult:
+        self.actions.append(action)
+        if action.tool == "open_app":
+            self.opened = True
+        elif action.tool == "click" and self.click_count < len(self.numbers):
+            self.click_count += 1
+        elif action.tool == "input_text":
+            self.entered_product = str(action.args["text"])
+        elif action.tool == "click" and self.entered_product is not None:
+            self.submitted = True
+        return ActionResult(True)
+
+    def get_state(self, source_state_id: str) -> Observation:
+        if source_state_id == "source_start":
+            return Observation(
+                xml='<hierarchy><node text="Home" /></hierarchy>',
+                package_name="com.android.launcher",
+                extra={"state_id": source_state_id},
+            )
+        if source_state_id == "source_form":
+            xml = (
+                '<hierarchy><node class="android.widget.EditText" '
+                'resource-id="product" bounds="[200,500][800,650]" '
+                'editable="true" enabled="true" focused="true" /></hierarchy>'
+            )
+        elif source_state_id == "source_submit":
+            xml = (
+                '<hierarchy><node text="Submit" bounds="[350,700][650,900]" '
+                'clickable="true" enabled="true" /></hierarchy>'
+            )
+        else:
+            xml = (
+                '<hierarchy><node text="Click Me" bounds="[350,200][650,400]" '
+                'clickable="true" enabled="true" /></hierarchy>'
+            )
+        return Observation(
+            xml=xml,
+            package_name="com.android.chrome",
+            extra={
+                "state_id": source_state_id,
+                "display": {"width": 1000, "height": 1000},
+            },
+        )
+
+
+class _OfflineMultiplyPlanner(FinishingPlanner):
+    def __init__(self, host: _OfflineMultiplyHost) -> None:
+        super().__init__()
+        self.host = host
+        self.global_selected = False
+
+    def one_step_tool_call(
+        self,
+        _goal: str,
+        observation: Observation,
+        functions: tuple[Function, ...],
+        _installed_apps: dict[str, str],
+    ) -> ToolCall:
+        ids = tuple(function.id for function in functions)
+        self.visible_function_ids.append(ids)
+        self.observations.append(observation)
+        if not self.global_selected:
+            assert "complete_browser_multiply" in ids
+            self.global_selected = True
+            return ToolCall("complete_browser_multiply", {})
+        if self.host.click_count < len(self.host.numbers):
+            assert "click_number" in ids, ids
+            return ToolCall("click_number", {})
+        if self.host.entered_product is None:
+            assert "enter_product" in ids, ids
+            return ToolCall("enter_product", {"product": "120"})
+        if not self.host.submitted:
+            assert "submit_product" in ids, ids
+            return ToolCall("submit_product", {})
+        return ToolCall("finished", {"content": "120"})
+
+
+def test_offline_browser_multiply_completes_with_global_then_local_functions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    click = Action("click", {"x": 500.0, "y": 300.0})
+    empty_schema = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+    store.put_function(
+        Function(
+            function_id="complete_browser_multiply",
+            name="Complete BrowserMultiply task",
+            description="Open the task, collect numbers, enter their product, and submit.",
+            steps=(
+                FunctionStep(
+                    0,
+                    Action("open_app", {"package_name": "com.android.chrome"}),
+                    "source_start",
+                ),
+                *tuple(
+                    FunctionStep(index + 1, click, f"source_number_{index}")
+                    for index in range(5)
+                ),
+                FunctionStep(
+                    6,
+                    Action("click", {"x": 500.0, "y": 800.0}),
+                    "source_submit",
+                ),
+            ),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema=empty_schema,
+            agent_visible=True,
+        )
+    )
+    store.put_function(
+        Function(
+            function_id="click_number",
+            name="Click number button",
+            description="Click the visible button once to reveal one number.",
+            steps=(FunctionStep(0, click, "source_number_0"),),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema=empty_schema,
+            agent_visible=True,
+        )
+    )
+    store.put_function(
+        Function(
+            function_id="enter_product",
+            name="Enter product",
+            description="Enter the computed product in the visible field.",
+            steps=(
+                FunctionStep(
+                    0,
+                    Action(
+                        "input_text",
+                        {"text": "", "target_description": "product"},
+                    ),
+                    "source_form",
+                ),
+            ),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema={
+                "type": "object",
+                "properties": {"product": {"type": "string"}},
+                "required": ["product"],
+                "additionalProperties": False,
+            },
+            bindings=(
+                {
+                    "source": "$.arguments.product",
+                    "target": "$.steps[0].action.args.text",
+                },
+            ),
+            agent_visible=True,
+        )
+    )
+    store.put_function(
+        Function(
+            function_id="submit_product",
+            name="Submit product",
+            description="Submit the entered product.",
+            steps=(
+                FunctionStep(
+                    0,
+                    Action("click", {"x": 500.0, "y": 800.0}),
+                    "source_submit",
+                ),
+            ),
+            schema_version=FUNCTION_ARTIFACT_VERSION,
+            input_schema=empty_schema,
+            agent_visible=True,
+        )
+    )
+
+    host = _OfflineMultiplyHost()
+
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        source_state: Observation | None,
+    ) -> TransferResult:
+        source_id = str((source_state.extra if source_state else {}).get("state_id") or "")
+        if source_id.startswith("source_number_") and host.click_count < 5:
+            return TransferResult(
+                Action("click", {"x": 500.0, "y": 300.0}),
+                detail={"absolute_contextual_confidence": 0.95},
+            )
+        if source_id == "source_form" and host.click_count == 5:
+            return TransferResult(
+                Action(
+                    "input_text",
+                    {
+                        "text": action.args.get("text", ""),
+                        "target_description": "product",
+                        "x": 500.0,
+                        "y": 575.0,
+                    },
+                ),
+                detail={"absolute_contextual_confidence": 0.95},
+            )
+        if (
+            source_id == "source_submit"
+            and host.click_count == 5
+            and host.entered_product is not None
+        ):
+            return TransferResult(
+                Action("click", {"x": 500.0, "y": 800.0}),
+                detail={"absolute_contextual_confidence": 0.95},
+            )
+        return TransferResult(None, reason="offline_state_mismatch")
+
+    planner = _OfflineMultiplyPlanner(host)
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Chrome": "com.android.chrome"},
+        config=OmniFlowConfig(
+            runtime=RuntimeSettings(max_steps=20, max_fallback_steps=10),
+            plugins=PluginSet(transfer=transfer),
+        ),
+    )
+
+    result = flow.run("Click five numbers, multiply them, and submit the product.")
+
+    assert result.success is True, json.dumps(
+        result.detail["function_resolution"]["recall"]["events"][-1]["decisions"],
+        indent=2,
+    )
+    assert host.click_count == 5
+    assert host.entered_product == "120"
+    assert host.submitted is True
+    assert result.fallback_steps == 1
+    assert planner.visible_function_ids[0] == ("complete_browser_multiply",)
+    assert planner.visible_function_ids.count(("click_number",)) == 5
+
+
 def _store_with_open_settings_function(path: object) -> str:
     function = Function(
         function_id="complete_run_turn_bluetooth_on",
