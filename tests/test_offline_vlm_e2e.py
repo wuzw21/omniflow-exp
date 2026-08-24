@@ -4,6 +4,8 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from omniflow.core.model import Action, ActionResult, Function, Observation, ToolCall
 from omniflow.runtime import core
 from omniflow.runtime.engine import OmniFlow
@@ -53,10 +55,34 @@ def test_shared_planner_exposes_and_fills_function_input_schema() -> None:
         for tool in requests[0]["tools"]
         if tool["function"]["name"] == "enter_product"
     )
-    assert function_tool["function"]["parameters"]["required"] == [
-        "summary",
-        "product",
-    ]
+    assert function_tool["function"]["parameters"]["required"] == ["product"]
+
+
+def test_shared_planner_accepts_tool_call_without_optional_summary() -> None:
+    def transport(envelope: dict[str, object]) -> dict[str, object]:
+        return {
+            "requested_model": "test-model",
+            "resolved_model": "test-model",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "click",
+                        "arguments": '{"x":120,"y":240}',
+                    }
+                }
+            ],
+        }
+
+    planned = asyncio.run(
+        VLMPlanner(model="test-model", transport=transport).one_step_tool_call(
+            "Click the visible control",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+        )
+    )
+
+    assert planned.name == "click"
+    assert planned.arguments["x"] == pytest.approx(166.6666666667)
+    assert planned.arguments["y"] == pytest.approx(187.5)
 
 
 def test_openai_stream_is_normalized_to_shared_model_turn_response() -> None:

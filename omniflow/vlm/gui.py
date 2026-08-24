@@ -42,8 +42,9 @@ result, then inspect the fresh state before choosing another action. Coordinates
 are raw pixels in the current original Display coordinate frame, never normalized
 0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
 resized for transport, but its coordinates must still refer to the original
-Display. Every tool call
-must include a summary of at most 12 words naming only the immediate action.
+Display. If you include a summary, use a summary of at most 12 words naming only
+the immediate action. The summary is optional metadata; never reject a valid tool
+call because it is absent.
 Do not emit analysis, chain-of-thought, reasoning, thinking, rationale, or prose.
 Make the decision directly from current evidence and return only the tool call.
 Never call a recalled Function merely because it matches the goal. A global
@@ -243,12 +244,6 @@ def parse_model_turn_response(
         )
     rejected_arguments = dict(arguments)
     summary = str(arguments.pop("summary", "") or "").strip()
-    if not summary:
-        raise ModelToolCallError(
-            "model_turn_summary_required",
-            tool_name=tool,
-            arguments=rejected_arguments,
-        )
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
     coordinate_metadata = None
@@ -372,7 +367,6 @@ def function_tools(
                 **properties,
             }
             parameters["properties"] = properties
-            required = ["summary", *required]
         parameters["required"] = required
         tools.append(
             {
