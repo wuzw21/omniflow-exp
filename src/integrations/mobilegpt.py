@@ -3000,7 +3000,11 @@ def convert_runlog_to_mobilegpt_memory(
 
     started = time.monotonic()
     audit_rows: list[dict[str, Any]] = []
-    with _temporary_environment(environment), _working_directory(server_root):
+    # Upstream Memory deliberately stores data below ``./memory``. Keep its
+    # implementation unchanged, but run it from the prepared bundle's parent
+    # so ``./memory`` resolves to the requested output instead of mutating the
+    # canonical MobileGPT checkout.
+    with _temporary_environment(environment), _working_directory(memory.parent):
         from memory.memory_manager import Memory
 
         official_generalize_action = None
