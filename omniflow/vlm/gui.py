@@ -64,6 +64,9 @@ For switches and checkboxes, checked=false means off and checked=true means on.
 Never toggle a switch when its checked state already matches the requested goal.
 If a click leaves the state unchanged, do not repeat the same coordinates; ground the
 next action in the exact projected bounds or choose a different visible control.
+If the previous action succeeded and the state changed, reassess the fresh page before
+repeating the same semantic target; repeat it only when the current evidence shows it
+is still the required next action, never as timeout or recovery behavior.
 Prefer stable, reusable navigation. When the current app or page provides search,
 use search and type the requested text directly before browsing long menus or
 swiping. Do not select history, recent, suggestion, or cached-value items when the
