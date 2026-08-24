@@ -1404,7 +1404,7 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     request = completions.requests[0]
     assert request["max_tokens"] == 512
     assert "max_completion_tokens" not in request
-    assert request["stream"] is False
+    assert request["stream"] is True
     assert "stream_options" not in request
     assert request["reasoning_effort"] == "none"
     assert request["parallel_tool_calls"] is False
@@ -1549,7 +1549,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
 
     assert request["max_tokens"] == 512
     assert "max_completion_tokens" not in request
-    assert request["stream"] is False
+    assert request["stream"] is True
     assert "stream_options" not in request
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False

@@ -520,9 +520,16 @@ def convert_legacy_run_log(
     return canonicalize_run_log(converted)
 
 
-def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
+def project_androidworld_step_actions(
+    value: dict[str, Any],
+    *,
+    previous_step: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Project one official RunLog step to OmniFlow Function action fields."""
-    return _project_androidworld_step_actions(value)
+    return _project_androidworld_step_actions(
+        value,
+        previous_step=previous_step,
+    )
 
 
 def _androidworld_input_point_is_editable(

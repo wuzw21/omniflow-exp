@@ -38,7 +38,11 @@ def import_run_log_evidence(
     }
 
 
-def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, Any]]:
+def project_androidworld_step_actions(
+    value: dict[str, Any],
+    *,
+    previous_step: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or not isinstance(value.get("observation"), dict):
         raise ValueError("androidworld_run_log_step_required")
     action = dict(value.get("action") or {})
@@ -54,8 +58,36 @@ def project_androidworld_step_actions(value: dict[str, Any]) -> list[dict[str, A
                 replayable_only=True,
             )
         )
-    projected.append(_androidworld_action_to_omniflow(action, observation=observation))
+    projected_action = _androidworld_action_to_omniflow(
+        action,
+        observation=observation,
+    )
+    if (
+        action.get("action_type") == "input_text"
+        and not str(projected_action["args"].get("target_description") or "").strip()
+    ):
+        target_description = _previous_click_target_description(previous_step)
+        if target_description:
+            projected_action["args"]["target_description"] = target_description
+    projected.append(projected_action)
     return projected
+
+
+def _previous_click_target_description(
+    previous_step: dict[str, Any] | None,
+) -> str:
+    if not isinstance(previous_step, dict):
+        return ""
+    action = previous_step.get("action")
+    observation = previous_step.get("observation")
+    if (
+        not isinstance(action, dict)
+        or action.get("action_type") not in {"click", "double_tap"}
+        or not isinstance(observation, dict)
+    ):
+        return ""
+    _point, target = _androidworld_input_target(action, observation)
+    return _androidworld_input_target_description(target) if target is not None else ""
 
 
 def _store_transfer_state(
@@ -128,6 +160,13 @@ def _fullscreen_xml_display(xml: str) -> tuple[int, int] | None:
         root = ET.fromstring(xml)
     except ET.ParseError:
         return None
+    try:
+        root_width = int(root.attrib.get("width") or 0)
+        root_height = int(root.attrib.get("height") or 0)
+    except (TypeError, ValueError):
+        root_width, root_height = 0, 0
+    if root_width > 0 and root_height > 0:
+        return root_width, root_height
     first_node = next(root.iter("node"), None)
     if first_node is None:
         return None
@@ -155,7 +194,7 @@ def _androidworld_input_target(
     action: dict[str, Any],
     observation: dict[str, Any],
 ) -> tuple[dict[str, float] | None, ET.Element | None]:
-    display = observation_display(observation)
+    display = _observation_display(observation)
     if display is None:
         return None, None
     try:
@@ -176,6 +215,11 @@ def _androidworld_input_target(
             if str(node.attrib.get("focused") or "").casefold() == "true"
         ]
         node = min(focused, key=_xml_node_area, default=None)
+        # WebView accessibility snapshots can keep focused=false immediately
+        # after a successful click.  A sole editable node is still an
+        # unambiguous input target; multiple unfocused fields remain rejected.
+        if node is None and len(editable_nodes) == 1:
+            node = editable_nodes[0]
         bounds = _parse_xml_bounds(node.attrib.get("bounds")) if node is not None else None
         if bounds is None:
             return None, None
@@ -302,11 +346,17 @@ def _androidworld_action_point(
         left, top, right, bottom = bounds
         x = (left + right) / 2.0
         y = (top + bottom) / 2.0
-    display = observation_display(observation)
+    display = _observation_display(observation)
     if display is None:
         raise ValueError("androidworld_action_display_required")
     width, height = display
     return {"x": float(x) / width * 1000.0, "y": float(y) / height * 1000.0}
+
+
+def _observation_display(observation: dict[str, Any]) -> tuple[int, int] | None:
+    return observation_display(observation) or _fullscreen_xml_display(
+        observation_xml(observation)
+    )
 
 
 def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float] | None:

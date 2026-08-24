@@ -53,6 +53,7 @@ def compile_runlog_to_store(
 
     steps: list[dict[str, Any]] = []
     recovery_examples: list[dict[str, Any]] = []
+    previous_successful_step: dict[str, Any] | None = None
     for step in payload["steps"]:
         if not isinstance(step, dict):
             continue
@@ -71,7 +72,11 @@ def compile_runlog_to_store(
         action_type = str(step.get("action", {}).get("action_type") or "")
         if action_type in {"answer", "status", "unknown"}:
             continue
-        projected_actions = project_androidworld_step_actions(step)
+        projected_actions = project_androidworld_step_actions(
+            step,
+            previous_step=previous_successful_step,
+        )
+        previous_successful_step = step
         if metadata.get("origin") == "checker":
             for action in projected_actions:
                 example = {
@@ -137,8 +142,10 @@ When the successful RunLog starts with open_app, complete_function must start wi
 the first open_app and end with the terminal successful task action. It may omit
 unsafe internal retries, setup noise, checker actions, and observation-dependent
 repetitions while preserving that complete task envelope. A Function is atomic: if
-an action result must be observed to calculate a later parameter, those actions
-cannot share one Function.
+an action result must be observed to calculate a later value, stop the reusable
+Function before that action. Do not expose that later value as a Function
+parameter. The Planner must observe the returned page and continue with ordinary
+native tools or a separately recalled Function.
 The complete Function must lift its goal-dependent values into parameters, merge the
 selected meanings into one coherent name and description, and never merely hard-code
 the successful instance values. Do not invent a nesting or parent/child schema.
@@ -152,7 +159,9 @@ navigation accidents as standalone capabilities. Omit unsafe or unclear actions
 and explain each omission. Preserve the successful source order.
 
 Parameterize only entries copied exactly from parameter_candidates, and only when
-the same Function selects that source_step_index. Choose a stable identifier name
+the same Function selects that source_step_index. Never parameterize an
+observation-dependent input: such a step is a runtime handoff boundary and any
+Function containing it is omitted by the compiler. Choose a stable identifier name
 and concise description. Every (source_step_index, arg_name) pair must occur
 literally in parameter_candidates; never invent file, folder, click-count, integer,
 coordinate, or other parameters absent from that list. Usually target_description
@@ -182,7 +191,12 @@ return no prose outside the JSON object.
         if default_bundle is None:
             raise ValueError("default_bundle_actions_required")
         authored = {
-            "reason": "Registered one complete recorded Function.",
+            "reason": (
+                "Registered the safe reusable prefix; the Planner resumes at the "
+                "observation-dependent handoff."
+                if _observation_dependent_input_indices(facts)
+                else "Registered one complete recorded Function."
+            ),
             "bundle": default_bundle,
         }
     else:
@@ -250,7 +264,15 @@ return no prose outside the JSON object.
                 response=raw_author_response,
                 usage=usage,
             )
-            raise
+            if default_bundle is None:
+                raise
+            authored = {
+                "reason": (
+                    "Authoring proposal was unusable; registered the complete "
+                    f"schema-valid recorded Function instead ({type(error).__name__})."
+                ),
+                "bundle": default_bundle,
+            }
     if not isinstance(authored, dict) or set(authored) != {"reason", "bundle"}:
         raise ValueError("function_author_response_contract_invalid")
     if not isinstance(authored["reason"], str):
@@ -261,6 +283,21 @@ return no prose outside the JSON object.
         raise ValueError("functions_required")
     if not isinstance(bundle, dict):
         raise ValueError("function_author_bundle_must_be_object_or_null")
+    if (
+        selected_model is not None
+        and function_bundle is None
+        and default_bundle is not None
+        and isinstance(bundle.get("functions"), list)
+        and not bundle["functions"]
+    ):
+        authored = {
+            "reason": (
+                "The authored plan contained no safe tool Function at the runtime "
+                "handoff; registered the safe reusable prefix instead."
+            ),
+            "bundle": default_bundle,
+        }
+        bundle = default_bundle
     if set(bundle) != {
         "schema_version",
         "run_id",
@@ -291,7 +328,23 @@ return no prose outside the JSON object.
             f"{authored['reason']} Compiler restored {restored_commit_steps} "
             "successful post-input commit action(s)."
         )
-    functions = [parse_function_artifact(value) for value in raw_functions]
+    try:
+        functions = [parse_function_artifact(value) for value in raw_functions]
+    except ValueError as error:
+        if selected_model is None or function_bundle is not None or default_bundle is None:
+            raise
+        authored = {
+            "reason": (
+                "Authored Functions did not satisfy the runtime schema; registered "
+                f"the complete schema-valid recorded Function instead ({type(error).__name__})."
+            ),
+            "bundle": default_bundle,
+        }
+        bundle = default_bundle
+        raw_functions = list(bundle["functions"])
+        arguments_by_function = dict(bundle["arguments"])
+        raw_checker_rules = list(bundle["checker_rules"])
+        functions = [parse_function_artifact(value) for value in raw_functions]
     checker_rules = [validate_checker_rule(rule) for rule in raw_checker_rules]
     checker_ids = [rule["id"] for rule in checker_rules]
     if len(checker_ids) != len(set(checker_ids)):
@@ -473,6 +526,7 @@ def _materialize_authoring_plan(
         (candidate["source_step_index"], candidate["arg_name"]): candidate
         for candidate in _source_parameter_candidates(facts)
     }
+    observation_dependent_input_indices = _observation_dependent_input_indices(facts)
     functions: list[dict[str, Any]] = []
     arguments: dict[str, dict[str, Any]] = {}
     selected_source_indices: set[int] = set()
@@ -514,6 +568,7 @@ def _materialize_authoring_plan(
         ):
             raise ValueError("function_author_plan_function_invalid")
         indices = list(raw_indices)
+        skip_function = False
         if (
             indices != sorted(set(indices))
             or indices[0] < 0
@@ -527,10 +582,45 @@ def _materialize_authoring_plan(
         source_starts_with_open_app = bool(source_steps) and (
             source_steps[0].get("action", {}).get("tool") == "open_app"
         )
-        if is_complete and source_starts_with_open_app and (
-            indices[0] != 0 or indices[-1] != len(source_steps) - 1
+        if is_complete and observation_dependent_input_indices:
+            dynamic_indices = [
+                index
+                for index in indices
+                if index in observation_dependent_input_indices
+            ]
+            if dynamic_indices:
+                boundary = dynamic_indices[0]
+                safe_indices = [index for index in indices if index < boundary]
+                if safe_indices:
+                    indices = safe_indices
+                    description = (
+                        f"{description} Stop before the value-dependent input "
+                        "so the Planner can observe and compute its value."
+                    )
+                    materialization_notes.append(
+                        "Compiler split the global Function at an "
+                        f"observation-dependent input (source step {boundary})."
+                    )
+                else:
+                    skip_function = True
+                    materialization_notes.append(
+                        "Compiler omitted a global Function with no safe prefix; "
+                        "the Planner owns the runtime handoff."
+                    )
+        elif (
+            not is_complete
+            and observation_dependent_input_indices
+            and any(
+                index in observation_dependent_input_indices for index in indices
+            )
         ):
-            raise ValueError("function_author_plan_global_coverage_invalid")
+            skip_function = True
+            materialization_notes.append(
+                "Compiler omitted a semantic Function containing an "
+                "observation-dependent input; the Planner owns that runtime handoff."
+            )
+        if skip_function:
+            continue
         atomicized_count = 0
         if not (is_complete and source_starts_with_open_app):
             (
@@ -599,7 +689,14 @@ def _materialize_authoring_plan(
             source_index = parameter.get("source_step_index")
             arg_name = str(parameter.get("arg_name") or "").strip()
             candidate = candidates.get((source_index, arg_name))
-            if candidate is None or source_index not in indices:
+            if candidate is None:
+                raise ValueError("function_author_plan_parameter_target_invalid")
+            if source_index not in indices:
+                # A complete Function may be truncated at an observation
+                # boundary. Its parameter remains owned by the later
+                # semantic Function selected after the observation.
+                if is_complete:
+                    continue
                 raise ValueError("function_author_plan_parameter_target_invalid")
             parameter_name = str(parameter.get("name") or "").strip()
             parameter_target = (int(source_index), arg_name)
@@ -641,6 +738,21 @@ def _materialize_authoring_plan(
             "functions": functions,
         },
     }
+
+
+def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int]:
+    """Find input values that cannot be supplied before the task is observed."""
+
+    goal = " ".join(str(facts.get("goal") or "").casefold().split())
+    indices: set[int] = set()
+    for index, step in enumerate(facts.get("steps") or ()):
+        action = step.get("action") if isinstance(step, dict) else None
+        if not isinstance(action, dict) or action.get("tool") != "input_text":
+            continue
+        value = " ".join(str(action.get("args", {}).get("text") or "").casefold().split())
+        if value and value not in goal:
+            indices.add(index)
+    return frozenset(indices)
 
 
 def _atomicize_repeated_click_function(
@@ -854,7 +966,27 @@ def _default_bundle(
     source_steps = list(facts.get("steps") or ())
     if not source_steps:
         return None
-    function = _complete_function_artifact(facts)
+    dynamic_indices = _observation_dependent_input_indices(facts)
+    if dynamic_indices:
+        boundary = min(dynamic_indices)
+        safe_prefix = source_steps[:boundary]
+        if not safe_prefix:
+            safe_prefix = [
+                step
+                for index, step in enumerate(source_steps)
+                if index not in dynamic_indices
+            ][:1]
+        if not safe_prefix:
+            return None
+        prefix_facts = dict(facts)
+        prefix_facts["steps"] = safe_prefix
+        function = _complete_function_artifact(prefix_facts)
+        function["description"] = (
+            f"{function['description']} Stop before the value-dependent input "
+            "and let the Planner continue from the observed page."
+        )
+    else:
+        function = _complete_function_artifact(facts)
     function_id = function["function_id"]
     return {
         "schema_version": "omniflow.function-bundle.v2",

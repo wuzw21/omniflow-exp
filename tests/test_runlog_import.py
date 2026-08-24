@@ -143,6 +143,74 @@ def test_focused_input_text_preserves_existing_target_semantics() -> None:
     ]
 
 
+def test_unfocused_single_webview_input_is_still_grounded() -> None:
+    payload = androidworld_run_log(
+        [{"action_type": "input_text", "text": "1400"}]
+    )
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy width="720" height="1280">'
+            '<node class="android.widget.EditText" '
+            'text="Enter the product" resource-id="answer" '
+            'bounds="[216,278][615,331]" editable="true" focused="false" />'
+            '<node class="android.widget.Button" text="Submit" '
+            'bounds="[620,278][743,331]" clickable="true" />'
+            "</hierarchy>"
+        ),
+        "ui_elements": [],
+        "auxiliaries": {"state_id": "product-form"},
+    }
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {
+            "tool": "input_text",
+            "args": {
+                "target_description": "Enter the product",
+                "text": "1400",
+            },
+        }
+    ]
+
+
+def test_previous_click_grounds_unfocused_webview_input() -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "click", "x": 328, "y": 251},
+            {"action_type": "input_text", "text": "1400"},
+        ]
+    )
+    xml = (
+        '<hierarchy width="720" height="1280">'
+        '<node class="android.widget.EditText" text="URL" '
+        'bounds="[168,96][512,196]" editable="true" focused="false" />'
+        '<node class="android.widget.EditText" text="Enter the product" '
+        'resource-id="answer" bounds="[232,238][425,264]" '
+        'editable="true" focused="false" />'
+        "</hierarchy>"
+    )
+    for step in payload["steps"]:
+        step["observation"] = {
+            "pixels": None,
+            "forest": xml,
+            "ui_elements": [],
+            "auxiliaries": {"state_id": "product-form"},
+        }
+
+    assert project_androidworld_step_actions(
+        payload["steps"][1],
+        previous_step=payload["steps"][0],
+    ) == [
+        {
+            "tool": "input_text",
+            "args": {
+                "target_description": "Enter the product",
+                "text": "1400",
+            },
+        }
+    ]
+
+
 def test_widget_bounded_swipe_preserves_normalized_endpoints() -> None:
     payload = androidworld_run_log(
         [

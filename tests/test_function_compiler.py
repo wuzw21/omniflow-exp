@@ -76,7 +76,7 @@ def test_compiler_freezes_only_function_referenced_states(
     assert result["total_tokens"] == 0
 
 
-def test_compiler_preserves_focused_input_source_semantics(tmp_path: Path) -> None:
+def test_compiler_hands_off_before_observation_dependent_input(tmp_path: Path) -> None:
     payload = androidworld_run_log(
         [
             {"action_type": "input_text", "text": "3125"},
@@ -111,13 +111,14 @@ def test_compiler_preserves_focused_input_source_semantics(tmp_path: Path) -> No
 
     store = json.loads(Path(result["store_path"]).read_text(encoding="utf-8"))
     function = next(iter(store["functions"].values()))
-    assert function["steps"][0]["action"] == {
-        "tool": "input_text",
-        "args": {
-            "target_description": "Enter the product",
-            "text": "3125",
-        },
+    assert [step["action"]["tool"] for step in function["steps"]] == ["wait"]
+    assert function["input_schema"] == {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
     }
+    assert "observation-dependent handoff" in result["reason"]
 
 
 def test_compiler_restores_omitted_post_input_commit(tmp_path: Path) -> None:
@@ -507,36 +508,17 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
     )
 
     store = json.loads(Path(result["store_path"]).read_text())
-    function = store["functions"]["enter_product"]
+    assert len(store["functions"]) == 1
+    function = next(iter(store["functions"].values()))
+    assert [step["action"]["tool"] for step in function["steps"]] == ["click"]
     assert function["input_schema"] == {
         "type": "object",
-        "properties": {
-            "product": {
-                "type": "string",
-                "description": "Computed product to enter",
-            }
-        },
-        "required": ["product"],
+        "properties": {},
+        "required": [],
         "additionalProperties": False,
     }
-    assert function["bindings"] == [
-        {
-            "source": "$.arguments.product",
-            "target": "$.steps[0].action.args.text",
-        }
-    ]
-    assert function["steps"][0]["action"]["args"]["text"] == ""
-    complete = store["functions"]["complete_product_form"]
-    assert complete["input_schema"] == function["input_schema"]
-    assert complete["bindings"] == function["bindings"]
-    assert [step["action"]["tool"] for step in complete["steps"]] == [
-        "input_text",
-        "click",
-    ]
-    assert result["source_arguments"] == {
-        "enter_product": {"product": "3125"},
-        "complete_product_form": {"product": "3125"},
-    }
+    assert function["bindings"] == []
+    assert result["source_arguments"] == {function["function_id"]: {}}
     assert result["total_tokens"] == 140
 
 
@@ -676,7 +658,7 @@ def test_global_function_preserves_repeat_boundary_for_runtime_handoff(
     ]
 
 
-def test_model_plan_rejects_global_function_that_drops_terminal_action(
+def test_model_plan_falls_back_when_global_function_drops_terminal_action(
     tmp_path: Path,
 ) -> None:
     proposal = {
@@ -719,20 +701,20 @@ def test_model_plan_rejects_global_function_that_drops_terminal_action(
                 usage=None,
             )
 
-    with pytest.raises(
-        ValueError,
-        match="function_author_plan_global_coverage_invalid",
-    ):
-        compile_runlog_to_store(
-            _run_log(2),
-            tmp_path / "output",
-            source_states={
-                "state_0": {"state_id": "state_0"},
-                "state_1": {"state_id": "state_1"},
-            },
-            model="test-model",
-            client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
-        )
+    result = compile_runlog_to_store(
+        _run_log(2),
+        tmp_path / "output",
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    assert result["success"] is True
+    assert result["function_count"] == 3
+    assert "complete_settings_workflow" in result["function_ids"]
 
 
 def test_model_plan_allows_global_function_to_omit_unsafe_middle_actions(
@@ -814,7 +796,7 @@ def test_same_state_click_retry_is_not_treated_as_observation_output() -> None:
     )
 
 
-def test_invalid_model_plan_preserves_failure_response_and_usage(
+def test_invalid_model_plan_preserves_evidence_and_uses_complete_fallback(
     tmp_path: Path,
 ) -> None:
     invalid = {"reason": "Old full bundle shape.", "bundle": {}}
@@ -835,22 +817,22 @@ def test_invalid_model_plan_preserves_failure_response_and_usage(
             )
 
     output = tmp_path / "rejected"
-    with pytest.raises(
-        ValueError,
-        match="function_author_plan_response_contract_invalid",
-    ):
-        compile_runlog_to_store(
-            _run_log(2),
-            output,
-            source_states={
-                "state_0": {"state_id": "state_0"},
-                "state_1": {"state_id": "state_1"},
-            },
-            model="test-model",
-            client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
-        )
+    result = compile_runlog_to_store(
+        _run_log(2),
+        output,
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
 
     failure = json.loads((output / "authoring_failure.json").read_text())
     assert failure["classification"] == "authoring_rejected"
     assert failure["total_tokens"] == 20
     assert json.loads(failure["raw_response"]) == invalid
+    assert result["success"] is True
+    assert result["total_tokens"] == 20
+    assert result["function_count"] == 1
+    assert "complete schema-valid recorded Function" in result["reason"]
