@@ -3380,11 +3380,7 @@ def _t3a_hint_source_node(
         str(metadata.get("summary") or "") if isinstance(metadata, dict) else ""
     )
     index_match = re.search(r'"index"\s*:\s*(\d+)', raw_summary)
-    indexed_id = (
-        str(index)
-        if isinstance(index, int) and not isinstance(index, bool)
-        else index_match.group(1) if index_match else ""
-    )
+    indexed_id = index_match.group(1) if index_match else ""
     candidates: list[tuple[tuple[int, int, int], dict[str, str]]] = []
     for node in root.iter():
         if str(node.tag).rsplit("}", 1)[-1] != "node":

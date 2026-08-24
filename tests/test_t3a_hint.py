@@ -108,37 +108,6 @@ def test_t3a_hint_reads_canonical_runlog_xml_with_android_namespace() -> None:
     }
 
 
-def test_t3a_hint_resolves_canonical_action_index_from_xml() -> None:
-    semantic = _t3a_semantic_hint_step(
-        {
-            "action": {"action_type": "click", "index": 49},
-            "observation": {
-                "xml": (
-                    '<hierarchy><node id="49" class="android.widget.TextView" '
-                    'text="task.html" content-desc="" '
-                    'resource-id="android:id/title" '
-                    'package="com.google.android.documentsui" '
-                    'bounds="[20,200][700,280]" clickable="true" />'
-                    "</hierarchy>"
-                )
-            },
-        },
-        forbidden_values=(),
-    )
-
-    assert semantic == {
-        "action": "click",
-        "target": "task.html",
-        "source_node": {
-            "node_id": "49",
-            "class_name": "android.widget.TextView",
-            "text": "task.html",
-            "resource_id": "android:id/title",
-            "package_name": "com.google.android.documentsui",
-        },
-    }
-
-
 def test_t3a_hint_uses_focused_editable_node_for_unlocated_text_input() -> None:
     semantic = _t3a_semantic_hint_step(
         {
