@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import pairwise
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log, state_id
@@ -443,6 +445,7 @@ def _materialize_authoring_plan(
     functions: list[dict[str, Any]] = []
     arguments: dict[str, dict[str, Any]] = {}
     selected_source_indices: set[int] = set()
+    materialization_notes: list[str] = []
     function_fields = {
         "function_id",
         "name",
@@ -480,6 +483,25 @@ def _materialize_authoring_plan(
             or indices != list(range(indices[0], indices[-1] + 1))
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
+        (
+            indices,
+            function_id,
+            name,
+            description,
+            atomicized_count,
+        ) = _atomicize_repeated_click_function(
+            indices,
+            source_steps,
+            function_id=function_id,
+            name=name,
+            description=description,
+        )
+        if atomicized_count:
+            materialization_notes.append(
+                f"Compiler reduced {atomicized_count} identical clicks in "
+                f"{function_id} to one atomic step so the Planner observes "
+                "after every click."
+            )
         if selected_source_indices.intersection(indices):
             raise ValueError("function_author_plan_source_step_reused")
         selected_source_indices.update(indices)
@@ -540,8 +562,11 @@ def _materialize_authoring_plan(
         functions.append(function)
         arguments[function_id] = source_arguments
 
+    normalized_reason = reason.strip()
+    if materialization_notes:
+        normalized_reason = f"{normalized_reason} {' '.join(materialization_notes)}"
     return {
-        "reason": reason.strip(),
+        "reason": normalized_reason,
         "bundle": {
             "schema_version": "omniflow.function-bundle.v2",
             "run_id": str(facts["run_id"]),
@@ -550,6 +575,51 @@ def _materialize_authoring_plan(
             "functions": functions,
         },
     }
+
+
+def _atomicize_repeated_click_function(
+    indices: list[int],
+    source_steps: list[dict[str, Any]],
+    *,
+    function_id: str,
+    name: str,
+    description: str,
+) -> tuple[list[int], str, str, str, int]:
+    actions = [source_steps[index].get("action") for index in indices]
+    repeated_click = any(
+        current == following
+        and isinstance(current, dict)
+        and current.get("tool") == "click"
+        for current, following in pairwise(actions)
+    )
+    if not repeated_click:
+        return indices, function_id, name, description, 0
+    if not actions or any(action != actions[0] for action in actions[1:]):
+        raise ValueError("function_author_plan_repeated_click_must_be_atomic")
+
+    atomic_id = re.sub(r"_(?:\d+_)?times?$", "", function_id, flags=re.IGNORECASE)
+    if atomic_id == "click":
+        atomic_id = "click_recorded_button"
+    atomic_name = re.sub(
+        r"\s+\d+\s+times?\b",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    ).strip()
+    atomic_description = re.sub(
+        r"\s+\d+\s+times?\b",
+        "",
+        description,
+        flags=re.IGNORECASE,
+    ).strip()
+    return (
+        [indices[0]],
+        atomic_id or "click_recorded_button",
+        atomic_name or "Click recorded button",
+        atomic_description
+        or "Click the recorded button once, then return to the Planner.",
+        len(indices),
+    )
 
 
 def _write_authoring_failure(
@@ -657,7 +727,7 @@ def _restore_post_input_commit_steps(
 ) -> int:
     """Restore an authored-away source click that immediately follows input."""
     restored = 0
-    for source_step, commit_step in zip(source_steps, source_steps[1:]):
+    for source_step, commit_step in pairwise(source_steps):
         source_action = source_step.get("action")
         commit_action = commit_step.get("action")
         if not (

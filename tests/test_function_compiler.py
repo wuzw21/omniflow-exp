@@ -499,6 +499,59 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
     assert result["total_tokens"] == 140
 
 
+def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
+    tmp_path: Path,
+) -> None:
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 500, "y": 500} for _ in range(5)],
+        observations=[androidworld_state(f"number-{index}") for index in range(5)],
+        goal="Click five times, read each number, and multiply them.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Group source steps 0-4 as five clicks.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "click_button_5_times",
+                    "name": "Click the button 5 times",
+                    "description": "Click the button 5 times to display numbers.",
+                    "source_step_indices": [0, 1, 2, 3, 4],
+                    "parameters": [],
+                }
+            ]
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    assert result["function_ids"] == ["click_button"]
+    function = store["functions"]["click_button"]
+    assert function["name"] == "Click the button"
+    assert function["description"] == "Click the button to display numbers."
+    assert len(function["steps"]) == 1
+    assert function["steps"][0]["step_index"] == 0
+    assert "Planner observes after every click" in result["reason"]
+
+
 def test_invalid_model_plan_preserves_failure_response_and_usage(
     tmp_path: Path,
 ) -> None:
