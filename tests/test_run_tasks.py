@@ -22,6 +22,7 @@ from src.experiment.run_task import (
     build_autodroid_command,
     build_task_command,
     _formal_result_paths,
+    _infer_mobilegpt_target_from_source_run_log,
     _result_summary_rows,
     _subprocess_env,
     build_parser as build_run_task_parser,
@@ -92,7 +93,6 @@ def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(
             stdout="package:com.android.camera2\n",
         ),
     )
-
     assert (
         _resolve_mobilegpt_target_package(
             "Camera",
@@ -101,6 +101,51 @@ def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(
         )
         == "com.android.camera2"
     )
+
+
+def test_mobilegpt_target_inference_skips_android_crash_dialog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = CanonicalRunLog(
+        task="NotesTodoItemCount",
+        goal="Count todo items",
+        params={},
+        source_run_log=tmp_path / "source.json",
+        replay_seed=111,
+        step_count=2,
+        meta={},
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_task.canonicalize_source_run_log",
+        lambda _item: (
+            {
+                "steps": [
+                    {
+                        "observation": {
+                            "xml": '<hierarchy><node package="android" /></hierarchy>'
+                        }
+                    },
+                    {
+                        "observation": {
+                            "xml": (
+                                '<hierarchy><node package="net.cozic.joplin" />'
+                                "</hierarchy>"
+                            )
+                        }
+                    },
+                ]
+            },
+            "source",
+            "profile",
+            {},
+        ),
+    )
+
+    inferred = _infer_mobilegpt_target_from_source_run_log(item)
+
+    assert inferred["target_package"] == "net.cozic.joplin"
+    assert inferred["target_source"] == "source_runlog_observation"
 
 
 def test_subprocess_env_aliases_shared_glm_endpoint(monkeypatch) -> None:

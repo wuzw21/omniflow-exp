@@ -32,6 +32,7 @@ from src.integrations import mobilegpt_memory
 from src.integrations.runlog import import_run_log
 
 _IGNORED_SOURCE_PACKAGES = {
+    "android",
     "com.android.systemui",
     "com.example.MobileGPT",
     "com.google.android.apps.nexuslauncher",
@@ -92,7 +93,7 @@ def _mobilegpt_source_target(
 ) -> dict[str, str]:
     inferred = pipeline._infer_mobilegpt_target_from_source_run_log(item)
     package_name = str(inferred.get("target_package") or "").strip()
-    if package_name:
+    if package_name and package_name not in _IGNORED_SOURCE_PACKAGES:
         return {
             key: str(value)
             for key, value in inferred.items()

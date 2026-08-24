@@ -3736,6 +3736,7 @@ def _command_record_from_spec(
 
 
 _MOBILEGPT_IGNORED_TARGET_PACKAGES = {
+    "android",
     "com.android.systemui",
     "com.example.MobileGPT",
     "com.google.android.apps.nexuslauncher",
