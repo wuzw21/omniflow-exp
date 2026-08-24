@@ -3004,6 +3004,32 @@ def test_source_mode_success_returns_zero_exit_status(
     assert run_tasks.main([]) == 0
 
 
+def test_mobilegpt_memory_only_validated_returns_zero_exit_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.experiment import run_tasks
+
+    args = SimpleNamespace(
+        environment="androidworld",
+        dry_run=False,
+        source_only=False,
+        mobilegpt_memory_only=True,
+    )
+    monkeypatch.setattr(
+        run_tasks,
+        "build_parser",
+        lambda: SimpleNamespace(parse_args=lambda _argv: args),
+    )
+    monkeypatch.setattr(run_tasks, "_resolve_args", lambda value: value)
+    monkeypatch.setattr(
+        run_tasks,
+        "run_pipeline",
+        lambda _args: {"status": "validated"},
+    )
+
+    assert run_tasks.main([]) == 0
+
+
 def test_pipeline_blocks_only_function_when_canonical_store_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

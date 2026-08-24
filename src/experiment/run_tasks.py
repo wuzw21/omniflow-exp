@@ -4968,6 +4968,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.source_only:
         return 0 if result.get("status") == "collected" else 1
+    if args.mobilegpt_memory_only:
+        return 0 if result.get("status") == "validated" else 1
     counts = result.get("counts") if isinstance(result, dict) else None
     if result.get("function_retry_needed") is True:
         return 75
