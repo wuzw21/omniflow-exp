@@ -636,6 +636,12 @@ def _materialize_authoring_plan(
                 name=name,
                 description=description,
             )
+        if is_complete and source_starts_with_open_app:
+            description = (
+                f"{description} This is the global workflow entry; call it "
+                "directly from the launcher because it opens the app and owns "
+                "the startup navigation prefix."
+            )
         if atomicized_count:
             materialization_notes.append(
                 f"Compiler reduced {atomicized_count} identical clicks in "
