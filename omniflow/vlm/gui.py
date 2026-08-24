@@ -126,22 +126,29 @@ def build_model_turn_request(
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
     display = state.get("display") if isinstance(state.get("display"), dict) else None
-    tools = screen_pixel_tools(
-        vlm_action_tools(include_summary=True),
-        display,
+    global_functions = tuple(
+        function
+        for function in functions
+        if function.agent_visible
+        and function.steps
+        and function.steps[0].action.tool == "open_app"
     )
-    # A recalled global Function owns startup when its first action is open_app.
-    # Keep the choice in the standard tool-call surface, but do not expose a
-    # competing atomic launcher in the same turn.  If the Function later fails,
-    # the runtime excludes it on the next turn and open_app becomes visible again.
-    if _has_global_startup_function(functions):
-        tools = [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("name") != "open_app"
-        ]
-    tools = constrain_open_app_tool(tools, installed_apps or {})
-    tools.extend(function_tools(functions, include_summary=True))
+    if global_functions:
+        # A recalled global Function owns startup. Keep this as a normal tool
+        # call, but remove every competing native action and lower-priority
+        # Function from this turn. If execution fails, the runtime excludes the
+        # failed Function on the next turn and the complete native tool set is
+        # visible again for VLM fallback.
+        tools = []
+        visible_functions = global_functions
+    else:
+        tools = screen_pixel_tools(
+            vlm_action_tools(include_summary=True),
+            display,
+        )
+        tools = constrain_open_app_tool(tools, installed_apps or {})
+        visible_functions = functions
+    tools.extend(function_tools(visible_functions, include_summary=True))
     if retry_tool_name:
         tools = [
             tool
