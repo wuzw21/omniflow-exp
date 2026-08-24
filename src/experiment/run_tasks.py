@@ -1514,6 +1514,34 @@ def _validate_prepared_mobilegpt_memory(
     }
 
 
+def _validate_mobilegpt_memory_for_current_source(
+    *,
+    args: argparse.Namespace,
+    memory_root: str | Path,
+) -> dict[str, Any]:
+    """Validate both the sealed memory and its current source binding."""
+
+    validation = _validate_prepared_mobilegpt_memory(
+        memory_root,
+        task_name=args.task,
+    )
+    # Keep source identity validation in its authoritative owner.  In
+    # particular, this rejects a structurally valid memory authored from a
+    # transient Android crash dialog instead of the benchmark target app.
+    from src.experiment.mobilegpt_source import validate_mobilegpt_source_memory
+
+    source_validation = validate_mobilegpt_source_memory(
+        index_path=args.memory_index,
+        task_name=args.task,
+        memory_root=memory_root,
+        model=str(getattr(args, "formal_model", FORMAL_MODEL)),
+    )
+    return {
+        **validation,
+        "source_validation": source_validation,
+    }
+
+
 def prepare_mobilegpt_memory(
     *,
     args: argparse.Namespace,
@@ -1530,9 +1558,9 @@ def prepare_mobilegpt_memory(
             raise FileNotFoundError(
                 f"mobilegpt_source_memory_missing:{root}"
             )
-        validation = _validate_prepared_mobilegpt_memory(
-            root,
-            task_name=args.task,
+        validation = _validate_mobilegpt_memory_for_current_source(
+            args=args,
+            memory_root=root,
         )
         return root, {
             "status": "reused",
@@ -1562,18 +1590,18 @@ def prepare_mobilegpt_memory(
             "com.android.inputmethod.latin",
         }:
             try:
-                _validate_prepared_mobilegpt_memory(
-                    existing["memory_root"],
-                    task_name=args.task,
+                _validate_mobilegpt_memory_for_current_source(
+                    args=args,
+                    memory_root=existing["memory_root"],
                 )
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 existing_is_official = False
             else:
                 existing_is_official = True
     if existing is not None and existing_is_official:
-        validation = _validate_prepared_mobilegpt_memory(
-            existing["memory_root"],
-            task_name=args.task,
+        validation = _validate_mobilegpt_memory_for_current_source(
+            args=args,
+            memory_root=existing["memory_root"],
         )
         return Path(str(existing["memory_root"])).resolve(), {
             "status": "reused",
@@ -1639,9 +1667,9 @@ def prepare_mobilegpt_memory(
         raise PipelinePhaseError("mobilegpt_memory_not_registered", phase)
     prepared_root = Path(str(existing["memory_root"])).resolve()
     phase["memory_root"] = str(prepared_root)
-    phase["memory_validation"] = _validate_prepared_mobilegpt_memory(
-        prepared_root,
-        task_name=args.task,
+    phase["memory_validation"] = _validate_mobilegpt_memory_for_current_source(
+        args=args,
+        memory_root=prepared_root,
     )
     return prepared_root, phase
 

@@ -1227,6 +1227,40 @@ def test_mobilegpt_preparation_rejects_legacy_unaligned_memory(
         )
 
 
+def test_scheduler_rejects_memory_failed_by_source_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    memory_root = tmp_path / "stale" / "memory"
+    memory_root.mkdir(parents=True)
+    (memory_root.parent / "mobilegpt_memory_manifest.json").write_text(
+        json.dumps({"target_package": "android"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OMNIFLOW_MOBILEGPT_SOURCE_MEMORY_ROOT", str(memory_root))
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._validate_prepared_mobilegpt_memory",
+        lambda *_args, **_kwargs: {"memory_sha256": "digest"},
+    )
+    monkeypatch.setattr(
+        "src.experiment.mobilegpt_source.validate_mobilegpt_source_memory",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ValueError("mobilegpt_source_memory_target_package_mismatch")
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="mobilegpt_source_memory_target_package_mismatch",
+    ):
+        prepare_mobilegpt_memory(
+            args=args,
+            attempt_root=tmp_path / "attempt",
+            deadline=Deadline(60),
+        )
+
+
 def test_scheduler_reuses_sealed_native_mobilegpt_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
