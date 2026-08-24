@@ -26,6 +26,9 @@ identity and spatial relationships, and XML as evidence for text and control sta
 UI elements are grouped by priority; global controls come first, and goal_controls
 are actionable visual elements adaptively associated with nearby goal text. The `v`
 field is a stable visual reference for an actionable element at its XML bounds.
+When a projected element matches the target, compute x and y from the center of its
+`b=[left,top][right,bottom]` bounds. Never substitute the display center for a named
+target. For example, bounds [0,766][720,878] require click (360,822), not (360,640).
 Return exactly one native tool_call each turn. Never put
 action JSON or tool syntax in assistant text. Choose one action, wait for its
 result, then inspect the fresh state before choosing another action. Coordinates
@@ -48,6 +51,8 @@ not claim that a RunLog or reusable Function was registered; the host reports th
 real registration state after execution.
 For switches and checkboxes, checked=false means off and checked=true means on.
 Never toggle a switch when its checked state already matches the requested goal.
+If a click leaves the state unchanged, do not repeat the same coordinates; ground the
+next action in the exact projected bounds or choose a different visible control.
 Prefer stable, reusable navigation. When the current app or page provides search,
 use search and type the requested text directly before browsing long menus or
 swiping. Do not select history, recent, suggestion, or cached-value items when the
