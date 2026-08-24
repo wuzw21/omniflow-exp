@@ -10,7 +10,10 @@ in both repositories must remain byte-for-byte identical.
   accepted on input and removed from the canonical current representation.
 - `omniflow_function.v2.json`: reusable Functions with `function_id`,
   `input_schema`, `bindings`, and `steps`; each step references
-  `source_state_id`.
+  `source_state_id`. `step_index` is Function-local and equals its zero-based
+  position in `steps`; it never copies the source RunLog index. Coordinates are
+  fixed source transfer evidence and cannot be exposed through `input_schema`
+  or `bindings`.
 - `omniflow_checker_rule.v1.json`: one independently reusable shared checker
   rule with scope, phase, condition, action, budget, and priority.
 - `omniflow_checker_store.v1.json`: the checker library stored separately from
@@ -26,6 +29,10 @@ source coordinates must never pass through.
 Production writers, compilers, stores, and replay code accept only the
 `omniflow.run_log.v1` RunLog. Historical AndroidWorld data is
 converted once by the explicit offline converter, never inside the runtime.
+Python Function parsing validates the shared JSON Schema directly, then applies
+only semantic invariants that JSON Schema cannot express, such as contiguous
+Function-local step indices and binding targets that exist in the selected
+canonical Action.
 
 Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
 uses raw pixels in the current original device display frame so it matches XML
