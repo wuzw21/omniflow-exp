@@ -147,8 +147,14 @@ and explain each omission. Preserve the successful source order.
 
 Parameterize only entries copied exactly from parameter_candidates, and only when
 the same Function selects that source_step_index. Choose a stable identifier name
-and concise description. Use parameters=[] for fixed recorded values. Coordinates
-never appear in candidates and can never become Function inputs.
+and concise description. Every (source_step_index, arg_name) pair must occur
+literally in parameter_candidates; never invent file, folder, click-count, integer,
+coordinate, or other parameters absent from that list. Usually target_description
+is a stable UI label, not a goal-dependent value. The complete_function must repeat
+every parameter target selected by a semantic Function. Use parameters=[] for fixed
+recorded values. Coordinates never appear in candidates and can never become
+Function inputs. Keep reason under 40 words, each description under 20 words, and
+return no prose outside the JSON object.
 """
     selected_model = str(model or "").strip() or None
     usage = {
@@ -202,8 +208,14 @@ never appear in candidates and can never become Function inputs.
                 },
             ],
             response_format={"type": "json_object"},
-            max_tokens=4096,
+            max_tokens=512,
             temperature=0,
+            stream=False,
+            reasoning_effort="none",
+            extra_body={
+                "enable_thinking": False,
+                "thinking": {"type": "disabled"},
+            },
             timeout=float(timeout),
         )
         response_usage = getattr(response, "usage", None)

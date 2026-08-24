@@ -390,7 +390,13 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     assert "never merely\nhard-code the successful instance values" in system_prompt
     assert "Do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
-    assert captured["max_tokens"] == 4096
+    assert captured["max_tokens"] == 512
+    assert captured["stream"] is False
+    assert captured["reasoning_effort"] == "none"
+    assert captured["extra_body"] == {
+        "enable_thinking": False,
+        "thinking": {"type": "disabled"},
+    }
     request = json.loads(captured["messages"][1]["content"])
     facts = request["source_run"]
     assert facts["schema_version"] == "omniflow.function-compilation-facts.v2"
