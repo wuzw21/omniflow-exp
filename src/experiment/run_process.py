@@ -18,6 +18,113 @@ import time
 from typing import Any, Sequence
 
 
+def _proc_parent_pid(status_path: Path) -> int | None:
+    try:
+        status = status_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    for line in status.splitlines():
+        if line.startswith("PPid:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _managed_mobilegpt_server_path(
+    cmdline_path: Path,
+    *,
+    results_root: Path,
+) -> Path | None:
+    try:
+        argv = [
+            value.decode("utf-8")
+            for value in cmdline_path.read_bytes().split(b"\0")
+            if value
+        ]
+    except (OSError, UnicodeError):
+        return None
+    canonical_root = results_root.expanduser().resolve()
+    for value in argv:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            continue
+        resolved = candidate.resolve()
+        if (
+            resolved.name == "main.py"
+            and resolved.parent.name == "Server"
+            and resolved.parent.parent.name == "official_server_workspace"
+            and resolved.is_relative_to(canonical_root)
+        ):
+            return resolved
+    return None
+
+
+def managed_mobilegpt_orphan_pids(
+    *,
+    results_root: Path,
+    proc_root: Path = Path("/proc"),
+) -> list[int]:
+    """Find detached Planner servers created inside the canonical data tree.
+
+    The exact workspace path and ``PPid == 1`` requirements deliberately avoid
+    treating an arbitrary listener, or another live experiment, as ours.
+    """
+
+    matches: list[int] = []
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return matches
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid in {os.getpid(), os.getppid()}:
+            continue
+        if _proc_parent_pid(entry / "status") != 1:
+            continue
+        if _managed_mobilegpt_server_path(
+            entry / "cmdline",
+            results_root=results_root,
+        ) is not None:
+            matches.append(pid)
+    return sorted(matches)
+
+
+def stop_managed_mobilegpt_orphans(
+    *,
+    results_root: Path,
+    timeout_sec: float = 3.0,
+    proc_root: Path = Path("/proc"),
+) -> list[int]:
+    """Stop only detached MobileGPT servers owned by this result tree."""
+
+    stopped: list[int] = []
+    for pid in managed_mobilegpt_orphan_pids(
+        results_root=results_root,
+        proc_root=proc_root,
+    ):
+        try:
+            if os.getpgid(pid) != pid:
+                continue
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        deadline = time.monotonic() + max(0.0, float(timeout_sec))
+        process_path = proc_root / str(pid)
+        while process_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if process_path.exists():
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        stopped.append(pid)
+    return stopped
+
+
 def start_process(
     command: Sequence[str],
     *,

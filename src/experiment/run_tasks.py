@@ -45,7 +45,11 @@ from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
     next_attempt_name,
 )
-from src.experiment.run_process import run_process, start_process
+from src.experiment.run_process import (
+    run_process,
+    start_process,
+    stop_managed_mobilegpt_orphans,
+)
 from src.experiment.observation_evidence import (
     build_androidworld_run_log,
     persist_androidworld_run_log,
@@ -377,6 +381,11 @@ def ensure_target_devices(
 ) -> dict[str, Any]:
     avds = dict(DEVICE_AVDS)
     mobilegpt_selected = "mobilegpt" in _e2e_methods(args)
+    cleaned_mobilegpt_server_pids = (
+        stop_managed_mobilegpt_orphans(results_root=args.results_root)
+        if mobilegpt_selected
+        else []
+    )
     devices: list[dict[str, Any]] = []
     for label, serial, console_port in _e2e_devices(args):
         avd = avds.get(serial)
@@ -507,6 +516,7 @@ def ensure_target_devices(
     return {
         "status": "ready",
         "devices": devices,
+        "cleaned_mobilegpt_server_pids": cleaned_mobilegpt_server_pids,
         "model_calls": 0,
         "total_tokens": 0,
     }

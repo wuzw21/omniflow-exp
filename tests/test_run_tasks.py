@@ -2038,8 +2038,17 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     args.emulator_gpu = "swiftshader_indirect"
     args.runtime_preflight = tmp_path / "checks.py"
     calls: list[tuple[list[str], dict[str, object]]] = []
+    lifecycle: list[str] = []
+
+    monkeypatch.setattr(
+        scheduler,
+        "stop_managed_mobilegpt_orphans",
+        lambda **_kwargs: lifecycle.append("cleanup") or [4312],
+        raising=False,
+    )
 
     def runner(command: list[str], **kwargs: object) -> dict[str, object]:
+        lifecycle.append("command")
         calls.append((command, kwargs))
         return {"returncode": 0, "timed_out": False, "wall_sec": 0.01}
 
@@ -2052,6 +2061,8 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     )
 
     assert result["status"] == "ready"
+    assert result["cleaned_mobilegpt_server_pids"] == [4312]
+    assert lifecycle == ["cleanup", "command", "command"]
     assert len(calls) == 2
     preflight, preflight_kwargs = calls[1]
     assert preflight[:2] == [str(args.python_bin), str(args.runtime_preflight)]
