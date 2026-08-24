@@ -231,6 +231,57 @@ def test_core_blocks_clickable_transfer_with_mismatched_target_semantics(
     assert host.actions == []
 
 
+def test_core_accepts_semantic_child_candidate_with_same_mapped_bounds(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" '
+            'content-desc="Search" bounds="[100,100][300,200]" '
+            'clickable="true" enabled="true" /></hierarchy>'
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+    host = RecordingHost(Observation(xml="<after />"))
+
+    async def transfer(*_args: object) -> TransferResult:
+        return TransferResult(
+            Action("click", {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_mapped",
+            detail={
+                "absolute_contextual_confidence": 1.0,
+                "source": {"class": "android.widget.Button", "content_desc": "Search"},
+                "target": {"bounds": [100.0, 100.0, 300.0, 200.0]},
+                "candidates": [
+                    {
+                        "class": "android.view.ViewGroup",
+                        "bounds": [100.0, 100.0, 300.0, 200.0],
+                    },
+                    {
+                        "class": "android.widget.Button",
+                        "content_desc": "Search",
+                        "bounds": [100.0, 100.0, 300.0, 200.0],
+                    },
+                ],
+            },
+        )
+
+    result = asyncio.run(
+        core.execute_action(
+            Action("click", {"x": 200, "y": 150}),
+            observation=before,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=Observation(xml="<hierarchy />"),
+        )
+    )
+
+    assert result.success is True
+    assert host.actions
+
+
 def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     before = Observation(package_name="cn.com.omnimind.bot.debug")

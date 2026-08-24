@@ -1172,6 +1172,9 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
     target_display = _display_detail(result.get("target_size"))
     if target_display:
         target["display"] = target_display
+    target_bounds = result.get("target_bbox")
+    if isinstance(target_bounds, (list, tuple)) and len(target_bounds) == 4:
+        target["bounds"] = list(target_bounds)
     candidates = []
     for rank, raw in enumerate(result.get("top_candidates") or (), start=1):
         if not isinstance(raw, dict):

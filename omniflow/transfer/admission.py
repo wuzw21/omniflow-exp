@@ -138,6 +138,26 @@ def _target_semantics_match(detail: dict[str, Any]) -> bool:
     if not isinstance(target, dict):
         return True
 
+    if _candidate_semantics_match(source, target):
+        return True
+    mapped_bounds = _candidate_bounds(detail.get("target"))
+    if mapped_bounds is None:
+        return False
+    # OmniTransfer may return wrapper nodes before the actionable child when
+    # they share the same bounds. Keep the hard semantic gate, but allow the
+    # compatible child only for that exact mapped target rectangle.
+    return any(
+        isinstance(candidate, dict)
+        and _candidate_bounds(candidate) == mapped_bounds
+        and _candidate_semantics_match(source, candidate)
+        for candidate in candidates[1:]
+    )
+
+
+def _candidate_semantics_match(
+    source: dict[str, Any],
+    target: dict[str, Any],
+) -> bool:
     source_resource = _semantic_value(source.get("resource_id"))
     target_resource = _semantic_value(target.get("resource_id"))
     if source_resource and target_resource and source_resource == target_resource:
@@ -162,6 +182,19 @@ def _target_semantics_match(detail: dict[str, Any]) -> bool:
         if value
     }
     return bool(source_labels & target_labels)
+
+
+def _candidate_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    raw = value.get("bounds") if isinstance(value, dict) else None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        result = tuple(float(item) for item in raw)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(item) for item in result):
+        return None
+    return result  # type: ignore[return-value]
 
 
 def _semantic_value(value: Any) -> str:
