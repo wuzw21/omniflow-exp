@@ -510,7 +510,10 @@ class OmniFlow:
                     previous_action_error = str(error)
                     continue
                 current_entry_observation = await self._observe(screenshot=True)
-                if not _same_observation(observation, current_entry_observation):
+                if not _same_entry_observation(
+                    observation,
+                    current_entry_observation,
+                ):
                     observation = current_entry_observation
                     previous_action_error = (
                         "function_entry_state_changed_after_mapping"
@@ -1161,6 +1164,29 @@ def _same_observation(
         after.xml,
         after.image_base64,
     )
+
+
+def _same_entry_observation(
+    before: Observation | None,
+    after: Observation | None,
+) -> bool:
+    """Check the semantic state at the Function mapping/execution boundary.
+
+    The entry gate must reject a real UI-state change, but AndroidWorld's
+    screenshot can change while the canonical accessibility state remains the
+    same (for example, a clock tick or screenshot encoding difference).  The
+    canonical state id is therefore the authority when both observations have
+    one.  Hosts without a state id retain the strict observation comparison.
+    """
+    if before is None or after is None:
+        return False
+    before_state_id = str(before.extra.get("state_id") or "").strip()
+    after_state_id = str(after.extra.get("state_id") or "").strip()
+    if before_state_id or after_state_id:
+        return bool(before_state_id and after_state_id) and (
+            before_state_id == after_state_id
+        )
+    return _same_observation(before, after)
 
 
 def _optional_step_index(value: Any) -> int | None:

@@ -21,6 +21,7 @@ from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
+from omniflow.runtime.engine import _same_entry_observation
 from omniflow.vlm.gui import (
     SYSTEM_PROMPT,
     ModelToolCallError,
@@ -1009,6 +1010,44 @@ def test_selected_function_is_not_executed_after_entry_state_changes(tmp_path) -
         None,
         "function_entry_state_changed_after_mapping",
     ]
+
+
+def test_function_entry_gate_uses_canonical_state_id_over_screenshot_bytes() -> None:
+    before = Observation(
+        xml='<hierarchy><node text="Launcher" /></hierarchy>',
+        package_name="com.example",
+        activity_name="MainActivity",
+        image_base64="screenshot-before",
+        extra={"state_id": "state_same"},
+    )
+    after = Observation(
+        xml=before.xml,
+        package_name=before.package_name,
+        activity_name=before.activity_name,
+        image_base64="screenshot-after",
+        extra={"state_id": "state_same"},
+    )
+
+    assert _same_entry_observation(before, after) is True
+
+
+def test_function_entry_gate_rejects_changed_canonical_state_id() -> None:
+    before = Observation(
+        xml='<hierarchy><node text="Launcher" /></hierarchy>',
+        package_name="com.example",
+        activity_name="MainActivity",
+        image_base64="same-screenshot",
+        extra={"state_id": "state_before"},
+    )
+    after = Observation(
+        xml=before.xml,
+        package_name=before.package_name,
+        activity_name=before.activity_name,
+        image_base64=before.image_base64,
+        extra={"state_id": "state_after"},
+    )
+
+    assert _same_entry_observation(before, after) is False
 
 
 def test_transfer_failure_falls_back_without_replaying_source_coordinates(
