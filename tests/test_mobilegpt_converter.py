@@ -746,6 +746,34 @@ def test_runlog_index_click_is_grounded_from_ui_element_bounds(
     assert trajectory["transitions"][0].action["y"] == 60
 
 
+def test_runlog_index_click_is_grounded_from_xml_forest_order(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "index": 2}],
+        forests=[
+            (
+                '<hierarchy><window id="window-7"><node id="7:0" '
+                'bounds="[0,0][300,100]">'
+                '<node id="7:1" bounds="[0,0][300,100]">'
+                '<node id="7:4" text="Target" clickable="true" '
+                'bounds="[100,0][200,100]" />'
+                '<node id="7:2" text="First" clickable="true" '
+                'bounds="[0,0][100,100]" />'
+                '<node id="7:3" text="Second" clickable="true" '
+                'bounds="[200,0][300,100]" />'
+                "</node></node></window></hierarchy>"
+            )
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(source)
+
+    assert trajectory["transitions"][0].action["x"] == 150
+    assert trajectory["transitions"][0].action["y"] == 50
+
+
 def test_direct_conversion_grounds_container_click_to_visible_child(
     tmp_path: Path,
 ) -> None:

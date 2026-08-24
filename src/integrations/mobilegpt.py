@@ -1174,6 +1174,42 @@ def _point(action: dict[str, Any]) -> tuple[float, float] | None:
         return None
 
 
+def _androidworld_index_bounds_from_xml(
+    observation: dict[str, Any],
+    index: int,
+) -> tuple[float, float, float, float] | None:
+    """Recover AndroidWorld's persisted forest element order from source XML."""
+
+    forest = androidworld_observation_xml(observation)
+    if not forest:
+        return None
+    try:
+        root = ET.fromstring(forest)
+    except ET.ParseError:
+        return None
+    elements: list[ET.Element] = []
+    for window in root.iter("window"):
+        ordered_nodes: list[tuple[int, ET.Element]] = []
+        for element in window.iter("node"):
+            raw_id = str(element.get("id") or "")
+            try:
+                order = int(raw_id.rsplit(":", 1)[1])
+            except (IndexError, ValueError):
+                return None
+            ordered_nodes.append((order, element))
+        for _, element in sorted(ordered_nodes, key=lambda item: item[0]):
+            child_nodes = [child for child in element if child.tag == "node"]
+            if (
+                not child_nodes
+                or bool(str(element.get("content-desc") or "").strip())
+                or str(element.get("scrollable") or "").strip().lower() == "true"
+            ):
+                elements.append(element)
+    if not 0 <= index < len(elements):
+        return None
+    return _bounds(elements[index].get("bounds"))
+
+
 def _ground_indexed_action(
     action: dict[str, Any],
     observation: dict[str, Any],
@@ -1189,21 +1225,26 @@ def _ground_indexed_action(
     except (KeyError, TypeError, ValueError):
         return action
     elements = observation.get("ui_elements")
-    if not isinstance(elements, list) or not 0 <= index < len(elements):
+    resolved_bounds: tuple[float, float, float, float] | None = None
+    if isinstance(elements, list) and 0 <= index < len(elements):
+        element = elements[index]
+        if isinstance(element, dict):
+            bounds = element.get("bbox_pixels")
+            if isinstance(bounds, dict):
+                try:
+                    resolved_bounds = (
+                        float(bounds["x_min"]),
+                        float(bounds["y_min"]),
+                        float(bounds["x_max"]),
+                        float(bounds["y_max"]),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    resolved_bounds = None
+    if resolved_bounds is None:
+        resolved_bounds = _androidworld_index_bounds_from_xml(observation, index)
+    if resolved_bounds is None:
         return action
-    element = elements[index]
-    if not isinstance(element, dict):
-        return action
-    bounds = element.get("bbox_pixels")
-    if not isinstance(bounds, dict):
-        return action
-    try:
-        left = float(bounds["x_min"])
-        top = float(bounds["y_min"])
-        right = float(bounds["x_max"])
-        bottom = float(bounds["y_max"])
-    except (KeyError, TypeError, ValueError):
-        return action
+    left, top, right, bottom = resolved_bounds
     grounded = dict(action)
     grounded["x"] = (left + right) / 2.0
     grounded["y"] = (top + bottom) / 2.0
