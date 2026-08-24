@@ -10,6 +10,19 @@
 
 ## 不可破坏的运行合同
 
+- **唯一权威部署 checkout 是 `~/Projects/Omni/OmniFlow-exp`。** 本地对应
+  `/Users/wuzewen/Projects/Omni/OmniFlow-exp`，9207 对应
+  `/home/wuzewen/Projects/Omni/OmniFlow-exp`；以后所有部署、启动、Python
+  环境、配置和 OmniFlow 实验数据都必须从这个 checkout 读取。
+- `OmniFlow-exp-unified`、`OmniFlow-exp-official`、
+  `OmniFlow-exp-mobilegpt-*`、`OmniFlow-exp-semantic-*` 和其他带日期/版本后缀
+  的目录只作为历史证据或只读参考，禁止作为运行时 source、`PYTHON_BIN`、
+  `OMNIFLOW_*_ROOT` 或部署目标。不要再从这些目录派生新的备份版本。
+- OmniFlow 代码的版本一致性以权威 checkout 的 Git 工作树为准；远端部署必须
+  先把该 checkout 同步到 9207 的同名路径，再从该路径的
+  `scripts/exp/run_androidworld.sh` 启动。官方 MobileGPT、AndroidWorld 和
+  OmniTransfer 若作为外部依赖，必须通过权威 checkout 的固定配置显式引用，
+  不能从另一份 OmniFlow checkout 偷渡运行时代码或数据。
 - 唯一公开入口是 `scripts/exp/run_androidworld.sh`。
 - 唯一 task + method + device 调度器是 `src/experiment/run_tasks.py`。
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
@@ -35,6 +48,7 @@
 
 ## 证据、环境和数据
 
+- 4090 长期部署规则：OmniFlow-exp 的唯一权威工作区固定为 `/home/zewen/Projects/OmniFlow-exp`。代码、`.git`、`.venv`、`data/current.json`、实验资产和结果都在这一工作区内直接修改、验证和运行；Git commit 是唯一版本历史。禁止再创建或从 `local-authoritative`、`current-snapshot`、按日期/任务命名的 checkout、`/data/omniflow-4090/OmniFlow-exp` 或其他复制目录部署和启动实验。旧目录只可作为只读历史证据，不得成为运行入口。所有 4090 命令必须先解析并校验 canonical workspace，路径不一致立即失败。
 - Function v2 按成功 RunLog 动作顺序保存；步骤通过 `source_state_id` 引用 sibling `transfer_states.json`。新跑的正式 AndroidWorld source 默认使用 seed 111。
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。

@@ -11,19 +11,19 @@ Usage:
   bash tools/build_4090_resources.sh --ssh user@host [options]
   bash tools/build_4090_resources.sh --remote [options]
 
-The default mode is latest: external repositories are updated to their
-default-branch HEAD and the exact deployed commits are recorded in
+The 4090 workspace is frozen to /home/zewen/Projects/OmniFlow-exp. Parallel
+snapshots and bundle roots are prohibited. External repositories are updated
+to their default-branch HEAD and exact commits are recorded in
 <remote-root>/deployment_manifest.json. Python dependencies remain locked by
 uv.lock unless --upgrade-python-deps is supplied.
 
 Options:
   --ssh HOST                 SSH destination, e.g. user@4090
   --remote                   Run the build on the current Linux host
-  --remote-root DIR          Remote bundle root (default: /data/omniflow-4090)
+  --remote-root DIR          Must be /home/zewen/Projects/OmniFlow-exp
   --source-data DIR          Local authoritative data directory (default: repo/data)
   --model-env FILE           Local model.env to copy to the remote host
   --mode latest              External repo policy (default: latest)
-  --archive-data             Also transfer a complete data archive
   --skip-data                Do not transfer authoritative data
   --skip-system-bootstrap    Do not use apt/sudo or install uv/Node/SDK
   --user-bootstrap            Skip apt/sudo, but install missing user-local tools
@@ -46,11 +46,11 @@ log() { printf '[4090] %s\n' "$*"; }
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ssh_host=""
 remote=0
-remote_root="/data/omniflow-4090"
+canonical_remote_root="/home/zewen/Projects/OmniFlow-exp"
+remote_root="$canonical_remote_root"
 source_data="$repo/data"
 model_env=""
 mode="latest"
-archive_data=0
 skip_data=0
 skip_system_bootstrap=0
 user_bootstrap=0
@@ -68,7 +68,7 @@ while [[ $# -gt 0 ]]; do
     --source-data) [[ $# -ge 2 ]] || die "--source-data needs DIR"; source_data="$2"; shift 2 ;;
     --model-env) [[ $# -ge 2 ]] || die "--model-env needs FILE"; model_env="$2"; shift 2 ;;
     --mode) [[ $# -ge 2 ]] || die "--mode needs latest"; mode="$2"; shift 2 ;;
-    --archive-data) archive_data=1; shift ;;
+    --archive-data) die "parallel deployment archives are prohibited; use canonical data/.archive" ;;
     --skip-data) skip_data=1; shift ;;
     --skip-system-bootstrap) skip_system_bootstrap=1; shift ;;
     --user-bootstrap) user_bootstrap=1; shift ;;
@@ -83,6 +83,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$mode" == latest ]] || die "--mode must be latest"
+[[ "$remote_root" == "$canonical_remote_root" ]] || die "4090 canonical workspace must be $canonical_remote_root"
 if [[ "$remote" == 1 && -n "$ssh_host" ]]; then
   die "use either --ssh or --remote, not both"
 fi
@@ -108,39 +109,35 @@ if [[ "$remote" == 0 ]]; then
     fi
   fi
 
-  log "creating remote bundle at $ssh_host:$remote_root"
+  log "using canonical workspace at $ssh_host:$remote_root"
   ssh "${ssh_opts[@]}" "$ssh_host" "mkdir -p '$remote_root'"
   rsync_repo_args=(-az)
   [[ "$reuse_remote" == 1 ]] || rsync_repo_args+=(--delete)
   rsync "${rsync_repo_args[@]}" \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
     --exclude '.pytest_cache/' --exclude 'outputs/' --exclude 'data/' \
-    "$repo/" "$ssh_host:$remote_root/OmniFlow-exp/"
+    "$repo/" "$ssh_host:$remote_root/"
   if [[ -n "$model_env" ]]; then
     rsync -az "$model_env" "$ssh_host:$remote_root/model.env"
     ssh "${ssh_opts[@]}" "$ssh_host" "chmod 600 '$remote_root/model.env'"
   fi
 
-  if [[ "$skip_data" != 1 ]] && ! { [[ "$reuse_remote" == 1 ]] && ssh "${ssh_opts[@]}" "$ssh_host" "test -s '$remote_root/OmniFlow-exp/data/current.json'"; }; then
+  if [[ "$skip_data" != 1 ]] && ! { [[ "$reuse_remote" == 1 ]] && ssh "${ssh_opts[@]}" "$ssh_host" "test -s '$remote_root/data/current.json'"; }; then
     log "migrating authoritative data and registered assets"
     bash "$repo/scripts/exp/migrate_authoritative_data.sh" \
       --source-data "$source_data" \
       --target-host "$ssh_host" \
-      --target-data "$remote_root/OmniFlow-exp/data" \
+      --target-data "$remote_root/data" \
       --sync
     if [[ -d "$repo/vendor/androidworld" ]]; then
       rsync -az "$repo/vendor/androidworld/" \
-        "$ssh_host:$remote_root/OmniFlow-exp/vendor/androidworld/"
+        "$ssh_host:$remote_root/vendor/androidworld/"
     fi
     if [[ -d "$repo/vendor/autodroid" ]]; then
       rsync -az "$repo/vendor/autodroid/" \
-        "$ssh_host:$remote_root/OmniFlow-exp/vendor/autodroid/"
+        "$ssh_host:$remote_root/vendor/autodroid/"
     fi
   fi
-  if [[ "$archive_data" == 1 && "$skip_data" != 1 ]]; then
-    rsync -az "$source_data/" "$ssh_host:$remote_root/data-archive/"
-  fi
-
   remote_args=(--remote --remote-root "$remote_root" --mode "$mode")
   [[ "$skip_system_bootstrap" == 1 ]] && remote_args+=(--skip-system-bootstrap)
   [[ "$skip_device_setup" == 1 ]] && remote_args+=(--skip-device-setup)
@@ -155,13 +152,13 @@ if [[ "$remote" == 0 ]]; then
   printf -v source_commit_env 'OMNIFLOW_SOURCE_COMMIT=%q' "$source_commit"
   printf -v source_dirty_env 'OMNIFLOW_SOURCE_DIRTY=%q' "$([[ -n "$source_dirty" ]] && printf true || printf false)"
   ssh "${ssh_opts[@]}" "$ssh_host" \
-    "cd '$remote_root/OmniFlow-exp' && $source_commit_env $source_dirty_env bash tools/build_4090_resources.sh $remote_cmd"
+    "cd '$remote_root' && $source_commit_env $source_dirty_env bash tools/build_4090_resources.sh $remote_cmd"
   exit 0
 fi
 
 [[ "$(uname -s)" == Linux ]] || die "--remote must run on Linux"
 [[ "$(uname -m)" == x86_64 ]] || die "4090 build expects Linux x86_64"
-repo="$remote_root/OmniFlow-exp"
+repo="$remote_root"
 [[ -d "$repo" ]] || die "remote repository missing: $repo"
 
 if [[ -z "$model_env" ]]; then
