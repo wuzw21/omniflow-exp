@@ -22,6 +22,7 @@ from src.integrations.mobilegpt import (
     _target_element,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
+    validate_memory_manifest,
     validate_mobilegpt_memory,
     write_conversion_failure_audit,
 )
@@ -274,6 +275,7 @@ def test_open_app_only_conversion_uses_final_observation_as_finish_page(
 
     assert sealed["memory_validation"]["launch_only"] is True
     assert validated["memory_inventory"]["has_useful_actions"] is False
+    assert validate_memory_manifest(memory)["launch_only"] is True
 
 
 def test_conversion_scopes_official_embedding_model_to_offline_memory(

@@ -208,7 +208,22 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
     )
     transition_count = int(audit.get("transition_count") or 0)
     validation_rows = audit.get("validation_rows")
-    if (
+    source_payload = import_run_log(
+        json.loads(evidence_paths["source_run_log"].read_text(encoding="utf-8"))
+    )
+    official_reader = audit.get("official_reader_validation")
+    launch_only = False
+    if isinstance(official_reader, dict):
+        from src.integrations.mobilegpt_memory import (
+            is_valid_mobilegpt_launch_only_memory,
+        )
+
+        launch_only = is_valid_mobilegpt_launch_only_memory(
+            source_payload,
+            audit,
+            official_reader,
+        )
+    common_alignment_invalid = (
         not isinstance(audit, dict)
         or audit.get("schema_version") != MOBILEGPT_AUDIT_SCHEMA
         or str(audit.get("task_name") or "")
@@ -217,7 +232,9 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         or audit.get("conversion_mode") != CONVERSION_MODE_DIRECT
         or audit.get("actions_supplied_to_mobilegpt") is not True
         or audit.get("source_reader_coverage_validation") is not True
-        or transition_count <= 0
+    )
+    transition_alignment_invalid = (
+        transition_count <= 0
         or int(audit.get("validated_transition_count") or 0)
         != transition_count
         or not isinstance(validation_rows, list)
@@ -232,6 +249,9 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
             for row in validation_rows
         )
         != transition_count
+    )
+    if common_alignment_invalid or (
+        not launch_only and transition_alignment_invalid
     ):
         raise ValueError("mobilegpt_memory_runlog_alignment_invalid")
     if "official_source_result" in payload:
@@ -245,6 +265,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "memory_file_count": len(files),
         "task_file_count": len(task_files),
         "runlog_direct_alignment": True,
+        "launch_only": launch_only,
         "validated_transition_count": transition_count,
     }
 
