@@ -59,7 +59,10 @@ def _jsonl_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
 def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
     """Require immutable evidence that MobileGPT used OOB for all device I/O."""
 
-    artifact_root = Path(str(outcome.get("artifact_root") or "")).expanduser()
+    artifact_root_text = str(outcome.get("artifact_root") or "").strip()
+    if not artifact_root_text:
+        return False
+    artifact_root = Path(artifact_root_text).expanduser()
     if not artifact_root.is_dir():
         return False
     method = str(outcome.get("method") or "")
