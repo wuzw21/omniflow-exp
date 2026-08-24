@@ -154,6 +154,59 @@ def test_function_execution_is_gated_by_transfer_not_page_embedding(monkeypatch)
     assert actions == [Action("click", {"x": 800.0, "y": 860.0})]
 
 
+def test_function_hands_observation_dependent_click_repeat_back_to_planner(
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    current = Observation(package_name="com.example")
+
+    class Host:
+        def __init__(self) -> None:
+            self.actions: list[Action] = []
+
+        def act(self, action: Action):
+            self.actions.append(action)
+            return {"success": True}
+
+        def observe(self, **_kwargs: object):
+            return current
+
+    host = Host()
+    repeated_click = Action("click", {"x": 500, "y": 500})
+    function = Function(
+        function_id="complete_task",
+        name="Complete task",
+        description="Open the app and complete the task.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("open_app", {"package_name": "com.example"}),
+                "start",
+            ),
+            FunctionStep(1, repeated_click, "number_1"),
+            FunctionStep(2, repeated_click, "number_2"),
+        ),
+    )
+
+    result = asyncio.run(
+        execute_function(
+            function,
+            host=host,
+            plugins=PluginSet(),
+            observation=current,
+            installed_packages=frozenset({"com.example"}),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "observation_dependent_repeat_requires_planner"
+    assert result.actions_executed == 1
+    assert result.detail["failed_step_index"] == 1
+    assert host.actions == [Action("open_app", {"package_name": "com.example"})]
+
+
 def test_payment_text_does_not_create_hidden_runtime_policy(monkeypatch) -> None:
     import omniflow.runtime.core as core
 

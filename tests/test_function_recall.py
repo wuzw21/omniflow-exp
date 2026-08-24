@@ -269,13 +269,13 @@ def test_package_mismatch_is_diagnostic_and_does_not_override_transfer() -> None
     assert decision["mapping_confidence"] == 0.95
 
 
-def test_open_app_function_uses_the_same_page_weighted_score() -> None:
+def test_open_app_function_uses_default_entry_page_score() -> None:
     current = _page("Bluetooth settings", "bluetooth_switch")
     open_app_function = _function(
         "z_open_settings",
         "Continue",
         "Continue from this page.",
-        "matching_page",
+        "unrelated_source_page",
         action=Action("open_app", {"package_name": "com.android.settings"}),
     )
     click_function = _function(
@@ -291,7 +291,9 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
             observation=current,
             functions=(click_function, open_app_function),
             source_states={
-                "matching_page": current,
+                "unrelated_source_page": _page(
+                    "Camera", "shutter", variant="camera"
+                ),
                 "other_page": _page("Camera", "shutter", variant="camera"),
             },
             limit=1,
@@ -301,9 +303,54 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
     assert result.functions == (open_app_function,)
     decisions = {item["function_id"]: item for item in result.audit["decisions"]}
     assert decisions[open_app_function.id]["page_similarity"] == 1.0
+    assert decisions[open_app_function.id]["observed_page_similarity"] < 1.0
+    assert decisions[open_app_function.id]["entry_page_override"] == "open_app"
     assert decisions[open_app_function.id]["score"] > decisions[click_function.id][
         "score"
     ]
+
+
+def test_recall_can_select_local_function_after_global_is_excluded() -> None:
+    current = _page("Account details", "account_form")
+    global_function = _function(
+        "complete_task",
+        "Complete task",
+        "Complete the whole task.",
+        "task_start",
+        action=Action("open_app", {"package_name": "com.example"}),
+    )
+    local_function = _function(
+        "submit_current_form",
+        "Submit current form",
+        "Submit the visible form.",
+        "current_form",
+    )
+
+    async def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 800.0, "y": 860.0}),
+            detail={"absolute_contextual_confidence": 0.95},
+        )
+
+    result = asyncio.run(
+        recall_functions(
+            "Complete the task",
+            observation=current,
+            functions=(global_function, local_function),
+            source_states={
+                "task_start": _page("Start", "start"),
+                "current_form": current,
+            },
+            transfer=transfer,
+            exclude_function_ids=frozenset({global_function.id}),
+        )
+    )
+
+    assert result.functions == (local_function,)
 
 
 def test_missing_page_evidence_prevents_recall() -> None:

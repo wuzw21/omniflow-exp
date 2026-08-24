@@ -133,10 +133,12 @@ commits, submits, confirms, or advances the form; keep both in one Function.
 
 In functions, return zero or more reusable semantic actions or tightly coupled
 contiguous groups. Then author exactly one complete_function as an ordinary Function.
-Select only the largest safe coherent source_step_indices for complete_function;
-it does not need to cover the whole RunLog. Omit retries, setup noise, checker actions,
-and observation-dependent repetitions. A Function is atomic: if an action result must
-be observed to calculate a later parameter, those actions cannot share one Function.
+When the successful RunLog starts with open_app, complete_function must start with
+the first open_app and end with the terminal successful task action. It may omit
+unsafe internal retries, setup noise, checker actions, and observation-dependent
+repetitions while preserving that complete task envelope. A Function is atomic: if
+an action result must be observed to calculate a later parameter, those actions
+cannot share one Function.
 The complete Function must lift its goal-dependent values into parameters, merge the
 selected meanings into one coherent name and description, and never merely hard-code
 the successful instance values. Do not invent a nesting or parent/child schema.
@@ -522,19 +524,28 @@ def _materialize_authoring_plan(
             )
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
-        (
-            indices,
-            function_id,
-            name,
-            description,
-            atomicized_count,
-        ) = _atomicize_repeated_click_function(
-            indices,
-            source_steps,
-            function_id=function_id,
-            name=name,
-            description=description,
+        source_starts_with_open_app = bool(source_steps) and (
+            source_steps[0].get("action", {}).get("tool") == "open_app"
         )
+        if is_complete and source_starts_with_open_app and (
+            indices[0] != 0 or indices[-1] != len(source_steps) - 1
+        ):
+            raise ValueError("function_author_plan_global_coverage_invalid")
+        atomicized_count = 0
+        if not (is_complete and source_starts_with_open_app):
+            (
+                indices,
+                function_id,
+                name,
+                description,
+                atomicized_count,
+            ) = _atomicize_repeated_click_function(
+                indices,
+                source_steps,
+                function_id=function_id,
+                name=name,
+                description=description,
+            )
         if atomicized_count:
             materialization_notes.append(
                 f"Compiler reduced {atomicized_count} identical clicks in "

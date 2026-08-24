@@ -17,6 +17,7 @@ from omniflow.core.model import (
     ActionResult,
     CheckerContext,
     Function,
+    FunctionStep,
     Host,
     Observation,
     RunResult,
@@ -85,7 +86,20 @@ async def execute_function(
         checker_trigger_counts if checker_trigger_counts is not None else {}
     )
     resume_metadata_pending = dict(resume_metadata or {})
-    for function_step in steps:
+    for step_offset, function_step in enumerate(steps):
+        if _starts_observation_dependent_click_repeat(steps, step_offset):
+            return RunResult(
+                False,
+                function.id,
+                executed,
+                error="observation_dependent_repeat_requires_planner",
+                final_state=current,
+                detail={
+                    "trace": trace,
+                    "failed_step_index": function_step.step_index,
+                    "next_step_index": function_step.step_index,
+                },
+            )
         action = function_step.action
         source_state = await _load_state(
             host,
@@ -216,6 +230,21 @@ async def execute_function(
                 + 1
             ),
         },
+    )
+
+
+def _starts_observation_dependent_click_repeat(
+    steps: tuple[FunctionStep, ...],
+    step_offset: int,
+) -> bool:
+    if step_offset + 1 >= len(steps):
+        return False
+    current = steps[step_offset]
+    following = steps[step_offset + 1]
+    return (
+        current.action.tool == "click"
+        and following.action == current.action
+        and following.source_state_id != current.source_state_id
     )
 
 

@@ -386,7 +386,11 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     system_prompt = captured["messages"][0]["content"]
     assert "encode repetition count" in system_prompt
     assert "call it repeatedly" in system_prompt
-    assert "does not need to cover the whole RunLog" in system_prompt
+    assert "complete_function must start with" in system_prompt
+    assert (
+        "the first open_app and end with the terminal successful task action"
+        in system_prompt
+    )
     assert "never merely hard-code\nthe successful instance values" in system_prompt
     assert "Do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
@@ -600,7 +604,79 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     assert "Planner observes after every click" in result["reason"]
 
 
-def test_model_plan_allows_complete_function_to_omit_runlog_actions(
+def test_global_function_preserves_repeat_boundary_for_runtime_handoff(
+    tmp_path: Path,
+) -> None:
+    actions = [
+        {"action_type": "open_app", "app_name": "com.android.chrome"},
+        *[
+            {"action_type": "click", "x": 500, "y": 500}
+            for _ in range(3)
+        ],
+        {"action_type": "wait"},
+    ]
+    payload = androidworld_run_log(
+        actions,
+        observations=[
+            androidworld_state(f"state-{index}")
+            for index in range(len(actions))
+        ],
+        goal="Open the task, click three times, and finish.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Keep an atomic click and the complete task envelope.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "click_button_3_times",
+                    "name": "Click button 3 times",
+                    "description": "Click the button three times.",
+                    "source_step_indices": [1, 2, 3],
+                    "parameters": [],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_task",
+                "name": "Complete task",
+                "description": "Open the app and complete the whole task.",
+                "source_step_indices": [0, 1, 2, 3, 4],
+                "parameters": [],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())["functions"]
+    assert len(store["click_button"]["steps"]) == 1
+    assert [step["action"]["tool"] for step in store["complete_task"]["steps"]] == [
+        "open_app",
+        "click",
+        "click",
+        "click",
+        "wait",
+    ]
+
+
+def test_model_plan_rejects_global_function_that_drops_terminal_action(
     tmp_path: Path,
 ) -> None:
     proposal = {
@@ -643,26 +719,68 @@ def test_model_plan_allows_complete_function_to_omit_runlog_actions(
                 usage=None,
             )
 
+    with pytest.raises(
+        ValueError,
+        match="function_author_plan_global_coverage_invalid",
+    ):
+        compile_runlog_to_store(
+            _run_log(2),
+            tmp_path / "output",
+            source_states={
+                "state_0": {"state_id": "state_0"},
+                "state_1": {"state_id": "state_1"},
+            },
+            model="test-model",
+            client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        )
+
+
+def test_model_plan_allows_global_function_to_omit_unsafe_middle_actions(
+    tmp_path: Path,
+) -> None:
+    proposal = {
+        "reason": "Keep the stable task envelope and omit the unsafe middle wait.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "complete_settings_workflow",
+                "name": "Complete Settings workflow",
+                "description": "Open Settings and finish the recorded workflow.",
+                "source_step_indices": [0, 2],
+                "parameters": [],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
     result = compile_runlog_to_store(
-        _run_log(2),
+        _run_log(3),
         tmp_path / "output",
         source_states={
-            "state_0": {"state_id": "state_0"},
-            "state_1": {"state_id": "state_1"},
+            f"state_{index}": {"state_id": f"state_{index}"}
+            for index in range(3)
         },
         model="test-model",
         client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
     )
 
-    assert result["function_count"] == 3
-    assert result["function_ids"][:2] == ["open_settings", "wait_for_settings"]
-    complete_id = result["function_ids"][2]
-    assert complete_id == "complete_settings_workflow"
-    store = json.loads(Path(result["store_path"]).read_text())
-    assert [
-        step["action"]["tool"]
-        for step in store["functions"][complete_id]["steps"]
-    ] == ["open_app"]
+    function = json.loads(Path(result["store_path"]).read_text())["functions"][
+        "complete_settings_workflow"
+    ]
+    assert [step["action"]["tool"] for step in function["steps"]] == [
+        "open_app",
+        "wait",
+    ]
 
 
 def test_same_state_click_retry_is_not_treated_as_observation_output() -> None:

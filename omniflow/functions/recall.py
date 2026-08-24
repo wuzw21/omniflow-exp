@@ -180,7 +180,15 @@ def _score_function(
         source_observation=source_observation,
         encoder=encoder,
     )
-    page_similarity = float(page_match["page_similarity"] or 0.0)
+    observed_page_similarity = float(page_match["page_similarity"] or 0.0)
+    entry_page_override = (
+        "open_app"
+        if function.steps and function.steps[0].action.tool == "open_app"
+        else None
+    )
+    page_similarity = (
+        1.0 if entry_page_override is not None else observed_page_similarity
+    )
     goal_score = _jaccard(
         _tokens(goal),
         _tokens(f"{function.name} {function.description}"),
@@ -195,6 +203,8 @@ def _score_function(
         "agent_visible": function.agent_visible,
         "source_state_id": source_state_id,
         "page_similarity": page_similarity,
+        "observed_page_similarity": observed_page_similarity,
+        "entry_page_override": entry_page_override,
         "page_similarity_threshold": FUNCTION_PAGE_SIMILARITY_THRESHOLD,
         "page_match": page_match["matched"],
         "goal_lexical_score": goal_score,
