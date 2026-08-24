@@ -183,7 +183,7 @@ selected_supplemental_method_arg="${OMNIFLOW_ANDROIDWORLD_SUPPLEMENTAL_METHOD:-}
 # AndroidWorld experiments use the repository's OOB observe/act transport by
 # default.  Native AndroidWorld I/O remains an explicit diagnostic override;
 # it must not silently become the formal experiment backend.
-control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-oob}"
+control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-androidworld}"
 require_root_device="${OMNIFLOW_REQUIRE_ROOT_DEVICE:-1}"
 configure_device="${OMNIFLOW_CONFIGURE_DEVICE:-1}"
 task="${OMNIFLOW_ANDROIDWORLD_TASK:-SystemBluetoothTurnOn}"
@@ -225,18 +225,6 @@ if [[ -z "${OMNIFLOW_APPAGENT_ROOT:-}" ]]; then
   for candidate in "$appagent_root" "$workspace_root/appagent-official" "$workspace_root/OmniFlow/runtime/external/appagent"; do
     if [[ -d "$candidate" ]]; then
       appagent_root="$candidate"
-      break
-    fi
-  done
-fi
-if [[ -z "${OMNIFLOW_OOB_APK:-}" ]]; then
-  for candidate in \
-    "$workspace_root/../releases/OOB/OpenOmniBot-foolproof-debug.apk" \
-    "$workspace_root/oob-downloads/v0.5.8.4/OpenOmniBot-v0.5.8.4-develop-standard-debug.apk" \
-    "$workspace_root/OpenOmniBot/app/build/outputs/apk/developStandard/debug/app-develop-standard-debug.apk" \
-    "$asset_root/runtime/assets/oob-x86_64-debug.apk"; do
-    if [[ -f "$candidate" ]]; then
-      export OMNIFLOW_OOB_APK="$candidate"
       break
     fi
   done

@@ -294,68 +294,6 @@ def _source_device_ready(args: argparse.Namespace) -> bool:
     )
 
 
-def _ensure_oob_release_installed(
-    *,
-    args: argparse.Namespace,
-    serial: str,
-    log_path: Path,
-    deadline: Deadline,
-) -> dict[str, Any]:
-    configured = str(os.environ.get("OMNIFLOW_OOB_APK") or "").strip()
-    canonical = args.repo.parents[1] / "releases" / "OOB" / "OpenOmniBot-foolproof-debug.apk"
-    apk_path = Path(configured).expanduser().resolve() if configured else canonical.resolve()
-    if not apk_path.is_file():
-        raise FileNotFoundError(f"canonical_oob_release_missing:{apk_path}")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    install = run_logged_command(
-        [str(args.adb_path), "-s", serial, "install", "-r", "-t", str(apk_path)],
-        cwd=args.repo,
-        environment=dict(os.environ),
-        log_path=log_path,
-        timeout_sec=deadline.remaining(300),
-    )
-    if install["returncode"] != 0:
-        raise RuntimeError(f"canonical_oob_release_install_failed:{serial}:{apk_path}")
-    service = (
-        "cn.com.omnimind.bot.debug/"
-        "cn.com.omnimind.accessibility.service.AssistsService"
-    )
-    for setting_command in (
-        ("enabled_accessibility_services", service),
-        ("accessibility_enabled", "1"),
-    ):
-        configured_service = run_logged_command(
-            [
-                str(args.adb_path),
-                "-s",
-                serial,
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                *setting_command,
-            ],
-            cwd=args.repo,
-            environment=dict(os.environ),
-            log_path=log_path.with_name(
-                f"{log_path.stem}_{setting_command[0]}{log_path.suffix}"
-            ),
-            timeout_sec=deadline.remaining(30),
-        )
-        if configured_service["returncode"] != 0:
-            raise RuntimeError(
-                f"canonical_oob_accessibility_enable_failed:{serial}:"
-                f"{setting_command[0]}"
-            )
-    time.sleep(2)
-    return {
-        "status": "installed",
-        "apk_path": str(apk_path),
-        "serial": serial,
-        "returncode": 0,
-    }
-
-
 def ensure_source_device(
     *,
     args: argparse.Namespace,
@@ -406,12 +344,6 @@ def ensure_source_device(
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
-    oob_release = _ensure_oob_release_installed(
-        args=args,
-        serial=source_serial,
-        log_path=attempt_root / "preflight" / "source_oob_release.log",
-        deadline=deadline,
-    )
     # Source emulator readiness is sufficient here. The old checks.py gate
     # rejected valid registered Functions when the optional source index row
     # was stale, before the actual Function/Transfer path could run.
@@ -441,7 +373,6 @@ def ensure_source_device(
         "model_calls": 0,
         "total_tokens": 0,
         "preflight": None,
-        "oob_release": oob_release,
     }
 
 
@@ -505,12 +436,6 @@ def ensure_target_devices(
                     "total_tokens": 0,
                 },
             )
-        device_phase["oob_release"] = _ensure_oob_release_installed(
-            args=args,
-            serial=serial,
-            log_path=attempt_root / "preflight" / f"target_oob_release_{serial}.log",
-            deadline=deadline,
-        )
         if mobilegpt_selected:
             preflight_path = (
                 attempt_root
@@ -1179,7 +1104,7 @@ def collect_manual_source(
         str(output_path),
     ]
     backend = str(
-        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
     ).strip().lower()
     if (
         backend not in {"oob", "omniflow", "oob_control"}

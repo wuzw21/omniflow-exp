@@ -36,7 +36,6 @@ from src.experiment.run_tasks import (
     _fixed_replay_source_step_width,
     _e2e_devices,
     _e2e_methods,
-    _ensure_oob_release_installed,
     _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
@@ -169,47 +168,6 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         source_only=False,
         dry_run=False,
     )
-
-
-def test_ensure_oob_release_installed_uses_one_canonical_apk(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = _args(tmp_path)
-    apk = args.repo.parents[1] / "releases" / "OOB" / "OpenOmniBot-foolproof-debug.apk"
-    apk.parent.mkdir(parents=True)
-    apk.write_bytes(b"apk")
-    calls: list[list[str]] = []
-    monkeypatch.delenv("OMNIFLOW_OOB_APK", raising=False)
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        lambda command, **_kwargs: calls.append(command) or {"returncode": 0},
-    )
-    monkeypatch.setattr("src.experiment.run_tasks.time.sleep", lambda _seconds: None)
-
-    result = _ensure_oob_release_installed(
-        args=args,
-        serial="emulator-5560",
-        log_path=tmp_path / "oob.log",
-        deadline=Deadline(120),
-    )
-
-    assert result["status"] == "installed"
-    assert result["apk_path"] == str(apk.resolve())
-    assert calls[0] == [
-        str(args.adb_path),
-        "-s",
-        "emulator-5560",
-        "install",
-        "-r",
-        "-t",
-        str(apk.resolve()),
-    ]
-    assert calls[1][-2:] == [
-        "enabled_accessibility_services",
-        "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
-    ]
-    assert calls[2][-2:] == ["accessibility_enabled", "1"]
 
 
 def test_next_source_attempt_id_uses_unified_monotonic_name(tmp_path: Path) -> None:
@@ -1960,12 +1918,8 @@ def test_source_device_is_cold_restarted_when_already_ready(
     assert adb_calls.count(("-s", "emulator-5560", "emu", "kill")) == 1
     assert result["launched"] is True
     assert result["kept_alive_for_pipeline"] is True
-    assert "--require-contacts-ready" not in preflight_commands[0]
-    assert "--expected-tasks" not in preflight_commands[0]
-    assert preflight_commands[0][preflight_commands[0].index("--android-world-root") + 1] == str(
-        args.android_world_root
-    )
-    assert str(args.android_world_root) in preflight_environments[0]["PYTHONPATH"]
+    assert preflight_commands == []
+    assert preflight_environments == []
 
 
 def test_source_device_reports_emulator_process_exit_immediately(
