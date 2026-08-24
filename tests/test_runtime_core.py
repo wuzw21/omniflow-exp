@@ -282,6 +282,59 @@ def test_core_accepts_semantic_child_candidate_with_same_mapped_bounds(
     assert host.actions
 
 
+def test_core_rejects_same_text_on_editable_target_for_noneditable_source(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.TextView" text="Lasagna" '
+            'bounds="[100,100][300,200]" clickable="true" '
+            'editable="false" enabled="true" /></hierarchy>'
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+    host = RecordingHost(Observation(xml="<after />"))
+
+    async def transfer(*_args: object) -> TransferResult:
+        return TransferResult(
+            Action("click", {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_mapped",
+            detail={
+                "absolute_contextual_confidence": 1.0,
+                "source": {
+                    "class": "android.widget.TextView",
+                    "text": "Lasagna",
+                    "editable": False,
+                },
+                "target": {"bounds": [100.0, 100.0, 300.0, 200.0]},
+                "candidates": [
+                    {
+                        "class": "android.widget.EditText",
+                        "text": "Lasagna",
+                        "editable": True,
+                        "bounds": [100.0, 100.0, 300.0, 200.0],
+                    }
+                ],
+            },
+        )
+
+    result = asyncio.run(
+        core.execute_action(
+            Action("click", {"x": 200, "y": 150}),
+            observation=before,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=Observation(xml="<hierarchy />"),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "omnitransfer_target_semantics_mismatch"
+    assert host.actions == []
+
+
 def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     before = Observation(package_name="cn.com.omnimind.bot.debug")

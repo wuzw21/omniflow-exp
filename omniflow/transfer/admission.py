@@ -163,6 +163,15 @@ def _candidate_semantics_match(
     if source_resource and target_resource and source_resource == target_resource:
         return True
 
+    source_editable = str(source.get("editable") or "").casefold()
+    target_editable = str(target.get("editable") or "").casefold()
+    if source_editable == "false" and target_editable == "true":
+        return False
+    source_class = _semantic_value(source.get("class"))
+    target_class = _semantic_value(target.get("class"))
+    if "edittext" in target_class and "edittext" not in source_class:
+        return False
+
     source_labels = {
         value
         for value in (
