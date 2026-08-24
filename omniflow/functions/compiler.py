@@ -803,7 +803,16 @@ def _materialize_authoring_plan(
                 # semantic Function selected after the observation.
                 if is_complete:
                     continue
-                raise ValueError("function_author_plan_parameter_target_invalid")
+                # Authoring models occasionally copy a public parameter onto
+                # a semantic sub-function without including the source step
+                # in that sub-function.  The complete Function still owns
+                # the public API, so discard only this misplaced sub-function
+                # proposal instead of rejecting the entire authoring plan.
+                materialization_notes.append(
+                    "Compiler dropped a parameter target not selected by its "
+                    f"semantic Function (source step {source_index})."
+                )
+                continue
             parameter_name = str(parameter.get("name") or "").strip()
             parameter_target = (int(source_index), arg_name)
             if is_complete:

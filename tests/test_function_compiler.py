@@ -846,6 +846,75 @@ def test_model_plan_copies_semantic_parameters_to_complete_function(
     assert "copied a validated semantic parameter" in result["reason"]
 
 
+def test_model_plan_drops_misplaced_semantic_parameter_without_fallback(
+    tmp_path: Path,
+) -> None:
+    proposal = {
+        "reason": "Keep the startup action public and the remaining action reusable.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "wait_for_page",
+                    "name": "Wait for page",
+                    "description": "Wait for the page after launch.",
+                    "source_step_indices": [1],
+                    "parameters": [
+                        {
+                            "name": "package_name",
+                            "description": "App package to launch",
+                            "source_step_index": 0,
+                            "arg_name": "package_name",
+                        }
+                    ],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_startup",
+                "name": "Complete startup",
+                "description": "Launch the app and wait for the page.",
+                "source_step_indices": [0, 1],
+                "parameters": [
+                    {
+                        "name": "package_name",
+                        "description": "App package to launch",
+                        "source_step_index": 0,
+                        "arg_name": "package_name",
+                    }
+                ],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        _run_log(2),
+        tmp_path / "output",
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    assert result["function_ids"] == ["wait_for_page", "complete_startup"]
+    assert store["functions"]["complete_startup"]["input_schema"]["required"] == [
+        "package_name"
+    ]
+    assert "dropped a parameter target" in result["reason"]
+
+
 def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     tmp_path: Path,
 ) -> None:
