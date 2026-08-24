@@ -2134,36 +2134,11 @@ def _repair_androidworld_chrome_first_run(
                     timeout_sec=2.0,
                 )
             except ValueError:
-                clicked = False
-                visible_optional_labels: set[str] | None = None
-                if callable(get_ui_elements):
-                    visible_optional_labels = {
-                        str(value or "").strip().casefold()
-                        for element in get_ui_elements() or ()
-                        for value in (
-                            getattr(element, "text", None),
-                            getattr(element, "content_description", None),
-                        )
-                        if str(value or "").strip()
-                    }
-                    if not visible_optional_labels.intersection(
-                        {"no thanks", "not now", "cancel"}
-                    ):
-                        break
-                for label in ("No thanks", "Not now", "Cancel"):
-                    if (
-                        visible_optional_labels is not None
-                        and label.casefold() not in visible_optional_labels
-                    ):
-                        continue
-                    try:
-                        controller.click_element(label)
-                    except ValueError:
-                        continue
-                    clicked = True
-                    break
-                if not clicked:
-                    break
+                # The text snapshot can lag behind the first-run activity and
+                # make an already-settled Chrome home page look like an old
+                # optional dialog. The stable resource ID is the only bounded
+                # second-stage signal; absence means setup is complete.
+                break
             time.sleep(1.0)
     finally:
         adb_utils.close_app("chrome", env.controller)
