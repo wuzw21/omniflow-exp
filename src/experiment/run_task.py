@@ -5133,6 +5133,11 @@ def build_mobilegpt_command(
         "GRADLE_USER_HOME",
         "JAVA_HOME",
         "OMNIFLOW_GRADLE_BIN",
+        # Reuse the prebuilt official MobileGPT APK from the public launcher.
+        # Without this narrow-environment entry, each task can fall back to a
+        # per-task Gradle/network build and turn a configured run into an
+        # environment failure.
+        "OMNIFLOW_MOBILEGPT_APK",
         "PATH",
     ):
         value = str(client_runtime_env.get(key) or "").strip()
