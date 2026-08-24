@@ -47,6 +47,44 @@ def test_default_compiler_registers_one_action_complete_function(
     assert result["function_ids"][0].startswith("complete_recorded_")
 
 
+def test_compiler_promotes_launcher_app_click_to_global_open_app(
+    tmp_path: Path,
+) -> None:
+    launcher = androidworld_state(
+        "launcher",
+        package_name="com.google.android.apps.nexuslauncher",
+        forest=(
+            '<hierarchy><node package="com.google.android.apps.nexuslauncher" '
+            'resource-id="com.google.android.apps.nexuslauncher:id/icon" '
+            'text="Camera" clickable="true" /></hierarchy>'
+        ),
+    )
+    camera = androidworld_state(
+        "camera",
+        package_name="com.android.camera2",
+        forest='<hierarchy><node package="com.android.camera2" /></hierarchy>',
+    )
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 624, "y": 560}],
+        observations=[launcher],
+        goal="Take one video.",
+    )
+    payload["steps"][0]["next_observation"] = camera
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states={"launcher": launcher},
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = next(iter(store["functions"].values()))
+    assert function["steps"][0]["action"] == {
+        "tool": "open_app",
+        "args": {"package_name": "com.android.camera2"},
+    }
+
+
 def test_compiler_marks_answer_as_planner_handoff(tmp_path: Path) -> None:
     payload = androidworld_run_log(
         [

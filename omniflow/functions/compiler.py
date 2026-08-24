@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import canonicalize_run_log, state_id
 from omniflow.functions.management import apply_parameters, parameter_candidates
@@ -78,6 +79,15 @@ def compile_runlog_to_store(
             step,
             previous_step=previous_successful_step,
         )
+        promoted_launcher_entry = False
+        if not steps and projected_actions:
+            original_entry_action = projected_actions[0]
+            projected_actions[0] = _promote_launcher_app_entry(
+                projected_actions[0],
+                observation=observation,
+                next_observation=next_observation,
+            )
+            promoted_launcher_entry = projected_actions[0] != original_entry_action
         previous_successful_step = step
         if metadata.get("origin") == "checker":
             for action in projected_actions:
@@ -100,6 +110,8 @@ def compile_runlog_to_store(
             for key in ("summary", "thinking", "action_description")
             if str(metadata.get(key) or "").strip()
         }
+        if promoted_launcher_entry:
+            action_metadata["fixed_open_app_package"] = True
         for action in projected_actions:
             steps.append(
                 {
@@ -499,11 +511,12 @@ def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "step_index": index,
                 "action": step["action"],
+                "metadata": step.get("metadata") or {},
             }
             for index, step in enumerate(facts.get("steps") or ())
         ],
     }
-    return [
+    candidates = [
         {
             "source_step_index": candidate["step_index"],
             "tool": candidate["tool"],
@@ -511,6 +524,21 @@ def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
             "recorded_value": candidate["recorded_value"],
         }
         for candidate in parameter_candidates(function_view)
+    ]
+    fixed_open_app_steps = {
+        int(step["step_index"])
+        for step in function_view["steps"]
+        if isinstance(step.get("metadata"), dict)
+        and step["metadata"].get("fixed_open_app_package") is True
+    }
+    return [
+        candidate
+        for candidate in candidates
+        if not (
+            candidate["tool"] == "open_app"
+            and candidate["arg_name"] == "package_name"
+            and candidate["source_step_index"] in fixed_open_app_steps
+        )
     ]
 
 
@@ -791,6 +819,55 @@ def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int
         if value and value not in goal:
             indices.add(index)
     return frozenset(indices)
+
+
+def _promote_launcher_app_entry(
+    action: dict[str, Any],
+    *,
+    observation: dict[str, Any],
+    next_observation: Any,
+) -> dict[str, Any]:
+    """Turn a recorded launcher app-icon click into the global open_app entry."""
+
+    if str(action.get("tool") or "") != "click":
+        return action
+    before_package = _primary_observation_package(observation)
+    after_package = _primary_observation_package(next_observation)
+    if not before_package or not after_package:
+        return action
+    if "launcher" not in before_package.casefold():
+        return action
+    if after_package == before_package or "systemui" in after_package.casefold():
+        return action
+    return {
+        "tool": "open_app",
+        "args": {"package_name": after_package},
+    }
+
+
+def _primary_observation_package(observation: Any) -> str:
+    if not isinstance(observation, dict):
+        return ""
+    auxiliaries = observation.get("auxiliaries")
+    if isinstance(auxiliaries, dict):
+        package_name = str(auxiliaries.get("package_name") or "").strip()
+        if package_name:
+            return package_name
+    xml = str(observation.get("xml") or observation.get("forest") or "").strip()
+    if not xml:
+        return ""
+    try:
+        packages = [
+            str(node.get("package") or "").strip()
+            for node in ET.fromstring(xml).iter()
+            if str(node.get("package") or "").strip()
+        ]
+    except ET.ParseError:
+        packages = re.findall(r'\bpackage="([^"]+)"', xml)
+    for package in packages:
+        if "systemui" not in package.casefold():
+            return package
+    return ""
 
 
 def _restore_omitted_complete_actions(
