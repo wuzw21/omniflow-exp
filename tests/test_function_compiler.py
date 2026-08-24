@@ -8,7 +8,10 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.artifact import parse_function_artifact
-from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.compiler import (
+    _atomicize_repeated_click_function,
+    compile_runlog_to_store,
+)
 from omniflow.runlog import import_run_log_evidence
 
 
@@ -550,6 +553,37 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     assert len(function["steps"]) == 1
     assert function["steps"][0]["step_index"] == 0
     assert "Planner observes after every click" in result["reason"]
+
+
+def test_same_state_click_retry_is_not_treated_as_observation_output() -> None:
+    click = {"tool": "click", "args": {"x": 500, "y": 500}}
+    source_steps = [
+        {
+            "before_state_id": "launcher",
+            "action": {
+                "tool": "open_app",
+                "args": {"package_name": "com.android.documentsui"},
+            },
+        },
+        {"before_state_id": "onboarding", "action": click},
+        {"before_state_id": "onboarding", "action": click},
+    ]
+
+    result = _atomicize_repeated_click_function(
+        [0, 1, 2],
+        source_steps,
+        function_id="open_file",
+        name="Open file",
+        description="Open the file through onboarding.",
+    )
+
+    assert result == (
+        [0, 1, 2],
+        "open_file",
+        "Open file",
+        "Open the file through onboarding.",
+        0,
+    )
 
 
 def test_invalid_model_plan_preserves_failure_response_and_usage(

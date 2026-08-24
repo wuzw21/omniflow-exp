@@ -586,13 +586,27 @@ def _atomicize_repeated_click_function(
     description: str,
 ) -> tuple[list[int], str, str, str, int]:
     actions = [source_steps[index].get("action") for index in indices]
-    repeated_click = any(
-        current == following
-        and isinstance(current, dict)
-        and current.get("tool") == "click"
-        for current, following in pairwise(actions)
-    )
-    if not repeated_click:
+    observation_dependent_repeat = False
+    run_start = 0
+    while run_start < len(actions):
+        run_end = run_start + 1
+        while run_end < len(actions) and actions[run_end] == actions[run_start]:
+            run_end += 1
+        action = actions[run_start]
+        if (
+            run_end - run_start > 1
+            and isinstance(action, dict)
+            and action.get("tool") == "click"
+        ):
+            state_ids = {
+                str(source_steps[indices[position]].get("before_state_id") or "")
+                for position in range(run_start, run_end)
+            }
+            if len(state_ids) > 1:
+                observation_dependent_repeat = True
+                break
+        run_start = run_end
+    if not observation_dependent_repeat:
         return indices, function_id, name, description, 0
     if not actions or any(action != actions[0] for action in actions[1:]):
         raise ValueError("function_author_plan_repeated_click_must_be_atomic")
