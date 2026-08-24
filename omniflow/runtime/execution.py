@@ -30,7 +30,11 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
-from omniflow.transfer.runtime import source_semantic_anchor, transfer_action
+from omniflow.transfer.runtime import (
+    source_semantic_anchor,
+    source_semantic_offset,
+    transfer_action,
+)
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
@@ -749,6 +753,13 @@ def default_transfer(
     source_element_id = source_semantic_anchor(source_xml, source_point)
     if source_element_id:
         request["source_element_id"] = source_element_id
+        source_offset = source_semantic_offset(
+            source_xml,
+            source_point,
+            source_element_id,
+        )
+        if source_offset is not None:
+            request["source_offset"] = source_offset
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -915,7 +926,18 @@ def _transfer_swipe(
 def _observation_screenshot_path(observation: Observation | None) -> str:
     if observation is None:
         return ""
-    return str(observation.extra.get("screenshot_path") or "").strip()
+    extra = observation.extra if isinstance(observation.extra, dict) else {}
+    androidworld_state = (
+        extra.get("androidworld_state")
+        if isinstance(extra.get("androidworld_state"), dict)
+        else {}
+    )
+    pixels = (
+        androidworld_state.get("pixels")
+        if isinstance(androidworld_state.get("pixels"), dict)
+        else {}
+    )
+    return str(extra.get("screenshot_path") or pixels.get("path") or "").strip()
 
 
 def _attach_visual_evidence(

@@ -1884,6 +1884,41 @@ def test_observe_uses_official_stable_state() -> None:
     assert calls == [True]
 
 
+def test_observe_treats_complete_application_modal_as_transfer_graph() -> None:
+    modal_xml = """\
+<hierarchy>
+  <node package="org.videolan.vlc" bounds="[18,377][702,902]">
+    <node package="org.videolan.vlc" resource-id="android:id/parentPanel"
+          bounds="[50,409][670,870]">
+      <node package="org.videolan.vlc" resource-id="android:id/alertTitle"
+            class="android.widget.TextView" text="Allow VLC all file access"
+            bounds="[178,452][622,501]" />
+      <node package="org.videolan.vlc" resource-id="android:id/buttonPanel"
+            bounds="[50,758][670,870]">
+        <node package="org.videolan.vlc" resource-id="android:id/button1"
+              class="android.widget.Button" text="OK" clickable="true"
+              bounds="[518,766][646,862]" />
+      </node>
+    </node>
+  </node>
+</hierarchy>
+"""
+
+    class Env:
+        device_screen_size = (720, 1280)
+        logical_screen_size = (720, 1280)
+        foreground_activity_name = "org.videolan.vlc/.gui.MainActivity"
+
+        def get_state(self, wait_to_stabilize: bool = False):
+            assert wait_to_stabilize is True
+            return _official_state(forest=modal_xml)
+
+    observation = AndroidWorldHost(Env()).observe()
+
+    assert observation.extra["ui_graph_complete"] is True
+    assert observation.extra["ui_graph_source"] == "androidworld_state_forest"
+
+
 def test_observe_can_disable_stabilization_for_diagnostic_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2438,6 +2473,57 @@ def test_androidworld_host_exposes_system_settings_as_installed(monkeypatch) -> 
     packages = AndroidWorldHost(SimpleNamespace()).installed_packages()
 
     assert packages == {"com.example.app", "com.android.settings"}
+
+
+def test_androidworld_host_falls_back_to_adb_when_official_package_list_is_empty(
+    monkeypatch,
+) -> None:
+    host_module = sys.modules["src.integrations.android_world.host"]
+    setup = SimpleNamespace(get_installed_packages=lambda _env: frozenset())
+    monkeypatch.setattr(
+        host_module.importlib,
+        "import_module",
+        lambda name: (
+            setup
+            if name == "android_world.env.setup_device.setup"
+            else None
+        ),
+    )
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="package:org.videolan.vlc\npackage:org.tasks\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(host_module.subprocess, "run", run)
+
+    packages = AndroidWorldHost(
+        SimpleNamespace(),
+        adb_serial="emulator-5560",
+        adb_path="/tmp/androidworld-adb",
+    ).installed_packages()
+
+    assert commands == [
+        [
+            "/tmp/androidworld-adb",
+            "-s",
+            "emulator-5560",
+            "shell",
+            "pm",
+            "list",
+            "packages",
+        ]
+    ]
+    assert packages == {
+        "com.android.settings",
+        "org.tasks",
+        "org.videolan.vlc",
+    }
 
 
 def test_oob_open_app_resolves_androidworld_launcher_name(monkeypatch) -> None:

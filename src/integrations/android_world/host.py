@@ -7,6 +7,7 @@ import inspect
 import io
 import os
 from pathlib import Path
+import subprocess
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +18,7 @@ from omniflow.core.androidworld_accessibility import (
     androidworld_forest_xml,
     forest_has_complete_active_application_window,
     xml_covers_screen,
+    xml_has_complete_application_modal,
     xml_with_screen_size,
 )
 from src.experiment.performance_metrics import PerformanceMetrics
@@ -252,6 +254,10 @@ class AndroidWorldHost:
         control_backend: str = "androidworld",
     ):
         self.env = env
+        self.adb_serial = str(
+            adb_serial or os.environ.get("ANDROID_SERIAL") or ""
+        ).strip()
+        self.adb_path = str(adb_path or os.environ.get("ADB_PATH") or "adb")
         self.recorder = getattr(env, "_recorder", None)
         self.evidence_root = (
             Path(evidence_root).expanduser().resolve()
@@ -288,9 +294,27 @@ class AndroidWorldHost:
 
     def installed_packages(self) -> set[str]:
         setup = importlib.import_module("android_world.env.setup_device.setup")
-        return set(setup.get_installed_packages(self.env)).union(
-            _ANDROID_SYSTEM_OPEN_APP_PACKAGES
-        )
+        packages = set(setup.get_installed_packages(self.env))
+        if not packages:
+            command = [self.adb_path]
+            if self.adb_serial:
+                command.extend(["-s", self.adb_serial])
+            command.extend(["shell", "pm", "list", "packages"])
+            completed = subprocess.run(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15.0,
+            )
+            if completed.returncode == 0:
+                packages.update(
+                    line.removeprefix("package:").strip()
+                    for line in completed.stdout.splitlines()
+                    if line.strip().startswith("package:")
+                )
+        return packages.union(_ANDROID_SYSTEM_OPEN_APP_PACKAGES)
 
     def observe(
         self,
@@ -465,6 +489,10 @@ class AndroidWorldHost:
                     package_name=package,
                     screen_size=(display_width, display_height),
                 )
+                or xml_has_complete_application_modal(
+                    xml_text,
+                    package_name=package,
+                )
                 or (
                     not isinstance(forest, str)
                     and forest_has_complete_active_application_window(
@@ -609,6 +637,13 @@ class AndroidWorldHost:
         try:
             if self.control_client is not None:
                 def execute() -> dict[str, Any]:
+                    if action.tool == "press_key":
+                        # OOB's ENTER is an IME action for focused text fields;
+                        # AndroidWorld's native key event also handles system
+                        # dialogs. Keep global key semantics compatible across
+                        # the old and new collectors.
+                        self.env.execute_action(self._json_action(action))
+                        return {"success": True}
                     payload = action.to_dict()
                     if action.tool == "open_app":
                         args = dict(payload.get("args") or {})

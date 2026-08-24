@@ -155,11 +155,12 @@ def build_agent(
         max(0, int(fallback_limit_text)) if fallback_limit_text else None
     )
     configured_max_steps = max(1, int(max_steps))
+    installed_packages = raw_host.installed_packages()
     flow = OmniFlow(
         resolved_store_path,
         host=host,
         planner=planner,
-        installed_apps={package: package for package in raw_host.installed_packages()},
+        installed_apps={package: package for package in installed_packages},
         config=OmniFlowConfig(
             runtime=RuntimeSettings(
                 max_steps=configured_max_steps,

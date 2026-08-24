@@ -35,6 +35,8 @@ _OMNITRANSFER_CANDIDATE_FIELDS = {
     "action_type",
     "top_k",
 }
+_MIN_SOURCE_ANCHOR_OFFSET = -1.0
+_MAX_SOURCE_ANCHOR_OFFSET = 2.0
 
 
 def capture_transfer_state(observation: Any) -> dict[str, Any]:
@@ -287,6 +289,13 @@ def audit_transfer_action_sources(
             }
             if source_element_id:
                 transfer_request["source_element_id"] = source_element_id
+                source_offset = source_semantic_offset(
+                    source_xml,
+                    source_point,
+                    source_element_id,
+                )
+                if source_offset is not None:
+                    transfer_request["source_offset"] = source_offset
             result = transfer_action(
                 **transfer_request,
             )
@@ -309,7 +318,12 @@ def audit_transfer_action_sources(
                 step_index=step_index,
                 source_state_id=source_state_id,
             )
-            if not (0.0 <= offset_x <= 1.0 and 0.0 <= offset_y <= 1.0):
+            if not all(
+                _MIN_SOURCE_ANCHOR_OFFSET
+                <= value
+                <= _MAX_SOURCE_ANCHOR_OFFSET
+                for value in (offset_x, offset_y)
+            ):
                 raise ValueError(
                     f"transfer_action_source_point_outside:{function_id}:"
                     f"{step_index}:{source_state_id}:"
@@ -519,14 +533,16 @@ def source_semantic_anchor(
     """
 
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
     except ET.ParseError:
         return ""
     indexed: list[tuple[ET.Element, str, int]] = []
+    parents: dict[ET.Element, ET.Element] = {}
 
     def visit(element: ET.Element, path: str, depth: int) -> None:
         indexed.append((element, path, depth))
         for index, child in enumerate(list(element)):
+            parents[child] = element
             visit(child, f"{path}.{index}", depth + 1)
 
     visit(root, "0", 0)
@@ -534,6 +550,27 @@ def source_semantic_anchor(
     if source is None:
         return ""
     source_element, source_path, _ = source
+    promoted = False
+    if _is_repeated_generic_affordance(source_element, indexed):
+        ancestor = parents.get(source_element)
+        while ancestor is not None:
+            label = str(
+                ancestor.attrib.get("text")
+                or ancestor.attrib.get("content-desc")
+                or ""
+            ).strip()
+            if (
+                _semantic_label(label)
+                and not _is_generic_affordance_label(label)
+                and _element_bounds(ancestor) is not None
+            ):
+                source_element = ancestor
+                source_path = next(
+                    path for element, path, _ in indexed if element is ancestor
+                )
+                promoted = True
+                break
+            ancestor = parents.get(ancestor)
     source_bounds = _element_bounds(source_element)
     source_area = _bounds_area(source_bounds)
     descendants = set(source_element.iter())
@@ -560,7 +597,12 @@ def source_semantic_anchor(
         semantic.append(
             (
                 (
-                    0 if element is source_element else 1,
+                    (
+                        0
+                        if (promoted and element is not source_element)
+                        or (not promoted and element is source_element)
+                        else 1
+                    ),
                     0 if resource_tail == "title" else 1,
                     0 if element in descendants else 1,
                     -depth,
@@ -583,6 +625,95 @@ def source_semantic_anchor(
     ) == 1:
         return resource_id
     return anchor_path
+
+
+def source_semantic_offset(
+    xml_text: str,
+    point: tuple[float, float],
+    element_id: str,
+) -> tuple[float, float] | None:
+    try:
+        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
+    except ET.ParseError:
+        return None
+    indexed: list[tuple[ET.Element, str]] = []
+
+    def visit(element: ET.Element, path: str) -> None:
+        indexed.append((element, path))
+        for index, child in enumerate(list(element)):
+            visit(child, f"{path}.{index}")
+
+    visit(root, "0")
+    matching = [
+        element
+        for element, path in indexed
+        if element_id
+        in {
+            str(element.attrib.get("id") or "").strip(),
+            str(element.attrib.get("resource-id") or "").strip(),
+            path,
+        }
+    ]
+    if len(matching) != 1:
+        return None
+    bounds = _element_bounds(matching[0])
+    if bounds is None:
+        return None
+    left, top, right, bottom = bounds
+    return (
+        (point[0] - left) / (right - left),
+        (point[1] - top) / (bottom - top),
+    )
+
+
+def _is_repeated_generic_affordance(
+    element: ET.Element,
+    indexed: list[tuple[ET.Element, str, int]],
+) -> bool:
+    label = str(
+        element.attrib.get("text")
+        or element.attrib.get("content-desc")
+        or ""
+    ).strip()
+    resource_id = str(element.attrib.get("resource-id") or "").strip()
+    resource_tail = resource_id.rsplit("/", 1)[-1].casefold()
+    generic = _is_generic_affordance_label(label) or resource_tail in {
+        "item_more",
+        "more",
+        "overflow",
+        "overflow_menu",
+    }
+    if not generic:
+        return False
+    signature = (
+        str(element.attrib.get("class") or "").strip(),
+        resource_id,
+        label.casefold(),
+    )
+    return sum(
+        (
+            str(candidate.attrib.get("class") or "").strip(),
+            str(candidate.attrib.get("resource-id") or "").strip(),
+            str(
+                candidate.attrib.get("text")
+                or candidate.attrib.get("content-desc")
+                or ""
+            ).strip().casefold(),
+        )
+        == signature
+        for candidate, _, _ in indexed
+    ) > 1
+
+
+def _is_generic_affordance_label(value: str) -> bool:
+    return value.strip().casefold() in {
+        "menu",
+        "more",
+        "more actions",
+        "more options",
+        "options",
+        "overflow",
+    }
 
 
 def _actionable_source_element(
@@ -658,7 +789,103 @@ def _semantic_label(value: str) -> bool:
     )
 
 
+def _normalize_legacy_flat_xml(xml_text: str) -> str:
+    """Restore hierarchy omitted by legacy OOB accessibility captures.
+
+    Older collectors emitted accessibility nodes in native preorder but placed
+    every node directly below one package wrapper.  OmniTransfer needs the
+    original local graph relations, so rebuild only that recognisable flat
+    representation from preorder and geometric containment.  Native nested
+    AndroidWorld XML does not match this shape and passes through unchanged.
+    """
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return xml_text
+    flat_container = next(
+        (
+            element
+            for element in root.iter()
+            if len(children := list(element)) >= 3
+            and all(not list(child) for child in children)
+            and all(str(child.attrib.get("id") or "").strip() for child in children)
+        ),
+        None,
+    )
+    if flat_container is None:
+        return xml_text
+    flat_nodes = list(flat_container)
+    bounds = [_element_bounds(node) for node in flat_nodes]
+    depths: list[int] = []
+    parents: list[int | None] = []
+    for index, _ in enumerate(flat_nodes):
+        node_bounds = bounds[index]
+        possible = [
+            parent_index
+            for parent_index in range(index)
+            if node_bounds is not None
+            and bounds[parent_index] is not None
+            and _bounds_contains(bounds[parent_index], node_bounds)
+            and _legacy_node_can_contain(flat_nodes[parent_index])
+        ]
+        parent = min(
+            possible,
+            key=lambda parent_index: (
+                _bounds_area(bounds[parent_index]),
+                -depths[parent_index],
+                -parent_index,
+            ),
+            default=None,
+        )
+        parents.append(parent)
+        depths.append(0 if parent is None else depths[parent] + 1)
+
+    for node in flat_nodes:
+        flat_container.remove(node)
+    top_level: list[ET.Element] = []
+    for index, node in enumerate(flat_nodes):
+        parent = parents[index]
+        if parent is None:
+            top_level.append(node)
+        else:
+            flat_nodes[parent].append(node)
+
+    wrapper_is_capture_artifact = (
+        flat_container is not root
+        and len(list(root)) == 1
+        and not str(flat_container.attrib.get("id") or "").strip()
+        and not str(flat_container.attrib.get("class") or "").strip()
+        and not str(flat_container.attrib.get("resource-id") or "").strip()
+    )
+    destination = root if wrapper_is_capture_artifact else flat_container
+    if wrapper_is_capture_artifact:
+        root.remove(flat_container)
+    destination.extend(top_level)
+    return ET.tostring(root, encoding="unicode")
+
+
+def _legacy_node_can_contain(element: ET.Element) -> bool:
+    class_name = str(element.attrib.get("class") or "").rsplit(".", 1)[-1]
+    return class_name not in {
+        "Button",
+        "CheckBox",
+        "EditText",
+        "ImageButton",
+        "ImageView",
+        "RadioButton",
+        "Switch",
+        "SwitchCompat",
+        "TextView",
+    }
+
+
 def transfer_action(**kwargs: Any) -> dict[str, Any]:
+    kwargs = dict(kwargs)
+    for field in ("source_xml", "target_xml"):
+        value = kwargs.get(field)
+        if isinstance(value, str) and value:
+            kwargs[field] = _normalize_legacy_flat_xml(value)
     module = load_omnitransfer()
     rank_candidates = getattr(module, "rank_action_candidates", None)
     if callable(rank_candidates):

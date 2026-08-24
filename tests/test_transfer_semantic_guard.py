@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 from omniflow import Action, Observation
 from omniflow.runtime import execution
@@ -499,6 +500,161 @@ def test_transfer_derives_semantic_anchor_from_flat_oob_source_graph(
     assert request["source_point"] == (313.0, 782.0)
     assert result.action is not None
     assert "source_element_id" not in result.action.args
+
+
+def test_transfer_promotes_repeated_overflow_to_named_parent_row() -> None:
+    flat_xml = """\
+<hierarchy width="720" height="1280">
+  <node package="org.videolan.vlc" bounds="[0,0][720,1280]">
+    <node id="10" class="android.view.ViewGroup" clickable="true"
+          content-desc="File: first.mp4, File size: 1 MB"
+          bounds="[0,100][720,212]" />
+    <node id="11" class="android.widget.TextView" text="first.mp4"
+          bounds="[144,112][560,168]" />
+    <node id="12" class="android.widget.ImageView" clickable="true"
+          resource-id="org.videolan.vlc:id/item_more"
+          content-desc="More Actions" bounds="[624,108][720,204]" />
+    <node id="20" class="android.view.ViewGroup" clickable="true"
+          content-desc="File: second.mp4, File size: 2 MB"
+          bounds="[0,212][720,324]" />
+    <node id="21" class="android.widget.TextView" text="second.mp4"
+          bounds="[144,224][560,280]" />
+    <node id="22" class="android.widget.ImageView" clickable="true"
+          resource-id="org.videolan.vlc:id/item_more"
+          content-desc="More Actions" bounds="[624,220][720,316]" />
+  </node>
+</hierarchy>
+"""
+
+    anchor = transfer_runtime.source_semantic_anchor(flat_xml, (672.0, 268.0))
+
+    assert anchor == "21"
+    assert transfer_runtime.source_semantic_offset(
+        flat_xml,
+        (672.0, 268.0),
+        anchor,
+    ) == (1.2692307692307692, 0.7857142857142857)
+
+
+def test_transfer_restores_legacy_flat_source_hierarchy(monkeypatch) -> None:
+    request = {}
+
+    def rank_action_candidates(**kwargs):
+        request.update(kwargs)
+        return {
+            "status": "scored",
+            "mapping_mode": "omnitransfer_unified_association_v1",
+            "pair_confidence": 1.0,
+            "margin": 1.0,
+            "source": {
+                "bounds": [576.0, 728.0, 688.0, 824.0],
+                "class": "android.widget.Switch",
+            },
+            "candidates": [
+                {
+                    "candidate_id": "target-switch",
+                    "new_x": 632.0,
+                    "new_y": 776.0,
+                    "bbox": [576.0, 728.0, 688.0, 824.0],
+                    "score": 1.0,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        transfer_runtime,
+        "load_omnitransfer",
+        lambda: SimpleNamespace(rank_action_candidates=rank_action_candidates),
+    )
+    flat_xml = """\
+<hierarchy width="720" height="1280">
+  <node package="com.android.settings" bounds="[0,0][720,1280]">
+    <node id="20" class="android.widget.FrameLayout"
+          bounds="[0,406][720,1132]" />
+    <node id="21" class="android.widget.LinearLayout" clickable="true"
+          bounds="[0,694][720,859]" />
+    <node id="23" class="android.widget.TextView"
+          text="Allow access to manage all files"
+          bounds="[48,726][544,827]" />
+    <node id="24" class="android.widget.LinearLayout"
+          bounds="[544,694][688,859]" />
+    <node id="25" class="android.widget.Switch"
+          resource-id="android:id/switch_widget"
+          bounds="[576,728][688,824]" />
+  </node>
+</hierarchy>
+"""
+
+    result = transfer_runtime.transfer_action(
+        source_xml=flat_xml,
+        target_xml=TARGET_XML,
+        source_element_id="25",
+        source_point=(632.0, 776.0),
+        top_k=3,
+    )
+
+    normalized = ET.fromstring(request["source_xml"])
+    switch = next(
+        element
+        for element in normalized.iter()
+        if element.attrib.get("id") == "25"
+    )
+    widget_frame = next(
+        element
+        for element in normalized.iter()
+        if element.attrib.get("id") == "24"
+    )
+    permission_row = next(
+        element
+        for element in normalized.iter()
+        if element.attrib.get("id") == "21"
+    )
+    assert switch in list(widget_frame)
+    assert widget_frame in list(permission_row)
+    assert result["mapped"] is True
+
+
+def test_transfer_reads_nested_androidworld_screenshot_evidence(monkeypatch) -> None:
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_unified_association_v1",
+            "new_x": 1100.0,
+            "new_y": 620.0,
+            "target_bbox": [900.0, 570.0, 1400.0, 640.0],
+            "score": 1.0,
+            "margin": 1.0,
+        }
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+    result = execution.default_transfer(
+        Action("click", {"x": 500.0, "y": 428.90625}),
+        Observation(
+            xml=TARGET_XML,
+            extra={
+                "display": {"width": 2208, "height": 1840},
+                "androidworld_state": {
+                    "pixels": {"path": "/evidence/target.png"}
+                },
+            },
+        ),
+        Observation(
+            xml=SOURCE_XML,
+            extra={
+                "display": {"width": 720, "height": 1280},
+                "androidworld_state": {
+                    "pixels": {"path": "/evidence/source.png"}
+                },
+            },
+        ),
+    )
+
+    assert request["source_screenshot_path"] == "/evidence/source.png"
+    assert request["target_screenshot_path"] == "/evidence/target.png"
+    assert result.action is not None
 
 
 def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(

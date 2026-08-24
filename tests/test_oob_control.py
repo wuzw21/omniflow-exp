@@ -273,6 +273,32 @@ def test_oob_host_keeps_nested_forest_instead_of_flattened_ui_elements(
     assert observation.extra["ui_graph_source"] == "oob_control_forest"
 
 
+def test_oob_host_dispatches_global_keys_through_androidworld(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def act(self, _action):
+            raise AssertionError("OOB IME key path was used")
+
+    native_actions: list[object] = []
+
+    class Env:
+        device_screen_size = (720, 1280)
+
+        def execute_action(self, action):
+            native_actions.append(action)
+
+    monkeypatch.setattr(host_module, "OobControlClient", FakeClient)
+    host = host_module.AndroidWorldHost(Env(), control_backend="oob")
+    monkeypatch.setattr(host, "_json_action", lambda _action: "native-enter")
+
+    result = host.act(Action("press_key", {"key": "enter"}))
+
+    assert result.success is True
+    assert native_actions == ["native-enter"]
+
+
 def test_omniflow_open_app_records_ready_target_after_async_launch(
     monkeypatch,
     tmp_path,

@@ -182,6 +182,39 @@ def xml_covers_screen(
     )
 
 
+def xml_has_complete_application_modal(
+    xml_text: str,
+    *,
+    package_name: str,
+) -> bool:
+    """Recognize a self-contained Android application AlertDialog subtree."""
+    if not xml_text or not package_name:
+        return False
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    package_nodes = [
+        element
+        for element in root.iter()
+        if str(element.attrib.get("package") or "") == package_name
+    ]
+    resource_ids = {
+        str(element.attrib.get("resource-id") or "")
+        for element in package_nodes
+    }
+    has_action_button = any(
+        str(element.attrib.get("class") or "").endswith("Button")
+        and str(element.attrib.get("clickable") or "").lower() == "true"
+        for element in package_nodes
+    )
+    return (
+        "android:id/parentPanel" in resource_ids
+        and "android:id/buttonPanel" in resource_ids
+        and has_action_button
+    )
+
+
 def forest_has_complete_active_application_window(
     forest: Any,
     *,
@@ -264,5 +297,6 @@ __all__ = [
     "androidworld_forest_xml",
     "forest_has_complete_active_application_window",
     "xml_covers_screen",
+    "xml_has_complete_application_modal",
     "xml_with_screen_size",
 ]
