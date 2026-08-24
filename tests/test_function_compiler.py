@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
-from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.functions.artifact import parse_function_artifact
+from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
 
 
@@ -338,45 +338,16 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     tmp_path: Path,
 ) -> None:
     captured: dict[str, object] = {}
-    bundle = {
+    proposal = {
         "reason": "Keep the recorded navigation and wait together.",
-        "bundle": {
-            "schema_version": "omniflow.function-bundle.v2",
-            "run_id": "source-run",
-            "checker_rules": [],
-            "arguments": {"open_settings": {}},
+        "plan": {
             "functions": [
                 {
-                    "schema_version": "omniflow.function.v2",
                     "function_id": "open_settings",
                     "name": "Open Settings",
                     "description": "Open Settings and wait for the page.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                        "additionalProperties": False,
-                    },
-                    "bindings": [],
-                    "steps": [
-                        {
-                            "step_index": 0,
-                            "source_state_id": "state_0",
-                            "action": {
-                                "tool": "open_app",
-                                "args": {"package_name": "com.android.settings"},
-                            },
-                        },
-                        {
-                            "step_index": 1,
-                            "source_state_id": "state_1",
-                            "action": {
-                                "tool": "wait",
-                                "args": {"duration_ms": 1000},
-                            },
-                        },
-                    ],
-                    "agent_visible": True,
+                    "source_step_indices": [0, 1],
+                    "parameters": [],
                 }
             ],
         },
@@ -388,7 +359,7 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(content=json.dumps(bundle))
+                        message=SimpleNamespace(content=json.dumps(proposal))
                     )
                 ],
                 usage=None,
@@ -409,11 +380,162 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     )
 
     system_prompt = captured["messages"][0]["content"]
-    assert "Never encode a repetition count" in system_prompt
-    assert "let the Planner call that one-step Function repeatedly" in system_prompt
-    assert "Never copy a supplied\n`source_step_index`" in system_prompt
-    assert "only `source_state_id`" in system_prompt
-    facts = json.loads(captured["messages"][1]["content"])["run_log"]
+    assert "encode repetition count" in system_prompt
+    assert "call it repeatedly" in system_prompt
+    assert "Do not output input_schema, bindings, steps, actions" in system_prompt
+    assert captured["max_tokens"] == 4096
+    request = json.loads(captured["messages"][1]["content"])
+    facts = request["source_run"]
     assert facts["schema_version"] == "omniflow.function-compilation-facts.v2"
     assert [step["source_step_index"] for step in facts["steps"]] == [0, 1]
     assert all("step_index" not in step for step in facts["steps"])
+    assert request["parameter_candidates"] == []
+
+    store = json.loads((tmp_path / "output" / "store.json").read_text())
+    function = store["functions"]["open_settings"]
+    assert [step["step_index"] for step in function["steps"]] == [0, 1]
+    assert function["input_schema"] == {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+
+
+def test_model_plan_materializes_schema_binding_and_source_arguments(
+    tmp_path: Path,
+) -> None:
+    form_state = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy><node class="android.widget.EditText" '
+            'text="Enter the product" bounds="[100,100][600,200]" '
+            'editable="true" focused="true" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "product-form",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+    payload = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "3125"},
+            {"action_type": "click", "x": 600, "y": 900},
+        ],
+        observations=[
+            form_state,
+            androidworld_state("product-entered", width=720, height=1280),
+        ],
+        goal="Enter the product and submit it.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Keep input and submit together; parameterize the product.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "enter_product",
+                    "name": "Enter product",
+                    "description": "Enter the requested product and submit it.",
+                    "source_step_indices": [0, 1],
+                    "parameters": [
+                        {
+                            "name": "product",
+                            "description": "Computed product to enter",
+                            "source_step_index": 0,
+                            "arg_name": "text",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=100,
+                    completion_tokens=40,
+                    total_tokens=140,
+                ),
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = store["functions"]["enter_product"]
+    assert function["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "product": {
+                "type": "string",
+                "description": "Computed product to enter",
+            }
+        },
+        "required": ["product"],
+        "additionalProperties": False,
+    }
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.product",
+            "target": "$.steps[0].action.args.text",
+        }
+    ]
+    assert function["steps"][0]["action"]["args"]["text"] == ""
+    assert result["source_arguments"] == {"enter_product": {"product": "3125"}}
+    assert result["total_tokens"] == 140
+
+
+def test_invalid_model_plan_preserves_failure_response_and_usage(
+    tmp_path: Path,
+) -> None:
+    invalid = {"reason": "Old full bundle shape.", "bundle": {}}
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(invalid))
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=12,
+                    completion_tokens=8,
+                    total_tokens=20,
+                ),
+            )
+
+    output = tmp_path / "rejected"
+    with pytest.raises(
+        ValueError,
+        match="function_author_plan_response_contract_invalid",
+    ):
+        compile_runlog_to_store(
+            _run_log(2),
+            output,
+            source_states={
+                "state_0": {"state_id": "state_0"},
+                "state_1": {"state_id": "state_1"},
+            },
+            model="test-model",
+            client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        )
+
+    failure = json.loads((output / "authoring_failure.json").read_text())
+    assert failure["classification"] == "authoring_rejected"
+    assert failure["total_tokens"] == 20
+    assert json.loads(failure["raw_response"]) == invalid

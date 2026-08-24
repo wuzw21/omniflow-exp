@@ -89,7 +89,7 @@ def enhance_function(
         if replacement and replacement != updated[field]:
             updated[field] = replacement
             changes.append({"part": "function", "field": field})
-    if "parameters" in proposal and _apply_parameters(
+    if "parameters" in proposal and apply_parameters(
         updated,
         proposal["parameters"],
         run_log,
@@ -137,7 +137,7 @@ def _enhancement_prompt(
         "name": function["name"],
         "description": function["description"],
         "steps": steps,
-        "parameter_candidates": _parameter_candidates(function),
+        "parameter_candidates": parameter_candidates(function),
         "run_log": run_log_facts,
         "user_instruction": str(instruction or "").strip()[:2000],
     }
@@ -163,7 +163,7 @@ Function:
 """.strip()
 
 
-def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
+def parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
     bound_targets = {
         str(binding.get("target") or "")
         for binding in function.get("bindings") or ()
@@ -180,7 +180,7 @@ def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
         args = action.get("args")
         if not isinstance(args, dict):
             continue
-        for arg_name in _PARAMETERIZABLE_ACTION_ARGS.get(tool, ()):
+        for arg_name in sorted(_PARAMETERIZABLE_ACTION_ARGS.get(tool, ())):
             target = f"$.steps[{step_index}].action.args.{arg_name}"
             value = args.get(arg_name)
             if target in bound_targets or not isinstance(value, str) or not value:
@@ -196,7 +196,7 @@ def _parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def _apply_parameters(
+def apply_parameters(
     function: dict[str, Any],
     proposal: Any,
     run_log: dict[str, Any],
@@ -205,7 +205,7 @@ def _apply_parameters(
         raise ValueError("function_enhancement_parameters_invalid")
     candidates = {
         (candidate["step_index"], candidate["arg_name"]): candidate
-        for candidate in _parameter_candidates(function)
+        for candidate in parameter_candidates(function)
     }
     schema = function["input_schema"]
     properties = schema["properties"]

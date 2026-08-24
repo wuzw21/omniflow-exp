@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log, state_id
+from omniflow.functions.management import apply_parameters, parameter_candidates
 from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import CheckerLibrary, validate_checker_rule
 
@@ -112,133 +113,37 @@ def compile_runlog_to_store(
         "steps": steps,
     }
     default_bundle = _default_bundle(facts, recovery_examples)
-    authoring_prompt = (
-        prompt
-        or """Convert the successful replayable GUI RunLog facts into reusable OmniFlow Functions.
-Return exactly {"reason": string, "bundle": object|null}.
+    source_parameter_candidates = _source_parameter_candidates(facts)
+    authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
+Return exactly:
+{"reason":"account for every source step: kept, grouped, or omitted and why","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}]}}
 
-The bundle must use schema_version "omniflow.function-bundle.v2" and contain
-run_id, arguments, checker_rules, and one or more ordinary
-"omniflow.function.v2" Functions. Every Function contains exactly
-schema_version, function_id, name, description, input_schema, bindings, steps,
-and agent_visible. Checker rules belong only to the bundle-level shared library.
+Do not output input_schema, bindings, steps, actions, coordinates, checker rules,
+agent_visible, schema_version, arguments, or source_state_id. The compiler owns
+all of them and materializes canonical omniflow.function.v2 artifacts from the
+selected immutable source actions.
 
-Copy this exact JSON shape. Replace values but never move, rename, or omit keys:
-{
-  "reason": "step-by-step keep, group, parameterize, or omit decisions",
-  "bundle": {
-    "schema_version": "omniflow.function-bundle.v2",
-    "run_id": "copy the supplied run_id exactly",
-    "checker_rules": [],
-    "arguments": {
-      "enter_requested_name": {"name": "Alice"}
-    },
-    "functions": [
-      {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "enter_requested_name",
-        "name": "Enter requested name",
-        "description": "Enter the name requested by the user.",
-        "input_schema": {
-          "type": "object",
-          "properties": {"name": {"type": "string"}},
-          "required": ["name"],
-          "additionalProperties": false
-        },
-        "bindings": [
-          {
-            "source": "$.arguments.name",
-            "target": "$.steps[0].action.args.text"
-          }
-        ],
-        "steps": [
-          {
-            "step_index": 0,
-            "source_state_id": "copy the matching before_state_id",
-            "action": {
-              "tool": "input_text",
-              "args": {"target_description": "Name field", "text": ""}
-            }
-          }
-        ],
-        "agent_visible": true
-      }
-    ]
-  }
-}
+Inspect source_run in source_step_index order. The reason must account for every
+source index. Within one Function, source_step_indices must be strictly increasing
+and contiguous. Never omit a click immediately following input_text when that click
+commits, submits, confirms, or advances the form; keep both in one Function.
 
-`arguments` is an object keyed by function_id. `bindings` is always an
-array of {"source", "target"} objects. `steps` is always a non-empty array and
-each step contains only step_index, source_state_id, and action. Every action
-contains only tool and args. Every Function repeats schema_version
-"omniflow.function.v2". Never place a JSON path or template in an action value;
-bound action values use empty type-correct placeholders.
+Create Functions only for meaningful actions or tightly coupled contiguous groups.
+Do not classify Functions as semantic, full-flow, complete-task, root, or child.
+A Function call is atomic: the Planner observes only after its last step. Never
+encode repetition count when the task requires reading changing UI after each
+repeat. Keep one representative action as a one-step Function and let the Planner
+call it repeatedly.
 
-Every Function owns its own local step sequence. Assign its `step_index` values
-from zero in exact array order: 0, 1, 2, ... with no gaps. Never copy a supplied
-`source_step_index` into Function `step_index`. Bindings such as `$.steps[0]`
-also refer to these Function-local array positions. Use `source_state_id`, and
-only `source_state_id`, to link a Function step to its original RunLog evidence.
+Do not reinterpret onboarding, installers, permissions, ads, errors, waits, or
+navigation accidents as standalone capabilities. Omit unsafe or unclear actions
+and explain each omission. Preserve the successful source order.
 
-Treat this as action-grounded compilation of a raw human Record.
-Inspect every supplied run_log step in source_step_index order before authoring.
-The top-level reason must account for every source step index and say whether it was
-kept, grouped with neighboring steps, parameterized, or omitted, with a brief
-evidence-based explanation.
-
-Actions and args are execution truth. Explicitly preserve meaningful values such
-as input_text.text, open_app.package_name, press_key.key, and wait.duration_ms.
-Every input_text action must also preserve its non-empty source
-target_description so the runtime can derive the source anchor for OmniTransfer.
-Never omit a successful click immediately following input_text when that click
-commits, submits, confirms, or advances the form; keep it in the same Function.
-Use the original RunLog goal plus step metadata.summary, metadata.thinking, and
-metadata.action_description only to explain the work represented by those
-actions. Never replace or contradict the recorded Action with prose.
-
-Create reusable Functions for meaningful actions or tightly coupled contiguous
-action groups. Every retained replayable action must appear in at least one
-Function; every omitted action must be explained in reason. Do not label or
-classify Functions as semantic, full-flow, complete-task, root, or child.
-
-A Function call is atomic: the Planner receives only the observation after its
-last step. Never encode a repetition count in a Function name, description, or
-multi-step body when the task requires reading the changing UI after each
-repetition (for example, click five times and remember every displayed number).
-In that case, retain exactly one representative action as a one-step reusable
-Function, omit the later repeated source actions with an explicit explanation,
-and let the Planner call that one-step Function repeatedly so every fresh
-observation remains visible.
-
-Do not create a Function merely because one recorded action exists. A coordinate
-click without supporting goal, metadata, or neighboring-action evidence is not a
-named capability. Do not reinterpret an accidental installer, permission page,
-advertisement, error page, or other side effect as the intended task. Mechanical
-waits and navigation scaffolding should stay inside the workflow they support,
-not become misleading standalone Functions. If the complete task needs fresh UI
-discovery, a dynamic loop, visual transcription, or a hidden runtime answer,
-omit that complete Function but keep safe understandable subsequences. Never
-emit kind, parent, Root, Child, recovery, task name, or routing metadata.
-
-input_schema values are strict JSON Schema objects with additionalProperties=false.
-Parameterize only action-ready values inferable from the fresh goal and consumed
-by Function actions. Every required parameter must have direct bindings from
-$.arguments.NAME or a fixed array index to an existing
-$.steps[INDEX].action.args.FIELD. Put exact successful values in
-arguments. Use empty type-correct placeholders in bound action fields.
-Never bind coordinates (x/y/x1/y1/x2/y2); they are source transfer evidence,
-not caller-supplied Function arguments. Use the fixed recorded coordinates and
-let OmniTransfer map them against the current page.
-
-Preserve selected source actions in order and do not invent actions or UI
-evidence. Coordinate fields in the supplied facts are already normalized to
-0..1000. Copy each supplied canonical action without adding fields. Return
-bundle=null only when no safe reusable action-grounded Function exists.
-
-This compilation prompt does not author recovery behavior. Set the bundle-level
-checker_rules=[] unless an explicit independently reusable checker rule is supplied.
+Parameterize only entries copied exactly from parameter_candidates, and only when
+the same Function selects that source_step_index. Choose a stable identifier name
+and concise description. Use parameters=[] for fixed recorded values. Coordinates
+never appear in candidates and can never become Function inputs.
 """
-    )
     selected_model = str(model or "").strip() or None
     usage = {
         "model_calls": 0,
@@ -281,13 +186,16 @@ checker_rules=[] unless an explicit independently reusable checker rule is suppl
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"run_log": facts, "recovery_examples": recovery_examples},
+                        {
+                            "source_run": facts,
+                            "parameter_candidates": source_parameter_candidates,
+                        },
                         ensure_ascii=False,
                     ),
                 },
             ],
             response_format={"type": "json_object"},
-            max_tokens=16384,
+            max_tokens=4096,
             temperature=0,
             timeout=float(timeout),
         )
@@ -304,7 +212,20 @@ checker_rules=[] unless an explicit independently reusable checker rule is suppl
             "total_tokens": total_tokens
             or prompt_tokens + completion_tokens,
         }
-        authored = json.loads(str(response.choices[0].message.content or ""))
+        raw_author_response = str(response.choices[0].message.content or "")
+        try:
+            proposal = json.loads(raw_author_response)
+            authored = _materialize_authoring_plan(proposal, facts)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            _write_authoring_failure(
+                root,
+                error=error,
+                model=selected_model,
+                prompt=authoring_prompt,
+                response=raw_author_response,
+                usage=usage,
+            )
+            raise
     if not isinstance(authored, dict) or set(authored) != {"reason", "bundle"}:
         raise ValueError("function_author_response_contract_invalid")
     if not isinstance(authored["reason"], str):
@@ -474,6 +395,187 @@ checker_rules=[] unless an explicit independently reusable checker rule is suppl
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     )
     return report
+
+
+def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    function_view = {
+        "bindings": [],
+        "steps": [
+            {
+                "step_index": index,
+                "action": step["action"],
+            }
+            for index, step in enumerate(facts.get("steps") or ())
+        ],
+    }
+    return [
+        {
+            "source_step_index": candidate["step_index"],
+            "tool": candidate["tool"],
+            "arg_name": candidate["arg_name"],
+            "recorded_value": candidate["recorded_value"],
+        }
+        for candidate in parameter_candidates(function_view)
+    ]
+
+
+def _materialize_authoring_plan(
+    value: Any,
+    facts: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"reason", "plan"}:
+        raise ValueError("function_author_plan_response_contract_invalid")
+    reason = value.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("function_author_reason_must_be_string")
+    plan = value.get("plan")
+    if not isinstance(plan, dict) or set(plan) != {"functions"}:
+        raise ValueError("function_author_plan_contract_invalid")
+    raw_functions = plan.get("functions")
+    if not isinstance(raw_functions, list) or not raw_functions:
+        raise ValueError("function_author_plan_functions_required")
+
+    source_steps = list(facts.get("steps") or ())
+    candidates = {
+        (candidate["source_step_index"], candidate["arg_name"]): candidate
+        for candidate in _source_parameter_candidates(facts)
+    }
+    functions: list[dict[str, Any]] = []
+    arguments: dict[str, dict[str, Any]] = {}
+    selected_source_indices: set[int] = set()
+    function_fields = {
+        "function_id",
+        "name",
+        "description",
+        "source_step_indices",
+        "parameters",
+    }
+    parameter_fields = {
+        "name",
+        "description",
+        "source_step_index",
+        "arg_name",
+    }
+    for raw_function in raw_functions:
+        if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
+            raise ValueError("function_author_plan_function_contract_invalid")
+        function_id = str(raw_function.get("function_id") or "").strip()
+        name = str(raw_function.get("name") or "").strip()
+        description = str(raw_function.get("description") or "").strip()
+        raw_indices = raw_function.get("source_step_indices")
+        if (
+            not function_id
+            or not name
+            or not description
+            or not isinstance(raw_indices, list)
+            or not raw_indices
+            or any(isinstance(index, bool) or not isinstance(index, int) for index in raw_indices)
+        ):
+            raise ValueError("function_author_plan_function_invalid")
+        indices = list(raw_indices)
+        if (
+            indices != sorted(set(indices))
+            or indices[0] < 0
+            or indices[-1] >= len(source_steps)
+            or indices != list(range(indices[0], indices[-1] + 1))
+        ):
+            raise ValueError("function_author_plan_source_steps_invalid")
+        if selected_source_indices.intersection(indices):
+            raise ValueError("function_author_plan_source_step_reused")
+        selected_source_indices.update(indices)
+
+        function = {
+            "schema_version": "omniflow.function.v2",
+            "function_id": function_id,
+            "name": name,
+            "description": description,
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "bindings": [],
+            "steps": [
+                {
+                    "step_index": local_index,
+                    "source_state_id": str(
+                        source_steps[source_index]["before_state_id"]
+                    ),
+                    "action": json.loads(
+                        json.dumps(
+                            source_steps[source_index]["action"],
+                            ensure_ascii=False,
+                        )
+                    ),
+                }
+                for local_index, source_index in enumerate(indices)
+            ],
+            "agent_visible": True,
+        }
+        raw_parameters = raw_function.get("parameters")
+        if not isinstance(raw_parameters, list):
+            raise ValueError("function_author_plan_parameters_invalid")
+        parameter_proposals: list[dict[str, Any]] = []
+        source_arguments: dict[str, Any] = {}
+        for parameter in raw_parameters:
+            if not isinstance(parameter, dict) or set(parameter) != parameter_fields:
+                raise ValueError("function_author_plan_parameter_contract_invalid")
+            source_index = parameter.get("source_step_index")
+            arg_name = str(parameter.get("arg_name") or "").strip()
+            candidate = candidates.get((source_index, arg_name))
+            if candidate is None or source_index not in indices:
+                raise ValueError("function_author_plan_parameter_target_invalid")
+            parameter_name = str(parameter.get("name") or "").strip()
+            parameter_proposals.append(
+                {
+                    "name": parameter_name,
+                    "description": str(parameter.get("description") or "").strip(),
+                    "step_index": indices.index(source_index),
+                    "arg_name": arg_name,
+                }
+            )
+            source_arguments[parameter_name] = candidate["recorded_value"]
+        apply_parameters(function, parameter_proposals, facts)
+        functions.append(function)
+        arguments[function_id] = source_arguments
+
+    return {
+        "reason": reason.strip(),
+        "bundle": {
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": str(facts["run_id"]),
+            "arguments": arguments,
+            "checker_rules": [],
+            "functions": functions,
+        },
+    }
+
+
+def _write_authoring_failure(
+    root: Path,
+    *,
+    error: Exception,
+    model: str,
+    prompt: str,
+    response: str,
+    usage: dict[str, int],
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    report = {
+        "schema_version": "omniflow.function-authoring-failure.v1",
+        "success": False,
+        "classification": "authoring_rejected",
+        "error": str(error) or type(error).__name__,
+        "model": model,
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "raw_response": response,
+        **usage,
+    }
+    (root / "authoring_failure.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _referenced_source_state_ids(functions: list[Any]) -> list[str]:
