@@ -420,6 +420,7 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
         False,
         True,
         True,
+        True,
     ]
     assert "Function `complete_run_turn_bluetooth_on`" in str(
         planner.observations[1].extra.get("execution_history")
@@ -590,6 +591,98 @@ def test_task_planner_receives_recalled_functions(tmp_path) -> None:
     ]
 
 
+def test_selected_function_is_not_executed_after_entry_state_changes(tmp_path) -> None:
+    class ChangingHost:
+        def __init__(self) -> None:
+            self.page = "entry"
+            self.actions: list[Action] = []
+
+        def observe(self, **_kwargs: object) -> Observation:
+            if self.page == "entry":
+                xml = (
+                    '<hierarchy><node class="android.widget.Button" text="Click Me" '
+                    'bounds="[100,100][300,200]" clickable="true" enabled="true" />'
+                    "</hierarchy>"
+                )
+            else:
+                xml = (
+                    '<hierarchy><node class="android.widget.TextView" text="Changed" '
+                    'bounds="[0,0][400,800]" /></hierarchy>'
+                )
+            return Observation(
+                xml=xml,
+                package_name="com.example",
+                extra={
+                    "state_id": self.page,
+                    "display": {"width": 400, "height": 800},
+                },
+            )
+
+        def get_state(self, _source_state_id: str) -> Observation:
+            return self.observe()
+
+        def act(self, action: Action) -> ActionResult:
+            self.actions.append(action)
+            return ActionResult(True)
+
+    class StateChangingPlanner(SequencePlanner):
+        def __init__(self, host: ChangingHost, function_id: str) -> None:
+            super().__init__([ToolCall(function_id, {}), ToolCall("finished", {})])
+            self.host = host
+
+        def one_step_tool_call(self, *args: object, **kwargs: object) -> ToolCall:
+            call = super().one_step_tool_call(*args, **kwargs)
+            if len(self.goals) == 1:
+                self.host.page = "changed"
+            return call
+
+    function = Function(
+        function_id="click_me",
+        name="Click me",
+        description="Click the visible Click Me button.",
+        steps=(
+            FunctionStep(0, Action("click", {"x": 500, "y": 187.5}), "source"),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        agent_visible=True,
+    )
+    store_path = tmp_path / "store.json"
+    FunctionStore(store_path).put_function(function)
+    host = ChangingHost()
+    planner = StateChangingPlanner(host, function.id)
+
+    def transfer(
+        action: Action,
+        _observation: Observation,
+        _source_state: Observation | None,
+    ) -> TransferResult:
+        return TransferResult(
+            Action(action.tool, {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_unified_association_v1",
+            detail={"absolute_contextual_confidence": 0.99},
+        )
+
+    result = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        config=OmniFlowConfig(plugins=PluginSet(transfer=transfer)),
+    ).run("Click the Click Me button")
+
+    assert result.success is True
+    assert host.actions == []
+    assert planner.previous_action_errors == [
+        None,
+        "function_entry_state_changed_after_mapping",
+    ]
+
+
 def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     tmp_path,
 ) -> None:
@@ -616,9 +709,7 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
     assert planner.visible_function_ids == [(), ()]
-    assert planner.previous_action_errors[0] == (
-        "function_page_not_aligned:function_page_embedding_missing"
-    )
+    assert planner.previous_action_errors[0] == "omnitransfer_source_state_missing"
 
 
 def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -> None:
@@ -645,9 +736,7 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
     assert planner.visible_function_ids == [(), ()]
-    assert planner.previous_action_errors[0] == (
-        "function_page_not_aligned:function_page_embedding_missing"
-    )
+    assert planner.previous_action_errors[0] == "omnitransfer_source_state_missing"
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
     assert result.detail["function_resolution"]["status"] == "direct"
@@ -708,7 +797,7 @@ def test_function_failure_returns_to_offline_resume_after_planner_recovery(
         "resume_step_index": 1,
         "probability": 0.9,
         "score": pytest.approx(2.1972245773362196),
-        "minimum_probability": 0.0,
+        "minimum_probability": 0.8,
         "source_skip_penalty": pytest.approx(1.0986122886681098),
         "target_observation_count": 2,
         "path": [
@@ -886,6 +975,39 @@ def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> No
             "arguments": {"summary": "Use click", "x": [361, 1136]},
         }
     ]
+
+
+def test_vlm_planner_blank_tool_retry_keeps_screenshot_and_ui_context() -> None:
+    completions = SequenceCompletions(
+        [
+            _planner_response("", {}),
+            _planner_response("click", {"x": 200, "y": 150}),
+        ]
+    )
+    planner = VLMPlanner(
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    observation = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" text="Click Me" '
+            'bounds="[100,100][300,200]" clickable="true" /></hierarchy>'
+        ),
+        image_base64="screen-evidence",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+
+    planned = asyncio.run(
+        planner.one_step_tool_call("Click the Click Me button", observation)
+    )
+
+    assert planned == ToolCall("click", {"x": 500.0, "y": 187.5})
+    retry_content = completions.requests[1]["messages"][-1]["content"]
+    assert any(item["type"] == "image_url" for item in retry_content)
+    retry_text = retry_content[0]["text"]
+    assert "Relevant UI elements" in retry_text
+    assert "Click Me" in retry_text
+    assert len(completions.requests[1]["tools"]) > 1
 
 
 def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:

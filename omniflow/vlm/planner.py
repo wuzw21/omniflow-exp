@@ -138,19 +138,18 @@ class VLMPlanner:
                     )
                     raise
                 validation_error = str(error)
-                retry_tool_name = (
-                    ""
-                    if error.code.startswith("model_turn_tool_not_visible:")
-                    else error.tool_name
+                tool_not_visible = error.code.startswith(
+                    "model_turn_tool_not_visible:"
                 )
+                retry_tool_name = "" if tool_not_visible else error.tool_name
                 rejected_tool_call = {
                     "tool": error.tool_name or None,
                     "arguments": error.arguments,
                 }
-                # The state has not changed, and retries expose only the rejected
-                # tool. Re-sending screenshots, projected UI, and skill context
-                # adds tokens without adding evidence needed to repair arguments.
-                lightweight_retry = True
+                # Argument repair can be constrained to the rejected tool.  An
+                # empty or unknown tool name is a selection failure, so the model
+                # must retain the screenshot, projected UI, and complete tool set.
+                lightweight_retry = not tool_not_visible
         else:
             raise AssertionError("unreachable")
 

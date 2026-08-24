@@ -105,7 +105,7 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not validation_error.strip()
+    include_images = not lightweight_retry
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
         content.append({"type": "image_url", "image_url": {"url": current_image}})
