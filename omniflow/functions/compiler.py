@@ -127,6 +127,10 @@ def compile_runlog_to_store(
         if promoted_launcher_entry:
             action_metadata["fixed_open_app_package"] = True
         for action in projected_actions:
+            action = _canonicalize_open_app_action(
+                action,
+                next_observation=next_observation,
+            )
             steps.append(
                 {
                     "source_step_index": len(steps),
@@ -209,11 +213,10 @@ recorded values. Coordinates never appear in candidates and can never become
 Function inputs. Keep reason under 40 words, each description under 20 words, and
 return no prose outside the JSON object.
 
-For a global Function whose first action is open_app, package_name is a public
-task-level input when the goal identifies the app. Do not freeze the recorded
-source app in that case: select the open_app package_name candidate and describe
-it as the app package to launch. Keep it fixed only when the Function's purpose
-is explicitly tied to that one app.
+For a global Function whose first action is open_app, keep the canonical recorded
+package fixed when the goal identifies a concrete app such as Joplin or Settings.
+Only expose package_name when the goal explicitly asks the caller to choose an
+app or package; a model must never invent an app package from a friendly app name.
 """
     selected_model = str(model or "").strip() or None
     usage = {
@@ -901,6 +904,23 @@ def _promote_launcher_app_entry(
         "tool": "open_app",
         "args": {"package_name": after_package},
     }
+
+
+def _canonicalize_open_app_action(
+    action: dict[str, Any],
+    *,
+    next_observation: Any,
+) -> dict[str, Any]:
+    """Persist the native package observed after a recorded app launch."""
+
+    if str(action.get("tool") or "") != "open_app":
+        return action
+    after_package = _primary_observation_package(next_observation)
+    if not after_package:
+        return action
+    updated = json.loads(json.dumps(action, ensure_ascii=False))
+    updated.setdefault("args", {})["package_name"] = after_package
+    return updated
 
 
 def _primary_observation_package(observation: Any) -> str:

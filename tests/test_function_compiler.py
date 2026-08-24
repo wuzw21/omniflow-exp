@@ -120,6 +120,34 @@ def test_compiler_promotes_launcher_app_click_to_global_open_app(
     }
 
 
+def test_compiler_canonicalizes_recorded_open_app_from_next_observation(
+    tmp_path: Path,
+) -> None:
+    launcher = androidworld_state(
+        "launcher",
+        package_name="com.google.android.apps.nexuslauncher",
+    )
+    joplin = androidworld_state("joplin", package_name="net.cozic.joplin")
+    payload = androidworld_run_log(
+        [{"action_type": "open_app", "app_name": "joplin"}],
+        observations=[launcher],
+    )
+    payload["steps"][0]["next_observation"] = joplin
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states={"launcher": launcher},
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = next(iter(store["functions"].values()))
+    assert function["steps"][0]["action"] == {
+        "tool": "open_app",
+        "args": {"package_name": "net.cozic.joplin"},
+    }
+
+
 def test_compiler_marks_answer_as_planner_handoff(tmp_path: Path) -> None:
     payload = androidworld_run_log(
         [
