@@ -255,6 +255,7 @@ def test_planner_step_budget_stops_non_device_action_loop(
         ),
     ]
     monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", "com.android.camera2")
     monkeypatch.setattr(mobilegpt_oob, "OobControlClient", lambda *_a, **_k: oob)
     monkeypatch.setattr(
         mobilegpt_oob,
