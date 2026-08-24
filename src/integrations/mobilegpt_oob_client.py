@@ -392,6 +392,7 @@ def _run_mobilegpt_oob_transport(
     lines = ["[omniflow] MobileGPT OOB client starting"]
     started = time.monotonic()
     actions = 0
+    planner_steps = 0
     reason = ""
     task_finished = False
     oob = OobControlClient(None, adb_serial=serial, adb_path=adb_path)
@@ -517,6 +518,7 @@ def _run_mobilegpt_oob_transport(
                     raise RuntimeError("mobilegpt_oob_action_json_invalid") from error
                 if not isinstance(action, dict):
                     raise RuntimeError("mobilegpt_oob_action_not_object")
+                planner_steps += 1
                 if str(action.get("name") or "").strip().lower() == "finish":
                     task_finished = True
                     lines.append("[omniflow] Task finished (finish action)")
@@ -536,7 +538,7 @@ def _run_mobilegpt_oob_transport(
                 lines.append(f"[omniflow] OOB action={action.get('name')}")
                 finish_stall_started = None
                 last_action_count = actions
-                if max_steps > 0 and actions >= max_steps:
+                if max_steps > 0 and planner_steps >= max_steps:
                     reason = "mobilegpt_step_budget_exhausted"
                     break
             else:
@@ -554,6 +556,7 @@ def _run_mobilegpt_oob_transport(
         "reason": reason,
         "task_finished": task_finished,
         "actions": actions,
+        "planner_steps": planner_steps,
         "log": client_log,
         "server_host": connect_host,
         "server_port": int(server_port),
@@ -682,6 +685,7 @@ def run_mobilegpt_oob_client(
                     else "method_failure"
                 ),
                 "actions_executed": int(result.get("actions") or 0),
+                "planner_steps": int(result.get("planner_steps") or 0),
                 **stats,
                 "token_usage_status": "tracked" if stats["model_calls"] else "unavailable",
                 "fallback_steps": 0,

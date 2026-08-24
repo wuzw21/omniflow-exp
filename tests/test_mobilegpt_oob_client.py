@@ -13,6 +13,7 @@ from src.integrations.mobilegpt_oob_client import (
     _oob_action,
     _prelaunch_target_package,
     _require_oob_backend,
+    _run_mobilegpt_oob_transport,
     _stats_terminal_reason,
 )
 
@@ -35,6 +36,41 @@ class _LaunchOob(_FakeOob):
         del wait_to_stabilize
         package = "com.android.camera2" if len(self.actions) >= 2 else "android"
         return {"package_name": package, "xml": "<hierarchy />"}
+
+
+class _TransportOob(_FakeOob):
+    def observe(self, *, wait_to_stabilize: bool = False) -> dict:
+        del wait_to_stabilize
+        return {
+            "package_name": "com.android.camera2",
+            "xml": '<hierarchy><node bounds="[0,0][1000,1000]" /></hierarchy>',
+            "display": {"width": 1000, "height": 1000},
+            "image_base64": "",
+        }
+
+
+class _ResponseSocket:
+    def __init__(self, responses: list[str]) -> None:
+        self._response = bytearray("".join(f"{item}\n" for item in responses).encode())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def settimeout(self, _seconds: float) -> None:
+        return None
+
+    def sendall(self, _payload: bytes) -> None:
+        return None
+
+    def recv(self, _size: int) -> bytes:
+        if not self._response:
+            return b""
+        value = bytes(self._response[:1])
+        del self._response[:1]
+        return value
 
 
 def test_mobilegpt_uses_goal_from_evaluated_androidworld_instance() -> None:
@@ -204,3 +240,45 @@ def test_target_app_is_launched_through_oob_before_planner_handshake(
     assert calls == [
         (oob, "adb", "emulator-45562", "com.android.camera2", 20.0),
     ]
+
+
+def test_planner_step_budget_stops_non_device_action_loop(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    oob = _TransportOob()
+    responses = [
+        "##$$##com.android.camera2",
+        *(
+            json.dumps({"name": "speak", "parameters": {"message": "working"}})
+            for _ in range(20)
+        ),
+    ]
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+    monkeypatch.setattr(mobilegpt_oob, "OobControlClient", lambda *_a, **_k: oob)
+    monkeypatch.setattr(
+        mobilegpt_oob,
+        "_prelaunch_target_package",
+        lambda *_a, **_k: "com.android.camera2",
+    )
+    monkeypatch.setattr(
+        mobilegpt_oob.socket,
+        "create_connection",
+        lambda *_a, **_k: _ResponseSocket(responses),
+    )
+
+    result = _run_mobilegpt_oob_transport(
+        serial="emulator-45562",
+        adb_path="adb",
+        server_host="0.0.0.0",
+        server_port=12345,
+        instruction="Take one photo.",
+        timeout_sec=600,
+        max_steps=20,
+        output_root=tmp_path,
+    )
+
+    assert result["reason"] == "mobilegpt_step_budget_exhausted"
+    assert result["planner_steps"] == 20
+    assert result["actions"] == 0
+    assert oob.actions == []
