@@ -30,6 +30,7 @@ from omniflow.runtime.execution import (
     execute_robust_action,
     record_execution,
 )
+from omniflow.transfer.embedding import PageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
 
 
@@ -112,6 +113,7 @@ class OmniFlow:
             else None
         )
         self.plugins = self.config.resolved_plugins()
+        self._page_encoder: PageEncoder | None = None
 
     async def _execute(
         self,
@@ -221,6 +223,7 @@ class OmniFlow:
                     ),
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
+                    page_encoder=self._get_page_encoder(),
                 )
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
@@ -509,6 +512,7 @@ class OmniFlow:
                     ),
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
+                    page_encoder=self._get_page_encoder(),
                 )
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
@@ -675,6 +679,7 @@ class OmniFlow:
                         ),
                         checker_rules=self.checker_library.rules,
                         checker_trigger_counts=shared_checker_trigger_counts,
+                        page_encoder=self._get_page_encoder(),
                     )
                     actions_executed += replay.actions_executed
                     replay_trace = list(replay.detail.get("trace") or ())
@@ -794,6 +799,7 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
+            page_encoder=self._get_page_encoder(),
         )
 
     def recall(
@@ -816,8 +822,14 @@ class OmniFlow:
                 functions=self.store.functions,
                 source_states=source_states,
                 limit=max(0, int(resolved_limit)),
+                page_encoder=self._get_page_encoder(),
             ).functions
         )
+
+    def _get_page_encoder(self) -> PageEncoder:
+        if self._page_encoder is None:
+            self._page_encoder = PageEncoder()
+        return self._page_encoder
 
     def call_tool(
         self,

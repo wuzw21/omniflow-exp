@@ -23,6 +23,7 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
+from omniflow.functions.recall import match_function_page
 from omniflow.runtime.checker import (
     checker_rule_action,
     checker_rule_matches,
@@ -34,6 +35,7 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
+from omniflow.transfer.embedding import PageEncoder
 from omniflow.transfer.runtime import (
     source_semantic_anchor,
     source_semantic_offset,
@@ -68,6 +70,7 @@ async def execute_function(
     state_loader: StateLoader | None = None,
     checker_rules: tuple[dict[str, Any], ...] = (),
     checker_trigger_counts: dict[str, int] | None = None,
+    page_encoder: PageEncoder | None = None,
 ) -> RunResult:
     current = observation or Observation.from_value(
         await _await(host.observe(xml=True, app_info=True))
@@ -80,6 +83,7 @@ async def execute_function(
     checker_trigger_counts = (
         checker_trigger_counts if checker_trigger_counts is not None else {}
     )
+    function_page_encoder = page_encoder or PageEncoder()
     resume_metadata_pending = dict(resume_metadata or {})
     for function_step in steps:
         action = function_step.action
@@ -88,6 +92,28 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
+        page_match = match_function_page(
+            source_observation=source_state,
+            current_observation=current,
+            encoder=function_page_encoder,
+        )
+        if page_match["matched"] is not True:
+            reason = str(page_match.get("reason") or "function_page_not_aligned")
+            return RunResult(
+                False,
+                function.id,
+                executed,
+                error=f"function_page_not_aligned:{reason}",
+                final_state=current,
+                detail={
+                    "trace": trace,
+                    "failed_step_index": function_step.step_index,
+                    "next_step_index": function_step.step_index,
+                    "recoverable": True,
+                    "fallback": "online_vlm",
+                    "page_alignment": dict(page_match),
+                },
+            )
         for checker_phase in ("pre_transfer", "pre_action"):
             checker_steps = await _run_shared_checker_phase(
                 checker_phase,

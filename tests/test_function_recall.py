@@ -5,6 +5,7 @@ from omniflow.core.config import OmniFlowConfig, PluginSet
 from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.recall import (
+    FUNCTION_PAGE_SIMILARITY_THRESHOLD,
     GOAL_LEXICAL_WEIGHT,
     PAGE_SIMILARITY_WEIGHT,
     recall_functions,
@@ -106,24 +107,51 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
         },
     )
 
-    assert [function.id for function in result.functions] == [
-        lexical_but_wrong_page.id,
-        matching.id,
-    ]
+    assert [function.id for function in result.functions] == [matching.id]
     decisions = {
         item["function_id"]: item for item in result.audit["decisions"]
     }
     assert decisions[matching.id]["goal_lexical_score"] == 0.0
     assert decisions[matching.id]["page_similarity"] == 1.0
     assert decisions[matching.id]["score"] == PAGE_SIMILARITY_WEIGHT
+    assert decisions[matching.id]["page_match"] is True
     assert decisions[lexical_but_wrong_page.id]["score"] > decisions[matching.id][
         "score"
     ]
+    assert decisions[lexical_but_wrong_page.id]["page_match"] is False
+    assert decisions[lexical_but_wrong_page.id]["rejection_reason"] == (
+        "function_page_similarity_below_threshold"
+    )
     assert result.audit["ranking_weights"] == {
         "page_similarity": PAGE_SIMILARITY_WEIGHT,
         "goal_lexical": GOAL_LEXICAL_WEIGHT,
     }
+    assert result.audit["encoder"]["dimension"] == 512
+    assert result.audit["page_similarity_threshold"] == 0.8
+    assert FUNCTION_PAGE_SIMILARITY_THRESHOLD == 0.8
     assert GOAL_LEXICAL_WEIGHT > PAGE_SIMILARITY_WEIGHT
+
+
+def test_recall_reads_package_from_xml_for_legacy_states() -> None:
+    source = _page("Account details", "account_form", package="com.example")
+    current = _page("Account details", "account_form", package="com.other")
+    function = _function(
+        "submit_current_form",
+        "Tap continue",
+        "Advance from the current form.",
+        "source_page",
+    )
+
+    result = recall_functions(
+        "Continue",
+        observation=Observation(xml=current.xml),
+        functions=(function,),
+        source_states={"source_page": Observation(xml=source.xml)},
+    )
+
+    assert result.functions == ()
+    decision = result.audit["decisions"][0]
+    assert decision["rejection_reason"] == "function_page_package_mismatch"
 
 
 def test_open_app_function_uses_the_same_page_weighted_score() -> None:
@@ -161,7 +189,7 @@ def test_open_app_function_uses_the_same_page_weighted_score() -> None:
     ]
 
 
-def test_missing_page_evidence_contributes_zero() -> None:
+def test_missing_page_evidence_prevents_recall() -> None:
     function = _function(
         "tap_continue",
         "Tap continue",
@@ -176,13 +204,15 @@ def test_missing_page_evidence_contributes_zero() -> None:
         source_states={"source_page": _page("Form", "form")},
     )
 
-    assert result.functions == (function,)
+    assert result.functions == ()
     decision = result.audit["decisions"][0]
     assert decision["page_similarity"] == 0.0
     assert decision["score"] == GOAL_LEXICAL_WEIGHT * decision["goal_lexical_score"]
+    assert decision["page_match"] is False
+    assert decision["rejection_reason"] == "function_page_embedding_missing"
 
 
-def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
+def test_recall_excludes_functions_without_source_page_evidence() -> None:
     function = _function(
         "tap_settings_control",
         "Turn bluetooth on",
@@ -200,7 +230,10 @@ def test_top_k_includes_zero_score_functions_with_stable_id_tiebreak() -> None:
         limit=2,
     )
 
-    assert [item.id for item in result.functions] == [function.id, first.id]
+    assert result.functions == ()
+    assert {
+        item["rejection_reason"] for item in result.audit["decisions"]
+    } == {"function_source_page_missing"}
 
 
 class _CheckerRecoveryHost:
@@ -252,12 +285,17 @@ class _SelectThenFinishPlanner:
     ) -> ToolCall:
         self.calls += 1
         if self.calls == 1:
+            assert functions == ()
+            return ToolCall(
+                "open_app", {"package_name": "com.android.settings"}
+            )
+        if self.calls == 2:
             assert self.function_id in {function.id for function in functions}
             return ToolCall(self.function_id, {})
         return ToolCall("finished", {"content": ""})
 
 
-def test_recalled_semantic_function_uses_checker_to_recover_from_other_app(
+def test_planner_navigates_to_function_page_before_recall(
     tmp_path,
 ) -> None:
     function = _function(
@@ -355,13 +393,13 @@ def test_runtime_recalls_again_after_page_changes(tmp_path) -> None:
 
     assert result.success is True
     assert planner.visible == [
-        ("first_page_action", "second_page_action"),
-        ("second_page_action", "first_page_action"),
+        ("first_page_action",),
+        ("second_page_action",),
     ]
     assert [
         event["candidate_function_ids"]
         for event in result.detail["function_resolution"]["recall"]["events"]
     ] == [
-        ["first_page_action", "second_page_action"],
-        ["second_page_action", "first_page_action"],
+        ["first_page_action"],
+        ["second_page_action"],
     ]

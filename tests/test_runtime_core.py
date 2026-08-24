@@ -122,15 +122,23 @@ def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:
 
 
 def test_function_execution_counts_all_auxiliary_actions(monkeypatch) -> None:
-    before = Observation(extra={"state_id": "before"})
+    before = Observation(
+        xml=(
+            '<hierarchy><node package="com.example" '
+            'class="android.widget.FrameLayout" bounds="[0,0][1000,1000]" />'
+            "</hierarchy>"
+        ),
+        package_name="com.example",
+        extra={"state_id": "before"},
+    )
     host = RecordingHost(before)
     function = Function(
         function_id="two_steps",
         name="Two steps",
         description="Two semantic steps with one auxiliary action each.",
         steps=(
-            FunctionStep(0, Action("wait", {"duration_ms": 0}), ""),
-            FunctionStep(1, Action("wait", {"duration_ms": 0}), ""),
+            FunctionStep(0, Action("wait", {"duration_ms": 0}), "source"),
+            FunctionStep(1, Action("wait", {"duration_ms": 0}), "source"),
         ),
     )
 
@@ -170,6 +178,7 @@ def test_function_execution_counts_all_auxiliary_actions(monkeypatch) -> None:
             host=host,
             plugins=PluginSet(),
             observation=before,
+            state_loader=lambda _state_id: before,
         )
     )
 

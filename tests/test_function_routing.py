@@ -36,13 +36,22 @@ class RecordingHost:
 
     def observe(self, **kwargs: object) -> Observation:
         self.observe_requests.append(dict(kwargs))
+        xml = (
+            '<hierarchy><node package="%s" class="android.widget.TextView" '
+            'text="Current page" bounds="[0,0][1000,1000]" /></hierarchy>'
+            % self.package_name
+        )
         return Observation(
+            xml=xml,
             package_name=self.package_name,
             activity_name="MainActivity",
             image_base64=(
                 "final-screenshot" if kwargs.get("screenshot") is True else None
             ),
-            extra={"state_id": f"state_{len(self.actions)}"},
+            extra={
+                "state_id": f"state_{len(self.actions)}",
+                "display": {"width": 1000, "height": 1000},
+            },
         )
 
     def act(self, action: Action) -> ActionResult:
@@ -51,8 +60,28 @@ class RecordingHost:
             self.package_name = str(action.args["package_name"])
         return ActionResult(True)
 
-    def get_state(self, _source_state_id: str) -> None:
-        return None
+    def get_state(self, source_state_id: str) -> Observation | None:
+        if source_state_id == "missing_source_state":
+            return None
+        package = (
+            "com.android.launcher"
+            if source_state_id == "source_home"
+            or source_state_id.startswith("source_")
+            else self.package_name
+        )
+        return Observation(
+            xml=(
+                '<hierarchy><node package="%s" class="android.widget.TextView" '
+                'text="Current page" bounds="[0,0][1000,1000]" /></hierarchy>'
+                % package
+            ),
+            package_name=package,
+            activity_name="MainActivity",
+            extra={
+                "state_id": source_state_id,
+                "display": {"width": 1000, "height": 1000},
+            },
+        )
 
 
 class ResumableHost(RecordingHost):
@@ -385,7 +414,7 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
     assert result.success is True
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
-    assert planner.visible_function_ids == [(function_id,), (function_id,)]
+    assert planner.visible_function_ids == [(function_id,), ()]
     assert planner.observations[0].image_base64 == "final-screenshot"
     assert [request.get("screenshot") for request in host.observe_requests] == [
         False,
@@ -418,13 +447,13 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
         },
     }
     function_resolution = result.detail["function_resolution"]
-    assert function_resolution["candidate_count"] == 1
-    assert function_resolution["candidate_function_ids"] == [function_id]
+    assert function_resolution["candidate_count"] == 0
+    assert function_resolution["candidate_function_ids"] == []
     assert function_resolution["status"] == "planner_tool_space"
     assert [
         event["candidate_function_ids"]
         for event in function_resolution["recall"]["events"]
-    ] == [[function_id], [function_id]]
+    ] == [[function_id], []]
     assert result.detail["runtime_limits"] == {
         "max_steps": 20,
         "max_fallback_steps": None,
@@ -477,7 +506,7 @@ def test_planner_fills_function_schema_arguments_in_e2e_loop(tmp_path) -> None:
     result = flow.run("Open the target app")
 
     assert result.success is True
-    assert planner.visible_function_ids == [(function.id,), (function.id,)]
+    assert planner.visible_function_ids == [(function.id,), ()]
     assert host.actions == [Action("open_app", {"package_name": "target.package"})]
 
 
@@ -504,7 +533,7 @@ def test_zero_fallback_budget_allows_task_planning_after_function(tmp_path) -> N
     assert result.error is None
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
-    assert planner.visible_function_ids == [(function_id,), (function_id,)]
+    assert planner.visible_function_ids == [(function_id,), ()]
     assert result.fallback_steps == 0
     assert result.detail["completion_review_calls"] == 0
     assert result.execution_summary["completion_review_calls"] == 0
@@ -586,31 +615,10 @@ def test_transfer_failure_falls_back_without_replaying_source_coordinates(
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
-    assert planner.visible_function_ids == [(function_id,), (function_id,)]
-    assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
-    assert planner.observations[0].extra["function_execution"] == {
-        "schema_version": "omniflow.function-execution-evidence.v1",
-        "function_id": function_id,
-        "function_name": "Turn bluetooth on",
-        "function_description": "Complete the exact goal: turn bluetooth on.",
-        "replay_status": "actions_failed",
-        "official_validator_status": "pending",
-        "steps": [
-            {
-                "step_index": 0,
-                "before_state_id": "state_0",
-                "after_state_id": "state_0",
-                "tool": "click",
-                "success": False,
-                "error": "omnitransfer_missing_target_page",
-            }
-        ],
-        "final_observation": {
-            "state_id": "state_0",
-            "package_name": "com.android.launcher",
-            "activity_name": "MainActivity",
-        },
-    }
+    assert planner.visible_function_ids == [(), ()]
+    assert planner.previous_action_errors[0] == (
+        "function_page_not_aligned:function_page_embedding_missing"
+    )
 
 
 def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -> None:
@@ -636,8 +644,10 @@ def test_direct_function_transfer_failure_continues_with_gui_planner(tmp_path) -
     assert result.function_id == function_id
     assert [action.tool for action in host.actions] == ["open_app"]
     assert all(action.tool != "click" for action in host.actions)
-    assert planner.visible_function_ids == [(function_id,), (function_id,)]
-    assert planner.previous_action_errors[0] == "omnitransfer_missing_target_page"
+    assert planner.visible_function_ids == [(), ()]
+    assert planner.previous_action_errors[0] == (
+        "function_page_not_aligned:function_page_embedding_missing"
+    )
     assert "Continue Function" in planner.goals[0]
     assert "Do not repeat actions that already succeeded" in planner.goals[0]
     assert result.detail["function_resolution"]["status"] == "direct"
@@ -727,7 +737,9 @@ def test_function_failure_returns_to_offline_resume_after_planner_recovery(
     assert result.execution_summary["fallback_steps"] == 1
 
 
-def test_successful_function_can_be_called_again_without_resume(tmp_path) -> None:
+def test_completed_function_cannot_be_recalled_from_the_wrong_entry_page(
+    tmp_path,
+) -> None:
     store_path = tmp_path / "store.json"
     function_id = _store_with_resumable_click_function(store_path)
     host = ResumableHost()
@@ -760,16 +772,11 @@ def test_successful_function_can_be_called_again_without_resume(tmp_path) -> Non
             "args": {"package_name": "com.android.settings"},
         },
         {"tool": "click", "args": {"x": 500.0, "y": 500.0}},
-        {
-            "tool": "open_app",
-            "args": {"package_name": "com.android.settings"},
-        },
-        {"tool": "click", "args": {"x": 700.0, "y": 700.0}},
     ]
     assert planner.visible_function_ids == [
         (function_id,),
-        (function_id,),
-        (function_id,),
+        (),
+        (),
     ]
     assert "function_resume" not in result.detail
     assert result.detail["completion_review_calls"] == 0

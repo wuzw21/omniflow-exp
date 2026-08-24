@@ -100,9 +100,11 @@ android_world_root="${OMNIFLOW_ANDROID_WORLD_ROOT:-$android_world_release_root}"
 export PYTHONPATH="$repo:$repo/src${android_world_root:+:$android_world_root}${PYTHONPATH:+:$PYTHONPATH}"
 validate_page_encoder_runtime() {
   "$python_bin" - <<'PY'
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder
+from omniflow.transfer.embedding import PageEncoder
 
-OmniTransferPageEncoder()
+encoder = PageEncoder()
+if encoder.dimension != 512:
+    raise SystemExit(f"native_page_encoder_dimension_mismatch:{encoder.dimension}")
 PY
 }
 protocol_values="$("$python_bin" - <<'PY'

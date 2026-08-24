@@ -339,12 +339,14 @@ chmod 600 "$env_file"
 # shellcheck disable=SC1090
 source "$env_file"
 
-log "checking canonical OmniTransfer checkpoint"
+log "checking native page encoder"
 (cd "$repo" && "$python_bin" - <<'PY'
-from omniflow.transfer.page_embedding import OmniTransferPageEncoder
+from omniflow.transfer.embedding import PageEncoder
 
-OmniTransferPageEncoder()
-print("omnitransfer_checkpoint=ok")
+encoder = PageEncoder()
+if encoder.dimension != 512:
+    raise SystemExit(f"native_page_encoder_dimension_mismatch:{encoder.dimension}")
+print("native_page_encoder=ok")
 PY
 )
 
