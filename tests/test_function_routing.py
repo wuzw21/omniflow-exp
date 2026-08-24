@@ -968,10 +968,14 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
 
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
-    assert request["max_completion_tokens"] == 512
+    assert request["max_tokens"] == 512
+    assert "max_completion_tokens" not in request
     assert request["reasoning_effort"] == "none"
     assert request["parallel_tool_calls"] is False
-    assert request["extra_body"] == {"enable_thinking": False}
+    assert request["extra_body"] == {
+        "enable_thinking": False,
+        "thinking": {"type": "disabled"},
+    }
     message_text = request["messages"][1]["content"][0]["text"]
     assert "installed_apps" not in message_text
     assert "com.android.chrome" not in message_text
@@ -1102,9 +1106,11 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
         turn_index=0,
     )
 
-    assert request["max_completion_tokens"] == 512
+    assert request["max_tokens"] == 512
+    assert "max_completion_tokens" not in request
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
+    assert request["thinking"] == {"type": "disabled"}
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT
     assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT

@@ -179,7 +179,8 @@ class VLMPlanner:
             return response
         request = dict(envelope["request"])
         extra_body = dict(request.get("extra_body") or {})
-        extra_body["enable_thinking"] = request.pop("enable_thinking")
+        for field in ("enable_thinking", "thinking"):
+            extra_body[field] = request.pop(field)
         request["extra_body"] = extra_body
         client = self._client or self._build_client()
         response = client.chat.completions.create(

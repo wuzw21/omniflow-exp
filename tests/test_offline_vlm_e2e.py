@@ -215,9 +215,13 @@ def test_offline_vlm_task_runs_unknown_tool_recovery_action_and_completion(
     assert [action.tool for action in host.actions] == ["click"]
     assert result.detail["done_reason"] == "finished"
     assert len(requests) == 3
-    assert all(request["max_completion_tokens"] == 512 for request in requests)
+    assert all(request["max_tokens"] == 512 for request in requests)
+    assert all("max_completion_tokens" not in request for request in requests)
     assert all(request["reasoning_effort"] == "none" for request in requests)
     assert all(request["enable_thinking"] is False for request in requests)
+    assert all(
+        request["thinking"] == {"type": "disabled"} for request in requests
+    )
     assert all(request["parallel_tool_calls"] is False for request in requests)
     assert all(
         "Task guidance:" in request["messages"][1]["content"][0]["text"]

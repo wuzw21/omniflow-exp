@@ -125,7 +125,7 @@ def build_model_turn_request(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
-        "max_completion_tokens": 512,
+        "max_tokens": 512,
         "temperature": 0,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -134,6 +134,7 @@ def build_model_turn_request(
         "parallel_tool_calls": False,
         "reasoning_effort": "none",
         "enable_thinking": False,
+        "thinking": {"type": "disabled"},
     }
 
 
