@@ -7,6 +7,8 @@ from src.integrations.mobilegpt_oob_client import (
     _is_oob_environment_failure,
     _launch_selected_package,
     _oob_action,
+    _prelaunch_target_package,
+    _require_oob_backend,
     _server_reported_empty_response,
 )
 
@@ -131,3 +133,48 @@ def test_server_planner_failure_is_not_misclassified_as_oob_environment() -> Non
     assert _is_oob_environment_failure("mobilegpt_server_no_action") is False
     assert _is_oob_environment_failure("mobilegpt_server_handler_failed") is False
     assert _is_oob_environment_failure("mobilegpt_target_app_not_ready:contacts") is True
+
+
+def test_mobilegpt_client_rejects_every_non_oob_physical_backend(monkeypatch) -> None:
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "androidworld")
+
+    try:
+        _require_oob_backend()
+    except RuntimeError as error:
+        assert str(error) == "mobilegpt_oob_backend_required:androidworld"
+    else:
+        raise AssertionError("non-OOB MobileGPT backend was accepted")
+
+
+def test_mobilegpt_client_accepts_only_canonical_oob_backend(monkeypatch) -> None:
+    monkeypatch.setenv("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
+
+    _require_oob_backend()
+
+
+def test_target_app_is_launched_through_oob_before_planner_handshake(
+    monkeypatch,
+) -> None:
+    oob = _FakeOob()
+    calls: list[tuple[object, str, str, str, float]] = []
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", "com.android.camera2")
+    monkeypatch.setattr(
+        mobilegpt_oob,
+        "_launch_selected_package",
+        lambda client, adb, serial, package, *, timeout_sec: calls.append(
+            (client, adb, serial, package, timeout_sec)
+        )
+        or package,
+    )
+
+    selected = _prelaunch_target_package(
+        oob,
+        "adb",
+        "emulator-45562",
+        timeout_sec=20.0,
+    )
+
+    assert selected == "com.android.camera2"
+    assert calls == [
+        (oob, "adb", "emulator-45562", "com.android.camera2", 20.0),
+    ]

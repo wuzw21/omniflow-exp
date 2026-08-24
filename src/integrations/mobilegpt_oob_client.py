@@ -25,6 +25,14 @@ from PIL import Image
 from src.integrations.android_world.oob_control import OobControlClient
 
 
+def _require_oob_backend() -> None:
+    backend = str(
+        os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND") or "oob"
+    ).strip().lower()
+    if backend != "oob":
+        raise RuntimeError(f"mobilegpt_oob_backend_required:{backend or 'unset'}")
+
+
 def _decode_image(value: Any) -> bytes:
     encoded = str(value or "").strip()
     if encoded.startswith("data:image/") and "," in encoded:
@@ -127,6 +135,27 @@ def _launch_selected_package(
         + candidate
         + ":foreground="
         + (str(oob.observe(wait_to_stabilize=True).get("package_name") or "unknown"))
+    )
+
+
+def _prelaunch_target_package(
+    oob: OobControlClient,
+    adb_path: str,
+    serial: str,
+    *,
+    timeout_sec: float,
+) -> str:
+    """Launch the benchmark target through OOB before Planner handshaking."""
+
+    target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
+    if not target_package:
+        raise RuntimeError("mobilegpt_target_app_package_unresolved")
+    return _launch_selected_package(
+        oob,
+        adb_path,
+        serial,
+        target_package,
+        timeout_sec=timeout_sec,
     )
 
 
@@ -344,6 +373,14 @@ def _run_mobilegpt_oob_transport(
     connect_host = str(os.environ.get("MOBILEGPT_OOB_SERVER_HOST") or "127.0.0.1")
 
     try:
+        _require_oob_backend()
+        launched_package = _prelaunch_target_package(
+            oob,
+            adb_path,
+            serial,
+            timeout_sec=app_ready_timeout_sec,
+        )
+        lines.append(f"[omniflow] OOB target ready={launched_package}")
         with socket.create_connection((connect_host, int(server_port)), timeout=30.0) as sock:
             sock.settimeout(1.0)
 
@@ -395,13 +432,12 @@ def _run_mobilegpt_oob_transport(
             lines.append(f"[omniflow] server selected app frame={selected[:200]}")
             if not selected.startswith("##$$##"):
                 raise RuntimeError("mobilegpt_oob_app_selection_missing")
-            _launch_selected_package(
-                oob,
-                adb_path,
-                serial,
-                selected[6:].strip(),
-                timeout_sec=app_ready_timeout_sec,
-            )
+            selected_package = selected[6:].strip()
+            if selected_package != launched_package:
+                raise RuntimeError(
+                    "mobilegpt_oob_selected_package_mismatch:"
+                    f"expected={launched_package}:selected={selected_package}"
+                )
 
             while time.monotonic() - started < max(1.0, float(timeout_sec)):
                 snapshot = oob.observe(wait_to_stabilize=True)

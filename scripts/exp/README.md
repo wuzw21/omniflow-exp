@@ -81,6 +81,9 @@ Server 或新的 AndroidWorld episode，也不使用 Function Store。只转换/
 MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试的环境/
 适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
 因此完成跳过不会把连接或 Server 崩溃误登记成 method failure。
+目标 episode 在连接 MobileGPT Planner 之前，必须先由 OOB `open_app` 启动并验证
+前台包；Planner 只选择后续动作，不能接管或绕过物理启动。Planner 没有返回动作时，
+保留已经完成的 OOB 启动证据，并把空响应单独登记为方法/协议错误。
 
 ```bash
 bash scripts/exp/run_androidworld.sh \
