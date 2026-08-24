@@ -12,6 +12,50 @@ from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 from src.integrations.android_world.run_episode import _summarize_task_results
 
 
+def _write_mobilegpt_oob_artifact(
+    root: Path,
+    *,
+    device: str,
+    official_instruction: str = "Complete the evaluated task.",
+) -> Path:
+    result_file = root / "oob_client" / "task_results.jsonl"
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(
+        json.dumps(
+            {
+                "method": "mobilegpt",
+                "goal": official_instruction,
+                "official_task_instruction": official_instruction,
+                "mobilegpt_protocol": {"transport": "oob_control"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    scheduler = root / "scheduler"
+    scheduler.mkdir(parents=True, exist_ok=True)
+    (scheduler / "result_summary.json").write_text(
+        json.dumps(
+            {
+                "details": [
+                    {
+                        "method": "mobilegpt",
+                        "device": device,
+                        "action_backend": "oob_control",
+                        "command": (
+                            "env OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob "
+                            "python -m src.integrations.mobilegpt_oob_client"
+                        ),
+                        "result_file": str(result_file),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
 def test_record_prep_failure_preserves_reason_tokens_and_time(tmp_path: Path) -> None:
     source_attempt = tmp_path / "source_attempt"
     source_attempt.mkdir()
@@ -345,6 +389,9 @@ def test_summary_reads_registry_when_current_index_is_stale(tmp_path: Path) -> N
 
 
 def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
+    artifact_root = _write_mobilegpt_oob_artifact(
+        tmp_path / "artifact", device="fold5564"
+    )
     record_result_outcome(
         outcomes_root=tmp_path / "outcomes",
         task_name="BrowserDraw",
@@ -356,6 +403,7 @@ def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) 
         evaluation_seed=113,
         status="execution_failed",
         stage="target_episode",
+        artifact_root=artifact_root,
     )
 
     concluded = concluded_result_keys(
@@ -374,6 +422,9 @@ def test_concluded_result_keys_maps_historical_label_to_current_device_model(
     tmp_path: Path,
 ) -> None:
     outcomes_root = tmp_path / "outcomes"
+    artifact_root = _write_mobilegpt_oob_artifact(
+        tmp_path / "artifact", device="small5562"
+    )
     record_result_outcome(
         outcomes_root=outcomes_root,
         task_name="CameraTakePhoto",
@@ -387,6 +438,7 @@ def test_concluded_result_keys_maps_historical_label_to_current_device_model(
         stage="androidworld_validate",
         official_validator_used=True,
         official_validator_success=False,
+        artifact_root=artifact_root,
     )
 
     assert concluded_result_keys(
@@ -398,6 +450,35 @@ def test_concluded_result_keys_maps_historical_label_to_current_device_model(
         evaluation_seed=113,
         device_models={"standard45562": "OmniFlowTargetSmall"},
     ) == {("mobilegpt", "standard45562")}
+
+
+def test_concluded_result_keys_rejects_mobilegpt_without_oob_evidence(
+    tmp_path: Path,
+) -> None:
+    record_result_outcome(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="CameraTakePhoto",
+        method="mobilegpt",
+        device="standard45562",
+        device_serial="emulator-45562",
+        attempt_id="attempt_001",
+        source_seed=111,
+        evaluation_seed=113,
+        status="method_failed",
+        stage="androidworld_validate",
+        official_validator_used=True,
+        official_validator_success=False,
+        actions_executed=1,
+    )
+
+    assert concluded_result_keys(
+        outcomes_root=tmp_path / "outcomes",
+        task_name="CameraTakePhoto",
+        methods=("mobilegpt",),
+        devices=("standard45562",),
+        source_seed=111,
+        evaluation_seed=113,
+    ) == set()
 
 
 def test_summary_maps_registered_historical_label_to_current_device_model(

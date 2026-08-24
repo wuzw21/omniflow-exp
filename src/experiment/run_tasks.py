@@ -1809,6 +1809,9 @@ def _concluded_results(
         # explicit contradictory model evidence is still rejected.
         device_models=_e2e_device_models(args),
     )
+    verified_mobilegpt = {
+        item for item in concluded if item[0] == "mobilegpt"
+    }
     # A formal cell is reusable across pipeline attempts only when its
     # immutable registration contains an official validator conclusion.  This
     # is deliberately independent of current.json: older external-baseline
@@ -1848,6 +1851,15 @@ def _concluded_results(
             device_models=_e2e_device_models(args),
         )
         concluded.update(indexed["completed"])
+    if "mobilegpt" in methods:
+        # Registry/index compatibility paths may contain historical
+        # official_forward or pre-goal-binding records. Only an outcome whose
+        # atomic result proves the current OOB contract may close MobileGPT.
+        concluded = {
+            item
+            for item in concluded
+            if item[0] != "mobilegpt" or item in verified_mobilegpt
+        }
     # External baselines are reusable evidence; OmniFlow is actively
     # corrected in the final campaign and must receive a fresh attempt.
     if "omniflow" in methods and os.environ.get(

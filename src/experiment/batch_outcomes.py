@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import tempfile
 from typing import Any, Iterable, Mapping
@@ -53,6 +54,58 @@ def _jsonl_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
             if isinstance(value, dict):
                 rows.append(value)
     return rows
+
+
+def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
+    """Require immutable evidence that MobileGPT used OOB for all device I/O."""
+
+    artifact_root = Path(str(outcome.get("artifact_root") or "")).expanduser()
+    if not artifact_root.is_dir():
+        return False
+    method = str(outcome.get("method") or "")
+    device = str(outcome.get("device") or "")
+    for summary_path in sorted(artifact_root.rglob("result_summary.json")):
+        summary = _json_object(summary_path)
+        candidates = summary.get("details") or summary.get("rows") or ()
+        for detail in candidates:
+            if not isinstance(detail, dict):
+                continue
+            if (
+                str(detail.get("method") or "") != method
+                or str(detail.get("device") or "") != device
+                or str(detail.get("action_backend") or "") != "oob_control"
+            ):
+                continue
+            try:
+                command = shlex.split(str(detail.get("command") or ""))
+            except ValueError:
+                continue
+            if (
+                "src.integrations.mobilegpt_oob_client" not in command
+                or "src.integrations.official_forward" in command
+                or "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob" not in command
+            ):
+                continue
+            result_file = Path(str(detail.get("result_file") or "")).expanduser()
+            if not result_file.is_absolute():
+                result_file = (summary_path.parent / result_file).resolve()
+            rows = _jsonl_rows((result_file,)) if result_file.is_file() else []
+            if not rows:
+                continue
+            result = rows[-1]
+            protocol = result.get("mobilegpt_protocol")
+            official_instruction = str(
+                result.get("official_task_instruction") or ""
+            ).strip()
+            if (
+                str(result.get("method") or "") == "mobilegpt"
+                and isinstance(protocol, dict)
+                and protocol.get("transport") == "oob_control"
+                and official_instruction
+                and str(result.get("goal") or "").strip() == official_instruction
+            ):
+                return True
+    return False
 
 
 def _number(value: Any) -> float:
@@ -405,6 +458,11 @@ def concluded_result_keys(
             ):
                 continue
         else:
+            continue
+        if method == "mobilegpt" and not _mobilegpt_oob_conclusion(payload):
+            # Old outcomes remain immutable evidence, but they cannot close a
+            # current MobileGPT cell unless launch/observe/act are proven to
+            # use OOB and the planner received the evaluated task instruction.
             continue
         expected_model = (device_models or {}).get(device)
         if expected_model:
