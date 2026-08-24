@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
+    _dismiss_oob_permission_dialog,
     _oob_action,
 )
 
@@ -13,6 +14,10 @@ class _FakeOob:
     def act(self, action: dict) -> dict:
         self.actions.append(action)
         return {"success": True}
+
+
+class _PermissionOob(_FakeOob):
+    pass
 
 
 def test_official_index_action_is_mapped_to_current_oob_bounds() -> None:
@@ -55,4 +60,22 @@ def test_oob_action_executes_official_click_and_input_schema() -> None:
             "tool": "input_text",
             "args": {"text": "Sara Ahmed", "clear_text": True},
         },
+    ]
+
+
+def test_permission_controller_is_dismissed_through_oob() -> None:
+    oob = _PermissionOob()
+    snapshot = {
+        "package_name": "com.google.android.permissioncontroller",
+        "display": {"width": 1000, "height": 1000},
+        "xml": (
+            '<hierarchy><node resource-id="com.android.permissioncontroller:id/'
+            'permission_deny_and_dont_ask_again_button" '
+            'bounds="[100,200][300,400]" /></hierarchy>'
+        ),
+    }
+
+    assert _dismiss_oob_permission_dialog(oob, snapshot) is True
+    assert oob.actions == [
+        {"tool": "click", "args": {"x": 200, "y": 300}},
     ]

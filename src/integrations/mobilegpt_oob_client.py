@@ -104,6 +104,9 @@ def _launch_selected_package(
         observed = str(snapshot.get("package_name") or "").strip()
         if observed == candidate:
             return candidate
+        if _dismiss_oob_permission_dialog(oob, snapshot):
+            time.sleep(0.25)
+            continue
         time.sleep(0.25)
     raise RuntimeError(
         "mobilegpt_target_app_not_ready:"
@@ -124,6 +127,43 @@ def _normalised_point(bounds: str, display: dict[str, Any]) -> tuple[int, int]:
         max(0, min(1000, round(((left + right) / 2) / width * 1000))),
         max(0, min(1000, round(((top + bottom) / 2) / height * 1000))),
     )
+
+
+def _dismiss_oob_permission_dialog(
+    oob: OobControlClient,
+    snapshot: dict[str, Any],
+) -> bool:
+    """Dismiss Android permission prompts through the OOB executor."""
+
+    if not str(snapshot.get("package_name") or "").strip().endswith(
+        ".permissioncontroller"
+    ):
+        return False
+    try:
+        root = ET.fromstring(str(snapshot.get("xml") or ""))
+    except ET.ParseError:
+        return False
+    for element in root.iter():
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        label = " ".join(
+            (
+                str(element.attrib.get("text") or "").strip(),
+                str(element.attrib.get("content-desc") or "").strip(),
+            )
+        ).casefold()
+        is_deny = "permission_deny" in resource_id.casefold() or label in {
+            "deny",
+            "don't allow",
+            "don’t allow",
+            "do not allow",
+        }
+        bounds = str(element.attrib.get("bounds") or "").strip()
+        if not is_deny or not bounds:
+            continue
+        point = _normalised_point(bounds, snapshot.get("display") or {})
+        oob.act({"tool": "click", "args": {"x": point[0], "y": point[1]}})
+        return True
+    return False
 
 
 def _action_with_bounds(action: dict[str, Any], xml: str) -> dict[str, Any]:
