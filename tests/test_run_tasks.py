@@ -2114,6 +2114,7 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     assert preflight[:2] == [str(args.python_bin), str(args.runtime_preflight)]
     assert preflight[preflight.index("--profile") + 1] == "mobilegpt"
     assert preflight[preflight.index("--serial") + 1] == DEVICES[2][1]
+    assert preflight[preflight.index("--server-port") + 1] == "12345"
     assert "--require-contacts-ready" in preflight
     assert preflight[preflight.index("--source-task") + 1] == args.task
     assert str(args.android_world_root) in str(

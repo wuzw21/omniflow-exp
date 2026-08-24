@@ -378,7 +378,7 @@ def ensure_target_devices(
     avds = dict(DEVICE_AVDS)
     mobilegpt_selected = "mobilegpt" in _e2e_methods(args)
     devices: list[dict[str, Any]] = []
-    for label, serial, _console_port in _e2e_devices(args):
+    for label, serial, console_port in _e2e_devices(args):
         avd = avds.get(serial)
         if not avd:
             raise ValueError(f"target_device_avd_missing:{label}:{serial}")
@@ -456,6 +456,13 @@ def ensure_target_devices(
                 str(args.task),
                 "--json-out",
                 str(preflight_path),
+                "--server-port",
+                str(
+                    _mobilegpt_port_for_device(
+                        args,
+                        (label, serial, console_port),
+                    )
+                ),
             ]
             if str(args.task).startswith("Contacts"):
                 preflight_command.append("--require-contacts-ready")
