@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from src.integrations import mobilegpt_oob_client as mobilegpt_oob
 from src.integrations.mobilegpt_oob_client import (
     _action_with_bounds,
     _dismiss_oob_permission_dialog,
     _is_oob_environment_failure,
+    _official_task_instruction,
     _launch_selected_package,
     _oob_action,
     _prelaunch_target_package,
@@ -33,6 +35,14 @@ class _LaunchOob(_FakeOob):
         del wait_to_stabilize
         package = "com.android.camera2" if len(self.actions) >= 2 else "android"
         return {"package_name": package, "xml": "<hierarchy />"}
+
+
+def test_mobilegpt_uses_goal_from_evaluated_androidworld_instance() -> None:
+    assert _official_task_instruction(
+        SimpleNamespace(goal="Delete Avocado Toast with Egg."),
+        requested_instruction="Delete Butternut Squash Soup.",
+        task_name="RecipeDeleteSingleRecipe",
+    ) == "Delete Avocado Toast with Egg."
 
 
 def test_official_index_action_is_mapped_to_current_oob_bounds() -> None:

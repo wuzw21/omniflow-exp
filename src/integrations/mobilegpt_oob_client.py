@@ -246,6 +246,21 @@ def _is_oob_environment_failure(reason: str) -> bool:
     ))
 
 
+def _official_task_instruction(
+    task: Any,
+    *,
+    requested_instruction: str,
+    task_name: str,
+) -> str:
+    """Use the goal belonging to the evaluated AndroidWorld task instance."""
+
+    return str(
+        getattr(task, "goal", "")
+        or requested_instruction
+        or task_name
+    ).strip()
+
+
 def _action_with_bounds(action: dict[str, Any], xml: str) -> dict[str, Any]:
     """Attach the current OOB node bounds to an official index action."""
 
@@ -595,13 +610,13 @@ def run_mobilegpt_oob_client(
     output = Path(output_root).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
-    def run_episode() -> dict[str, Any]:
+    def run_episode(episode_instruction: str = instruction) -> dict[str, Any]:
         return _run_mobilegpt_oob_transport(
             serial=serial,
             adb_path=adb_path,
             server_host=server_host,
             server_port=server_port,
-            instruction=instruction,
+            instruction=episode_instruction,
             timeout_sec=timeout_sec,
             max_steps=max_steps,
             output_root=output,
@@ -623,7 +638,12 @@ def run_mobilegpt_oob_client(
             use_uiautomator=False,
         )
         with startup as (env, task):
-            result = run_episode()
+            official_instruction = _official_task_instruction(
+                task,
+                requested_instruction=instruction,
+                task_name=task_name,
+            )
+            result = run_episode(official_instruction)
             params = json.loads(str(task_params_json or "{}"))
             reward = float(task.is_successful(env))
             stats = _mobilegpt_stats(
@@ -633,7 +653,9 @@ def run_mobilegpt_oob_client(
                 "schema_version": "omniflow.androidworld.result.v1",
                 "task_name": task_name,
                 "task": task_name,
-                "goal": instruction,
+                "goal": official_instruction,
+                "requested_instruction": instruction,
+                "official_task_instruction": official_instruction,
                 "task_params": params,
                 "task_params_sha256": hashlib.sha256(
                     json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
