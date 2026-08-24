@@ -26,6 +26,7 @@ from omniflow.vlm.gui import (
     ModelToolCallError,
     build_model_turn_request,
     function_tools,
+    parse_model_turn_response,
 )
 from omniflow.vlm.planner import VLMPlanner
 from src.integrations.android_world.agent import (
@@ -1264,6 +1265,102 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "When you choose a projected node identified by `v`" in SYSTEM_PROMPT
     assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
+
+
+def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
+    state = {
+        "xml": (
+            '<hierarchy><node class="android.widget.LinearLayout" '
+            'clickable="true" bounds="[0,766][720,878]">'
+            '<node class="android.widget.TextView" text="Chrome" '
+            'bounds="[80,780][240,850]" /></node></hierarchy>'
+        ),
+        "display": {"width": 720, "height": 1280},
+    }
+    response = {
+        "requested_model": "test-model",
+        "resolved_model": "test-model",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "Open Chrome",
+                            "target_description": "Chrome",
+                            "x": 154,
+                            "y": 640,
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="test-model",
+        turn_index=1,
+        display=state["display"],
+        state=state,
+        goal="Open the file with Chrome",
+    )
+
+    assert tool_call.name == "click"
+    assert tool_call.arguments["x"] == 500
+    assert tool_call.arguments["y"] == pytest.approx(642.1875)
+    assert metadata["node_grounding"] == {
+        "name": "projected_node_center.v1",
+        "reference": "A01",
+        "target_description": "Chrome",
+        "bounds": [0, 766, 720, 878],
+        "original_raw_pixels": {"x": 154, "y": 640},
+        "grounded_raw_pixels": {"x": 360.0, "y": 822.0},
+    }
+
+
+def test_projected_node_center_does_not_override_webview_click() -> None:
+    state = {
+        "xml": (
+            '<hierarchy><node class="android.webkit.WebView" '
+            'bounds="[0,0][720,1280]">'
+            '<node class="android.view.View" text="Chrome" clickable="true" '
+            'bounds="[0,766][720,878]" /></node></hierarchy>'
+        ),
+        "display": {"width": 720, "height": 1280},
+    }
+    response = {
+        "requested_model": "test-model",
+        "resolved_model": "test-model",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "Click visual target",
+                            "target_description": "Chrome",
+                            "x": 154,
+                            "y": 640,
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="test-model",
+        turn_index=1,
+        display=state["display"],
+        state=state,
+        goal="Click Chrome in the web page",
+    )
+
+    assert tool_call.arguments["x"] == pytest.approx(213.8888888889)
+    assert tool_call.arguments["y"] == 500
+    assert "node_grounding" not in metadata
 
 
 def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:

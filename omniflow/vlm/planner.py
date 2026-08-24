@@ -121,6 +121,8 @@ class VLMPlanner:
                         if isinstance(state.get("display"), dict)
                         else None
                     ),
+                    state=state,
+                    goal=str(goal),
                 )
                 break
             except ModelToolCallError as error:

@@ -11,7 +11,11 @@ from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.artifact import validate_arguments
 from omniflow.vlm.model_adapter import adapt_tool_arguments
 from omniflow.vlm.tool_arguments import load_tool_arguments
-from omniflow.vlm.ui_projection import UIProjection, project_ui
+from omniflow.vlm.ui_projection import (
+    UIProjection,
+    project_ui,
+    projected_node_center,
+)
 from omniflow.vlm_coordinates import (
     display_size,
     screen_context_to_pixels,
@@ -157,6 +161,8 @@ def parse_model_turn_response(
     display: dict[str, Any] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
     installed_apps: dict[str, str] | None = None,
+    state: dict[str, Any] | None = None,
+    goal: str = "",
 ) -> tuple[ToolCall, dict[str, Any]]:
     if not isinstance(value, dict):
         raise ValueError("model_turn_response_invalid")
@@ -221,6 +227,7 @@ def parse_model_turn_response(
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
     adapter_metadata = None
     coordinate_metadata = None
+    node_grounding_metadata = None
     try:
         if tool in function_catalog:
             validate_arguments(function_catalog[tool].input_schema, arguments)
@@ -249,6 +256,32 @@ def parse_model_turn_response(
                 resolved_model=resolved_model,
                 display=display,
             )
+            if tool in {"click", "input_text"}:
+                projection = project_ui(
+                    str((state or {}).get("xml") or ""),
+                    goal,
+                )
+                grounded = projected_node_center(
+                    projection,
+                    str(arguments.get("target_description") or ""),
+                )
+                if grounded is not None:
+                    node, (x, y) = grounded
+                    original = {
+                        "x": arguments.get("x"),
+                        "y": arguments.get("y"),
+                    }
+                    arguments = {**arguments, "x": x, "y": y}
+                    node_grounding_metadata = {
+                        "name": "projected_node_center.v1",
+                        "reference": node.reference,
+                        "target_description": str(
+                            arguments.get("target_description") or ""
+                        ),
+                        "bounds": list(node.bounds),
+                        "original_raw_pixels": original,
+                        "grounded_raw_pixels": {"x": x, "y": y},
+                    }
             arguments, coordinate_metadata = screen_pixel_args_to_canonical(
                 tool=tool,
                 args=arguments,
@@ -276,6 +309,8 @@ def parse_model_turn_response(
         metadata["model_adapter"] = adapter_metadata
     if coordinate_metadata is not None:
         metadata["coordinate_conversion"] = coordinate_metadata
+    if node_grounding_metadata is not None:
+        metadata["node_grounding"] = node_grounding_metadata
     thinking = str(value.get("reasoning") or "").strip()
     if thinking:
         metadata["thinking"] = thinking

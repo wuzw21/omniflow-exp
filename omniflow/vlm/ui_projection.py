@@ -67,6 +67,7 @@ class _Candidate:
     group: str
     compact: dict[str, object]
     bounds: tuple[int, int, int, int] | None
+    inside_webview: bool
 
 
 @dataclass(frozen=True)
@@ -77,10 +78,19 @@ class UIProjection:
     goal_match_count: int
     visual_context_required: bool = False
     visual_candidate_count: int = 0
+    actionable_nodes: tuple[ProjectedNode, ...] = ()
 
     @property
     def requires_screenshot(self) -> bool:
         return True
+
+
+@dataclass(frozen=True)
+class ProjectedNode:
+    reference: str
+    labels: tuple[str, ...]
+    bounds: tuple[int, int, int, int]
+    inside_webview: bool = False
 
 
 def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection:
@@ -90,6 +100,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         return UIProjection("<none>", 0, 0, 0)
     goal_terms = _terms(goal)
     candidates: list[_Candidate] = []
+    webview_elements = _webview_elements(root)
     for order, element in enumerate(root.iter()):
         compact: dict[str, object] = {}
         semantic_values: list[str] = []
@@ -152,11 +163,12 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
                 group=group,
                 compact=compact,
                 bounds=parsed_bounds,
+                inside_webview=id(element) in webview_elements,
             )
         )
     candidates = _promote_goal_controls(candidates)
     selected = _select_candidates(candidates, max_nodes=max_nodes)
-    text = _render_candidates(selected)
+    text, actionable_nodes = _render_candidates(selected)
     return UIProjection(
         text=text or "<none>",
         candidate_count=len(candidates),
@@ -168,7 +180,37 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         visual_candidate_count=sum(
             1 for item in selected if item.group in {"goal_control", "visual"}
         ),
+        actionable_nodes=actionable_nodes,
     )
+
+
+def projected_node_center(
+    projection: UIProjection,
+    target_description: str,
+) -> tuple[ProjectedNode, tuple[float, float]] | None:
+    target = _normalized_label(target_description)
+    if not target:
+        return None
+    reference_match = re.search(r"(?<![a-z0-9])a\d{2}(?![a-z0-9])", target)
+    if reference_match is not None:
+        reference = reference_match.group(0).upper()
+        matches = [
+            node
+            for node in projection.actionable_nodes
+            if node.reference == reference and not node.inside_webview
+        ]
+    else:
+        matches = [
+            node
+            for node in projection.actionable_nodes
+            if not node.inside_webview
+            and target in {_normalized_label(label) for label in node.labels}
+        ]
+    if len(matches) != 1:
+        return None
+    node = matches[0]
+    left, top, right, bottom = node.bounds
+    return node, ((left + right) / 2, (top + bottom) / 2)
 
 
 def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
@@ -236,8 +278,11 @@ def _select_candidates(
     )
 
 
-def _render_candidates(candidates: list[_Candidate]) -> str:
+def _render_candidates(
+    candidates: list[_Candidate],
+) -> tuple[str, tuple[ProjectedNode, ...]]:
     lines: list[str] = []
+    actionable_nodes: list[ProjectedNode] = []
     visual_reference = 0
     for group in _GROUP_ORDER:
         group_candidates = [item for item in candidates if item.group == group]
@@ -248,11 +293,44 @@ def _render_candidates(candidates: list[_Candidate]) -> str:
             compact = dict(item.compact)
             if compact.get("a"):
                 visual_reference += 1
-                compact = {"v": f"A{visual_reference:02d}", **compact}
+                reference = f"A{visual_reference:02d}"
+                compact = {"v": reference, **compact}
+                if item.bounds is not None:
+                    actionable_nodes.append(
+                        ProjectedNode(
+                            reference=reference,
+                            labels=tuple(
+                                str(compact[key])
+                                for key in ("t", "d", "h", "c", "r")
+                                if str(compact.get(key) or "").strip()
+                            ),
+                            bounds=item.bounds,
+                            inside_webview=item.inside_webview,
+                        )
+                    )
             lines.append(
                 json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
             )
-    return "\n".join(lines)
+    return "\n".join(lines), tuple(actionable_nodes)
+
+
+def _webview_elements(root: ET.Element) -> set[int]:
+    result: set[int] = set()
+
+    def visit(element: ET.Element, inside_webview: bool) -> None:
+        class_name = str(element.attrib.get("class") or "").casefold()
+        current_inside = inside_webview or "webview" in class_name
+        if current_inside:
+            result.add(id(element))
+        for child in element:
+            visit(child, current_inside)
+
+    visit(root, False)
+    return result
+
+
+def _normalized_label(value: str) -> str:
+    return " ".join(str(value or "").casefold().split())
 
 
 def _candidate_rank(item: _Candidate) -> tuple[int, tuple[int, int], int]:
@@ -343,4 +421,9 @@ def _terms(value: str) -> set[str]:
     return terms
 
 
-__all__ = ["UIProjection", "project_ui"]
+__all__ = [
+    "ProjectedNode",
+    "UIProjection",
+    "project_ui",
+    "projected_node_center",
+]
