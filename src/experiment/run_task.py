@@ -3920,6 +3920,16 @@ def _mobilegpt_target_package_from_open_target_app(open_target_app: str) -> str:
     return value
 
 
+def _mobilegpt_target_package_from_task_params(
+    task_params: dict[str, Any] | None,
+) -> str:
+    """Return the app selected by this evaluated task instance, if any."""
+
+    if not isinstance(task_params, dict):
+        return ""
+    return str(task_params.get("app_name") or "").strip()
+
+
 def _resolve_mobilegpt_target_package(
     candidate: str,
     *,
@@ -5479,8 +5489,17 @@ def _run_result_mobilegpt(
     explicit_target_package = _mobilegpt_target_package_from_open_target_app(
         args.mobilegpt_open_target_app
     )
+    effective_task_params = (
+        dict(task_params_override)
+        if task_params_override is not None
+        else dict(item.params or {})
+    )
+    parameter_target_package = _mobilegpt_target_package_from_task_params(
+        effective_task_params
+    )
     target_package = (
         explicit_target_package
+        or parameter_target_package
         or str(adapted_memory.get("target_package") or "").strip()
         or str(source_target.get("target_package") or "").strip()
     )
@@ -5497,7 +5516,11 @@ def _run_result_mobilegpt(
     target_source = (
         "mobilegpt_open_target_app"
         if explicit_target_package
-        else "sealed_native_cold_source_memory"
+        else (
+            "task_parameters.app_name"
+            if parameter_target_package
+            else "sealed_native_cold_source_memory"
+        )
     )
     memory_condition = "native_cold_memory"
     source_memory_digest, source_memory_file_count = mobilegpt_memory.mobilegpt_memory_digest(

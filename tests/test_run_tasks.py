@@ -14,6 +14,7 @@ from src.experiment import run_tasks as scheduler
 
 from src.experiment.run_task import (
     DeviceTarget,
+    _mobilegpt_target_package_from_task_params,
     _resolve_mobilegpt_target_package,
     _mobilegpt_server_task_app,
     _read_object,
@@ -82,6 +83,14 @@ from src.experiment.protocol import (
     TASK_DEADLINE_SEC,
     TASK_SEED,
 )
+
+
+def test_mobilegpt_target_package_uses_evaluated_app_parameter() -> None:
+    assert (
+        _mobilegpt_target_package_from_task_params({"app_name": "camera"})
+        == "camera"
+    )
+    assert _mobilegpt_target_package_from_task_params({"contact_name": "Ada"}) == ""
 
 
 def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(
