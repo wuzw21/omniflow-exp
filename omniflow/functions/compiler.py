@@ -800,6 +800,14 @@ def _materialize_authoring_plan(
             candidate = candidates.get((source_index, arg_name))
             if candidate is None:
                 raise ValueError("function_author_plan_parameter_target_invalid")
+            if arg_name == "package_name" and not _goal_allows_dynamic_app_package(
+                facts.get("goal")
+            ):
+                materialization_notes.append(
+                    "Compiler kept the concrete app package fixed instead of "
+                    "exposing package_name as a public Function input."
+                )
+                continue
             if source_index not in indices:
                 # A complete Function may be truncated at an observation
                 # boundary. Its parameter remains owned by the later
@@ -880,6 +888,21 @@ def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int
         if value and value not in goal:
             indices.add(index)
     return frozenset(indices)
+
+
+def _goal_allows_dynamic_app_package(goal: Any) -> bool:
+    normalized = " ".join(str(goal or "").casefold().split())
+    return any(
+        marker in normalized
+        for marker in (
+            "requested app",
+            "choose an app",
+            "select an app",
+            "app package",
+            "package name",
+            "package_name",
+        )
+    )
 
 
 def _promote_launcher_app_entry(

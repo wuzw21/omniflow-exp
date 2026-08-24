@@ -617,6 +617,7 @@ def test_model_plan_exposes_global_open_app_as_function_input(
     tmp_path: Path,
 ) -> None:
     payload = _run_log(1)
+    payload["goal"] = "Open the requested app and wait."
     _, source_states = import_run_log_evidence(payload)
     proposal = {
         "reason": "Launch the requested app through the global startup Function.",
@@ -924,8 +925,10 @@ def test_model_plan_drops_misplaced_semantic_parameter_without_fallback(
                 usage=None,
             )
 
+    payload = _run_log(2)
+    payload["goal"] = "Open the requested app and wait for the page."
     result = compile_runlog_to_store(
-        _run_log(2),
+        payload,
         tmp_path / "output",
         source_states={
             "state_0": {"state_id": "state_0"},
@@ -941,6 +944,61 @@ def test_model_plan_drops_misplaced_semantic_parameter_without_fallback(
         "package_name"
     ]
     assert "dropped a parameter target" in result["reason"]
+
+
+def test_model_plan_keeps_concrete_app_package_out_of_public_api(
+    tmp_path: Path,
+) -> None:
+    payload = _run_log(1)
+    payload["goal"] = "Open Settings and wait for the page."
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Launch the concrete app through the global Function.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_settings",
+                "name": "Open Settings",
+                "description": "Open Settings for the task.",
+                "source_step_indices": [0],
+                "parameters": [
+                    {
+                        "name": "package_name",
+                        "description": "Package of the app to launch",
+                        "source_step_index": 0,
+                        "arg_name": "package_name",
+                    }
+                ],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = store["functions"]["open_settings"]
+    assert function["input_schema"]["properties"] == {}
+    assert function["steps"][0]["action"]["args"]["package_name"] == (
+        "com.android.settings"
+    )
+    assert "concrete app package fixed" in result["reason"]
 
 
 def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
