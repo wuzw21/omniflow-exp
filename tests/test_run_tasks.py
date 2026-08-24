@@ -346,6 +346,28 @@ def test_pipeline_attempt_id_grows_past_historical_outcome(tmp_path: Path) -> No
     assert _next_pipeline_attempt_id(args, outcomes_root) == "attempt_002"
 
 
+def test_pipeline_attempt_id_skips_incomplete_immutable_outcome_directory(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.attempt_id = "attempt_006"
+    args.e2e_method = "omniflow"
+    args.e2e_device = DEVICES[0]
+    outcomes_root = (
+        args.results_root / "androidworld" / ".archive" / "outcomes" / "formal"
+    )
+    destination = (
+        outcomes_root
+        / args.task
+        / "omniflow"
+        / DEVICES[0][0]
+        / "attempt_006"
+    )
+    destination.mkdir(parents=True)
+
+    assert _next_pipeline_attempt_id(args, outcomes_root) == "attempt_007"
+
+
 def test_result_summary_resolves_native_row_to_unique_command_device() -> None:
     rows = _result_summary_rows(
         task="CameraTakePhoto",

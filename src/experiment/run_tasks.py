@@ -790,7 +790,18 @@ def _next_pipeline_attempt_id(
     devices = _e2e_devices(args)
     while True:
         output_collision = (task_root / candidate).exists()
-        outcome_collision = bool(
+        outcome_path_collision = any(
+            (
+                outcomes_root
+                / safe_component(args.task)
+                / safe_component(method)
+                / safe_component(device[0])
+                / candidate
+            ).exists()
+            for method in methods
+            for device in devices
+        )
+        outcome_collision = outcome_path_collision or bool(
             concluded_result_keys(
                 outcomes_root=outcomes_root,
                 task_name=args.task,
