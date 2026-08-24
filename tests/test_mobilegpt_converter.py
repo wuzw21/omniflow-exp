@@ -76,6 +76,45 @@ def test_conversion_uses_first_open_app_as_task_app(tmp_path: Path) -> None:
     assert len(trajectory["transitions"]) == 1
 
 
+def test_legacy_launcher_click_is_normalized_to_open_app(tmp_path: Path) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "click", "index": 4},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        forests=[
+            (
+                '<hierarchy><node package="com.google.android.apps.nexuslauncher" '
+                'text="Broccoli" clickable="true" bounds="[0,0][100,100]" />'
+                "</hierarchy>"
+            ),
+            (
+                '<hierarchy><node package="com.flauschcode.broccoli" '
+                'text="Recipe" clickable="true" bounds="[0,0][100,100]" />'
+                "</hierarchy>"
+            ),
+        ],
+        packages=[
+            "com.google.android.apps.nexuslauncher",
+            "com.flauschcode.broccoli",
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+
+    assert trajectory["target_package"] == "com.flauschcode.broccoli"
+    assert trajectory["launch_action"] == {
+        "action_type": "open_app",
+        "app_name": "com.flauschcode.broccoli",
+    }
+    assert trajectory["skipped_actions"] == [
+        {"step_index": 0, "action_type": "open_app"}
+    ]
+    assert len(trajectory["transitions"]) == 1
+    assert trajectory["transitions"][0].step_index == 1
+
+
 def test_preflight_accepts_compact_bmoca_runlog_with_state_catalog(
     tmp_path: Path,
 ) -> None:

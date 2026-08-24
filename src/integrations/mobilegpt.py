@@ -63,6 +63,12 @@ __all__ = [
 ]
 
 _SKIPPED_ACTION_TYPES = frozenset({"open_app", "status", "wait"})
+_LAUNCHER_PACKAGES = frozenset(
+    {
+        "com.google.android.apps.nexuslauncher",
+        "com.android.launcher3",
+    }
+)
 _SUPPORTED_ACTION_TYPES = frozenset(
     {
         "answer",
@@ -556,6 +562,21 @@ def _package_from_observation(observation: dict[str, Any]) -> str:
     return (foreground or packages or [""])[-1]
 
 
+def _launched_target_package(before_package: str, after_package: str) -> str:
+    """Recognize an app-icon click as launch evidence, not a task action."""
+
+    before = str(before_package or "").strip()
+    after = str(after_package or "").strip()
+    if (
+        before in _LAUNCHER_PACKAGES
+        and after
+        and after not in _LAUNCHER_PACKAGES
+        and after not in {"android", "com.android.systemui"}
+    ):
+        return after
+    return ""
+
+
 def _load_runlog_trajectory(
     source_run_log: str | Path,
     *,
@@ -625,20 +646,41 @@ def _load_runlog_trajectory(
         package = _package_from_observation(observation)
         if package:
             packages.append(package)
+        next_observation = raw_step.get("next_observation")
+        if not isinstance(next_observation, dict) and ordinal + 1 < len(raw_steps):
+            next_observation = _observation_for_step(raw_steps[ordinal + 1])
+        next_package = (
+            _package_from_observation(next_observation)
+            if isinstance(next_observation, dict)
+            else ""
+        )
+        launched_package = (
+            _launched_target_package(package, next_package)
+            if action_type == "click"
+            else ""
+        )
+        if launched_package:
+            packages.append(launched_package)
+            launch_action = {
+                "action_type": "open_app",
+                "app_name": launched_package,
+            }
+            launch_step_index = step_index
+            open_app_evidence.append(
+                {
+                    "step_index": step_index,
+                    "requested_package": launched_package,
+                    "observed_package": launched_package,
+                }
+            )
+            skipped.append({"step_index": step_index, "action_type": "open_app"})
+            continue
         if action_type == "open_app":
             app_name = str(action.get("app_name") or action.get("package_name") or "").strip()
             if app_name:
                 packages.append(app_name)
                 launch_action = action
                 launch_step_index = step_index
-                next_observation = raw_step.get("next_observation")
-                if not isinstance(next_observation, dict) and ordinal + 1 < len(raw_steps):
-                    next_observation = _observation_for_step(raw_steps[ordinal + 1])
-                next_package = (
-                    _package_from_observation(next_observation)
-                    if isinstance(next_observation, dict)
-                    else ""
-                )
                 open_app_evidence.append(
                     {
                         "step_index": step_index,
@@ -876,20 +918,15 @@ def _load_compact_runlog_trajectory(
         )
         action_type = _action_type(action)
         observation = _compact_observation(before)
-        if (
-            action_type == "click"
-            and package_name
-            in {
-                "com.google.android.apps.nexuslauncher",
-                "com.android.launcher3",
-            }
-            and after_package
-            and after_package != package_name
-            and after_package != "com.android.systemui"
-        ):
+        launched_package = (
+            _launched_target_package(package_name, after_package)
+            if action_type == "click"
+            else ""
+        )
+        if launched_package:
             launch_action = {
                 "action_type": "open_app",
-                "app_name": after_package,
+                "app_name": launched_package,
             }
             launch_step_index = ordinal
             skipped.append(
