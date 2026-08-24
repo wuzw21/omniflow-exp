@@ -9,6 +9,10 @@ from omniflow.functions.artifact import parse_function_artifact
 
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _PARAMETERIZABLE_ACTION_ARGS = {
+    # App launch is part of the public Function API.  The package is a
+    # task-level input when a global startup Function is reused for another
+    # app; keeping it out of this set silently freezes the source app.
+    "open_app": frozenset({"package_name"}),
     "click": frozenset({"target_description"}),
     "input_text": frozenset({"target_description", "text"}),
 }

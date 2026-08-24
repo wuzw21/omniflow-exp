@@ -170,6 +170,12 @@ every parameter target selected by a semantic Function. Use parameters=[] for fi
 recorded values. Coordinates never appear in candidates and can never become
 Function inputs. Keep reason under 40 words, each description under 20 words, and
 return no prose outside the JSON object.
+
+For a global Function whose first action is open_app, package_name is a public
+task-level input when the goal identifies the app. Do not freeze the recorded
+source app in that case: select the open_app package_name candidate and describe
+it as the app package to launch. Keep it fixed only when the Function's purpose
+is explicitly tied to that one app.
 """
     selected_model = str(model or "").strip() or None
     usage = {

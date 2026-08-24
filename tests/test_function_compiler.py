@@ -407,7 +407,14 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     assert facts["schema_version"] == "omniflow.function-compilation-facts.v2"
     assert [step["source_step_index"] for step in facts["steps"]] == [0, 1]
     assert all("step_index" not in step for step in facts["steps"])
-    assert request["parameter_candidates"] == []
+    assert request["parameter_candidates"] == [
+        {
+            "source_step_index": 0,
+            "tool": "open_app",
+            "arg_name": "package_name",
+            "recorded_value": "com.android.settings",
+        }
+    ]
 
     store = json.loads((tmp_path / "output" / "store.json").read_text())
     function = store["functions"]["open_settings"]
@@ -417,6 +424,76 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
         "properties": {},
         "required": [],
         "additionalProperties": False,
+    }
+
+
+def test_model_plan_exposes_global_open_app_as_function_input(
+    tmp_path: Path,
+) -> None:
+    payload = _run_log(1)
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Launch the requested app through the global startup Function.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_requested_app",
+                "name": "Open requested app",
+                "description": "Launch the app requested by the task.",
+                "source_step_indices": [0],
+                "parameters": [
+                    {
+                        "name": "package_name",
+                        "description": "Package of the app to launch",
+                        "source_step_index": 0,
+                        "arg_name": "package_name",
+                    }
+                ],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = store["functions"]["open_requested_app"]
+    assert function["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "package_name": {
+                "type": "string",
+                "description": "Package of the app to launch",
+            }
+        },
+        "required": ["package_name"],
+        "additionalProperties": False,
+    }
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.package_name",
+            "target": "$.steps[0].action.args.package_name",
+        }
+    ]
+    assert function["steps"][0]["action"]["args"]["package_name"] == ""
+    assert result["source_arguments"] == {
+        "open_requested_app": {"package_name": "com.android.settings"}
     }
 
 
