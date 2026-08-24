@@ -37,6 +37,7 @@ from omniflow.runtime.core import (
 from omniflow.transfer.runtime import (
     source_semantic_anchor,
     source_semantic_offset,
+    source_semantic_point,
     transfer_action,
 )
 
@@ -825,17 +826,18 @@ def default_transfer(
     observation: Observation,
     source_state: Observation | None = None,
 ) -> TransferResult:
-    if action.tool == "input_text" and not all(
-        action.args.get(key) is not None for key in ("x", "y")
-    ):
-        return TransferResult(action)
     if action.tool == "swipe" and all(
         action.args.get(key) is not None for key in ("x1", "y1", "x2", "y2")
     ):
         return _transfer_swipe(action, observation, source_state)
     if action.tool not in {"click", "input_text", "long_press"}:
         return TransferResult(action)
-    if not all(action.args.get(key) is not None for key in ("x", "y")):
+    if not all(
+        action.args.get(key) is not None for key in ("x", "y")
+    ) and not (
+        action.tool == "input_text"
+        and str(action.args.get("target_description") or "").strip()
+    ):
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
     target_xml = str(observation.xml or "")
     if not target_xml:
@@ -866,9 +868,18 @@ def default_transfer(
             float(action.args["x"]),
             float(action.args["y"]),
         )
-        request["source_point"] = source_point
     except (KeyError, TypeError, ValueError):
+        source_point = (
+            source_semantic_point(
+                source_xml,
+                str(action.args.get("target_description") or ""),
+            )
+            if action.tool == "input_text"
+            else None
+        )
+    if source_point is None:
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
+    request["source_point"] = source_point
     source_element_id = source_semantic_anchor(source_xml, source_point)
     if source_element_id:
         request["source_element_id"] = source_element_id
@@ -1080,7 +1091,11 @@ def _attach_visual_evidence(
 
 
 def _action_uses_transfer_target(action: Action) -> bool:
-    if action.tool in {"click", "input_text", "long_press"}:
+    if action.tool == "input_text":
+        return bool(str(action.args.get("target_description") or "").strip()) or all(
+            action.args.get(key) is not None for key in ("x", "y")
+        )
+    if action.tool in {"click", "long_press"}:
         return all(action.args.get(key) is not None for key in ("x", "y"))
     if action.tool == "swipe":
         return all(

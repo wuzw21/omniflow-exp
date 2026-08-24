@@ -145,28 +145,74 @@ def _androidworld_input_point_is_editable(
     action: dict[str, Any],
     observation: dict[str, Any],
 ) -> bool:
-    point = _androidworld_action_point(action, observation)
-    display = observation_display(observation)
-    if point is None or display is None:
+    if _androidworld_action_point(action, observation) is None:
         return False
-    x = point["x"] / 1000.0 * display[0]
-    y = point["y"] / 1000.0 * display[1]
+    _, node = _androidworld_input_target(action, observation)
+    return node is not None
+
+
+def _androidworld_input_target(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> tuple[dict[str, float] | None, ET.Element | None]:
+    display = observation_display(observation)
+    if display is None:
+        return None, None
     try:
         root = ET.fromstring(observation_xml(observation))
     except ET.ParseError:
-        return False
-    for node in root.iter():
+        return None, None
+    editable_nodes = [
+        node
+        for node in root.iter()
+        if str(node.attrib.get("editable") or "").casefold() == "true"
+        or str(node.attrib.get("class") or "").endswith("EditText")
+    ]
+    point = _androidworld_action_point(action, observation)
+    if point is None:
+        focused = [
+            node
+            for node in editable_nodes
+            if str(node.attrib.get("focused") or "").casefold() == "true"
+        ]
+        node = min(focused, key=_xml_node_area, default=None)
+        bounds = _parse_xml_bounds(node.attrib.get("bounds")) if node is not None else None
+        if bounds is None:
+            return None, None
+        left, top, right, bottom = bounds
+        return (
+            {
+                "x": (left + right) / 2.0 / display[0] * 1000.0,
+                "y": (top + bottom) / 2.0 / display[1] * 1000.0,
+            },
+            node,
+        )
+    x = point["x"] / 1000.0 * display[0]
+    y = point["y"] / 1000.0 * display[1]
+    containing: list[ET.Element] = []
+    for node in editable_nodes:
         bounds = _parse_xml_bounds(node.attrib.get("bounds"))
         if bounds is None or not (
             bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
         ):
             continue
-        if (
-            str(node.attrib.get("editable") or "").casefold() == "true"
-            or str(node.attrib.get("class") or "").endswith("EditText")
-        ):
-            return True
-    return False
+        containing.append(node)
+    return point, min(containing, key=_xml_node_area, default=None)
+
+
+def _xml_node_area(node: ET.Element) -> float:
+    bounds = _parse_xml_bounds(node.attrib.get("bounds"))
+    if bounds is None:
+        return float("inf")
+    return (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+
+
+def _androidworld_input_target_description(node: ET.Element) -> str:
+    for attribute in ("content-desc", "text", "resource-id"):
+        value = str(node.attrib.get(attribute) or "").strip()
+        if value:
+            return value.rsplit("/", 1)[-1]
+    return "editable text field"
 
 
 def _androidworld_action_to_omniflow(
@@ -187,7 +233,12 @@ def _androidworld_action_to_omniflow(
             "args": _required_androidworld_action_point(action, observation),
         }
     elif action_type == "input_text":
-        projected = {"tool": "input_text", "args": {"text": action.get("text", "")}}
+        point, target = _androidworld_input_target(action, observation)
+        args: dict[str, Any] = {"text": action.get("text", "")}
+        if point is not None and target is not None:
+            args.update(point)
+            args["target_description"] = _androidworld_input_target_description(target)
+        projected = {"tool": "input_text", "args": args}
     elif action_type in {"scroll", "swipe"}:
         projected = {
             "tool": "swipe",

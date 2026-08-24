@@ -261,10 +261,17 @@ def audit_transfer_action_sources(
                     f"{step_index}:{source_state_id}"
                 )
             width, height = source_size
-            source_point = (
-                float(action.args["x"]) / 1000.0 * width,
-                float(action.args["y"]) / 1000.0 * height,
+            source_point = _source_action_point(
+                action,
+                source_xml,
+                width=width,
+                height=height,
             )
+            if source_point is None:
+                raise ValueError(
+                    f"transfer_action_source_target_unresolved:{function_id}:"
+                    f"{step_index}:{source_state_id}"
+                )
             source_grounding = _require_raw_source_target(
                 source_xml,
                 source_point,
@@ -381,7 +388,11 @@ def _action_requires_transfer_state(action: Any) -> bool:
     args = getattr(action, "args", None)
     if not isinstance(args, dict):
         return False
-    if tool in {"click", "input_text", "long_press"}:
+    if tool == "input_text":
+        return bool(str(args.get("target_description") or "").strip()) or all(
+            args.get(key) is not None for key in ("x", "y")
+        )
+    if tool in {"click", "long_press"}:
         return all(args.get(key) is not None for key in ("x", "y"))
     if tool == "swipe":
         return all(args.get(key) is not None for key in ("x1", "y1", "x2", "y2"))
@@ -391,10 +402,40 @@ def _action_requires_transfer_state(action: Any) -> bool:
 def _action_requires_point_target(action: Any) -> bool:
     tool = str(getattr(action, "tool", "") or "")
     args = getattr(action, "args", None)
-    return (
-        tool in {"click", "input_text", "long_press"}
-        and isinstance(args, dict)
-        and all(args.get(key) is not None for key in ("x", "y"))
+    if not isinstance(args, dict):
+        return False
+    if tool == "input_text":
+        return bool(str(args.get("target_description") or "").strip()) or all(
+            args.get(key) is not None for key in ("x", "y")
+        )
+    return tool in {"click", "long_press"} and all(
+        args.get(key) is not None for key in ("x", "y")
+    )
+
+
+def _source_action_point(
+    action: Any,
+    source_xml: str,
+    *,
+    width: float,
+    height: float,
+) -> tuple[float, float] | None:
+    args = getattr(action, "args", None)
+    if not isinstance(args, dict):
+        return None
+    if all(args.get(key) is not None for key in ("x", "y")):
+        try:
+            return (
+                float(args["x"]) / 1000.0 * width,
+                float(args["y"]) / 1000.0 * height,
+            )
+        except (TypeError, ValueError):
+            return None
+    if str(getattr(action, "tool", "") or "") != "input_text":
+        return None
+    return source_semantic_point(
+        source_xml,
+        str(args.get("target_description") or ""),
     )
 
 
@@ -625,6 +666,36 @@ def source_semantic_anchor(
     ) == 1:
         return resource_id
     return anchor_path
+
+
+def source_semantic_point(
+    xml_text: str,
+    target_description: str,
+) -> tuple[float, float] | None:
+    """Resolve an input target only within its immutable source observation."""
+
+    description = " ".join(str(target_description or "").split()).casefold()
+    if not description:
+        return None
+    try:
+        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
+    except ET.ParseError:
+        return None
+    matches: list[ET.Element] = []
+    for element in root.iter():
+        labels = {
+            " ".join(str(element.attrib.get(attribute) or "").split()).casefold()
+            for attribute in ("text", "content-desc")
+        }
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        if resource_id:
+            labels.add(resource_id.rsplit("/", 1)[-1].casefold())
+        if description in labels and _element_bounds(element) is not None:
+            matches.append(element)
+    if len(matches) != 1:
+        return None
+    left, top, right, bottom = _element_bounds(matches[0]) or (0.0, 0.0, 0.0, 0.0)
+    return (left + right) / 2.0, (top + bottom) / 2.0
 
 
 def source_semantic_offset(

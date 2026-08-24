@@ -7,6 +7,7 @@ import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.runlog import import_run_log_evidence
 
 
 def _run_log(step_count: int) -> dict:
@@ -66,6 +67,50 @@ def test_compiler_freezes_only_function_referenced_states(
     assert result["prompt_tokens"] == 0
     assert result["completion_tokens"] == 0
     assert result["total_tokens"] == 0
+
+
+def test_compiler_preserves_focused_input_source_semantics(tmp_path: Path) -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "3125"},
+            {"action_type": "wait"},
+        ],
+        observations=[
+            {
+                "pixels": None,
+                "forest": (
+                    '<hierarchy><node class="android.widget.EditText" '
+                    'text="Enter the product" resource-id="answer" '
+                    'bounds="[216,278][615,331]" editable="true" '
+                    'focused="true" /></hierarchy>'
+                ),
+                "ui_elements": [],
+                "auxiliaries": {
+                    "state_id": "product-form",
+                    "display": {"width": 720, "height": 1280},
+                },
+            },
+            androidworld_state("submitted", width=720, height=1280),
+        ],
+        goal="Enter the product and submit it.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text(encoding="utf-8"))
+    function = next(iter(store["functions"].values()))
+    assert function["steps"][0]["action"] == {
+        "tool": "input_text",
+        "args": {
+            "target_description": "Enter the product",
+            "text": "3125",
+        },
+    }
 
 
 def test_compiler_registers_source_call_for_argumentless_authored_function(

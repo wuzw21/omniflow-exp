@@ -111,6 +111,38 @@ def test_input_text_point_outside_editable_node_does_not_add_click() -> None:
     ]
 
 
+def test_focused_input_text_preserves_existing_target_semantics() -> None:
+    payload = androidworld_run_log(
+        [{"action_type": "input_text", "text": "3125"}]
+    )
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy><node class="android.widget.EditText" '
+            'text="Enter the product" resource-id="answer" '
+            'bounds="[216,278][615,331]" editable="true" focused="true" />'
+            '<node class="android.widget.EditText" text="URL" '
+            'bounds="[168,96][512,196]" editable="true" focused="false" />'
+            "</hierarchy>"
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "product-form",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {
+            "tool": "input_text",
+            "args": {
+                "target_description": "Enter the product",
+                "text": "3125",
+            },
+        }
+    ]
+
+
 def test_widget_bounded_swipe_preserves_normalized_endpoints() -> None:
     payload = androidworld_run_log(
         [

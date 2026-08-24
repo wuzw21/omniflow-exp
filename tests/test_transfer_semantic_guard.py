@@ -275,6 +275,100 @@ def test_explicit_display_controls_grounding_when_xml_bounds_overflow(
     )
 
 
+def test_input_description_resolves_only_the_source_anchor_for_omnitransfer(
+    monkeypatch,
+) -> None:
+    source_xml = """\
+<hierarchy width="720" height="1280">
+  <node package="com.android.chrome" bounds="[0,0][720,1280]">
+    <node class="android.widget.EditText" text="Enter the product"
+          resource-id="answer" editable="true" focused="true"
+          bounds="[216,278][615,331]" />
+  </node>
+</hierarchy>
+"""
+    target_xml = """\
+<hierarchy width="1280" height="800">
+  <node package="com.android.chrome" bounds="[0,0][1280,800]">
+    <node class="android.widget.EditText" text="Product"
+          resource-id="answer" editable="true"
+          bounds="[400,200][900,280]" />
+  </node>
+</hierarchy>
+"""
+    requests = []
+
+    def transfer_action(**kwargs):
+        requests.append(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "mutual_graph_matcher_no_null_v3",
+            "new_x": 650.0,
+            "new_y": 240.0,
+            "target_bbox": [400.0, 200.0, 900.0, 280.0],
+            "src_element": {
+                "bounds": [216.0, 278.0, 615.0, 331.0],
+                "resource_id": "answer",
+                "text": "Enter the product",
+                "class": "android.widget.EditText",
+            },
+        }
+
+    function = SimpleNamespace(
+        id="enter_product",
+        steps=(
+            SimpleNamespace(
+                step_index=0,
+                source_state_id="product-form",
+                action=Action(
+                    "input_text",
+                    {
+                        "target_description": "Enter the product",
+                        "text": "3125",
+                    },
+                ),
+            ),
+        ),
+    )
+    source_state = {
+        "state_id": "product-form",
+        "xml": source_xml,
+        "display": {"width": 720, "height": 1280},
+    }
+    monkeypatch.setattr(transfer_runtime, "transfer_action", transfer_action)
+
+    audit = audit_transfer_action_sources((function,), {"product-form": source_state})
+
+    assert audit["source_target_count"] == 1
+    assert requests[0]["source_point"] == (415.5, 304.5)
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+    result = execution.default_transfer(
+        function.steps[0].action,
+        Observation(
+            xml=target_xml,
+            package_name="com.android.chrome",
+            extra={"display": {"width": 1280, "height": 800}},
+        ),
+        Observation(
+            xml=source_xml,
+            package_name="com.android.chrome",
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    assert requests[1]["source_point"] == (415.5, 304.5)
+    assert result.action == Action(
+        "input_text",
+        {
+            "target_description": "Enter the product",
+            "text": "3125",
+            "x": 650.0 / 1280.0 * 1000.0,
+            "y": 240.0 / 800.0 * 1000.0,
+        },
+    )
+
+
 def test_transfer_accepts_omnitransfer_mapped_row_without_second_semantic_gate(
     monkeypatch,
 ) -> None:
