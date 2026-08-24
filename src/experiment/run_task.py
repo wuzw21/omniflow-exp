@@ -1770,7 +1770,16 @@ def seal_mobilegpt_source_memory(
     transition_count = int(audit.get("transition_count") or 0)
     validated_count = int(audit.get("validated_transition_count") or 0)
     validation_rows = audit.get("validation_rows")
-    if (
+    official_reader = audit.get("official_reader_validation")
+    launch_only = (
+        isinstance(official_reader, dict)
+        and mobilegpt_memory.is_valid_mobilegpt_launch_only_memory(
+            source_payload,
+            audit,
+            official_reader,
+        )
+    )
+    trajectory_complete = not (
         transition_count <= 0
         or validated_count != transition_count
         or not isinstance(validation_rows, list)
@@ -1782,9 +1791,9 @@ def seal_mobilegpt_source_memory(
         or audit.get("source_transitions_supplied") is not True
         or audit.get("source_success_boundary_supplied") is not True
         or audit.get("complete") is not True
-    ):
+    )
+    if not (trajectory_complete or launch_only):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
-    official_reader = audit.get("official_reader_validation")
     if (
         not isinstance(official_reader, dict)
         or official_reader.get("loadable") is not True
@@ -1799,11 +1808,14 @@ def seal_mobilegpt_source_memory(
     inventory = mobilegpt_memory.inspect_mobilegpt_memory(memory)
     if inventory.get("task_local_memory") is not True:
         raise ValueError("mobilegpt_virtual_memory_not_task_local")
-    if inventory.get("virtual_source_memory_complete") is not True:
+    if (
+        not launch_only
+        and inventory.get("virtual_source_memory_complete") is not True
+    ):
         raise ValueError("mobilegpt_virtual_memory_graph_incomplete")
-    if not inventory.get("has_recallable_subtasks"):
+    if not launch_only and not inventory.get("has_recallable_subtasks"):
         raise ValueError("mobilegpt_virtual_memory_missing_recallable_subtasks")
-    if not inventory.get("has_useful_actions"):
+    if not launch_only and not inventory.get("has_useful_actions"):
         raise ValueError("mobilegpt_virtual_memory_missing_useful_actions")
     stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
     if (

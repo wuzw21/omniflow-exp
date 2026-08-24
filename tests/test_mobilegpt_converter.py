@@ -10,7 +10,9 @@ import sys
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
+from src.experiment import run_task as pipeline
 from src.integrations import mobilegpt as mobilegpt_module
+from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
 from src.integrations.mobilegpt import (
     CONVERSION_MODE_OFFICIAL,
     MobileGPTConversionError,
@@ -250,6 +252,28 @@ def test_open_app_only_conversion_uses_final_observation_as_finish_page(
     assert result["validated_transition_count"] == 0
     assert result["memory_validation"]["launch_only"] is True
     assert result["official_reader_validation"]["launch_finish_validated"] is True
+
+    task_name = str(json.loads(source.read_text(encoding="utf-8"))["task_name"])
+    sealed = pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory,
+        source_run_log=source,
+        source_stats=tmp_path / "stats.jsonl",
+        trajectory_audit=tmp_path / "audit.json",
+        task_name=task_name,
+        target_package="com.android.contacts",
+        target_app="Contacts",
+        source_model="",
+    )
+    validated = validate_mobilegpt_adapted_memory(
+        memory,
+        task_name=task_name,
+        source_seed=111,
+        source_run_log=source,
+        expected_source_method=sealed["manifest"]["source_method"],
+    )
+
+    assert sealed["memory_validation"]["launch_only"] is True
+    assert validated["memory_inventory"]["has_useful_actions"] is False
 
 
 def test_conversion_scopes_official_embedding_model_to_offline_memory(

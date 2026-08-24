@@ -1467,6 +1467,11 @@ def _validate_prepared_mobilegpt_memory(
     memory_record = manifest.get("memory")
     if not isinstance(memory_record, dict):
         raise ValueError(f"mobilegpt_source_memory_record_missing:{manifest_path}")
+    memory_validation = memory_record.get("validation")
+    launch_only = (
+        isinstance(memory_validation, dict)
+        and memory_validation.get("launch_only") is True
+    )
     digest, file_count = mobilegpt_memory_runtime.mobilegpt_memory_digest(root)
     inventory = mobilegpt_memory_runtime.inspect_mobilegpt_memory(root)
     if (
@@ -1480,8 +1485,11 @@ def _validate_prepared_mobilegpt_memory(
         # ``virtual_source_memory_complete``; requiring the stricter
         # screenshot-bearing ``native_memory_complete`` here rejected valid
         # official memories before target execution.
-        or inventory.get("virtual_source_memory_complete") is not True
-        or not inventory.get("has_useful_actions")
+        or (
+            not launch_only
+            and inventory.get("virtual_source_memory_complete") is not True
+        )
+        or (not launch_only and not inventory.get("has_useful_actions"))
     ):
         raise ValueError(f"mobilegpt_source_memory_content_invalid:{manifest_path}")
     if native_learning:

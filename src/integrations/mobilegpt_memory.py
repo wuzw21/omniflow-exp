@@ -813,6 +813,51 @@ def _official_source_result_summary(
     }
 
 
+def is_valid_mobilegpt_launch_only_memory(
+    source_payload: dict[str, Any],
+    audit: dict[str, Any],
+    official_reader: dict[str, Any],
+) -> bool:
+    """Return whether a finish-only memory exactly represents open_app."""
+
+    steps = source_payload.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    actions: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
+            return False
+        actions.append(step["action"])
+    if not all(
+        str(action.get("action_type") or "").strip().lower() == "open_app"
+        and bool(
+            str(
+                action.get("app_name")
+                or action.get("package_name")
+                or action.get("package")
+                or ""
+            ).strip()
+        )
+        for action in actions
+    ):
+        return False
+    return (
+        audit.get("launch_only") is True
+        and int(audit.get("transition_count") or 0) == 0
+        and int(audit.get("validated_transition_count") or 0) == 0
+        and audit.get("validation_rows") == []
+        and audit.get("actions_supplied_to_mobilegpt") is True
+        and audit.get("source_transitions_supplied") is True
+        and audit.get("source_success_boundary_supplied") is True
+        and audit.get("complete") is True
+        and official_reader.get("loadable") is True
+        and official_reader.get("launch_finish_validated") is True
+        and int(official_reader.get("task_path_pages") or 0) == 1
+        and int(official_reader.get("page_count") or 0) == 1
+        and int(official_reader.get("action_row_count") or 0) == 0
+    )
+
+
 def _validate_mobilegpt_converted_memory(
     root: Path,
     manifest: dict[str, Any],
@@ -903,13 +948,6 @@ def _validate_mobilegpt_converted_memory(
     inventory = inspect_mobilegpt_memory(root)
     if inventory.get("task_local_memory") is not True:
         raise ValueError("mobilegpt_virtual_memory_not_task_local")
-    if inventory.get("virtual_source_memory_complete") is not True:
-        raise ValueError("mobilegpt_virtual_memory_graph_incomplete")
-    if not inventory.get("has_recallable_subtasks"):
-        raise ValueError("mobilegpt_virtual_memory_missing_recallable_subtasks")
-    if not inventory.get("has_useful_actions"):
-        raise ValueError("mobilegpt_virtual_memory_missing_useful_actions")
-
     bundle_root = root.parent.resolve()
     source_log_record = manifest.get("source_run_log")
     source_log_path = _mobilegpt_manifest_evidence_path(
@@ -951,6 +989,20 @@ def _validate_mobilegpt_converted_memory(
     transition_count = int(audit.get("transition_count") or 0)
     validated_count = int(audit.get("validated_transition_count") or 0)
     validation_rows = audit.get("validation_rows")
+    official_reader = audit.get("official_reader_validation")
+    launch_only = (
+        isinstance(official_reader, dict)
+        and is_valid_mobilegpt_launch_only_memory(
+            source_payload,
+            audit,
+            official_reader,
+        )
+    )
+    if (
+        not launch_only
+        and inventory.get("virtual_source_memory_complete") is not True
+    ):
+        raise ValueError("mobilegpt_virtual_memory_graph_incomplete")
     direct_audit_valid = not (
         str(audit.get("task_name") or "") != str(task_name)
         or transition_count <= 0
@@ -966,6 +1018,7 @@ def _validate_mobilegpt_converted_memory(
         or audit.get("source_success_boundary_supplied") is not True
         or audit.get("complete") is not True
     )
+    direct_audit_valid = direct_audit_valid or launch_only
     official_audit_valid = (
         str(audit.get("task_name") or "") == str(task_name)
         and audit.get("conversion_mode") == "official_mobilegpt_learning"
@@ -979,7 +1032,6 @@ def _validate_mobilegpt_converted_memory(
         not native_learning and not direct_audit_valid
     ):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
-    official_reader = audit.get("official_reader_validation")
     if (
         not isinstance(official_reader, dict)
         or official_reader.get("loadable") is not True
@@ -990,6 +1042,10 @@ def _validate_mobilegpt_converted_memory(
         )
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
+    if not launch_only and not inventory.get("has_recallable_subtasks"):
+        raise ValueError("mobilegpt_virtual_memory_missing_recallable_subtasks")
+    if not launch_only and not inventory.get("has_useful_actions"):
+        raise ValueError("mobilegpt_virtual_memory_missing_useful_actions")
     success_boundary = audit.get("source_success_boundary")
     if (
         not isinstance(success_boundary, dict)

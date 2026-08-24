@@ -603,6 +603,64 @@ def test_scheduler_accepts_only_runlog_aligned_direct_memory(
     assert result["memory_inventory"] == inventory
 
 
+def test_scheduler_accepts_validated_launch_only_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory = tmp_path / "bundle" / "memory"
+    memory.mkdir(parents=True)
+    (memory.parent / MOBILEGPT_MEMORY_MANIFEST).write_text(
+        json.dumps(
+            {
+                "schema_version": MOBILEGPT_MEMORY_SCHEMA,
+                "source_method": MOBILEGPT_SOURCE_METHOD,
+                "task_name": "OpenAppTaskEval",
+                "memory": {
+                    "sha256": "digest",
+                    "file_count": 3,
+                    "validation": {"launch_only": True},
+                },
+                "provenance": {
+                    "native_mobilegpt_learning": False,
+                    "learning_mode": MOBILEGPT_LEARNING_MODE,
+                    "teacher_forcing": False,
+                    "actions_supplied_to_mobilegpt": True,
+                    "runlog_transition_compilation": True,
+                    "complete_transition_mapping": True,
+                    "official_reader_validation": True,
+                    "source_emulator_used": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    inventory = {
+        "virtual_source_memory_complete": True,
+        "has_useful_actions": False,
+    }
+    monkeypatch.setattr(
+        scheduler.mobilegpt_memory_runtime,
+        "mobilegpt_memory_digest",
+        lambda _root: ("digest", 3),
+    )
+    monkeypatch.setattr(
+        scheduler.mobilegpt_memory_runtime,
+        "inspect_mobilegpt_memory",
+        lambda _root: inventory,
+    )
+    monkeypatch.setattr(
+        "src.integrations.mobilegpt.validate_mobilegpt_memory",
+        lambda _root: {"launch_only": True},
+    )
+
+    result = scheduler._validate_prepared_mobilegpt_memory(
+        memory,
+        task_name="OpenAppTaskEval",
+    )
+
+    assert result["memory_sha256"] == "digest"
+
+
 def test_mobilegpt_source_uses_native_converter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
