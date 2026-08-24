@@ -95,6 +95,13 @@ qualification replay 或任务专用脚本。调度层只提供 goal、注册的
 `src/integrations/script_replay.py` 仅实现 B-MoCA 的外部 benchmark replay selector；
 它复用 canonical runtime，但不是 AndroidWorld 方法、入口或资格测试。
 
+Page Embedding 与 OmniTransfer 的离线回归属于运行前的数据质量检查，不是第二条
+AndroidWorld 执行路径。`src/experiment/offline_transfer_regression.py` 只读取并封存
+source/target Observation pair，调用唯一 `PageEncoder` 和生产
+`default_transfer`，不创建 Host、Planner、episode、ADB 连接或 validator。成功与失败
+RunLog pair 都进入同一去重数据集；失败样本缺少可信目标时保持待标注。每轮全量评测
+刷新一个派生 `errors.json` 视图，修复后仍必须重跑主数据集，不能只跑当前错误子集。
+
 ## 4. 索引、ledger 和历史输入的区别
 
 | 对象 | 是否运行时入口 | 语义 |

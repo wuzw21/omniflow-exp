@@ -6,7 +6,7 @@
 
 ## Python 文件的修改权限
 
-仓库当前有 104 个 Python 文件。下面的规则覆盖全部 `omniflow/**/*.py`、
+仓库当前有 140 个 Python 文件。下面的规则覆盖全部 `omniflow/**/*.py`、
 `src/**/*.py`、`tests/**/*.py` 和 `tools/**/*.py`；新增 Python 文件必须先
 放入一个已有 owner 的语义边界，并在本表补充路径。这里的“可改”不是任何人
 可以随意改，而是允许修改实现；真正的判断还要看该文件所属的变更级别。
@@ -32,6 +32,7 @@
 | `src/experiment/run_tasks.py`, `run_task.py`, `run_process.py` | A | scheduler、一个原子结果、统一子进程生命周期；不得新增 runner 或重复 `Popen` policy |
 | `src/experiment/paths.py` | A/B | 唯一 repository-relative、index-relative 和 safe artifact path 规则；外部 roots 仍必须显式传入 |
 | `src/experiment/data_index.py`, `checks.py`, `source_evidence.py`, `observation_evidence.py` | B | 唯一 `data/current.json`、source/设备 gate、证据转换；source 不负责 provider 分派；不得增加 index、snapshot 或 source pool |
+| `src/experiment/offline_transfer_regression.py` | B | Page Embedding + canonical OmniTransfer 的离线 pair 数据集、标注和错误闭环；不得创建 Host/Planner/episode、第二 encoder/mapper 或 official result |
 | `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
 | `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
 | `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
@@ -120,6 +121,7 @@ rg --files -g '*.py' | sort
 | `src/experiment/emulator_processes.py` | managed emulator 进程识别；诊断命令不写结果 |
 | `src/experiment/checks.py` | source、device、外部资产和 protocol gate；默认检查 root 并启用已安装的实验 Accessibility 服务；不生成 Store |
 | `src/experiment/observation_evidence.py` | observation、截图、transfer coverage 证据封存 |
+| `src/experiment/offline_transfer_regression.py` | 自包含 source/target pair 的去重收集、人工标签、全量回归报告和派生错误视图；只调用唯一 PageEncoder 与生产 transfer seam |
 | `src/experiment/source_evidence.py` | source evidence 验证与 legacy input 的统一投影；不负责 AppAgent/MobileGPT 转换，不创建平行 source pool |
 | `src/experiment/source_records.py` | `CanonicalRunLog`/`SourceRunLogProfile` 纯数据模型；不读取 index、不执行任务 |
 | `src/experiment/data_index.py` | 唯一 `data/current.json` materializer/loader；不要增加 index/snapshot |
@@ -172,6 +174,7 @@ rg --files -g '*.py' | sort
 | `tests/test_function_store_migration.py` | 旧 Store/bundle 到新版 Store 的迁移合同；迁移行为改变时同步修改，不要把旧格式重新接回 runtime |
 | `tests/test_runtime_*.py` | runtime/checker/transfer/fallback 合同 |
 | `tests/test_transfer_*.py` / `tests/test_visual_transfer_pipeline.py` | OmniTransfer candidate/page encoder 合同 |
+| `tests/test_offline_transfer_regression.py` | 成功/失败 pair 去重、负样本、人工标注、全量错误闭环和零设备/模型调用合同 |
 | `tests/test_androidworld_*.py` | AndroidWorld Host、environment、method 合同 |
 | `tests/test_run_tasks.py` / `tests/test_exp_script.py` | 唯一 scheduler 和 public shell 合同 |
 | `tests/test_result_registry.py` / `tests/test_batch_outcomes.py` | ledger 与汇总分开验证 |

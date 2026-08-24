@@ -110,6 +110,38 @@ OmniFlow-exp/tests/
 ./.venv/bin/pytest -q
 ```
 
+### Page Embedding + OmniTransfer 离线回归闭环
+
+核心映射回归不启动 AndroidWorld、ADB、Planner 或模型。数据集保存在
+`data/offline_transfer_regression/<suite>/`，每个 case 是自包含的 source/target
+Observation pair、source action 和人工或成功轨迹给出的 ground truth。成功和失败
+RunLog 都进入同一个去重数据集；失败 pair 缺少可信答案时保留为
+`pending_annotation`，不会把错误动作当作标签。
+
+```bash
+# 成功或失败 RunLog pair 都用同一命令收集
+./.venv/bin/python -m src.experiment.offline_transfer_regression add-pair \
+  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
+  --source-run-log /absolute/source/run_log.json \
+  --target-run-log /absolute/target/run_log.json
+
+# 把 canonical offline comparison 中的失败 step 直接加入错误回归组
+./.venv/bin/python -m src.experiment.offline_transfer_regression add-errors \
+  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
+  --comparison /absolute/comparison.json
+
+# 运行全量闭环，并刷新当前错误视图
+./.venv/bin/python -m src.experiment.offline_transfer_regression run \
+  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
+  --report data/offline_transfer_regression/androidworld_core/latest_report.json \
+  --errors data/offline_transfer_regression/androidworld_core/errors.json
+```
+
+`annotate` 用于给 pending pair 补 `mapped + bounds` 或明确的 `null` 标签；
+`add-negative` 用于人工组合不同页面的 Embedding 负样本。`run` 始终重跑完整
+dataset，并把所有失败和待标注 case 同步到 `errors.json`。这个命令是离线数据
+质量工具，不是 AndroidWorld 实验入口，也不写 official validator 结果。
+
 重复文件清理记录（2026-08-23）：完全相同的 13 个评测压缩文件、一个重复查询
 文件和一个重复 quarantine 文件已移到系统废纸篓，保留副本分别位于
 `../OmniTransfer/runtime/evals/vision_widget_mapping/_repo/testset/`、
