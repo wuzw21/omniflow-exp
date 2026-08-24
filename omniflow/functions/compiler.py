@@ -180,7 +180,8 @@ never appear in candidates and can never become Function inputs.
             except ImportError as exc:
                 raise RuntimeError("Install omniflow[llm] to compile RunLogs") from exc
             options: dict[str, Any] = {
-                "api_key": os.getenv("OPENAI_API_KEY") or "not-required"
+                "api_key": os.getenv("OPENAI_API_KEY") or "not-required",
+                "max_retries": 0,
             }
             if os.getenv("OPENAI_BASE_URL"):
                 options["base_url"] = os.environ["OPENAI_BASE_URL"]
