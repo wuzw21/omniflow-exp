@@ -78,6 +78,9 @@ class VLMPlanner:
         )
         self.prompts = prompts or PromptSet()
         self._usage = LLMUsageTracker(component="planner", model=self.model)
+        self._metadata: dict[str, Any] = {}
+        self._rejected_tool_calls: list[dict[str, Any]] = []
+        self._turn_index = 0
 
     async def one_step_tool_call(
         self,
@@ -179,13 +182,17 @@ class VLMPlanner:
             for tool in tools
             if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
         }
+        request_tools = tools
+        self._metadata.clear()
+        self._rejected_tool_calls.clear()
         for attempt in range(2):
+            self._turn_index += 1
             self._usage.start_call()
             try:
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    tools=tools,
+                    tools=request_tools,
                     tool_choice="required",
                     temperature=0,
                     timeout=self.timeout,
@@ -202,14 +209,16 @@ class VLMPlanner:
                     f"expected_one:got_{len(tool_calls)}"
                 )
             call = tool_calls[0].function
+            tool_name = str(call.name or "").strip()
+            rejected_arguments: Any = call.arguments
             try:
-                tool_name = str(call.name or "").strip()
                 if tool_name not in visible_tool_names:
                     raise ValueError(f"planner_tool_not_visible:{tool_name}")
                 arguments = _parse_tool_arguments(
                     tool_name,
                     call.arguments,
                 )
+                rejected_arguments = dict(arguments)
                 if tool_name in function_catalog:
                     validate_arguments(
                         function_catalog[tool_name].input_schema,
@@ -235,7 +244,29 @@ class VLMPlanner:
                     )
                     arguments = dict(canonical["args"])
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                rejected_entry: dict[str, Any] = {
+                    "turn_index": self._turn_index,
+                    "tool": tool_name or None,
+                    "error": str(exc),
+                }
+                if rejected_arguments is not None:
+                    rejected_entry["arguments"] = rejected_arguments
+                self._rejected_tool_calls.append(rejected_entry)
                 if attempt == 0:
+                    if tool_name in visible_tool_names:
+                        request_tools = [
+                            tool
+                            for tool in tools
+                            if str(tool.get("function", {}).get("name") or "")
+                            == tool_name
+                        ]
+                    rejected_call = json.dumps(
+                        {
+                            "tool": tool_name or None,
+                            "arguments": rejected_arguments,
+                        },
+                        ensure_ascii=False,
+                    )
                     messages = [
                         *messages,
                         {
@@ -243,18 +274,33 @@ class VLMPlanner:
                             "content": (
                                 "The previous tool call arguments were invalid "
                                 f"({exc}). "
-                                "Return exactly one provided GUI tool call whose "
-                                "arguments are valid JSON and satisfy its schema, "
-                                "including raw current-Display pixel coordinates."
+                                f"Rejected tool call: {rejected_call}. "
+                                "Return exactly one corrected call to that same "
+                                "GUI tool whose arguments are valid JSON and "
+                                "satisfy its schema. Coordinate fields such as x "
+                                "and y must each be one scalar raw current-Display "
+                                "pixel number, never an array, object, or string."
                             ),
                         },
                     ]
                     continue
+                self._metadata = {
+                    "rejected_tool_calls": list(self._rejected_tool_calls)
+                }
                 if isinstance(exc, json.JSONDecodeError):
                     raise ValueError("planner_tool_arguments_must_be_json") from exc
                 raise
+            if self._rejected_tool_calls:
+                self._metadata = {
+                    "rejected_tool_calls": list(self._rejected_tool_calls)
+                }
             return ToolCall(tool_name, arguments)
         raise AssertionError("unreachable")
+
+    def take_metadata(self) -> dict[str, Any]:
+        metadata = dict(self._metadata)
+        self._metadata.clear()
+        return metadata
 
     def take_usage(self) -> dict[str, Any]:
         return self._usage.take_usage()

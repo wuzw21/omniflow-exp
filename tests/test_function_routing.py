@@ -811,6 +811,75 @@ class CapturingCompletions:
         return self.response
 
 
+class SequenceCompletions:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = list(responses)
+        self.requests: list[dict[str, object]] = []
+
+    def create(self, **request: object) -> object:
+        self.requests.append(request)
+        return self.responses.pop(0)
+
+
+def _planner_response(tool: str, arguments: dict[str, object]) -> object:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(
+                                name=tool,
+                                arguments=json.dumps(arguments),
+                            )
+                        )
+                    ]
+                )
+            )
+        ],
+        usage=None,
+    )
+
+
+def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> None:
+    completions = SequenceCompletions(
+        [
+            _planner_response("click", {"x": [361, 1136]}),
+            _planner_response("click", {"x": 361, "y": 1136}),
+        ]
+    )
+    planner = VLMPlanner(
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "Open Downloads",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+        )
+    )
+
+    assert planned == ToolCall(
+        "click",
+        {"x": pytest.approx(501.3888888888889), "y": 887.5},
+    )
+    assert len(completions.requests) == 2
+    retry_tools = completions.requests[1]["tools"]
+    assert [tool["function"]["name"] for tool in retry_tools] == ["click"]
+    correction = completions.requests[1]["messages"][-1]["content"]
+    assert "canonical_action_arg_type_invalid:x" in correction
+    assert '"x": [361, 1136]' in correction
+    assert planner.take_metadata()["rejected_tool_calls"] == [
+        {
+            "turn_index": 1,
+            "tool": "click",
+            "error": "canonical_action_arg_type_invalid:x",
+            "arguments": {"x": [361, 1136]},
+        }
+    ]
+
+
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     response = SimpleNamespace(
         choices=[
