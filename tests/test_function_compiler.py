@@ -236,6 +236,44 @@ def test_function_rejects_ungrounded_input_text() -> None:
         )
 
 
+def test_function_rejects_coordinate_parameter_bindings() -> None:
+    with pytest.raises(
+        ValueError,
+        match="function_binding_target_non_parameterizable",
+    ):
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "click_button",
+                "name": "Click button",
+                "description": "Click the visible button once.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"x": {"type": "number"}},
+                    "required": ["x"],
+                    "additionalProperties": False,
+                },
+                "bindings": [
+                    {
+                        "source": "$.arguments.x",
+                        "target": "$.steps[0].action.args.x",
+                    }
+                ],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "button-page",
+                        "action": {
+                            "tool": "click",
+                            "args": {"x": 0, "y": 250},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
+
+
 def test_compiler_registers_source_call_for_argumentless_authored_function(
     tmp_path: Path,
 ) -> None:

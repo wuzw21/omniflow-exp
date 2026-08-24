@@ -26,6 +26,14 @@ _TARGET_PATH = re.compile(
     r"(?P<tail>(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)$"
 )
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)]")
+_NON_PARAMETERIZABLE_ACTION_ARGUMENTS = {
+    "x",
+    "x1",
+    "x2",
+    "y",
+    "y1",
+    "y2",
+}
 
 
 def parse_function_artifact(value: dict[str, Any]) -> Function:
@@ -194,6 +202,14 @@ def _validate_bindings(function: Function) -> None:
         if source_match is None or target_match is None:
             raise ValueError(f"function_binding_path_invalid:{source}->{target}")
         source_tokens = _tokens(".arguments" + source_match.group("tail"))
+        target_tokens = _tokens(target_match.group("tail"))
+        if (
+            target_tokens
+            and target_tokens[-1] in _NON_PARAMETERIZABLE_ACTION_ARGUMENTS
+        ):
+            raise ValueError(
+                f"function_binding_target_non_parameterizable:{target}"
+            )
         property_name = source_tokens[1] if len(source_tokens) > 1 else ""
         if property_name not in properties:
             raise ValueError(f"function_binding_source_unknown:{source}")
@@ -207,7 +223,7 @@ def _validate_bindings(function: Function) -> None:
         try:
             _read_path(
                 function.steps[action_index].action.args,
-                _tokens(target_match.group("tail")),
+                target_tokens,
             )
         except (IndexError, KeyError, TypeError) as error:
             raise ValueError(f"function_binding_target_missing:{target}") from error

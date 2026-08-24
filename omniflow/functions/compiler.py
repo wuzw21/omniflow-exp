@@ -220,6 +220,9 @@ by Function actions. Every required parameter must have direct bindings from
 $.arguments.NAME or a fixed array index to an existing
 $.steps[INDEX].action.args.FIELD. Put exact successful values in
 arguments. Use empty type-correct placeholders in bound action fields.
+Never bind coordinates (x/y/x1/y1/x2/y2); they are source transfer evidence,
+not caller-supplied Function arguments. Use the fixed recorded coordinates and
+let OmniTransfer map them against the current page.
 
 Preserve selected source actions in order and do not invent actions or UI
 evidence. Coordinate fields in the supplied facts are already normalized to
