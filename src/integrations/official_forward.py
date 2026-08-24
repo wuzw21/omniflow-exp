@@ -1694,6 +1694,92 @@ def _run_adb(
     )
 
 
+def _launch_mobilegpt_target_app(
+    adb_path: str,
+    serial: str,
+    target_package: str,
+) -> dict[str, Any]:
+    """Put the official MobileGPT target app in the foreground before broadcast.
+
+    The pinned Accessibility client launches the selected package with
+    ``PackageManager.getLaunchIntentForPackage``. Android system packages on
+    some tablet images expose a valid MAIN/LAUNCHER activity to the shell but
+    return ``null`` from that client API. In that state the official client
+    remains on Launcher and can never produce the first XML frame. Resolve and
+    start the same official launcher activity through ADB as a setup
+    precondition; all subsequent observation, planning, and device actions
+    remain owned by the official MobileGPT client/server.
+    """
+
+    package = str(target_package or "").strip()
+    if not package:
+        return {
+            "target_package": "",
+            "started": False,
+            "reason": "target_package_unresolved",
+        }
+
+    resolved = _run_adb(
+        adb_path,
+        serial,
+        [
+            "shell",
+            "cmd",
+            "package",
+            "resolve-activity",
+            "--brief",
+            "--components",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-p",
+            package,
+        ],
+        check=False,
+    )
+    component = ""
+    for line in reversed(str(resolved.stdout or "").splitlines()):
+        value = line.strip()
+        if value.startswith(package + "/"):
+            component = value
+            break
+
+    if component:
+        started = _run_adb(
+            adb_path,
+            serial,
+            ["shell", "am", "start", "-W", "-n", component],
+            check=False,
+        )
+        return {
+            "target_package": package,
+            "component": component,
+            "started": started.returncode == 0,
+            "returncode": int(started.returncode),
+            "output": str(started.stdout or "")[-2000:],
+            "launcher": "am_start_resolved_activity",
+        }
+
+    # Keep a generic fallback for third-party packages whose launcher cannot
+    # be resolved by the image's package shell. This only asks Android to open
+    # the declared app; it does not inject an action into MobileGPT.
+    started = _run_adb(
+        adb_path,
+        serial,
+        ["shell", "monkey", "-p", package, "1"],
+        check=False,
+    )
+    return {
+        "target_package": package,
+        "component": "",
+        "started": started.returncode == 0,
+        "returncode": int(started.returncode),
+        "output": str(started.stdout or "")[-2000:],
+        "launcher": "monkey_package_fallback",
+    }
+
+
 def _autodroid_display_ids(display_dump: str) -> tuple[int, ...]:
     return tuple(
         sorted(
@@ -2460,6 +2546,24 @@ def _run_mobilegpt_client(
             ["shell", "am", "force-stop", target_package],
             check=False,
         )
+        target_launch = _launch_mobilegpt_target_app(
+            adb_path,
+            serial,
+            target_package,
+        )
+        (output / "target_app_launch.json").write_text(
+            json.dumps(target_launch, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        if not target_launch.get("started"):
+            raise RuntimeError(
+                "mobilegpt_target_app_launch_failed:"
+                f"{target_package}:{target_launch.get('returncode')}"
+            )
+        # Give the target activity one scheduling turn before the official
+        # client receives the instruction. This closes the tablet-only race
+        # where the Accessibility service is bound but still sees Launcher.
+        time.sleep(1.0)
     _run_adb(adb_path, serial, ["logcat", "-c"])
     _run_adb(
         adb_path,

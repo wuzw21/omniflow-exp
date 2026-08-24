@@ -21,6 +21,7 @@ from src.integrations.official_forward import (
     _count_droidbot_output_events,
     _configure_mobilegpt_client_launch_lifecycle,
     _configure_mobilegpt_telemetry,
+    _launch_mobilegpt_target_app,
     _prepare_autodroid_device,
     prepare_appagent_workspace,
     prepare_mobilegpt_server,
@@ -29,6 +30,40 @@ from src.integrations.official_forward import (
     validate_autodroid_memory_root,
     write_adb_proxy,
 )
+
+
+def test_mobilegpt_target_app_is_started_from_resolved_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_adb(_adb: str, _serial: str, args: list[str], **_kwargs: object):
+        calls.append(list(args))
+        if "resolve-activity" in args:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "priority=0 preferredOrder=0 match=0x108000\n"
+                    "com.google.android.contacts/com.android.contacts.activities.PeopleActivity\n"
+                ),
+            )
+        return SimpleNamespace(returncode=0, stdout="Status: ok\n")
+
+    monkeypatch.setattr(official_forward, "_run_adb", fake_adb)
+
+    result = _launch_mobilegpt_target_app(
+        "adb",
+        "emulator-5554",
+        "com.google.android.contacts",
+    )
+
+    assert result["started"] is True
+    assert result["launcher"] == "am_start_resolved_activity"
+    assert calls[-1][-3:] == [
+        "-W",
+        "-n",
+        "com.google.android.contacts/com.android.contacts.activities.PeopleActivity",
+    ]
 
 
 def test_mobilegpt_accessibility_binding_requires_the_mobilegpt_service_in_bound_block() -> None:
