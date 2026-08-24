@@ -50,6 +50,12 @@ def assess_transfer(
             "omnitransfer_target_not_executable",
             confidence,
         )
+    if not _target_semantics_match(transfer.detail):
+        return TransferAdmission(
+            False,
+            "omnitransfer_target_semantics_mismatch",
+            confidence,
+        )
     return TransferAdmission(True, None, confidence)
 
 
@@ -119,6 +125,47 @@ def _target_is_executable(
         str(element.attrib.get(attribute, "false")).lower() == "true"
         for element in enabled
     )
+
+
+def _target_semantics_match(detail: dict[str, Any]) -> bool:
+    """Reject a clickable top candidate that loses a stable source identity."""
+
+    source = detail.get("source")
+    candidates = detail.get("candidates")
+    if not isinstance(source, dict) or not isinstance(candidates, list) or not candidates:
+        return True
+    target = candidates[0]
+    if not isinstance(target, dict):
+        return True
+
+    source_resource = _semantic_value(source.get("resource_id"))
+    target_resource = _semantic_value(target.get("resource_id"))
+    if source_resource and target_resource and source_resource == target_resource:
+        return True
+
+    source_labels = {
+        value
+        for value in (
+            _semantic_value(source.get("text")),
+            _semantic_value(source.get("content_desc")),
+        )
+        if value
+    }
+    if not source_labels:
+        return True
+    target_labels = {
+        value
+        for value in (
+            _semantic_value(target.get("text")),
+            _semantic_value(target.get("content_desc")),
+        )
+        if value
+    }
+    return bool(source_labels & target_labels)
+
+
+def _semantic_value(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
 
 
 def _canonical_coordinates_valid(args: dict[str, Any], keys: tuple[str, ...]) -> bool:

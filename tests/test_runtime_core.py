@@ -185,6 +185,52 @@ def test_core_blocks_transfer_to_non_executable_target(monkeypatch) -> None:
     assert host.actions == []
 
 
+def test_core_blocks_clickable_transfer_with_mismatched_target_semantics(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+    before = Observation(
+        xml=(
+            '<hierarchy><node class="android.widget.Button" '
+            'content-desc="Shutter" bounds="[100,100][300,200]" '
+            'clickable="true" enabled="true" /></hierarchy>'
+        ),
+        package_name="com.example",
+        extra={"display": {"width": 400, "height": 800}},
+    )
+    host = RecordingHost(Observation(xml="<after/>"))
+
+    async def transfer(*_args: object) -> TransferResult:
+        return TransferResult(
+            Action("click", {"x": 500.0, "y": 187.5}),
+            reason="omnitransfer_mapped",
+            detail={
+                "absolute_contextual_confidence": 1.0,
+                "source": {"content_desc": "Toggle mode list"},
+                "candidates": [
+                    {
+                        "content_desc": "Shutter",
+                        "resource_id": "camera:id/shutter",
+                    }
+                ],
+            },
+        )
+
+    result = asyncio.run(
+        core.execute_action(
+            Action("click", {"x": 200, "y": 150}),
+            observation=before,
+            host=host,
+            plugins=PluginSet(transfer=transfer),
+            source_state=Observation(xml="<hierarchy />"),
+        )
+    )
+
+    assert result.success is False
+    assert result.error == "omnitransfer_target_semantics_mismatch"
+    assert host.actions == []
+
+
 def test_core_has_no_open_app_catalog_gate(monkeypatch) -> None:
     monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
     before = Observation(package_name="cn.com.omnimind.bot.debug")
