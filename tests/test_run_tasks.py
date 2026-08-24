@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from runlog_fixtures import androidworld_run_log
+from src.experiment import run_tasks as scheduler
 
 from src.experiment.run_task import (
     DeviceTarget,
@@ -1209,6 +1210,77 @@ def test_mobilegpt_preparation_rejects_legacy_unaligned_memory(
             attempt_root=tmp_path / "attempt",
             deadline=Deadline(60),
         )
+
+
+def test_scheduler_reuses_sealed_native_mobilegpt_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.experiment.mobilegpt_contract import (
+        MOBILEGPT_LEARNING_MODE,
+        MOBILEGPT_MEMORY_SCHEMA,
+        MOBILEGPT_SOURCE_METHOD,
+    )
+
+    memory = tmp_path / "bundle" / "memory"
+    memory.mkdir(parents=True)
+    (memory.parent / "mobilegpt_memory_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": MOBILEGPT_MEMORY_SCHEMA,
+                "source_method": MOBILEGPT_SOURCE_METHOD,
+                "task_name": "SystemBluetoothTurnOn",
+                "memory": {"sha256": "digest", "file_count": 3},
+                "source_run_log": {"relative_path": "provenance/source.run_log.json"},
+                "provenance": {
+                    "native_mobilegpt_learning": True,
+                    "task_local_memory": True,
+                    "learning_mode": MOBILEGPT_LEARNING_MODE,
+                    "teacher_forcing": False,
+                    "synthetic_subtasks": False,
+                    "semantic_subtasks": True,
+                    "original_mobilegpt_prompts": True,
+                    "actions_supplied_to_mobilegpt": False,
+                    "runlog_transition_compilation": False,
+                    "complete_transition_mapping": False,
+                    "official_reader_validation": True,
+                    "function_store_used": False,
+                    "function_conversion_enabled": False,
+                    "target_inputs_read": False,
+                    "target_observations_read": False,
+                    "validator_state_read": False,
+                    "coordinate_replay": False,
+                    "source_emulator_used": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        scheduler.mobilegpt_memory_runtime,
+        "mobilegpt_memory_digest",
+        lambda _root: ("digest", 3),
+    )
+    monkeypatch.setattr(
+        scheduler.mobilegpt_memory_runtime,
+        "inspect_mobilegpt_memory",
+        lambda _root: {
+            "virtual_source_memory_complete": True,
+            "has_useful_actions": True,
+        },
+    )
+    monkeypatch.setattr(
+        "src.integrations.mobilegpt_memory.validate_mobilegpt_adapted_memory",
+        lambda *_args, **_kwargs: {"native": True},
+    )
+
+    result = scheduler._validate_prepared_mobilegpt_memory(
+        memory,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert result["memory_sha256"] == "digest"
+    assert result["memory_inventory"]["virtual_source_memory_complete"] is True
 
 
 def test_source_device_uses_protocol_avd() -> None:

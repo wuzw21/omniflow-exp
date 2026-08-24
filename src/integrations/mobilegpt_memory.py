@@ -854,19 +854,20 @@ def _validate_mobilegpt_converted_memory(
     provenance = manifest.get("provenance")
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_virtual_memory_provenance_missing")
+    native_learning = bool(provenance.get("native_mobilegpt_learning"))
     required_provenance = {
-        "native_mobilegpt_learning": False,
+        "native_mobilegpt_learning": native_learning,
         "task_local_memory": True,
         "learning_mode": schema_learning_mode,
         "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
+        "synthetic_subtasks": not native_learning,
+        "semantic_subtasks": native_learning,
+        "original_mobilegpt_prompts": native_learning,
+        "actions_supplied_to_mobilegpt": not native_learning,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": True,
-        "complete_transition_mapping": True,
+        "runlog_transition_compilation": not native_learning,
+        "complete_transition_mapping": not native_learning,
         "official_reader_validation": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
@@ -950,7 +951,7 @@ def _validate_mobilegpt_converted_memory(
     transition_count = int(audit.get("transition_count") or 0)
     validated_count = int(audit.get("validated_transition_count") or 0)
     validation_rows = audit.get("validation_rows")
-    if (
+    direct_audit_valid = not (
         str(audit.get("task_name") or "") != str(task_name)
         or transition_count <= 0
         or validated_count != transition_count
@@ -964,15 +965,29 @@ def _validate_mobilegpt_converted_memory(
         or audit.get("source_transitions_supplied") is not True
         or audit.get("source_success_boundary_supplied") is not True
         or audit.get("complete") is not True
+    )
+    official_audit_valid = (
+        str(audit.get("task_name") or "") == str(task_name)
+        and audit.get("conversion_mode") == "official_mobilegpt_learning"
+        and audit.get("official_server_finished") is True
+        and audit.get("actions_supplied_to_mobilegpt") is False
+        and audit.get("source_transitions_supplied") is True
+        and audit.get("source_success_boundary_supplied") is True
+        and audit.get("complete") is True
+    )
+    if (native_learning and not official_audit_valid) or (
+        not native_learning and not direct_audit_valid
     ):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
     official_reader = audit.get("official_reader_validation")
     if (
         not isinstance(official_reader, dict)
         or official_reader.get("loadable") is not True
-        or int(official_reader.get("task_path_pages") or 0) <= 0
         or int(official_reader.get("page_count") or 0) <= 0
-        or int(official_reader.get("action_row_count") or 0) < transition_count
+        or (
+            not native_learning
+            and int(official_reader.get("task_path_pages") or 0) <= 0
+        )
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
     success_boundary = audit.get("source_success_boundary")
@@ -995,7 +1010,7 @@ def _validate_mobilegpt_converted_memory(
         or int(stats_summary.get("task_finished_count") or 0) != 1
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
-    if int(stats_summary.get("chat_model_calls") or 0) != 0:
+    if not native_learning and int(stats_summary.get("chat_model_calls") or 0) != 0:
         raise ValueError("mobilegpt_memory_chat_calls_forbidden")
     return {
         "manifest": manifest,

@@ -1415,20 +1415,42 @@ def _validate_prepared_mobilegpt_memory(
             f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
         ) from error
     provenance = manifest.get("provenance")
-    if not (
+    native_learning = isinstance(provenance, dict) and bool(
+        provenance.get("native_mobilegpt_learning")
+    )
+    common_provenance_valid = (
         manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
         and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
         and str(manifest.get("task_name") or "") == str(task_name)
         and isinstance(provenance, dict)
-        and provenance.get("native_mobilegpt_learning") is False
         and provenance.get("learning_mode") == MOBILEGPT_LEARNING_MODE
         and provenance.get("teacher_forcing") is False
+        and provenance.get("official_reader_validation") is True
+        and provenance.get("source_emulator_used") is False
+    )
+    direct_provenance_valid = common_provenance_valid and (
+        not native_learning
         and provenance.get("actions_supplied_to_mobilegpt") is True
         and provenance.get("runlog_transition_compilation") is True
         and provenance.get("complete_transition_mapping") is True
-        and provenance.get("official_reader_validation") is True
-        and provenance.get("source_emulator_used") is False
-    ):
+    )
+    native_provenance_valid = common_provenance_valid and (
+        native_learning
+        and provenance.get("task_local_memory") is True
+        and provenance.get("function_store_used") is False
+        and provenance.get("function_conversion_enabled") is False
+        and provenance.get("target_inputs_read") is False
+        and provenance.get("target_observations_read") is False
+        and provenance.get("validator_state_read") is False
+        and provenance.get("coordinate_replay") is False
+        and provenance.get("semantic_subtasks") is True
+        and provenance.get("original_mobilegpt_prompts") is True
+        and provenance.get("actions_supplied_to_mobilegpt") is False
+        and provenance.get("runlog_transition_compilation") is False
+        and provenance.get("complete_transition_mapping") is False
+        and provenance.get("synthetic_subtasks") is False
+    )
+    if not (direct_provenance_valid or native_provenance_valid):
         raise ValueError(
             f"mobilegpt_source_memory_not_authoritative:{manifest_path}"
         )
@@ -1452,9 +1474,28 @@ def _validate_prepared_mobilegpt_memory(
         or not inventory.get("has_useful_actions")
     ):
         raise ValueError(f"mobilegpt_source_memory_content_invalid:{manifest_path}")
-    from src.integrations.mobilegpt import validate_mobilegpt_memory
+    if native_learning:
+        from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
 
-    validate_mobilegpt_memory(root)
+        source_record = manifest.get("source_run_log")
+        if not isinstance(source_record, dict):
+            raise ValueError(
+                f"mobilegpt_source_memory_source_evidence_missing:{manifest_path}"
+            )
+        source_path = (
+            root.parent / str(source_record.get("relative_path") or "")
+        ).resolve()
+        validate_mobilegpt_adapted_memory(
+            root,
+            task_name=str(task_name),
+            source_seed=SOURCE_SEED,
+            source_run_log=source_path,
+            expected_source_method=MOBILEGPT_SOURCE_METHOD,
+        )
+    else:
+        from src.integrations.mobilegpt import validate_mobilegpt_memory
+
+        validate_mobilegpt_memory(root)
     return {
         "task_name": str(task_name),
         "memory_sha256": digest,

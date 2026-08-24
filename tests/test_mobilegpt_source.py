@@ -502,7 +502,7 @@ def test_scheduler_accepts_only_runlog_aligned_direct_memory(
         encoding="utf-8",
     )
     inventory = {
-        "native_memory_complete": True,
+        "virtual_source_memory_complete": True,
         "has_useful_actions": True,
     }
     monkeypatch.setattr(
@@ -517,7 +517,7 @@ def test_scheduler_accepts_only_runlog_aligned_direct_memory(
     )
     monkeypatch.setattr(
         "src.integrations.mobilegpt.validate_mobilegpt_memory",
-        lambda _root: {"native_memory_complete": True},
+        lambda _root: {"virtual_source_memory_complete": True},
     )
 
     result = scheduler._validate_prepared_mobilegpt_memory(
