@@ -1034,6 +1034,38 @@ def test_anonymous_verified_input_avoids_unrelated_children_generalization(
     }
 
 
+def test_direct_conversion_persists_anonymous_input_through_official_save_task(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "text": "Daily Journal"},
+            {"action_type": "click", "x": 50, "y": 50},
+        ],
+        forests=[
+            '<hierarchy><node id="19" class="android.widget.EditText" text="" '
+            'clickable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node id="19" class="android.widget.EditText" '
+            'text="Daily Journal" clickable="true" bounds="[0,0][100,100]"/>'
+            '<node text="Todo" clickable="true" bounds="[0,0][100,100]"/>'
+            "</hierarchy>",
+        ],
+    )
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 2
+
+
 def test_action_generalization_avoids_nested_native_placeholders(
     tmp_path: Path,
 ) -> None:

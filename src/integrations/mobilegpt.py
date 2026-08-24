@@ -3176,6 +3176,15 @@ def convert_runlog_to_mobilegpt_memory(
                 selected_subtask=selected_subtask,
                 generalize_action=None,
             )
+            # Memory.save_task owns the official action generalization pass.
+            # The OOB execution representation may carry a structured
+            # ``attrib`` selector for an anonymous input, but upstream
+            # generalize_action_to_arguments expects every non-index value in
+            # its raw input to be a string.  Supply the original index/text
+            # action here and let MobileGPT derive its own selector once.
+            raw_parameters = raw_converted.get("parameters")
+            if isinstance(raw_parameters, dict):
+                raw_parameters.pop("attrib", None)
             action_example = _native_action_example(
                 instruction=trajectory["instruction"],
                 selected_subtask=selected_subtask,
