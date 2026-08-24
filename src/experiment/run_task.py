@@ -89,7 +89,6 @@ from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations.official_forward import (
-    resolve_mobilegpt_client_host,
     validate_autodroid_memory_root,
 )
 
@@ -4941,7 +4940,7 @@ def build_mobilegpt_command(
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    del fixed_task_seed
+    del fixed_task_seed, start_timeout_sec
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -4957,12 +4956,7 @@ def build_mobilegpt_command(
             fallback="run",
         )
     client_runtime_env = _subprocess_env({})
-    client_host = resolve_mobilegpt_client_host(
-        client_runtime_env.get("MOBILEGPT_CLIENT_HOST", ""),
-        serial=target.serial,
-        adb_path=adb_path,
-    )
-    client_output = resolved_output / "official_client"
+    client_output = resolved_output / "oob_client"
     effective_params = dict(task_params_override or item.params or {})
     instruction = task_goal_for_params(
         item.task,
@@ -4973,17 +4967,13 @@ def build_mobilegpt_command(
     client_argv = [
         sys.executable,
         "-m",
-        "src.integrations.official_forward",
-        "--baseline",
-        "mobilegpt",
-        "--root",
-        str(resolve_path(mobilegpt_root, root=repo_root)),
+        "src.integrations.mobilegpt_oob_client",
         "--serial",
         target.serial,
         "--adb",
         str(adb_path or "adb"),
-        "--host",
-        client_host,
+        "--server-host",
+        str(server_host),
         "--instruction",
         instruction,
         "--output",
@@ -5017,42 +5007,32 @@ def build_mobilegpt_command(
         client_argv.extend(["--server-log", str(server_log_path)])
     if not perform_emulator_setup:
         client_argv.append("--no-perform-emulator-setup")
-    # The task runner deliberately constructs a narrow child environment, but
-    # the official MobileGPT client is built inside that child.  Preserve the
-    # runtime toolchain selected by the public launcher so the client uses the
-    # configured JDK/Gradle/SDK rather than the host's stale defaults.
     client_environment = {
         "ANDROID_SERIAL": target.serial,
         "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
         "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
         "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-        # Preserve the campaign's canonical physical backend.  In the formal
-        # setup this is OOB; forcing AndroidWorld here re-enables the legacy
-        # accessibility-forwarder and can fail before the official client
-        # executes its first action.
+        "MOBILEGPT_OOB_SERVER_HOST": "127.0.0.1",
         "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": str(
             os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
         ).strip().lower()
         or "oob",
+        "PYTHONPATH": os.pathsep.join(
+            value
+            for value in (
+                str(repo_root),
+                str(repo_root / "src"),
+                str(client_runtime_env.get("PYTHONPATH") or ""),
+            )
+            if value
+        ),
     }
-    for key in (
-        "ANDROID_HOME",
-        "ANDROID_SDK_ROOT",
-        "GRADLE_USER_HOME",
-        "JAVA_HOME",
-        "OMNIFLOW_GRADLE_BIN",
-        # Reuse the prebuilt official MobileGPT APK from the public launcher.
-        # Without this narrow-environment entry, each task can fall back to a
-        # per-task Gradle/network build and turn a configured run into an
-        # environment failure.
-        "OMNIFLOW_MOBILEGPT_APK",
-        "PATH",
-    ):
+    for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT", "PATH"):
         value = str(client_runtime_env.get(key) or "").strip()
         if value:
             client_environment[key] = value
     return CommandSpec(
-        label=f"mobilegpt:official:{target.label}",
+        label=f"mobilegpt:oob:{target.label}",
         argv=client_argv,
         env=client_environment,
         cwd=repo_root,
@@ -5061,17 +5041,18 @@ def build_mobilegpt_command(
             float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
         ),
         metadata={
-            "mode": "mobilegpt_official_client_forward",
+            "mode": "mobilegpt_official_planner_oob_control",
             "device_target": target.to_dict(),
             "mobilegpt_stats_jsonl": str(stats_jsonl),
             "mobilegpt_server_host": str(server_host),
             "mobilegpt_server_port": int(server_port),
             "target_package": str(target_package or "").strip(),
-            "official_lifecycle": "mobilegpt_server_and_client",
+            "official_lifecycle": "mobilegpt_server_and_oob_client",
             "official_server_entry": "Server/main.py",
-            "official_client_entry": "App/app",
-            "official_client_host": client_host,
+            "official_client_entry": "src.integrations.mobilegpt_oob_client",
             "official_client_output": str(client_output),
+            "observe_backend": "oob_control",
+            "action_backend": "oob_control",
             "external_forward_only": True,
             "app_ready_timeout_sec": float(app_ready_timeout_sec),
             "app_ready_poll_sec": float(app_ready_poll_sec),
