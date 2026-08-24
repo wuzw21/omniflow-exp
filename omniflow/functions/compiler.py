@@ -93,7 +93,7 @@ def compile_runlog_to_store(
         for action in projected_actions:
             steps.append(
                 {
-                    "step_index": len(steps),
+                    "source_step_index": len(steps),
                     "before_state_id": before_state_id,
                     "action": action,
                     "result": {"success": True},
@@ -104,7 +104,7 @@ def compile_runlog_to_store(
     if not steps:
         raise ValueError("successful_source_actions_required")
     facts = {
-        "schema_version": "omniflow.function-compilation-facts.v1",
+        "schema_version": "omniflow.function-compilation-facts.v2",
         "run_id": str(payload.get("run_id") or "successful-source"),
         "goal": goal,
         "status": "succeeded",
@@ -174,9 +174,15 @@ contains only tool and args. Every Function repeats schema_version
 "omniflow.function.v2". Never place a JSON path or template in an action value;
 bound action values use empty type-correct placeholders.
 
+Every Function owns its own local step sequence. Assign its `step_index` values
+from zero in exact array order: 0, 1, 2, ... with no gaps. Never copy a supplied
+`source_step_index` into Function `step_index`. Bindings such as `$.steps[0]`
+also refer to these Function-local array positions. Use `source_state_id`, and
+only `source_state_id`, to link a Function step to its original RunLog evidence.
+
 Treat this as action-grounded compilation of a raw human Record.
-Inspect every supplied run_log step in step_index order before authoring. The
-top-level reason must account for every source step index and say whether it was
+Inspect every supplied run_log step in source_step_index order before authoring.
+The top-level reason must account for every source step index and say whether it was
 kept, grouped with neighboring steps, parameterized, or omitted, with a brief
 evidence-based explanation.
 

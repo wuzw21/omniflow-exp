@@ -411,3 +411,9 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     system_prompt = captured["messages"][0]["content"]
     assert "Never encode a repetition count" in system_prompt
     assert "let the Planner call that one-step Function repeatedly" in system_prompt
+    assert "Never copy a supplied\n`source_step_index`" in system_prompt
+    assert "only `source_state_id`" in system_prompt
+    facts = json.loads(captured["messages"][1]["content"])["run_log"]
+    assert facts["schema_version"] == "omniflow.function-compilation-facts.v2"
+    assert [step["source_step_index"] for step in facts["steps"]] == [0, 1]
+    assert all("step_index" not in step for step in facts["steps"])
