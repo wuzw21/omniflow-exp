@@ -722,6 +722,95 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
     assert result["total_tokens"] == 140
 
 
+def test_model_plan_copies_semantic_parameters_to_complete_function(
+    tmp_path: Path,
+) -> None:
+    form_state = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy><node class="android.widget.EditText" '
+            'text="Enter the product" bounds="[100,100][600,200]" '
+            'editable="true" focused="true" /></hierarchy>'
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "product-form",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+    payload = androidworld_run_log(
+        [
+            {"action_type": "input_text", "text": "3125"},
+            {"action_type": "click", "x": 600, "y": 900},
+        ],
+        observations=[
+            form_state,
+            androidworld_state("product-entered", width=720, height=1280),
+        ],
+        goal="Enter product 3125 and submit it.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Create a reusable input Function and complete envelope.",
+        "plan": {
+            "functions": [
+                {
+                    "function_id": "enter_product",
+                    "name": "Enter product",
+                    "description": "Enter the requested product.",
+                    "source_step_indices": [0],
+                    "parameters": [
+                        {
+                            "name": "product",
+                            "description": "Product to enter",
+                            "source_step_index": 0,
+                            "arg_name": "text",
+                        }
+                    ],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_product_form",
+                "name": "Complete product form",
+                "description": "Enter the product and submit the form.",
+                "source_step_indices": [0, 1],
+                "parameters": [],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    complete = store["functions"]["complete_product_form"]
+    assert complete["input_schema"]["required"] == ["product"]
+    assert complete["bindings"] == [
+        {
+            "source": "$.arguments.product",
+            "target": "$.steps[0].action.args.text",
+        }
+    ]
+    assert complete["steps"][0]["action"]["args"]["text"] == ""
+    assert "copied a validated semantic parameter" in result["reason"]
+
+
 def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     tmp_path: Path,
 ) -> None:

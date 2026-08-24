@@ -574,6 +574,7 @@ def _materialize_authoring_plan(
     arguments: dict[str, dict[str, Any]] = {}
     selected_source_indices: set[int] = set()
     semantic_parameter_targets: set[tuple[int, str]] = set()
+    semantic_parameter_specs: dict[tuple[int, str], dict[str, Any]] = {}
     complete_parameter_targets: set[tuple[int, str]] = set()
     complete_source_indices: set[int] = set()
     materialization_notes: list[str] = []
@@ -747,6 +748,28 @@ def _materialize_authoring_plan(
         raw_parameters = raw_function.get("parameters")
         if not isinstance(raw_parameters, list):
             raise ValueError("function_author_plan_parameters_invalid")
+        if is_complete:
+            # The complete Function is the public API envelope.  Authoring
+            # models sometimes select a parameter on a semantic sub-function
+            # but forget to repeat it on complete_function.  Repair that
+            # omission from the already validated semantic proposal instead of
+            # falling back to a hard-coded recorded Function.
+            explicit_targets = {
+                (
+                    parameter.get("source_step_index"),
+                    str(parameter.get("arg_name") or "").strip(),
+                )
+                for parameter in raw_parameters
+                if isinstance(parameter, dict)
+            }
+            raw_parameters = [*raw_parameters]
+            for target, parameter in semantic_parameter_specs.items():
+                if target[0] in indices and target not in explicit_targets:
+                    raw_parameters.append(dict(parameter))
+                    materialization_notes.append(
+                        "Compiler copied a validated semantic parameter onto "
+                        "the complete Function API."
+                    )
         parameter_proposals: list[dict[str, Any]] = []
         source_arguments: dict[str, Any] = {}
         for parameter in raw_parameters:
@@ -770,6 +793,15 @@ def _materialize_authoring_plan(
                 complete_parameter_targets.add(parameter_target)
             else:
                 semantic_parameter_targets.add(parameter_target)
+                semantic_parameter_specs.setdefault(
+                    parameter_target,
+                    {
+                        "name": parameter_name,
+                        "description": str(parameter.get("description") or "").strip(),
+                        "source_step_index": int(source_index),
+                        "arg_name": arg_name,
+                    },
+                )
             parameter_proposals.append(
                 {
                     "name": parameter_name,
