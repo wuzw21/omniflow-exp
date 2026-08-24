@@ -71,6 +71,38 @@ def test_runlog_import_recovers_missing_display_from_fullscreen_xml() -> None:
     ]
 
 
+def test_click_projection_preserves_clickable_node_semantics() -> None:
+    payload = androidworld_run_log(
+        [{"action_type": "click", "x": 360, "y": 640}]
+    )
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy width="720" height="1280">'
+            '<node class="android.widget.Button" text="7" '
+            'resource-id="com.example:id/digit_7" clickable="true" '
+            'bounds="[288,576][432,704]" />'
+            "</hierarchy>"
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "digit-7",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {
+            "tool": "click",
+            "args": {
+                "target_description": "7",
+                "x": 500.0,
+                "y": 500.0,
+            },
+        }
+    ]
+
+
 def test_fixed_replay_capture_preserves_native_androidworld_state() -> None:
     native_state = androidworld_state("capture", with_pixels=True)
     observation = SimpleNamespace(
@@ -1366,6 +1398,7 @@ def test_fixed_replay_accepts_only_omniflow_run_log() -> None:
         {
             "type": "click",
             "params": {
+                "target_description": "Network & internet",
                 "x": 500,
                 "y": 500,
             },

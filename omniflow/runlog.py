@@ -251,6 +251,35 @@ def _xml_node_area(node: ET.Element) -> float:
     return (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
 
 
+def _androidworld_click_target(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> ET.Element | None:
+    """Find the smallest clickable native node containing a recorded click."""
+
+    display = _observation_display(observation)
+    point = _androidworld_action_point(action, observation)
+    if display is None or point is None:
+        return None
+    try:
+        root = ET.fromstring(observation_xml(observation))
+    except ET.ParseError:
+        return None
+    x = point["x"] / 1000.0 * display[0]
+    y = point["y"] / 1000.0 * display[1]
+    containing: list[ET.Element] = []
+    for node in root.iter():
+        if str(node.attrib.get("clickable") or "").casefold() != "true":
+            continue
+        bounds = _parse_xml_bounds(node.attrib.get("bounds"))
+        if bounds is None or not (
+            bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
+        ):
+            continue
+        containing.append(node)
+    return min(containing, key=_xml_node_area, default=None)
+
+
 def _androidworld_input_target_description(node: ET.Element) -> str:
     for attribute in ("content-desc", "text", "resource-id"):
         value = str(node.attrib.get(attribute) or "").strip()
@@ -267,9 +296,15 @@ def _androidworld_action_to_omniflow(
     action = dict(value) if isinstance(value, dict) else {}
     action_type = str(action.get("action_type") or "").strip()
     if action_type in {"click", "double_tap"}:
+        args = _required_androidworld_action_point(action, observation)
+        target = _androidworld_click_target(action, observation)
+        if target is not None:
+            target_description = _androidworld_input_target_description(target)
+            if target_description:
+                args["target_description"] = target_description
         projected = {
             "tool": "click",
-            "args": _required_androidworld_action_point(action, observation),
+            "args": args,
         }
     elif action_type == "long_press":
         projected = {
