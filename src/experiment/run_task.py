@@ -2294,8 +2294,12 @@ def build_mobilegpt_server_command(
         # completion room for the official selector/derive JSON not to be
         # truncated on screens with many available actions.
         env["MOBILEGPT_THINKING"] = "disabled"
-        env["MOBILEGPT_MAX_TOKENS"] = "512"
-        env["MOBILEGPT_LIST_MAX_TOKENS"] = "512"
+        env["MOBILEGPT_MAX_TOKENS"] = str(
+            runtime_env.get("MOBILEGPT_MAX_TOKENS") or "2048"
+        )
+        env["MOBILEGPT_LIST_MAX_TOKENS"] = str(
+            runtime_env.get("MOBILEGPT_LIST_MAX_TOKENS") or "2048"
+        )
         env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         env["MOBILEGPT_EMBEDDING_MODEL"] = resolved_embedding_model
         if chat_model:
@@ -4595,6 +4599,15 @@ def _result_summary_rows(
                     ],
                     "memory_hit_count": episode_fields["episode_memory_hit_count"],
                     "memory_hit_rate": episode_fields["episode_memory_hit_rate"],
+                    "memory_explore_count": episode_fields[
+                        "episode_memory_explore_count"
+                    ],
+                    "memory_action_recalled_count": episode_fields[
+                        "episode_memory_action_recalled_count"
+                    ],
+                    "memory_action_use_rate": episode_fields[
+                        "episode_memory_action_use_rate"
+                    ],
                     "memory_hit": (
                         episode_fields["episode_memory_hit_count"] > 0
                     ),

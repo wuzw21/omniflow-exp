@@ -160,6 +160,33 @@ def _write_stats(path: Path) -> None:
     )
 
 
+def test_mobilegpt_stats_report_memory_utilization(tmp_path: Path) -> None:
+    stats = tmp_path / "mobilegpt_stats.jsonl"
+    stats.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"event": "memory_lookup", "result": "direct_hit"},
+                {"event": "memory_lookup", "result": "explore"},
+                {"event": "memory_action_recalled", "action_name": "click"},
+                {"event": "mobilegpt_action_sent", "is_device_action": True},
+                {"event": "mobilegpt_action_sent", "is_device_action": True},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = mobilegpt_memory.summarize_mobilegpt_stats(stats)
+
+    assert summary["memory_lookup_count"] == 2
+    assert summary["memory_hit_count"] == 1
+    assert summary["memory_hit_rate"] == 0.5
+    assert summary["memory_explore_count"] == 1
+    assert summary["memory_action_recalled_count"] == 1
+    assert summary["memory_action_use_rate"] == 0.5
+
+
 def _write_audit(path: Path, *, matched: bool = True) -> None:
     path.write_text(
         json.dumps(

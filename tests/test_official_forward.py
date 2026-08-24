@@ -133,6 +133,55 @@ def test_mobilegpt_staged_client_arms_first_screen_before_launch(tmp_path: Path)
     assert "postDelayed(screenUpdateTimeoutRunnable, 5000)" in staged
 
 
+def test_mobilegpt_server_skips_stale_explore_trigger_ui(tmp_path: Path) -> None:
+    server = tmp_path / "Server"
+    parsing = server / "utils"
+    parsing.mkdir(parents=True)
+    path = parsing / "parsing_utils.py"
+    path.write_text(
+        "from utils.utils import log\n\n"
+        "def get_trigger_ui_attributes(trigger_ui_indexes, screen):\n"
+        "    trigger_ui_data = {}\n"
+        "    for subtask_name, ui_indexes in trigger_ui_indexes.items():\n"
+        "        trigger_uis_attributes = []\n"
+        "        for ui_index in ui_indexes:\n"
+        "            ui_attributes = get_ui_key_attrib(int(ui_index), screen)\n\n"
+        "            skip = False\n"
+        "            trigger_uis_attributes.append(ui_attributes)\n",
+        encoding="utf-8",
+    )
+
+    official_forward._configure_mobilegpt_runtime_guards(server)
+    staged = path.read_text(encoding="utf-8")
+
+    assert "omniflow_mobilegpt_invalid_trigger_ui" in staged
+    assert "except (AttributeError, TypeError, ValueError):" in staged
+    assert "continue" in staged
+
+
+def test_mobilegpt_server_records_memory_recall_and_explore(tmp_path: Path) -> None:
+    server = tmp_path / "Server"
+    server.mkdir(parents=True)
+    path = server / "mobilegpt.py"
+    path.write_text(
+        "from utils.utils import log, parse_completion_rate\n\n"
+        "class MobileGPT:\n"
+        "    def get_next_action(self, parsed_xml=None, hierarchy_xml=None, encoded_xml=None):\n"
+        "        page_index, new_subtasks = self.memory.search_node(parsed_xml, hierarchy_xml, encoded_xml)\n\n"
+        "        if page_index == -1:\n"
+        "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
+        "        next_action = self.memory.get_next_action(self.current_subtask, self.encoded_xml)\n"
+        "        current_action_data = {\"page_index\": self.current_page_index, \"action\": next_action, \"screen\": self.encoded_xml,\n",
+        encoding="utf-8",
+    )
+
+    official_forward._configure_mobilegpt_memory_telemetry(server)
+    staged = path.read_text(encoding="utf-8")
+
+    assert '"event": "memory_lookup"' in staged
+    assert '"event": ("memory_action_recalled" if next_action else "memory_action_miss")' in staged
+
+
 def test_mobilegpt_staged_client_retries_instead_of_sending_empty_xml(
     tmp_path: Path,
 ) -> None:

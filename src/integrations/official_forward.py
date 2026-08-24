@@ -1010,6 +1010,108 @@ def _configure_mobilegpt_telemetry(server_root: Path) -> None:
             server_path.write_text(source, encoding="utf-8")
 
 
+def _configure_mobilegpt_runtime_guards(server_root: Path) -> None:
+    """Keep official Explore alive when a model returns a stale UI index.
+
+    The upstream parser assumes every ``trigger_UIs`` index returned by the
+    Explore model exists in the current XML.  A cross-device screen can make
+    that assumption false; ``get_ui_key_attrib`` then dereferences ``None``
+    and kills the Server handler thread.  The staged copy skips only that
+    stale trigger and records it, preserving the official planner/executor.
+    """
+
+    parsing_path = server_root / "utils" / "parsing_utils.py"
+    if not parsing_path.is_file():
+        return
+    source = parsing_path.read_text(encoding="utf-8")
+    marker = "omniflow_mobilegpt_invalid_trigger_ui"
+    if marker in source:
+        return
+    source = source.replace(
+        "from utils.utils import log\n",
+        "from utils.utils import log, write_omniflow_mobilegpt_event\n",
+        1,
+    )
+    original = (
+        "            ui_attributes = get_ui_key_attrib(int(ui_index), screen)\n"
+        "\n"
+        "            skip = False\n"
+    )
+    replacement = (
+        "            try:\n"
+        "                ui_attributes = get_ui_key_attrib(int(ui_index), screen)\n"
+        "            except (AttributeError, TypeError, ValueError):\n"
+        "                write_omniflow_mobilegpt_event({\n"
+        "                    \"event\": \"omniflow_mobilegpt_invalid_trigger_ui\",\n"
+        "                    \"ui_index\": str(ui_index),\n"
+        "                    \"subtask_name\": str(subtask_name),\n"
+        "                })\n"
+        "                continue\n"
+        "\n"
+        "            skip = False\n"
+    )
+    if original not in source:
+        return
+    parsing_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
+def _configure_mobilegpt_memory_telemetry(server_root: Path) -> None:
+    """Record official Memory recall/Explore decisions in the stats stream."""
+
+    mobilegpt_path = server_root / "mobilegpt.py"
+    if not mobilegpt_path.is_file():
+        return
+    source = mobilegpt_path.read_text(encoding="utf-8")
+    marker = "omniflow_mobilegpt_memory_telemetry"
+    if marker in source:
+        return
+    source = source.replace(
+        "from utils.utils import log, parse_completion_rate\n",
+        "from utils.utils import (\n"
+        "    log, parse_completion_rate, write_omniflow_mobilegpt_event,\n"
+        ")\n\n"
+        "# omniflow_mobilegpt_memory_telemetry\n",
+        1,
+    )
+    original_lookup = (
+        "        page_index, new_subtasks = self.memory.search_node(parsed_xml, hierarchy_xml, encoded_xml)\n"
+        "\n"
+        "        if page_index == -1:\n"
+        "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
+    )
+    replacement_lookup = (
+        "        page_index, new_subtasks = self.memory.search_node(parsed_xml, hierarchy_xml, encoded_xml)\n"
+        "        memory_lookup_result = (\"direct_hit\" if page_index >= 0 else \"explore\")\n"
+        "        write_omniflow_mobilegpt_event({\n"
+        "            \"event\": \"memory_lookup\",\n"
+        "            \"result\": memory_lookup_result,\n"
+        "            \"page_index\": int(page_index),\n"
+        "        })\n"
+        "\n"
+        "        if page_index == -1:\n"
+        "            page_index = self.explore_agent.explore(parsed_xml, hierarchy_xml, encoded_xml)\n"
+    )
+    if original_lookup not in source:
+        return
+    source = source.replace(original_lookup, replacement_lookup, 1)
+    original_action = (
+        "        next_action = self.memory.get_next_action(self.current_subtask, self.encoded_xml)\n"
+        "        current_action_data = {\"page_index\": self.current_page_index, \"action\": next_action, \"screen\": self.encoded_xml,\n"
+    )
+    replacement_action = (
+        "        next_action = self.memory.get_next_action(self.current_subtask, self.encoded_xml)\n"
+        "        write_omniflow_mobilegpt_event({\n"
+        "            \"event\": (\"memory_action_recalled\" if next_action else \"memory_action_miss\"),\n"
+        "            \"action_name\": (next_action or {}).get(\"name\") if isinstance(next_action, dict) else None,\n"
+        "            \"page_index\": int(self.current_page_index),\n"
+        "        })\n"
+        "        current_action_data = {\"page_index\": self.current_page_index, \"action\": next_action, \"screen\": self.encoded_xml,\n"
+    )
+    if original_action not in source:
+        return
+    mobilegpt_path.write_text(source.replace(original_action, replacement_action, 1), encoding="utf-8")
+
+
 def _configure_mobilegpt_finish_transport(server_root: Path) -> None:
     """Bridge an official JSON ``finish`` action to the official client frame.
 
@@ -1060,6 +1162,8 @@ def _configure_mobilegpt_server(
     normalized_embedding = str(embedding_model or "").strip()
     utils_path = server_root / "utils" / "utils.py"
     _configure_mobilegpt_telemetry(server_root)
+    _configure_mobilegpt_runtime_guards(server_root)
+    _configure_mobilegpt_memory_telemetry(server_root)
     _configure_mobilegpt_finish_transport(server_root)
     configured_threshold = str(
         os.environ.get("MOBILEGPT_MEMORY_SIMILARITY_THRESHOLD") or ""

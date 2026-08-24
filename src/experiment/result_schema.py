@@ -19,6 +19,8 @@ RESULT_FIELDS = (
     "token_usage_status",
     "memory_status", "memory_source", "memory_used",
     "memory_hit", "memory_covered_steps", "memory_total_steps", "memory_hit_rate",
+    "memory_explore_count", "memory_action_recalled_count",
+    "memory_action_use_rate",
     "fallback_steps", "fallback_steps_source", "max_fallback_steps",
     "fallback_measurement_status",
     "fallback_budget_exhausted", "method_outcome", "failure_stage",
@@ -248,6 +250,11 @@ def execution_metrics_from_result_row(row: dict[str, Any]) -> dict[str, Any]:
         memory_covered or memory_total
     ):
         memory_hit_rate = None
+    memory_explore_count = _optional_integer(row, "memory_explore_count")
+    memory_action_recalled_count = _optional_integer(
+        row, "memory_action_recalled_count"
+    )
+    memory_action_use_rate = _optional_number(row, "memory_action_use_rate")
 
     fallback_present = "fallback_steps" in row and row.get("fallback_steps") not in (
         None,
@@ -331,6 +338,9 @@ def execution_metrics_from_result_row(row: dict[str, Any]) -> dict[str, Any]:
         "memory_covered_steps": memory_covered,
         "memory_total_steps": memory_total,
         "memory_hit_rate": memory_hit_rate,
+        "memory_explore_count": memory_explore_count,
+        "memory_action_recalled_count": memory_action_recalled_count,
+        "memory_action_use_rate": memory_action_use_rate,
         "fallback_steps": fallback_steps,
         "fallback_steps_source": fallback_source,
         "max_fallback_steps": max_fallback_steps,

@@ -201,6 +201,12 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
     memory_hit_count = sum(
         1 for row in memory_rows if row.get("result") == "direct_hit"
     )
+    memory_explore_count = sum(
+        1 for row in memory_rows if row.get("result") == "explore"
+    )
+    memory_action_recalled_rows = [
+        row for row in rows if row.get("event") == "memory_action_recalled"
+    ]
     in_context_fallback_count = sum(
         1 for row in memory_rows if row.get("result") == "in_context_fallback"
     )
@@ -308,6 +314,11 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         "memory_lookup_count": len(memory_rows),
         "memory_hit_count": memory_hit_count,
         "memory_hit_rate": _rate(memory_hit_count, len(memory_rows)),
+        "memory_explore_count": memory_explore_count,
+        "memory_action_recalled_count": len(memory_action_recalled_rows),
+        "memory_action_use_rate": _rate(
+            len(memory_action_recalled_rows), len(device_action_rows)
+        ),
         "fallback_count": in_context_fallback_count + derive_fallback_count,
         "in_context_fallback_count": in_context_fallback_count,
         "derive_fallback_count": derive_fallback_count,
@@ -375,6 +386,15 @@ def mobilegpt_stats_row_fields(
         f"{prefix}_memory_lookup_count": _coerce_int(stats.get("memory_lookup_count")),
         f"{prefix}_memory_hit_count": _coerce_int(stats.get("memory_hit_count")),
         f"{prefix}_memory_hit_rate": _coerce_float(stats.get("memory_hit_rate")),
+        f"{prefix}_memory_explore_count": _coerce_int(
+            stats.get("memory_explore_count")
+        ),
+        f"{prefix}_memory_action_recalled_count": _coerce_int(
+            stats.get("memory_action_recalled_count")
+        ),
+        f"{prefix}_memory_action_use_rate": _coerce_float(
+            stats.get("memory_action_use_rate")
+        ),
         f"{prefix}_fallback_count": _coerce_int(stats.get("fallback_count")),
         f"{prefix}_in_context_fallback_count": _coerce_int(
             stats.get("in_context_fallback_count")
