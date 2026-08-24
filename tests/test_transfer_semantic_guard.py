@@ -370,6 +370,61 @@ def test_input_description_resolves_only_the_source_anchor_for_omnitransfer(
     )
 
 
+def test_transfer_resolves_generic_editable_text_field(monkeypatch) -> None:
+    source_xml = """\
+<hierarchy width="720" height="1280">
+  <node class="android.widget.EditText" package="com.example.app"
+        editable="true" focused="true"
+        bounds="[2,154][628,232]" />
+</hierarchy>
+"""
+    function = SimpleNamespace(
+        id="search_meeting",
+        steps=(
+            SimpleNamespace(
+                step_index=0,
+                source_state_id="search-state",
+                action=Action(
+                    "input_text",
+                    {
+                        "target_description": "editable text field",
+                        "text": "Product Launch Preparation",
+                    },
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        transfer_runtime,
+        "transfer_action",
+        lambda **_kwargs: {
+            "mapped": True,
+            "mapping_mode": "mutual_graph_matcher_no_null_v3",
+            "new_x": 300.0,
+            "new_y": 200.0,
+            "target_bbox": [200.0, 100.0, 400.0, 300.0],
+            "src_element": {
+                "bounds": [2.0, 154.0, 628.0, 232.0],
+                "class": "android.widget.EditText",
+            },
+            "score": 1.0,
+        },
+    )
+
+    audit = audit_transfer_action_sources(
+        (function,),
+        {
+            "search-state": {
+                "state_id": "search-state",
+                "xml": source_xml,
+                "display": {"width": 720, "height": 1280},
+            }
+        },
+    )
+
+    assert audit["source_target_count"] == 1
+
+
 def test_transfer_accepts_omnitransfer_mapped_row_without_second_semantic_gate(
     monkeypatch,
 ) -> None:

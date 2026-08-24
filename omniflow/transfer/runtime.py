@@ -694,6 +694,19 @@ def source_semantic_point(
             labels.add(resource_id.rsplit("/", 1)[-1].casefold())
         if description in labels and _element_bounds(element) is not None:
             matches.append(element)
+    if not matches and description == "editable text field":
+        editable = [
+            element
+            for element in root.iter()
+            if str(element.attrib.get("editable") or "").casefold() == "true"
+            and _element_bounds(element) is not None
+        ]
+        focused = [
+            element
+            for element in editable
+            if str(element.attrib.get("focused") or "").casefold() == "true"
+        ]
+        matches = focused if len(focused) == 1 else editable
     if len(matches) != 1:
         return None
     left, top, right, bottom = _element_bounds(matches[0]) or (0.0, 0.0, 0.0, 0.0)
