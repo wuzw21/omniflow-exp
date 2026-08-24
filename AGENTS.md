@@ -28,7 +28,7 @@
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
 - `compile_runlog_to_store` 是唯一 Function 写 API；输出 v2 `store.json`、`compile_report.json` 和 sibling `transfer_states.json`。
-- 成功 RunLog 可先拆成一个或多个语义 Function；compiler 必须确定性保留或补出一个覆盖全部 canonical source actions 的普通完整 Function。最终 Function 数量大于等于一；若已有完整覆盖则不重复，不增加嵌套或 parent/child schema。
+- 成功 RunLog 由 authoring Agent 先生成零个或多个语义 Function，再生成恰好一个覆盖全部 canonical source actions 的普通完整 Function；完整 Function 必须由 Agent 合并语义、参数 schema 和 bindings。Compiler 只校验完整覆盖、source 顺序和参数提升，不机械拼接或猜测语义。最终 Function 数量大于等于一，不增加嵌套或 parent/child schema。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
 - AndroidWorld 正式方法只有 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。

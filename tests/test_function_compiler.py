@@ -346,15 +346,14 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     proposal = {
         "reason": "Keep the recorded navigation and wait together.",
         "plan": {
-            "functions": [
-                {
-                    "function_id": "open_settings",
-                    "name": "Open Settings",
-                    "description": "Open Settings and wait for the page.",
-                    "source_step_indices": [0, 1],
-                    "parameters": [],
-                }
-            ],
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_settings",
+                "name": "Open Settings",
+                "description": "Open Settings and wait for the page.",
+                "source_step_indices": [0, 1],
+                "parameters": [],
+            },
         },
     }
 
@@ -387,8 +386,9 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     system_prompt = captured["messages"][0]["content"]
     assert "encode repetition count" in system_prompt
     assert "call it repeatedly" in system_prompt
-    assert "complete canonical source trajectory" in system_prompt
-    assert "do not invent a nesting or parent/child schema" in system_prompt
+    assert "covering every source_step_index exactly once" in system_prompt
+    assert "never merely\nhard-code the successful instance values" in system_prompt
+    assert "Do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
     assert captured["max_tokens"] == 4096
     request = json.loads(captured["messages"][1]["content"])
@@ -444,8 +444,8 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
                 {
                     "function_id": "enter_product",
                     "name": "Enter product",
-                    "description": "Enter the requested product and submit it.",
-                    "source_step_indices": [0, 1],
+                    "description": "Enter the requested product.",
+                    "source_step_indices": [0],
                     "parameters": [
                         {
                             "name": "product",
@@ -455,7 +455,21 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
                         }
                     ],
                 }
-            ]
+            ],
+            "complete_function": {
+                "function_id": "complete_product_form",
+                "name": "Enter and submit product",
+                "description": "Enter the requested product and submit the form.",
+                "source_step_indices": [0, 1],
+                "parameters": [
+                    {
+                        "name": "product",
+                        "description": "Computed product to enter",
+                        "source_step_index": 0,
+                        "arg_name": "text",
+                    }
+                ],
+            },
         },
     }
 
@@ -502,7 +516,17 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
         }
     ]
     assert function["steps"][0]["action"]["args"]["text"] == ""
-    assert result["source_arguments"] == {"enter_product": {"product": "3125"}}
+    complete = store["functions"]["complete_product_form"]
+    assert complete["input_schema"] == function["input_schema"]
+    assert complete["bindings"] == function["bindings"]
+    assert [step["action"]["tool"] for step in complete["steps"]] == [
+        "input_text",
+        "click",
+    ]
+    assert result["source_arguments"] == {
+        "enter_product": {"product": "3125"},
+        "complete_product_form": {"product": "3125"},
+    }
     assert result["total_tokens"] == 140
 
 
@@ -526,7 +550,14 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
                     "source_step_indices": [0, 1, 2, 3, 4],
                     "parameters": [],
                 }
-            ]
+            ],
+            "complete_function": {
+                "function_id": "complete_multiply_workflow",
+                "name": "Complete multiplication workflow",
+                "description": "Click five times and compute the product.",
+                "source_step_indices": [0, 1, 2, 3, 4],
+                "parameters": [],
+            },
         },
     }
 
@@ -558,13 +589,12 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
     assert len(function["steps"]) == 1
     assert function["steps"][0]["step_index"] == 0
     complete_id = result["function_ids"][1]
-    assert complete_id.startswith("complete_recorded_")
+    assert complete_id == "complete_multiply_workflow"
     assert len(store["functions"][complete_id]["steps"]) == 5
     assert "Planner observes after every click" in result["reason"]
-    assert "appended one complete recorded Function" in result["reason"]
 
 
-def test_model_plan_keeps_fragments_and_appends_one_complete_function(
+def test_model_plan_keeps_fragments_and_agent_authored_complete_function(
     tmp_path: Path,
 ) -> None:
     proposal = {
@@ -585,7 +615,14 @@ def test_model_plan_keeps_fragments_and_appends_one_complete_function(
                     "source_step_indices": [1],
                     "parameters": [],
                 },
-            ]
+            ],
+            "complete_function": {
+                "function_id": "complete_settings_workflow",
+                "name": "Open Settings and wait",
+                "description": "Open Settings and wait for the page.",
+                "source_step_indices": [0, 1],
+                "parameters": [],
+            },
         },
     }
 
@@ -614,7 +651,7 @@ def test_model_plan_keeps_fragments_and_appends_one_complete_function(
     assert result["function_count"] == 3
     assert result["function_ids"][:2] == ["open_settings", "wait_for_settings"]
     complete_id = result["function_ids"][2]
-    assert complete_id.startswith("complete_recorded_")
+    assert complete_id == "complete_settings_workflow"
     store = json.loads(Path(result["store_path"]).read_text())
     assert [
         step["action"]["tool"]

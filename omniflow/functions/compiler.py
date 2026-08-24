@@ -117,8 +117,8 @@ def compile_runlog_to_store(
     default_bundle = _default_bundle(facts, recovery_examples)
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
-Return exactly:
-{"reason":"account for every source step: kept, grouped, or omitted and why","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}]}}
+Return exactly one object with this shape:
+{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_task","name":"Complete task","description":"Execute the complete reusable workflow.","source_step_indices":[0,1,2,3,4,5,6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
 
 Do not output input_schema, bindings, steps, actions, coordinates, checker rules,
 agent_visible, schema_version, arguments, or source_state_id. The compiler owns
@@ -130,11 +130,12 @@ source index. Within one Function, source_step_indices must be strictly increasi
 and contiguous. Never omit a click immediately following input_text when that click
 commits, submits, confirms, or advances the form; keep both in one Function.
 
-Create Functions only for meaningful actions or tightly coupled contiguous groups.
-Do not classify Functions as semantic, full-flow, complete-task, root, or child.
-A deterministic compiler pass separately preserves or appends one ordinary Function
-covering the complete canonical source trajectory, so return one or more reusable
-semantic Functions here and do not invent a nesting or parent/child schema.
+In functions, return zero or more reusable semantic actions or tightly coupled
+contiguous groups. Then author exactly one complete_function as an ordinary Function
+covering every source_step_index exactly once in source order. The complete Function
+must be a semantic composition: lift all goal-dependent values into its own parameters,
+merge the reusable meanings into one coherent name and description, and never merely
+hard-code the successful instance values. Do not invent a nesting or parent/child schema.
 A Function call is atomic: the Planner observes only after its last step. Never
 encode repetition count when the task requires reading changing UI after each
 repeat. Keep one representative action as a one-step Function and let the Planner
@@ -290,24 +291,17 @@ never appear in candidates and can never become Function inputs.
         normalized_arguments[function.id] = dict(arguments)
     arguments_by_function = normalized_arguments
 
-    if not any(
-        _function_covers_source_trajectory(
-            bind_function(function, arguments_by_function[function.id]),
-            facts["steps"],
-        )
-        for function in functions
-    ):
-        complete_artifact = _complete_function_artifact(
-            facts,
-            existing_function_ids={function.id for function in functions},
-        )
-        complete_function = parse_function_artifact(complete_artifact)
-        functions.append(complete_function)
-        arguments_by_function[complete_function.id] = {}
-        authored["reason"] = (
-            f"{authored['reason']} Compiler appended one complete recorded "
-            "Function covering every canonical source action."
-        )
+    if selected_model is not None:
+        complete_functions = [
+            function
+            for function in functions
+            if _function_covers_source_trajectory(
+                bind_function(function, arguments_by_function[function.id]),
+                facts["steps"],
+            )
+        ]
+        if len(complete_functions) != 1:
+            raise ValueError("function_author_complete_function_invalid")
 
     function_ids = [function.id for function in functions]
 
@@ -455,11 +449,17 @@ def _materialize_authoring_plan(
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("function_author_reason_must_be_string")
     plan = value.get("plan")
-    if not isinstance(plan, dict) or set(plan) != {"functions"}:
+    if not isinstance(plan, dict) or set(plan) != {
+        "functions",
+        "complete_function",
+    }:
         raise ValueError("function_author_plan_contract_invalid")
     raw_functions = plan.get("functions")
-    if not isinstance(raw_functions, list) or not raw_functions:
+    raw_complete_function = plan.get("complete_function")
+    if not isinstance(raw_functions, list):
         raise ValueError("function_author_plan_functions_required")
+    if not isinstance(raw_complete_function, dict):
+        raise ValueError("function_author_plan_complete_function_required")
 
     source_steps = list(facts.get("steps") or ())
     candidates = {
@@ -469,6 +469,8 @@ def _materialize_authoring_plan(
     functions: list[dict[str, Any]] = []
     arguments: dict[str, dict[str, Any]] = {}
     selected_source_indices: set[int] = set()
+    semantic_parameter_targets: set[tuple[int, str]] = set()
+    complete_parameter_targets: set[tuple[int, str]] = set()
     materialization_notes: list[str] = []
     function_fields = {
         "function_id",
@@ -483,7 +485,11 @@ def _materialize_authoring_plan(
         "source_step_index",
         "arg_name",
     }
-    for raw_function in raw_functions:
+    planned_functions = [
+        *((raw_function, False) for raw_function in raw_functions),
+        (raw_complete_function, True),
+    ]
+    for raw_function, is_complete in planned_functions:
         if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
             raise ValueError("function_author_plan_function_contract_invalid")
         function_id = str(raw_function.get("function_id") or "").strip()
@@ -507,28 +513,36 @@ def _materialize_authoring_plan(
             or indices != list(range(indices[0], indices[-1] + 1))
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
-        (
-            indices,
-            function_id,
-            name,
-            description,
-            atomicized_count,
-        ) = _atomicize_repeated_click_function(
-            indices,
-            source_steps,
-            function_id=function_id,
-            name=name,
-            description=description,
-        )
+        if is_complete:
+            if indices != list(range(len(source_steps))):
+                raise ValueError(
+                    "function_author_plan_complete_source_steps_invalid"
+                )
+            atomicized_count = 0
+        else:
+            (
+                indices,
+                function_id,
+                name,
+                description,
+                atomicized_count,
+            ) = _atomicize_repeated_click_function(
+                indices,
+                source_steps,
+                function_id=function_id,
+                name=name,
+                description=description,
+            )
         if atomicized_count:
             materialization_notes.append(
                 f"Compiler reduced {atomicized_count} identical clicks in "
                 f"{function_id} to one atomic step so the Planner observes "
                 "after every click."
             )
-        if selected_source_indices.intersection(indices):
-            raise ValueError("function_author_plan_source_step_reused")
-        selected_source_indices.update(indices)
+        if not is_complete:
+            if selected_source_indices.intersection(indices):
+                raise ValueError("function_author_plan_source_step_reused")
+            selected_source_indices.update(indices)
 
         function = {
             "schema_version": "omniflow.function.v2",
@@ -573,6 +587,11 @@ def _materialize_authoring_plan(
             if candidate is None or source_index not in indices:
                 raise ValueError("function_author_plan_parameter_target_invalid")
             parameter_name = str(parameter.get("name") or "").strip()
+            parameter_target = (int(source_index), arg_name)
+            if is_complete:
+                complete_parameter_targets.add(parameter_target)
+            else:
+                semantic_parameter_targets.add(parameter_target)
             parameter_proposals.append(
                 {
                     "name": parameter_name,
@@ -585,6 +604,9 @@ def _materialize_authoring_plan(
         apply_parameters(function, parameter_proposals, facts)
         functions.append(function)
         arguments[function_id] = source_arguments
+
+    if semantic_parameter_targets - complete_parameter_targets:
+        raise ValueError("function_author_plan_complete_parameters_missing")
 
     normalized_reason = reason.strip()
     if materialization_notes:
