@@ -53,6 +53,7 @@ def compile_runlog_to_store(
 
     steps: list[dict[str, Any]] = []
     recovery_examples: list[dict[str, Any]] = []
+    omitted_action_types: set[str] = set()
     previous_successful_step: dict[str, Any] | None = None
     for step in payload["steps"]:
         if not isinstance(step, dict):
@@ -71,6 +72,7 @@ def compile_runlog_to_store(
         )
         action_type = str(step.get("action", {}).get("action_type") or "")
         if action_type in {"answer", "status", "unknown"}:
+            omitted_action_types.add(action_type)
             continue
         projected_actions = project_androidworld_step_actions(
             step,
@@ -118,6 +120,7 @@ def compile_runlog_to_store(
         "status": "succeeded",
         "success": True,
         "steps": steps,
+        "omitted_action_types": sorted(omitted_action_types),
     }
     default_bundle = _default_bundle(facts, recovery_examples)
     source_parameter_candidates = _source_parameter_candidates(facts)
@@ -135,6 +138,12 @@ source index. Actions already marked origin=checker were removed before this pla
 do not reconstruct them in the main flow. Within one Function, source_step_indices must be strictly increasing
 and contiguous. Never omit a click immediately following input_text when that click
 commits, submits, confirms, or advances the form; keep both in one Function.
+
+If source_run.omitted_action_types contains answer or status, those terminal
+outputs are intentionally not Function actions. The complete Function is only a
+reusable prefix; its name and description must say that the Planner must observe
+the returned page and provide the answer/status afterward. Do not claim that the
+Function itself answered the task.
 
 In functions, return zero or more reusable semantic actions or tightly coupled
 contiguous groups. Then author exactly one complete_function as an ordinary Function.
@@ -690,6 +699,11 @@ def _materialize_authoring_plan(
             ],
             "agent_visible": True,
         }
+        if is_complete:
+            function["description"] = _append_terminal_handoff_description(
+                function["description"],
+                facts,
+            )
         raw_parameters = raw_function.get("parameters")
         if not isinstance(raw_parameters, list):
             raise ValueError("function_author_plan_parameters_invalid")
@@ -999,6 +1013,10 @@ def _default_bundle(
         )
     else:
         function = _complete_function_artifact(facts)
+    function["description"] = _append_terminal_handoff_description(
+        function["description"],
+        facts,
+    )
     function_id = function["function_id"]
     return {
         "schema_version": "omniflow.function-bundle.v2",
@@ -1056,3 +1074,20 @@ def _complete_function_artifact(
         "steps": steps,
         "agent_visible": True,
     }
+
+
+def _append_terminal_handoff_description(
+    description: str,
+    facts: dict[str, Any],
+) -> str:
+    omitted = {
+        str(value).strip().lower()
+        for value in facts.get("omitted_action_types") or ()
+    }
+    if not omitted.intersection({"answer", "status"}):
+        return description
+    suffix = (
+        " This Function only reaches the observed page; the Planner must "
+        "inspect it and provide the task answer or status afterward."
+    )
+    return description if description.endswith(suffix) else f"{description}{suffix}"

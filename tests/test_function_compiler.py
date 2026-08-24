@@ -47,6 +47,32 @@ def test_default_compiler_registers_one_action_complete_function(
     assert result["function_ids"][0].startswith("complete_recorded_")
 
 
+def test_compiler_marks_answer_as_planner_handoff(tmp_path: Path) -> None:
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.calendar"},
+            {"action_type": "answer", "text": "Meeting"},
+        ],
+        observations=[
+            androidworld_state("state_0"),
+            androidworld_state("state_1"),
+        ],
+        goal="Find the event and answer with its title.",
+    )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states={"state_0": {"state_id": "state_0"}},
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = next(iter(store["functions"].values()))
+    assert "Planner must inspect it and provide the task answer" in function[
+        "description"
+    ]
+
+
 def test_compiler_freezes_only_function_referenced_states(
     tmp_path: Path,
 ) -> None:
