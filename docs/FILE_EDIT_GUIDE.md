@@ -76,7 +76,7 @@ rg --files -g '*.py' | sort
 | 文件 | owner / 修改方式 |
 | --- | --- |
 | `omniflow/__init__.py` | 稳定导出；不要在这里放实验调度 |
-| `omniflow/bridge.py` | JSON-line 管理接口和 `run_gui`；新增工具必须复用现有 Function/Store 合同 |
+| `omniflow/bridge.py` | JSON-line 管理接口和唯一执行工具 `run_gui`；Function 名不能作为隐藏直调工具 |
 | `omniflow/runlog.py` | canonical RunLog 读取、截图和 native observation 校验；不写实验索引 |
 | `omniflow/vlm_coordinates.py` | VLM 像素与 canonical action 坐标转换；不处理 OmniTransfer |
 | `omniflow/core/__init__.py` | core 导出 |
@@ -111,7 +111,7 @@ rg --files -g '*.py' | sort
 | `src/__init__.py` | 包标记 |
 | `src/experiment/__init__.py` | experiment 导出 |
 | `src/experiment/protocol.py` | `config/paper_androidworld.json` 的 typed view；不复制常量 |
-| `src/experiment/run_tasks.py` | 唯一 task + method + device scheduler；旁路应作为这里的请求模式进入共同 launcher |
+| `src/experiment/run_tasks.py` | 唯一 task + method + device scheduler；AndroidWorld 只调度完整 E2E goal，不选择 Function 或绑定参数 |
 | `src/experiment/run_task.py` | 一个 AndroidWorld `task + method + device` 结果；不是第二 scheduler |
 | `src/experiment/paths.py` | 唯一路径解析、artifact component 和文件 SHA-256 owner；调用方不要重新实现 `Path(...).resolve()`、`_safe_component` 或文件哈希 |
 | `src/experiment/run_process.py` | 所有 experiment command 的子进程组、timeout、终止和 immutable log seam；不要复制 `Popen` 生命周期 |
@@ -143,15 +143,15 @@ rg --files -g '*.py' | sort
 | `src/integrations/official_forward.py` | 唯一外部 baseline forwarder；只准备临时 workspace、设备和官方入口，不实现 parser/controller/action loop |
 | `vendor/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
-| `src/integrations/script_replay.py` | 完整 Function 的共享 replay 薄适配器；禁止私有 mapper/executor |
+| `src/integrations/script_replay.py` | 仅 B-MoCA 外部 replay 合同的共享 runtime 薄适配器；禁止接入 AndroidWorld 方法或私有 mapper/executor |
 | `src/integrations/skilldroid_replay.py` | DroidRun v0.5.6 官方 MacroPlayer adapter |
 | `src/integrations/android_world/__init__.py` | AndroidWorld adapter 包标记 |
-| `src/integrations/android_world/agent.py` | OmniFlow Host/runtime 构造和一个完整 `step()` cycle；direct Function 必须在这里进入 canonical runtime |
+| `src/integrations/android_world/agent.py` | OmniFlow Host/runtime 构造和一个完整 `step()` cycle；只调用 `flow.run(goal)`，Planner 自行选择 Function 并填写 schema 参数 |
 | `src/integrations/android_world/apps.py` | AndroidWorld app setup helper |
 | `src/integrations/android_world/environment.py` | official task environment/validator adapter |
 | `src/integrations/android_world/host.py` | native observe/act/reset Host |
-| `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；直跑 Function 只能复用此生命周期，不得 patch `agent.run` |
-| `src/integrations/android_world/methods.py` | 六个正式方法的 adapter registry，以及 direct Function intent；不得增加第二个 executor |
+| `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；不得暴露 direct Function、调用序列或测试专用执行模式 |
+| `src/integrations/android_world/methods.py` | 正式方法 adapter registry；OmniFlow adapter 只传 Store、Planner 和 Host 配置，不传 Function intent |
 | `src/integrations/mobilegpt_format.py` | MobileGPT 官方 XML Encoder 的最小转换入口 |
 | `src/integrations/android_world/oob_control.py` | 仅显式选择的 development/source/OOB transport adapter |
 | `src/integrations/android_world/state.py` | native state normalization |
@@ -175,7 +175,7 @@ rg --files -g '*.py' | sort
 | `tests/test_run_tasks.py` / `tests/test_exp_script.py` | 唯一 scheduler 和 public shell 合同 |
 | `tests/test_result_registry.py` / `tests/test_batch_outcomes.py` | ledger 与汇总分开验证 |
 | `tests/test_mobilegpt_*.py` / `tests/test_appagent_source.py` | 外部 baseline adapter 合同 |
-| `tests/test_script_replay.py` / `tests/test_skilldroid_replay.py` | replay adapter 合同，尤其验证无私有 mapper |
+| `tests/test_script_replay.py` / `tests/test_skilldroid_replay.py` | B-MoCA/外部 replay adapter 合同，尤其验证无私有 mapper；不代表 AndroidWorld 入口 |
 | 其余 `tests/test_*.py` | 按被测 owner 放置；删除 retired alias 时删除对应测试，不为兼容保留测试 |
 
 ### Provider 修改的最短路径

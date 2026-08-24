@@ -19,6 +19,10 @@
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
 - AndroidWorld 正式方法只有 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
 - B-MoCA 的 replay selector 属于外部 benchmark 合同，不复制进 AndroidWorld method 名称。
+- AndroidWorld 的 OmniFlow 正式执行只有完整 E2E Planner 循环：runner 只传 goal、
+  Function Store 和设备环境；Planner 从 Function `input_schema` 生成参数，runtime
+  通过 `bindings` 绑定后执行。禁止 direct Function id、Function 序列、预绑定参数、
+  source qualification replay 或任务专用执行脚本。
 
 ## OmniTransfer 合同
 
@@ -41,7 +45,8 @@
 - 10-cell 历史结果、测试结果和表格不能因目录迁移而丢失；合并到仓库时必须保留原始文件、来源路径、文件时间和 SHA-256 等 provenance，并去重而不是覆盖冲突版本。
 - 桌面端 10-cell 归档是历史证据源，不是运行时选择器；归档副本放在 `data/`，运行时仍只读取注册的资产和 `data/current.json`。
 - 旧适配层和历史输入可按只读迁移路径保留；不要为了兼容重新加 alias、旧 writer、旧 index 或旧 runner。
-- 单/多 Function 直跑必须复用共同 Host、OmniTransfer、共享 checker、证据封存和结果路径；不要复制执行实现。
+- `source_calls` 只允许作为 Function 编译 provenance，不得成为 AndroidWorld 正式执行输入。
+  B-MoCA 官方外部 replay 合同可使用共享底层 runtime，但不得接入 AndroidWorld 方法或入口。
 
 ## 通用数据目录合同
 
@@ -93,5 +98,5 @@ bash scripts/exp/run_androidworld.sh ...
 ```
 
 Function authoring 只走 `compile_runlog_to_store`；管理工具只有 README 中列出的
-Function/RunLog 工具。详细文件职责、旁路方案和索引区分见
+Function/RunLog 工具。详细文件职责、E2E 入口和索引区分见
 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。

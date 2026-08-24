@@ -1,7 +1,7 @@
 # OmniFlow-exp 顶层设计与精简边界
 
-本文回答三个问题：仓库真正的运行路径是什么、哪些文件拥有哪种语义、哪些
-“旁路”必须保留但不应再复制实现。文件级编辑位置见
+本文回答三个问题：仓库真正的运行路径是什么、哪些文件拥有哪种语义、如何
+保证 AndroidWorld 没有测试专用执行旁路。文件级编辑位置见
 [`FILE_EDIT_GUIDE.md`](FILE_EDIT_GUIDE.md)；本文件不替代它。
 
 ## 1. 仓库职责
@@ -55,9 +55,9 @@ The boundaries inside this path are intentionally different:
   background server/emulator cleanup.
 - `run_episode.py` owns one native AndroidWorld episode, including setup,
   observation/action recording, official validation, and teardown.
-- `methods.py` resolves one method adapter. Direct Function replay is carried
-  into `agent.py` as an execution decision, not implemented by launcher-side
-  mutation of an agent instance.
+- `methods.py` resolves one method adapter. AndroidWorld OmniFlow always enters
+  `agent.py` with a goal and Function Store; no launcher layer selects a
+  Function or supplies Function arguments.
 
 普通 `omniflow` 的运行核心继续是：
 
@@ -75,21 +75,18 @@ Formal Function 动作绝不能回放 source 坐标。OmniTransfer 映射失败�
 Function 步骤失败，并回到 Planner 的正常 fallback；任何隐藏的 resource-id、
 node-id、坐标直通分支都违反这个接口。
 
-## 3. 旁路的正确形态
+## 3. 唯一 AndroidWorld E2E 运行形态
 
-“旁路”指的是相同执行语义被不同入口各写一遍，不是“有一种不走 Planner 的
-合法模式”。单 Function 直跑有价值，因为它用于 B-MoCA source gate、离线
-重放和零 model-call 验证；它不应被删除，也不应拥有自己的 mapper、executor、
-resume state 或结果格式。
+正式 AndroidWorld 目标端没有 direct Function、Function 序列、source
+qualification replay 或任务专用脚本。调度层只提供 goal、注册的 Function Store
+和设备环境；每轮 Planner 同时看到原子动作与召回 Function 的 `input_schema`，
+自行选择工具并填写参数。runtime 校验参数后通过 Function `bindings` 写入动作，
+执行并重新观察，直到 Planner 返回 `finished`，最后交给官方 validator。
 
-当前保留的复用点是 `src/integrations/script_replay.py`：它按 compiler report
-顺序选择一个或多个 Function，随后调用 canonical runtime，测试中
-必须能证明它没有私有 action mapping。AndroidWorld source qualification
-通过 `build_task_command(function_calls=...)` 进入同一 launcher；`methods.py`
-把这个意图交给 `agent.py`，由正常 `step()` cycle 顺序执行这些调用。因此
-direct replay 和普通 `OmniFlow.run()` 共享 Host、
-OmniTransfer、checker、证据封存和结果归档，且不会因为 CLI 入口不同而产生
-第二个 executor。
+探索、RunLog 采集和 Function 增强属于目标运行之前的资产生成阶段。
+`source_calls` 只记录 compiler provenance，不参与目标端选择或执行。
+`src/integrations/script_replay.py` 仅实现 B-MoCA 的外部 benchmark replay selector；
+它复用 canonical runtime，但不是 AndroidWorld 方法、入口或资格测试。
 
 ## 4. 索引、ledger 和历史输入的区别
 
@@ -165,8 +162,8 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 
 | 候选 | 判断 | 后续动作 |
 | --- | --- | --- |
-| `run_episode.py` 中的 direct Function 调用与普通 OmniFlow 运行 | 真旁路：生命周期相似、调用语义可共享 | 通过 E2E 请求 seam 收敛，不删除直跑能力 |
-| `script_replay.py` 与 runtime execution | 不是重复 mapper；前者是薄适配器，后者是核心实现 | 保留，继续用测试锁住“无私有 mapping” |
+| AndroidWorld direct Function / sequence / qualification replay | 非真实端执行旁路 | 删除；只保留 `OmniFlow.run(goal)` Planner 循环 |
+| B-MoCA `script_replay.py` 与 runtime execution | 外部 benchmark 合同，不是 AndroidWorld 方法 | 保留，继续用测试锁住“无私有 mapping” |
 | `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
@@ -180,7 +177,7 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 每个重构遵循下面的顺序：
 
 1. 先在本文件和 `FILE_EDIT_GUIDE.md` 写清 owner、接口和不变量。
-2. 先改现有 owner，优先让旁路通过共享接口表达。
+2. 先改现有 owner；AndroidWorld 不增加测试专用执行入口。
 3. focused tests 证明行为仍在，再删除无调用者的 helper/文件。
 4. 不触及 schema、public result row、统计表；若必须触及，单独 commit。
 5. 每个语义组独立 commit 并 push；最后再运行完整测试。

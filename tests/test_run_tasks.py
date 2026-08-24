@@ -13,10 +13,8 @@ from runlog_fixtures import androidworld_run_log
 
 from src.experiment.run_task import (
     DeviceTarget,
-    _canonical_function_source_calls,
     _resolve_mobilegpt_target_package,
     _mobilegpt_server_task_app,
-    bind_function_arguments_to_task_params,
     _read_object,
     _t3a_hint_source_node,
     build_mobilegpt_server_command,
@@ -34,10 +32,8 @@ from src.experiment.run_tasks import (
     Deadline,
     PipelinePhaseError,
     _bmoca_source_replay_qualified,
-    _cached_source_function_qualification,
     _concluded_results,
     _fixed_replay_source_step_width,
-    _function_replay_success,
     _e2e_devices,
     _e2e_methods,
     _ensure_oob_release_installed,
@@ -61,7 +57,6 @@ from src.experiment.run_tasks import (
     ensure_target_devices,
     prepare_function_asset,
     prepare_mobilegpt_memory,
-    qualify_source_function,
     run_bmoca_pipeline,
     run_logged_command,
     run_pipeline,
@@ -171,7 +166,6 @@ def _args(tmp_path: Path) -> SimpleNamespace:
         source_model="glm-5.1",
         source_device=SOURCE_DEVICE,
         source_avd=SOURCE_AVD,
-        source_qualification_only=False,
         source_only=False,
         dry_run=False,
     )
@@ -552,7 +546,7 @@ def test_t3a_hint_reads_native_ui_element_bounds() -> None:
     assert source_node["resource_id"] == "com.android.camera2:id/shutter_button"
 
 
-def test_e2e_command_exposes_direct_function_with_fallback_planner(
+def test_e2e_command_has_no_direct_function_interface(
     tmp_path: Path,
 ) -> None:
     item = CanonicalRunLog(
@@ -565,35 +559,20 @@ def test_e2e_command_exposes_direct_function_with_fallback_planner(
         meta={},
     )
 
-    spec = build_task_command(
-        item,
-        android_world_root=tmp_path / "android-world",
-        output_root=tmp_path / "data",
-        method_name="function_replay",
-        device_label="source5560",
-        serial="emulator-5560",
-        console_port=5560,
-        store_path=tmp_path / "function_store.json",
-        omnitransfer_root=tmp_path / "OmniTransfer",
-        function_id="complete_task",
-        function_arguments={"target": "Alarm"},
-        planner_provider="openai",
-        model="GLM-4.6V",
-        planner_timeout_sec=45,
-    )
-
-    assert spec.metadata["mode"] == "direct_function_e2e"
-    assert spec.metadata["function_id"] == "complete_task"
-    assert spec.argv[spec.argv.index("--function-id") + 1] == "complete_task"
-    assert json.loads(
-        spec.argv[spec.argv.index("--function-arguments-json") + 1]
-    ) == {"target": "Alarm"}
-    assert spec.argv[spec.argv.index("--planner-provider") + 1] == "openai"
-    assert spec.argv[spec.argv.index("--model") + 1] == "GLM-4.6V"
-    assert spec.argv[spec.argv.index("--planner-timeout-sec") + 1] == "45.0"
+    with pytest.raises(TypeError, match="function_id"):
+        build_task_command(
+            item,
+            android_world_root=tmp_path / "android-world",
+            output_root=tmp_path / "data",
+            method_name="omniflow",
+            store_path=tmp_path / "function_store.json",
+            function_id="complete_task",
+        )
 
 
-def test_e2e_command_exposes_ordered_function_sequence(tmp_path: Path) -> None:
+def test_e2e_command_has_no_direct_function_sequence_interface(
+    tmp_path: Path,
+) -> None:
     item = CanonicalRunLog(
         task="BrowserMultiply",
         goal="Multiply the displayed numbers",
@@ -603,24 +582,14 @@ def test_e2e_command_exposes_ordered_function_sequence(tmp_path: Path) -> None:
         step_count=2,
         meta={},
     )
-    calls = [
-        {"function_id": "open_page", "arguments": {}},
-        {"function_id": "click_number", "arguments": {"number": "2"}},
-    ]
-
-    spec = build_task_command(
-        item,
-        android_world_root=tmp_path / "android-world",
-        output_root=tmp_path / "data",
-        store_path=tmp_path / "function_store.json",
-        function_calls=calls,
-    )
-
-    assert spec.metadata["mode"] == "direct_function_e2e"
-    assert spec.metadata["function_calls"] == calls
-    assert json.loads(
-        spec.argv[spec.argv.index("--function-calls-json") + 1]
-    ) == calls
+    with pytest.raises(TypeError, match="function_calls"):
+        build_task_command(
+            item,
+            android_world_root=tmp_path / "android-world",
+            output_root=tmp_path / "data",
+            store_path=tmp_path / "function_store.json",
+            function_calls=[{"function_id": "open_page", "arguments": {}}],
+        )
 
 
 def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
@@ -635,63 +604,47 @@ def test_result_runner_planner_timeout_defaults_to_formal_vision_budget(
     assert args.planner_timeout_sec == 180.0
 
 
-def test_canonical_function_source_calls_select_store_source_calls(
-    monkeypatch: pytest.MonkeyPatch,
+def test_result_runner_has_no_direct_function_flags() -> None:
+    parser = build_run_task_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "result",
+                "--task",
+                "BrowserMultiply",
+                "--function-calls-json",
+                "[]",
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ("--source-qualification-only", "--function-replay-collection"),
+)
+def test_pipeline_cli_has_no_direct_replay_modes(
+    flag: str,
     tmp_path: Path,
 ) -> None:
-    class FakeStore:
-        load_errors = {}
-        def __init__(self, _path: Path) -> None:
-            pass
-
-        def get_function(self, function_id: str):
-            return object() if function_id in {"open_camera", "take_photo"} else None
-
-    monkeypatch.setattr("src.experiment.run_task.FunctionStore", FakeStore)
-    monkeypatch.setattr(
-        "src.experiment.run_task.load_v2_source_calls",
-        lambda _path: [
-            {"function_id": "open_camera", "arguments": {}},
-            {"function_id": "take_photo", "arguments": {"lens": "rear"}},
-        ],
-    )
-
-    assert _canonical_function_source_calls(tmp_path / "function_store.json") == [
-        {"function_id": "open_camera", "arguments": {}},
-        {"function_id": "take_photo", "arguments": {"lens": "rear"}},
+    parser = build_parser()
+    required = [
+        "--repo",
+        str(tmp_path),
+        "--script",
+        str(tmp_path / "run.sh"),
+        "--task",
+        "BrowserMultiply",
+        "--output-root",
+        str(tmp_path / "data"),
+        "--omnitransfer-root",
+        str(tmp_path / "OmniTransfer"),
+        "--python-bin",
+        sys.executable,
     ]
 
-
-def test_function_arguments_bind_only_declared_dynamic_task_params() -> None:
-    assert bind_function_arguments_to_task_params(
-        {"folder_name": "source-folder", "static": "keep"},
-        {"folder_name": "evaluation-folder", "unrelated": "ignore"},
-    ) == {
-        "folder_name": "evaluation-folder",
-        "static": "keep",
-    }
-
-
-def test_function_arguments_bind_semantic_alias_from_source_runlog_provenance() -> None:
-    assert bind_function_arguments_to_task_params(
-        {"clipboard_text": "1234 Elm St, Springfield, IL", "static": "keep"},
-        {"clipboard_content": "Acme Corp, Suite 200", "seed": 113},
-        {
-            "clipboard_content": "1234 Elm St, Springfield, IL",
-            "seed": 111,
-        },
-    ) == {
-        "clipboard_text": "Acme Corp, Suite 200",
-        "static": "keep",
-    }
-
-
-def test_function_arguments_do_not_guess_ambiguous_value_provenance() -> None:
-    assert bind_function_arguments_to_task_params(
-        {"query": "same"},
-        {"first": "target-a", "second": "target-b"},
-        {"first": "same", "second": "same"},
-    ) == {"query": "same"}
+    with pytest.raises(SystemExit):
+        parser.parse_args([*required, flag])
 
 
 def test_omniflow_e2e_command_forwards_oob_backend_to_child(monkeypatch, tmp_path: Path) -> None:
@@ -763,27 +716,6 @@ def test_mobilegpt_server_uses_sealed_source_manifest_for_episode_memory(
 def test_mobilegpt_server_keeps_memory_app_separate_from_installed_package() -> None:
     assert _mobilegpt_server_task_app("markor", "net.gsantner.markor") == "markor"
     assert _mobilegpt_server_task_app("", "net.gsantner.markor") == "net.gsantner.markor"
-
-
-def test_e2e_command_rejects_direct_function_for_non_omniflow_agent(
-    tmp_path: Path,
-) -> None:
-    item = CanonicalRunLog(
-        task="BrowserDraw",
-        goal="Draw a shape",
-        params={},
-        source_run_log=tmp_path / "source.run_log.json",
-        replay_seed=111,
-        step_count=1,
-        meta={},
-    )
-
-    with pytest.raises(ValueError, match="direct_function_requires_omniflow_agent"):
-        build_task_command(
-            item,
-            agent_name="official:t3a_gpt4",
-            function_id="complete_task",
-        )
 
 
 def test_dry_run_has_fixed_task_method_device_schedule(
@@ -1003,8 +935,16 @@ def test_e2e_function_check_creates_and_validates_missing_store(
             }
         }
 
-    def writer(run_log: Path, store_path: Path, **kwargs: object) -> dict[str, object]:
-        calls.append({"run_log": run_log, "store_path": store_path, **kwargs})
+    def writer(run_log: Path, output_root: Path, **kwargs: object) -> dict[str, object]:
+        store_path = output_root / "store.json"
+        calls.append(
+            {
+                "run_log": run_log,
+                "output_root": output_root,
+                "store_path": store_path,
+                **kwargs,
+            }
+        )
         store_path.parent.mkdir(parents=True)
         store_path.write_text("{}", encoding="utf-8")
         indexed["value"] = {
@@ -1017,14 +957,14 @@ def test_e2e_function_check_creates_and_validates_missing_store(
                 {"function_id": "complete", "arguments": {}}
             ],
         }
-        return {"enhanced": True, "function_ids": ["complete"]}
+        return {
+            "enhanced": True,
+            "function_ids": ["complete"],
+            "store_path": str(store_path),
+        }
 
     monkeypatch.setattr("src.experiment.run_tasks.load_data_index", load_index)
-    monkeypatch.setattr("src.experiment.run_tasks.save_function", writer)
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._function_enhancement_transport",
-        lambda **_: (lambda _prompt, _tool: "{}"),
-    )
+    monkeypatch.setattr("src.experiment.run_tasks.compile_function_v2", writer)
     monkeypatch.setattr(
         "src.experiment.run_tasks.refresh_data_index_from_pointer",
         lambda **_: {},
@@ -2938,23 +2878,15 @@ def test_source_only_pipeline_collects_replayed_source_and_stops(
     assert report["phases"]["source"]["source_run_log"] == str(source_path)
 
 
-@pytest.mark.parametrize(
-    ("source_only", "source_qualification_only", "report_status"),
-    ((True, False, "collected"), (False, True, "qualified")),
-)
 def test_source_mode_success_returns_zero_exit_status(
     monkeypatch: pytest.MonkeyPatch,
-    source_only: bool,
-    source_qualification_only: bool,
-    report_status: str,
 ) -> None:
     from src.experiment import run_tasks
 
     args = SimpleNamespace(
         environment="androidworld",
         dry_run=False,
-        source_only=source_only,
-        source_qualification_only=source_qualification_only,
+        source_only=True,
     )
     monkeypatch.setattr(
         run_tasks,
@@ -2965,7 +2897,7 @@ def test_source_mode_success_returns_zero_exit_status(
     monkeypatch.setattr(
         run_tasks,
         "run_pipeline",
-        lambda _args: {"status": report_status},
+        lambda _args: {"status": "collected"},
     )
 
     assert run_tasks.main([]) == 0
@@ -3079,7 +3011,7 @@ def test_appagent_pipeline_does_not_use_or_refresh_function_store(
     assert refresh_called is False
 
 
-def test_pipeline_qualifies_source_function_sequence_before_target_workers(
+def test_pipeline_goes_from_function_store_directly_to_target_e2e(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3088,7 +3020,6 @@ def test_pipeline_qualifies_source_function_sequence_before_target_workers(
     source_path.write_text("{}", encoding="utf-8")
     store_path = tmp_path / "store.json"
     store_path.write_text("{}", encoding="utf-8")
-    source_call = {"function_id": "create_note", "arguments": {"name": "note"}}
     events: list[str] = []
     monkeypatch.setattr(
         "src.experiment.run_tasks.ensure_source_device",
@@ -3106,24 +3037,11 @@ def test_pipeline_qualifies_source_function_sequence_before_target_workers(
                 "status": "reused",
                 "model_calls": 0,
                 "total_tokens": 0,
-                "source_calls": [source_call],
+                "source_calls": [
+                    {"function_id": "create_note", "arguments": {"name": "note"}}
+                ],
             },
         ),
-    )
-
-    def qualify(**kwargs: object) -> dict[str, object]:
-        events.append("qualify")
-        assert kwargs["source_calls"] == [source_call]
-        return {
-            "status": "qualified",
-            "qualified": True,
-            "model_calls": 0,
-            "total_tokens": 0,
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.qualify_source_function",
-        qualify,
     )
     monkeypatch.setattr(
         "src.experiment.run_tasks.prepare_mobilegpt_memory",
@@ -3150,108 +3068,8 @@ def test_pipeline_qualifies_source_function_sequence_before_target_workers(
 
     phases = run_pipeline(args)
 
-    assert events == ["qualify", "targets"]
-    assert phases["source_qualification"]["qualified"] is True
-
-
-def test_cached_source_function_qualification_requires_matching_function_identity(
-    tmp_path: Path,
-) -> None:
-    args = _args(tmp_path)
-    source_path = tmp_path / "source.json"
-    source_path.write_text("source", encoding="utf-8")
-    store_path = tmp_path / "store.json"
-    store_path.write_text("store", encoding="utf-8")
-    qualification_path = (
-        args.output_root
-        / args.task
-        / "previous"
-        / "source_qualification"
-        / "CameraTakePhoto"
-        / "function_replay"
-        / "source5560"
-        / "qualification.json"
-    )
-    qualification_path.parent.mkdir(parents=True)
-    qualification_path.write_text(
-        json.dumps(
-            {
-                "qualified": True,
-                "source_run_log": str(source_path),
-                "store_path": str(store_path),
-                "function_id": "create_note",
-                "source_calls": [
-                    {"function_id": "create_note", "arguments": {}}
-                ],
-                "model_calls": 0,
-                "fallback_steps": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    cached = _cached_source_function_qualification(
-        args=args,
-        source_path=source_path,
-        function_store={"store_path": str(store_path)},
-        source_calls=[{"function_id": "create_note", "arguments": {}}],
-    )
-
-    assert cached is not None
-    assert cached["status"] == "reused"
-    assert cached["cached_from"] == str(qualification_path.resolve())
-
-
-def test_cached_source_function_qualification_ignores_other_function_store(
-    tmp_path: Path,
-) -> None:
-    args = _args(tmp_path)
-    source_path = tmp_path / "source.json"
-    source_path.write_text("new source", encoding="utf-8")
-    store_path = tmp_path / "store.json"
-    store_path.write_text("new store", encoding="utf-8")
-    qualification_path = (
-        args.output_root
-        / args.task
-        / "previous"
-        / "source_qualification"
-        / "CameraTakePhoto"
-        / "function_replay"
-        / "source5560"
-        / "qualification.json"
-    )
-    qualification_path.parent.mkdir(parents=True)
-    qualification_path.write_text(
-        json.dumps(
-            {
-                "qualified": True,
-                "source_run_log": str(source_path),
-                "store_path": str(tmp_path / "old-store.json"),
-                "function_id": "open_brightness_settings",
-                "source_calls": [
-                    {
-                        "function_id": "open_brightness_settings",
-                        "arguments": {},
-                    }
-                ],
-                "model_calls": 0,
-                "fallback_steps": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert _cached_source_function_qualification(
-        args=args,
-        source_path=source_path,
-        function_store={"store_path": str(store_path)},
-        source_calls=[
-            {
-                "function_id": "set_brightness_to_minimum",
-                "arguments": {},
-            }
-        ],
-    ) is None
+    assert events == ["targets"]
+    assert "source_qualification" not in phases
 
 
 def test_run_task_reads_json_objects_strictly(tmp_path: Path) -> None:
@@ -3259,69 +3077,6 @@ def test_run_task_reads_json_objects_strictly(tmp_path: Path) -> None:
     path.write_text('{"ready": true}', encoding="utf-8")
 
     assert _read_object(path) == {"ready": True}
-
-
-def test_source_qualification_only_stops_before_baselines_and_targets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = _args(tmp_path)
-    args.source_qualification_only = True
-    source_path = tmp_path / "source.json"
-    source_path.write_text("{}", encoding="utf-8")
-    store_path = tmp_path / "store.json"
-    store_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.ensure_source_device",
-        lambda **_: {"status": "ready", "model_calls": 0, "total_tokens": 0},
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._canonical_source",
-        lambda *_: ({}, source_path, {"task_parameters": {}}),
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.prepare_function_asset",
-        lambda **_: (
-            {"store_path": str(store_path)},
-            {
-                "status": "reused",
-                "model_calls": 0,
-                "total_tokens": 0,
-                "source_calls": [
-                    {"function_id": "create_note", "arguments": {}}
-                ],
-            },
-        ),
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.qualify_source_function",
-        lambda **_: {
-            "status": "qualified",
-            "qualified": True,
-            "model_calls": 0,
-            "total_tokens": 0,
-        },
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.prepare_mobilegpt_memory",
-        lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.prepare_appagent_memory",
-        lambda **_: (_ for _ in ()).throw(AssertionError("baseline prepared")),
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_target_workers",
-        lambda **_: (_ for _ in ()).throw(AssertionError("targets started")),
-    )
-    monkeypatch.setattr(
-        "src.experiment.run_tasks._report",
-        lambda **kwargs: kwargs["phases"],
-    )
-
-    phases = run_pipeline(args)
-
-    assert phases["source_qualification"]["qualified"] is True
 
 
 def test_mobilegpt_memory_only_starts_no_emulators(
@@ -3371,286 +3126,6 @@ def test_mobilegpt_memory_only_starts_no_emulators(
     assert report["phases"]["target_devices"]["reason"] == (
         "runlog_memory_conversion_only"
     )
-
-
-@pytest.mark.parametrize(
-    ("model_calls", "fallback_steps", "expected"),
-    [(0, 0, True), (1, 0, False), (0, 1, False)],
-)
-def test_source_function_qualification_requires_zero_model_and_fallback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    model_calls: int,
-    fallback_steps: int,
-    expected: bool,
-) -> None:
-    args = _args(tmp_path)
-    store = tmp_path / "store.json"
-    store.write_text("{}", encoding="utf-8")
-    source = tmp_path / "source.json"
-    source.write_text("{}", encoding="utf-8")
-
-    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
-        output = Path(command[command.index("--output-path") + 1])
-        output.mkdir(parents=True)
-        (output / "task_results.jsonl").write_text(
-            json.dumps(
-                {
-                    "official_validator_success": True,
-                    "model_calls": model_calls,
-                    "fallback_steps": fallback_steps,
-                    "canonical_run": {
-                        "status": "succeeded",
-                        "diagnostics": {
-                            "execution_summary": {"success": True, "steps": 1},
-                            "execution_trace": [{"result": {"success": True}}],
-                        },
-                    },
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return {
-            "returncode": 0,
-            "timed_out": False,
-            "wall_sec": 0.1,
-            "log_path": str(kwargs["log_path"]),
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        runner,
-    )
-    result = qualify_source_function(
-        args=args,
-        source_path=source,
-        run_log={"task_parameters": {}},
-        function_store={
-            "store_path": str(store),
-            "transfer_states_sha256": "a" * 64,
-        },
-        source_calls=[{"function_id": "draw", "arguments": {}}],
-        attempt_root=tmp_path / "attempt",
-        deadline=Deadline(10),
-    )
-
-    assert result["qualified"] is expected
-
-
-def test_source_function_qualification_does_not_require_whole_task_validator(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = _args(tmp_path)
-    store = tmp_path / "store.json"
-    store.write_text("{}", encoding="utf-8")
-    source = tmp_path / "source.json"
-    source.write_text("{}", encoding="utf-8")
-
-    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
-        output = Path(command[command.index("--output-path") + 1])
-        output.mkdir(parents=True)
-        (output / "task_results.jsonl").write_text(
-            json.dumps(
-                {
-                    "official_validator_success": False,
-                    "model_calls": 0,
-                    "fallback_steps": 0,
-                    "canonical_run": {
-                        "status": "failed",
-                        "diagnostics": {
-                            "execution_summary": {"success": True, "steps": 2},
-                            "execution_trace": [
-                                {"result": {"success": True}},
-                                {"result": {"success": True}},
-                            ],
-                        },
-                    },
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return {
-            "returncode": 0,
-            "timed_out": False,
-            "wall_sec": 0.1,
-            "log_path": str(kwargs["log_path"]),
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        runner,
-    )
-    result = qualify_source_function(
-        args=args,
-        source_path=source,
-        run_log={"task_parameters": {}},
-        function_store={"store_path": str(store), "transfer_states_sha256": "a" * 64},
-        source_calls=[{"function_id": "draw", "arguments": {}}],
-        attempt_root=tmp_path / "attempt",
-        deadline=Deadline(10),
-    )
-
-    assert result["official_validator_success"] is False
-    assert result["function_replay_success"] is True
-    assert result["qualified"] is False
-
-
-def test_source_function_qualification_uses_ordered_function_sequence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = _args(tmp_path)
-    store = tmp_path / "store.json"
-    store.write_text("{}", encoding="utf-8")
-    source = tmp_path / "source.json"
-    source.write_text("{}", encoding="utf-8")
-    captured: list[list[str]] = []
-
-    def runner(command: list[str], **kwargs: object) -> dict[str, object]:
-        captured.append(command)
-        output = Path(command[command.index("--output-path") + 1])
-        output.mkdir(parents=True)
-        (output / "task_results.jsonl").write_text(
-            json.dumps(
-                {
-                    "official_validator_success": True,
-                    "model_calls": 0,
-                    "fallback_steps": 0,
-                    "canonical_run": {
-                        "status": "succeeded",
-                        "diagnostics": {
-                            "execution_summary": {"success": True, "steps": 6},
-                            "execution_trace": [
-                                {"result": {"success": True}}
-                                for _ in range(6)
-                            ],
-                        },
-                    },
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return {
-            "returncode": 0,
-            "timed_out": False,
-            "wall_sec": 0.1,
-            "log_path": str(kwargs["log_path"]),
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        runner,
-    )
-    source_calls = [
-        {"function_id": "open_note_app", "arguments": {}},
-        {"function_id": "create_note", "arguments": {"name": "note"}},
-    ]
-
-    result = qualify_source_function(
-        args=args,
-        source_path=source,
-        run_log={"task_parameters": {}},
-        function_store={
-            "store_path": str(store),
-            "transfer_states_sha256": "a" * 64,
-        },
-        source_calls=source_calls,
-        attempt_root=tmp_path / "attempt",
-        deadline=Deadline(10),
-    )
-
-    assert result["qualified"] is True
-    assert result["qualification_scope"] == "function_sequence_replay"
-    assert result["source_calls"] == source_calls
-    assert len(captured) == 1
-    command = captured[0]
-    calls_index = command.index("--function-calls-json") + 1
-    assert json.loads(command[calls_index]) == source_calls
-
-
-def test_source_qualification_requires_official_validator(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "source.json"
-    source.write_text("{}\n", encoding="utf-8")
-    store = tmp_path / "store.json"
-    store.write_text("{}\n", encoding="utf-8")
-    args = _args(tmp_path)
-
-    def runner(command, **kwargs):
-        output_root = Path(command[command.index("--output-path") + 1])
-        output_root.mkdir(parents=True, exist_ok=True)
-        (output_root / "task_results.jsonl").write_text(
-            json.dumps(
-                {
-                    "official_validator_success": False,
-                    "model_calls": 0,
-                    "fallback_steps": 0,
-                    "canonical_run": {
-                        "status": "failed",
-                        "diagnostics": {
-                            "execution_summary": {"success": True, "steps": 1},
-                            "execution_trace": [{"result": {"success": True}}],
-                        },
-                    },
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return {
-            "returncode": 0,
-            "timed_out": False,
-            "wall_sec": 0.1,
-            "log_path": str(kwargs["log_path"]),
-        }
-
-    monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        runner,
-    )
-    result = qualify_source_function(
-        args=args,
-        source_path=source,
-        run_log={"task_parameters": {}},
-        function_store={
-            "store_path": str(store),
-            "transfer_states_sha256": "a" * 64,
-        },
-        source_calls=[{"function_id": "create_note", "arguments": {}}],
-        attempt_root=tmp_path / "attempt",
-        deadline=Deadline(10),
-    )
-
-    assert result["function_replay_success"] is True
-    assert result["official_validator_success"] is False
-    assert result["qualified"] is False
-
-
-def test_function_replay_success_is_independent_of_validator() -> None:
-    row = {
-        "official_validator_success": False,
-        "canonical_run": {
-            "diagnostics": {
-                "execution_summary": {"success": True, "steps": 1},
-                "execution_trace": [{"result": {"success": True}}],
-            }
-        },
-    }
-    assert _function_replay_success(row) is True
-
-
-def test_function_replay_success_rejects_whole_task_status_without_runtime_evidence() -> None:
-    row = {
-        "official_validator_success": True,
-        "canonical_run": {"status": "succeeded"},
-    }
-    assert _function_replay_success(row) is False
 
 
 def test_pipeline_report_always_materializes_four_report_formats(tmp_path: Path) -> None:

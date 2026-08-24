@@ -34,7 +34,6 @@ from omniflow.transfer.runtime import (
     load_transfer_state_catalog,
     transfer_state_coverage,
 )
-from src.experiment.function_v2 import load_v2_source_calls
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_EMBEDDING_MODEL,
@@ -1396,9 +1395,6 @@ def build_task_command(
     planner_timeout_sec: float | None = None,
     store_path: str | Path | None = None,
     omnitransfer_root: str | Path | None = None,
-    function_id: str = "",
-    function_arguments: dict[str, Any] | None = None,
-    function_calls: list[dict[str, Any]] | None = None,
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -1415,14 +1411,6 @@ def build_task_command(
     )
     resolved_method = _safe_stem(method_name, fallback="e2e")
     resolved_agent = str(agent_name or "omniflow").strip() or "omniflow"
-    resolved_function_id = str(function_id or "").strip()
-    resolved_function_calls = [dict(call) for call in (function_calls or ())]
-    if resolved_function_id and resolved_function_calls:
-        raise ValueError("direct_function_selection_ambiguous")
-    if (resolved_function_id or resolved_function_calls) and resolved_agent != "omniflow":
-        raise ValueError("direct_function_requires_omniflow_agent")
-    if function_arguments is not None and not isinstance(function_arguments, dict):
-        raise ValueError("direct_function_arguments_must_be_object")
     resolved_output = _experiment_run_dir(
         output_root,
         task=item.task,
@@ -1448,10 +1436,6 @@ def build_task_command(
         item.replay_seed if task_random_seed is None else task_random_seed
     )
     if resolved_agent == "omniflow":
-        # A direct Function call is the fast path, not a planner-free mode.
-        # If transfer or Function execution fails, the same episode must
-        # continue with the normal GUI planner instead of terminating before
-        # fallback can be constructed.
         planner_provider, model = _resolve_planner_provider_and_model(
             planner_provider,
             model,
@@ -1518,30 +1502,6 @@ def build_task_command(
         argv.append("--perform-emulator-setup")
     if resolved_agent == "omniflow":
         argv.extend(["--store-path", str(resolved_store_path)])
-        if resolved_function_id:
-            argv.extend(
-                [
-                    "--function-id",
-                    resolved_function_id,
-                    "--function-arguments-json",
-                    json.dumps(
-                        dict(function_arguments or {}),
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                ]
-            )
-        elif resolved_function_calls:
-            argv.extend(
-                [
-                    "--function-calls-json",
-                    json.dumps(
-                        resolved_function_calls,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                ]
-            )
         if planner_provider.strip():
             argv.extend(["--planner-provider", planner_provider.strip()])
         if model.strip():
@@ -1554,13 +1514,9 @@ def build_task_command(
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
     execution_mode = (
-        "direct_function_e2e"
-        if resolved_function_id or resolved_function_calls
-        else (
-            "normal_omniflow_e2e"
-            if resolved_agent == "omniflow"
-            else "normal_androidworld_episode"
-        )
+        "normal_omniflow_e2e"
+        if resolved_agent == "omniflow"
+        else "normal_androidworld_episode"
     )
     return CommandSpec(
         label=f"e2e:{item.task}",
@@ -1604,15 +1560,6 @@ def build_task_command(
             ),
             "planner_provider": planner_provider,
             "model": model,
-            "function_id": resolved_function_id,
-            "function_arguments": (
-                dict(function_arguments or {}) if resolved_function_id else None
-            ),
-            "function_calls": (
-                [dict(call) for call in resolved_function_calls]
-                if resolved_function_calls
-                else None
-            ),
             "state_backend": "androidworld",
             "control_backend": (
                 "oob_control"
@@ -1634,84 +1581,6 @@ def build_task_command(
             "uses_action_transfer": True,
         },
     )
-
-
-def _canonical_function_source_calls(
-    store_path: str | Path,
-) -> list[dict[str, Any]]:
-    """Resolve the ordered source calls that own a canonical Function Store.
-
-    The formal scheduler passes the Store path to the atomic result runner. A
-    Store alone is not enough to select direct Function execution: the
-    function id and its arguments are part of the Store's source-call
-    contract. Keeping this resolution here makes every formal OmniFlow result
-    use the same direct-function path as source qualification.
-    """
-
-    store = FunctionStore(resolve_path(store_path))
-    if store.load_errors:
-        raise ValueError(
-            "omniflow_function_store_invalid:"
-            + ",".join(sorted(store.load_errors))
-        )
-    source_calls = load_v2_source_calls(store_path)
-    if not source_calls:
-        raise ValueError("omniflow_function_source_call_invalid")
-    resolved: list[dict[str, Any]] = []
-    for source_call in source_calls:
-        function_id = str(source_call.get("function_id") or "").strip()
-        arguments = source_call.get("arguments")
-        if not function_id or not isinstance(arguments, dict):
-            raise ValueError("omniflow_function_source_call_invalid")
-        if store.get_function(function_id) is None:
-            raise ValueError(
-                f"omniflow_function_source_call_missing:{function_id}"
-            )
-        resolved.append(
-            {"function_id": function_id, "arguments": dict(arguments)}
-        )
-    return resolved
-
-
-def bind_function_arguments_to_task_params(
-    source_arguments: dict[str, Any],
-    task_params: dict[str, Any] | None,
-    source_task_params: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Bind dynamic Function inputs to the current evaluation task.
-
-    A Function Store records the arguments used by the successful source
-    episode. Those arguments are not necessarily valid for a target episode:
-    AndroidWorld tasks such as MarkorCreateFolder generate a fresh folder name
-    from the evaluation seed. Only keys already declared by the source call
-    are rebound, so static Function inputs remain unchanged and unrelated task
-    parameters never leak into the Function invocation. Authoring may give a
-    Function input a clearer semantic name than AndroidWorld's generator key
-    (for example ``clipboard_text`` versus ``clipboard_content``). For those
-    cases, use the self-contained source RunLog as provenance: when exactly
-    one source task parameter has the same source value and also exists in the
-    target task parameters, bind from that corresponding target field.
-    """
-
-    bound = dict(source_arguments or {})
-    target = task_params if isinstance(task_params, dict) else {}
-    source_params = (
-        source_task_params if isinstance(source_task_params, dict) else {}
-    )
-    for key in tuple(bound):
-        if key in target:
-            bound[key] = target[key]
-            continue
-        provenance_keys = [
-            source_key
-            for source_key, source_value in source_params.items()
-            if source_key in target
-            and source_key != "seed"
-            and source_value == bound[key]
-        ]
-        if len(provenance_keys) == 1:
-            bound[key] = target[provenance_keys[0]]
-    return bound
 
 
 def task_goal_for_params(
@@ -6024,20 +5893,6 @@ def run_task(args: argparse.Namespace) -> int:
     )
     attempt_id = attempt_root.name
     task_params_override = _task_params_override_from_args(args)
-    function_arguments_override: dict[str, Any] | None = None
-    if str(getattr(args, "function_arguments_json", "") or "").strip():
-        decoded_function_arguments = json.loads(str(args.function_arguments_json))
-        if not isinstance(decoded_function_arguments, dict):
-            raise ValueError("--function-arguments-json must be a JSON object")
-        function_arguments_override = dict(decoded_function_arguments)
-    function_calls_override: list[dict[str, Any]] | None = None
-    if str(getattr(args, "function_calls_json", "") or "").strip():
-        decoded_function_calls = json.loads(str(args.function_calls_json))
-        if not isinstance(decoded_function_calls, list) or not all(
-            isinstance(call, dict) for call in decoded_function_calls
-        ):
-            raise ValueError("--function-calls-json must be a JSON array")
-        function_calls_override = [dict(call) for call in decoded_function_calls]
     task_seed = (
         random.randint(1, 2**31 - 1)
         if bool(args.random_task_seed)
@@ -6092,24 +5947,8 @@ def run_task(args: argparse.Namespace) -> int:
                     f"--store-path is required when result includes {method}"
                 )
             store_path = resolve_path(store_text)
-            function_calls = _canonical_function_source_calls(store_path)
-            if function_calls_override is not None:
-                if [call.get("function_id") for call in function_calls_override] != [
-                    call["function_id"] for call in function_calls
-                ]:
-                    raise ValueError("function_calls_override_identity_mismatch")
-                function_calls = function_calls_override
-            if function_arguments_override is not None:
-                if len(function_calls) != 1:
-                    raise ValueError(
-                        "function_arguments_override_requires_one_function"
-                    )
-                function_calls[0]["arguments"] = dict(
-                    function_arguments_override
-                )
         else:
             store_path = memory_root / "unused-store.json"
-            function_calls = []
 
         if method == "omniflow":
             transfer_asset_audit: dict[str, Any] = {}
@@ -6439,7 +6278,6 @@ def run_task(args: argparse.Namespace) -> int:
                     planner_timeout_sec=args.planner_timeout_sec,
                     store_path=store_path,
                     omnitransfer_root=args.omnitransfer_root,
-                    function_calls=function_calls,
                 )
             spec.metadata["memory_root"] = str(memory_root)
             if appagent_prep:
@@ -6665,22 +6503,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-params-json",
         default="",
         help="Override archived task params with this JSON object.",
-    )
-    result_parser.add_argument(
-        "--function-arguments-json",
-        default="",
-        help=(
-            "Override canonical source-call arguments for this evaluation. "
-            "The scheduler uses this only to bind dynamic task parameters."
-        ),
-    )
-    result_parser.add_argument(
-        "--function-calls-json",
-        default="",
-        help=(
-            "Override the ordered canonical Function calls for this evaluation. "
-            "The scheduler uses this to bind dynamic task parameters."
-        ),
     )
     result_parser.add_argument("--planner-provider", default="")
     result_parser.add_argument("--model", default="")

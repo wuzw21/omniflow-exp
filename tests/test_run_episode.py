@@ -43,7 +43,15 @@ from src.integrations.android_world.run_episode import (
     _runtime_execution_trace,
     _model_base_url_for_profile,
     _wait_for_androidworld_a11y,
+    build_parser,
 )
+
+
+def test_androidworld_episode_cli_has_no_direct_function_flags() -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--function-id", "complete_task"])
 
 
 def test_oob_control_uses_only_formal_accessibility_services() -> None:

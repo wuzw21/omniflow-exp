@@ -431,6 +431,56 @@ def test_planner_selects_recalled_function_as_one_peer_tool(tmp_path) -> None:
     }
 
 
+def test_planner_fills_function_schema_arguments_in_e2e_loop(tmp_path) -> None:
+    store_path = tmp_path / "store.json"
+    function = Function(
+        function_id="open_requested_app",
+        name="Open requested app",
+        description="Open the app requested by the current goal.",
+        steps=(
+            FunctionStep(
+                step_index=0,
+                source_state_id="source_home",
+                action=Action("open_app", {"package_name": "source.package"}),
+            ),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {"package_name": {"type": "string"}},
+            "required": ["package_name"],
+            "additionalProperties": False,
+        },
+        bindings=(
+            {
+                "source": "$.arguments.package_name",
+                "target": "$.steps[0].action.args.package_name",
+            },
+        ),
+        agent_visible=True,
+    )
+    FunctionStore(store_path).put_function(function)
+    host = RecordingHost()
+    planner = SequencePlanner(
+        [
+            ToolCall(function.id, {"package_name": "target.package"}),
+            ToolCall("finished", {"content": ""}),
+        ]
+    )
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        installed_apps={"Target": "target.package"},
+    )
+
+    result = flow.run("Open the target app")
+
+    assert result.success is True
+    assert planner.visible_function_ids == [(function.id,), (function.id,)]
+    assert host.actions == [Action("open_app", {"package_name": "target.package"})]
+
+
 def test_zero_fallback_budget_allows_task_planning_after_function(tmp_path) -> None:
     store_path = tmp_path / "store.json"
     function_id = _store_with_open_settings_function(store_path)

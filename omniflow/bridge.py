@@ -165,7 +165,7 @@ class JsonLineBridge:
             run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
             return self._run(request_id, {**args, **run_metadata})
         if tool not in _MANAGEMENT_TOOL_NAMES:
-            return self._execute_tool(request_id, call, body.get("_meta"))
+            raise ValueError(f"tool_not_exposed:{tool}")
 
         catalog_action = _FUNCTION_CATALOG_ACTIONS.get(tool)
         if catalog_action is not None:
@@ -281,49 +281,6 @@ class JsonLineBridge:
             catalog=self.catalog,
         )
         return _run_result(flow.run(goal), body=body, function=None)
-
-    def _execute_tool(
-        self,
-        request_id: str,
-        tool_call: ToolCall,
-        metadata: Any,
-    ) -> dict[str, Any]:
-        run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-        max_steps = _gui_max_steps(run_metadata.get("max_steps"))
-        host = _BridgeHost(
-            self,
-            request_id,
-            defer_user_input=run_metadata.get("defer_user_input") is True,
-        )
-        model = str(run_metadata.get("model") or "").strip()
-        planner = (
-            _BridgePlanner(
-                self,
-                request_id,
-                host,
-                model=model,
-                target_package_name=str(
-                    run_metadata.get("target_package_name") or ""
-                ),
-                step_skill_guidance=str(
-                    run_metadata.get("step_skill_guidance") or ""
-                ),
-                max_steps=max_steps,
-            )
-            if model
-            else None
-        )
-        flow = OmniFlow(
-            self.flow.store.path,
-            host=host,
-            planner=planner,
-            installed_apps=host.installed_apps(),
-            config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=max_steps)),
-            catalog=self.catalog,
-        )
-        function = flow.store.get_function(tool_call.name)
-        result = flow.call_tool(tool_call)
-        return _run_result(result, body=run_metadata, function=function)
 
     def _catalog(self, body: dict[str, Any]) -> dict[str, Any]:
         self.flow.store.reload()

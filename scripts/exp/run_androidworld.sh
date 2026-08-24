@@ -410,11 +410,9 @@ dry_run=0
 check_only=0
 prepare_mobilegpt_memory_only=0
 development_run=0
-source_qualification_only=0
 source_collection=0
 manual_source_collection=0
 manual_reuse_source_emulator=0
-function_replay_collection=0
 all_tasks=0
 batch_task_filter=""
 refresh_memory=0
@@ -426,8 +424,6 @@ e2e_evaluation_seed="$formal_task_seed"
 e2e_task_deadline_sec="${OMNIFLOW_E2E_TASK_DEADLINE_SEC:-$formal_task_deadline_sec}"
 source_screenshot_roots="${OMNIFLOW_SOURCE_SCREENSHOT_ROOTS:-}"
 setup_device=""
-function_replay_device="${OMNIFLOW_FUNCTION_REPLAY_DEVICE:-standard45562:emulator-45562:45562}"
-function_replay_avd="${OMNIFLOW_FUNCTION_REPLAY_AVD:-OmniFlowTargetSmall}"
 
 normalize_model_environment() {
   if [[ -z "${LLMTHU_API_KEY:-}" && -n "${LLMTHU_KEY:-}" ]]; then
@@ -600,9 +596,6 @@ Options:
                             Install and health-check the complete host/device
                             stack for one or more protocol devices. This mode
                             does not execute an AndroidWorld task.
-  --source-qualification-only
-                            Stop that pipeline after immutable seed-111 Function
-                            qualification; create no target result results.
   --collect-source         Re-run one task on the source device only and save
                             screenshot-backed native RunLog evidence.
   --collect-source-manual  Run one task interactively on the source device;
@@ -610,9 +603,6 @@ Options:
   --manual-reuse-source-emulator
                             Reuse a source emulator already prepared for the
                             current manual task instead of reinstalling its app.
-  --function-replay-collection
-                            Convert each successful source RunLog with
-                            enhance=false and run one official Function replay.
   --task-deadline-sec SEC   Whole-task wall deadline; maximum/default is 1800.
   --attempt-id ID            Internal batch child attempt identifier.
   --refresh-memory          Deduplicate and index all configured RunLogs,
@@ -790,9 +780,6 @@ while [[ "$#" -gt 0 ]]; do
       fi
       setup_device="$1"
       ;;
-    --source-qualification-only)
-      source_qualification_only=1
-      ;;
     --collect-source)
       source_collection=1
       ;;
@@ -802,9 +789,6 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --manual-reuse-source-emulator)
       manual_reuse_source_emulator=1
-      ;;
-    --function-replay-collection)
-      function_replay_collection=1
       ;;
     --task-deadline-sec)
       shift
@@ -925,7 +909,6 @@ if [[ "$execution_environment" != "bmoca" && "$source_collection" -eq 1 ]]; then
   batch_task_filter=""
   e2e_method="${e2e_method:-omniflow}"
   e2e_device="${e2e_device:-$default_device}"
-  source_qualification_only=0
 fi
 if [[ "$execution_environment" == "bmoca" ]]; then
   if [[ "$source_collection" -eq 1 || "$development_run" -eq 1 || "$check_only" -eq 1 || "$dry_run" -eq 1 || -n "$e2e_task" || -n "$selected_device_arg" || "$refresh_memory" -eq 1 ]]; then
@@ -1274,7 +1257,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "[static] ready task=$e2e_task methods=$e2e_method devices=$e2e_device; no device or persistent output created"
     exit 0
   fi
-  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( "$e2e_method" == "all" || ",${e2e_method}," == *,appagent,* ) && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$dry_run" -ne 1 && "$check_only" -ne 1 && ( "$e2e_method" == "all" || ",${e2e_method}," == *,appagent,* ) && ( -z "$appagent_root" || "$appagent_root" != /* || ! -d "$appagent_root" ) ]]; then
     echo "--e2e-task requires an absolute native AppAgent root." >&2
     exit 2
   fi
@@ -1301,7 +1284,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task requires an executable absolute emulator path: $e2e_emulator_bin" >&2
     exit 2
   fi
-  if [[ "$supplemental_autodroid" -eq 0 && "$function_replay_collection" -eq 0 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
+  if [[ "$supplemental_autodroid" -eq 0 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
     "$source_avd" \
     "$e2e_emulator_bin" \
     "$e2e_avdmanager_bin" \
@@ -1309,15 +1292,7 @@ if [[ -n "$e2e_task" ]]; then
     echo "--e2e-task source AVD is unavailable: $source_avd" >&2
     exit 2
   fi
-  if [[ "$function_replay_collection" -eq 1 && "$dry_run" -ne 1 ]] && ! ensure_avd_installed \
-    "$function_replay_avd" \
-    "$e2e_emulator_bin" \
-    "$e2e_avdmanager_bin" \
-    "$e2e_android_sdk_root"; then
-    echo "--function-replay-collection replay AVD is unavailable: $function_replay_avd" >&2
-    exit 2
-  fi
-  if [[ "$supplemental_autodroid" -eq 0 && "$check_only" -ne 1 && "$function_replay_collection" -eq 0 ]]; then
+  if [[ "$supplemental_autodroid" -eq 0 && "$check_only" -ne 1 ]]; then
     if [[ -z "$env_file" || "$env_file" != /* || ! -f "$env_file" ]]; then
       echo "--e2e-task requires an existing absolute OMNIFLOW_ENV_FILE." >&2
       exit 2
@@ -1402,19 +1377,8 @@ if [[ -n "$e2e_task" ]]; then
   if [[ "$supplemental_autodroid" -eq 0 && ( "$e2e_method" == "all" || ",${e2e_method}," == *,omniflow,* ) ]]; then
     e2e_args+=(--ensure-function)
   fi
-  if [[ "$function_replay_collection" -eq 1 ]]; then
-    e2e_args+=(
-      --function-replay-collection
-      --replay-avd "$function_replay_avd"
-      --e2e-method omniflow
-      --e2e-device "$function_replay_device"
-    )
-  fi
   if [[ -n "${OMNIFLOW_E2E_ATTEMPT_ID:-}" ]]; then
     e2e_args+=(--attempt-id "$OMNIFLOW_E2E_ATTEMPT_ID")
-  fi
-  if [[ "$source_qualification_only" -eq 1 ]]; then
-    e2e_args+=(--source-qualification-only)
   fi
   if [[ "$prepare_mobilegpt_memory_only" -eq 1 ]]; then
     e2e_args+=(--mobilegpt-memory-only)
@@ -2150,13 +2114,7 @@ PY
   batch_status=0
   for batch_task in "${batch_tasks[@]}"; do
     child_args=(--e2e-task "$batch_task" --task-deadline-sec "$e2e_task_deadline_sec")
-    if [[ "$function_replay_collection" -eq 1 ]]; then
-      child_args+=(
-        --function-replay-collection
-        --e2e-method omniflow
-        --e2e-device "$function_replay_device"
-      )
-    elif [[ "$supplemental_batch" -eq 1 ]]; then
+    if [[ "$supplemental_batch" -eq 1 ]]; then
       child_args+=(
         --e2e-method autodroid
         --e2e-device all

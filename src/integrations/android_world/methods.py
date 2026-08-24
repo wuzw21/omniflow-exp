@@ -249,9 +249,6 @@ class MethodAdapterContext:
     task_seed: int | None = None
     evidence_root: str = ""
     performance_metrics: Any | None = None
-    direct_function_id: str = ""
-    direct_function_arguments: dict[str, Any] | None = None
-    direct_function_calls: list[dict[str, Any]] | None = None
     build_omniflow_agent: Callable[..., Any] | None = None
     apply_fixed_replay: Callable[..., Any] | None = None
     build_official_agent: Callable[..., Any] | None = None
@@ -361,15 +358,6 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
     }
     if context.selector == "fixed_replay":
         build_kwargs["allow_empty_store"] = True
-    if str(context.direct_function_id or "").strip():
-        build_kwargs["direct_function_id"] = str(context.direct_function_id).strip()
-        build_kwargs["direct_function_arguments"] = dict(
-            context.direct_function_arguments or {}
-        )
-    if context.direct_function_calls:
-        build_kwargs["direct_function_calls"] = [
-            dict(call) for call in context.direct_function_calls
-        ]
     if planner is not None:
         build_kwargs["planner"] = planner
     built_agent = build_agent(**build_kwargs)

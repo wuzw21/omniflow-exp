@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
 
 from omniflow.bridge import JsonLineBridge
+from omniflow.core.model import Function
 from omniflow.functions.management import enhance_function
 
 
@@ -99,6 +101,18 @@ def test_save_function_accepts_complete_function(tmp_path) -> None:
         "error": None,
     }
     assert bridge.flow.store.get_function("open_settings") is not None
+
+
+def test_bridge_rejects_hidden_direct_function_execution(tmp_path) -> None:
+    bridge = JsonLineBridge(tmp_path / "functions.json")
+    bridge.flow.store.put_function(Function.from_dict(_function()))
+
+    with pytest.raises(ValueError, match="tool_not_exposed:open_settings"):
+        bridge._handle(
+            "request-1",
+            "tools/call",
+            {"name": "open_settings", "arguments": {}},
+        )
 
 
 def test_save_function_compiles_run_log_without_model_and_saves_once(tmp_path) -> None:

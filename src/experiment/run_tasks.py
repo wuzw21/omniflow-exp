@@ -22,8 +22,6 @@ from typing import Any, Callable, Mapping, Sequence
 from omniflow.core.trajectory import require_complete_source_run_log
 from src.experiment.function_v2 import compile_function_v2
 from src.experiment.run_task import (
-    _canonical_function_source_calls,
-    bind_function_arguments_to_task_params,
     build_task_command,
     build_replay_command,
     validate_omniflow_transfer_assets,
@@ -782,31 +780,6 @@ def _official_success(row: dict[str, Any]) -> bool:
     )
 
 
-def _function_replay_success(row: dict[str, Any]) -> bool:
-    """Return the atomic Function result, independent of task validation."""
-
-    canonical = row.get("canonical_run")
-    if not isinstance(canonical, dict):
-        return False
-    diagnostics = canonical.get("diagnostics")
-    if not isinstance(diagnostics, dict):
-        return False
-    execution_summary = diagnostics.get("execution_summary")
-    if not isinstance(execution_summary, dict):
-        return False
-    if execution_summary.get("success") is not True:
-        return False
-    trace = diagnostics.get("execution_trace")
-    if isinstance(trace, list):
-        return bool(trace) and all(
-            isinstance(step, dict)
-            and isinstance(step.get("result"), dict)
-            and step["result"].get("success") is True
-            for step in trace
-        )
-    return int(execution_summary.get("steps") or 0) > 0
-
-
 def _captured_androidworld_state(record: Any) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ValueError("fixed_replay_capture_observation_required")
@@ -1467,158 +1440,6 @@ def prepare_function_asset(
     return existing, {
         **phase,
     }
-
-
-def qualify_source_function(
-    *,
-    args: argparse.Namespace,
-    source_path: Path,
-    run_log: dict[str, Any],
-    function_store: dict[str, Any],
-    source_calls: list[dict[str, Any]],
-    attempt_root: Path,
-    deadline: Deadline,
-) -> dict[str, Any]:
-    source_label, source_serial, source_console_port = args.source_device
-    store_path = Path(str(function_store["store_path"])).resolve()
-    task_parameters = run_log.get("task_parameters")
-    task_parameters = task_parameters if isinstance(task_parameters, dict) else {}
-    source_steps = run_log.get("steps")
-    source_steps = source_steps if isinstance(source_steps, list) else []
-    item = CanonicalRunLog(
-        task=args.task,
-        goal=str(run_log.get("goal") or args.task),
-        params=dict(task_parameters),
-        source_run_log=source_path,
-        replay_seed=SOURCE_SEED,
-        step_count=len(source_steps),
-        meta={"source_function_qualification": True},
-    )
-    command_spec = build_task_command(
-        item,
-        android_world_root=args.android_world_root,
-        output_root=attempt_root / "source_qualification",
-        method_name="function_replay",
-        device_label=source_label,
-        serial=source_serial,
-        console_port=source_console_port,
-        adb_path=str(args.adb_path),
-        max_steps=SOURCE_MAX_STEPS,
-        timeout_sec=int(TASK_DEADLINE_SEC),
-        max_fallback_steps=0,
-        task_random_seed=SOURCE_SEED,
-        fixed_task_seed=True,
-        fixed_task_params=True,
-        perform_emulator_setup=_perform_androidworld_emulator_setup(),
-        store_path=store_path,
-        omnitransfer_root=args.omnitransfer_root,
-        function_calls=[dict(source_call) for source_call in source_calls],
-        python_executable=str(args.python_bin),
-        repo_root=args.repo,
-        run_dir_suffix="function_sequence",
-    )
-    if command_spec.output_path is None:
-        raise RuntimeError("function_qualification_output_path_required")
-    output_root = command_spec.output_path
-    environment = dict(os.environ)
-    environment.update(
-        {
-            **command_spec.env,
-            "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
-        }
-    )
-    for key in (
-        "ANTHROPIC_API_KEY",
-        "GOOGLE_API_KEY",
-    ):
-        environment.pop(key, None)
-    result = run_logged_command(
-        command_spec.argv,
-        cwd=args.repo,
-        environment=environment,
-        log_path=output_root.parent / "qualification.log",
-        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
-    )
-    row = _last_jsonl_row(output_root / "task_results.jsonl")
-    canonical = row.get("canonical_run")
-    canonical = canonical if isinstance(canonical, dict) else {}
-    result.update(
-        {
-            "qualification_scope": "function_sequence_replay",
-            "official_validator_success": _official_success(row),
-            "function_replay_success": _function_replay_success(row),
-            "model_calls": int(row.get("model_calls") or 0),
-            "fallback_steps": int(row.get("fallback_steps") or 0),
-            "task_run_status": str(canonical.get("status") or ""),
-            "function_id": str(
-                row.get("function_id") or source_calls[-1]["function_id"]
-            ),
-            "function_ids": [
-                str(source_call["function_id"]) for source_call in source_calls
-            ],
-            "source_run_log": str(source_path),
-            "store_path": str(store_path),
-            "source_calls": [dict(source_call) for source_call in source_calls],
-        }
-    )
-    result["qualified"] = bool(
-        result["returncode"] == 0
-        and result["function_replay_success"]
-        and result["official_validator_success"]
-        and result["model_calls"] == 0
-        and result["fallback_steps"] == 0
-    )
-    _write_json(output_root.parent / "qualification.json", result)
-    return result
-
-
-def _cached_source_function_qualification(
-    *,
-    args: argparse.Namespace,
-    source_path: Path,
-    function_store: dict[str, Any],
-    source_calls: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    store_path = Path(str(function_store["store_path"])).resolve()
-    expected_source_calls = [
-        {
-            "function_id": str(source_call.get("function_id") or ""),
-            "arguments": dict(source_call.get("arguments") or {}),
-        }
-        for source_call in source_calls
-    ]
-    candidates = sorted(
-        (
-            path
-            for path in (
-                args.output_root / safe_component(args.task)
-            ).glob("*/source_qualification/**/qualification.json")
-            if path.is_file()
-        ),
-        key=lambda path: path.stat().st_mtime_ns,
-        reverse=True,
-    )
-    for path in candidates:
-        try:
-            qualification = _read_object(path)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if (
-            qualification.get("qualified") is True
-            and int(qualification.get("model_calls") or 0) == 0
-            and int(qualification.get("fallback_steps") or 0) == 0
-            and Path(str(qualification.get("source_run_log") or "")).resolve()
-            == source_path.resolve()
-            and Path(str(qualification.get("store_path") or "")).resolve()
-            == store_path
-            and qualification.get("source_calls") == expected_source_calls
-        ):
-            return {
-                **qualification,
-                "status": "reused",
-                "cached_from": str(path.resolve()),
-            }
-    return None
 
 
 def _validate_prepared_mobilegpt_memory(
@@ -2477,18 +2298,6 @@ def _autodroid_task_params_from_index(
     return resolved
 
 
-def _function_source_task_params(store_path: str | Path) -> dict[str, Any]:
-    """Read task-parameter provenance from a self-contained Function bundle."""
-
-    run_log_path = resolve_path(store_path).parent / "run_log.json"
-    try:
-        run_log = _read_object(run_log_path)
-    except (FileNotFoundError, ValueError, TypeError, json.JSONDecodeError):
-        return {}
-    params = run_log.get("task_parameters")
-    return dict(params) if isinstance(params, dict) else {}
-
-
 def _androidworld_result_command(
     *,
     args: argparse.Namespace,
@@ -2582,24 +2391,6 @@ def _androidworld_result_command(
             # whose generator cannot be imported in a lightweight scheduler
             # test or whose official task requires externally supplied params.
             evaluation_params = None
-    if method == "omniflow" and store_path is not None and store_path.is_file():
-        source_calls = _canonical_function_source_calls(store_path)
-        if evaluation_params is None:
-            evaluation_params = _generate_missing_androidworld_task_params(
-                task=str(args.task),
-                source_seed=_e2e_evaluation_seed(args),
-            )
-        bound_function_calls = [
-            {
-                "function_id": source_call["function_id"],
-                "arguments": bind_function_arguments_to_task_params(
-                    source_call["arguments"],
-                    evaluation_params,
-                    _function_source_task_params(store_path),
-                ),
-            }
-            for source_call in source_calls
-        ]
     if evaluation_params is None and not FIXED_TASK_PARAMS and method != "autodroid":
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
     elif evaluation_params is not None:
@@ -2608,22 +2399,6 @@ def _androidworld_result_command(
                 "--task-params-json",
                 json.dumps(
                     evaluation_params,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            )
-        )
-    if (
-        evaluation_params is not None
-        and method == "omniflow"
-        and store_path is not None
-        and store_path.is_file()
-    ):
-        command.extend(
-            (
-                "--function-calls-json",
-                json.dumps(
-                    bound_function_calls,
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ),
@@ -3087,208 +2862,6 @@ def run_target_workers(
         return [result for future in futures for result in future.result()]
 
 
-def run_function_replay_collection(args: argparse.Namespace) -> dict[str, Any]:
-    """Collect one deterministic Function conversion and its official replay."""
-
-    deadline = Deadline(args.task_deadline_sec)
-    attempt_id = args.attempt_id or next_attempt_name(
-        args.output_root / safe_component(args.task)
-    )
-    attempt_root = args.output_root / safe_component(args.task) / attempt_id
-    attempt_root.mkdir(parents=True, exist_ok=False)
-    summary: dict[str, Any] = {
-        "schema_version": "omniflow.androidworld.function-replay-collection.v1",
-        "immutable": True,
-        "task": args.task,
-        "attempt_id": attempt_id,
-        "enhance": False,
-        "status": "failed",
-        "source_seed": SOURCE_SEED,
-        "evaluation_seed": _e2e_evaluation_seed(args),
-        "model_calls": 0,
-        "total_tokens": 0,
-        "phases": {},
-    }
-    try:
-        _, source_path, run_log = _canonical_source(args.memory_index, args.task)
-        source_copy = persist_androidworld_run_log(
-            attempt_root / "source",
-            run_log=run_log,
-        )
-        summary["phases"]["source"] = {
-            "status": "reused",
-            "source_run_log": str(source_path),
-            "copied_run_log": str(source_copy),
-            "step_count": len(run_log.get("steps") or []),
-        }
-
-        device_label = safe_component(str(_e2e_devices(args)[0][0]))
-        function_bundle_root = (
-            args.asset_root
-            / "androidworld"
-            / safe_component(args.task)
-            / device_label
-            / "function"
-            / "function_authoring"
-            / safe_component(attempt_id)
-        )
-        conversion = compile_function_v2(
-            source_path,
-            function_bundle_root,
-            enhance=False,
-        )
-        store_path = Path(conversion["store_path"]).resolve()
-        transfer_audit = validate_omniflow_transfer_assets(
-            store_path,
-            require_action_transfer=True,
-        )
-        summary["phases"]["function"] = {
-            "status": "created",
-            "enhanced": conversion["enhanced"],
-            "function_ids": conversion["function_ids"],
-            "source_calls": conversion["source_calls"],
-            "store_path": str(store_path),
-            "transfer_audit": transfer_audit,
-        }
-
-        if args.dry_run:
-            summary["status"] = "planned"
-            summary["phases"]["replay"] = {
-                "status": "planned",
-                "device": list(_e2e_devices(args)[0]),
-                "avd": str(args.replay_avd),
-            }
-            summary["outer_wall_sec"] = deadline.elapsed
-            _write_json(attempt_root / "pipeline_summary.json", summary)
-            return summary
-
-        devices = _e2e_devices(args)
-        if len(devices) != 1:
-            raise ValueError("function_replay_collection_requires_one_device")
-        device = devices[0]
-        label, serial, console_port = device
-        emulator_phase = run_logged_command(
-            [
-                str(args.python_bin),
-                "-m",
-                "src.experiment.development_emulator",
-                "--adb",
-                str(args.adb_path),
-                "--emulator",
-                str(args.emulator_bin),
-                "--serial",
-                serial,
-                "--avd",
-                str(args.replay_avd),
-                "--gpu",
-                str(args.emulator_gpu),
-                "--log-path",
-                str(attempt_root / "preflight" / "replay_emulator.log"),
-                "--boot-timeout",
-                str(min(240, max(1, int(deadline.remaining(240))))),
-            ],
-            cwd=args.repo,
-            environment=dict(os.environ),
-            log_path=attempt_root / "preflight" / "replay_emulator_command.log",
-            timeout_sec=deadline.remaining(300),
-        )
-        summary["phases"]["replay_device"] = {
-            **emulator_phase,
-            "status": "ready" if emulator_phase["returncode"] == 0 else "failed",
-            "device": list(device),
-            "avd": str(args.replay_avd),
-        }
-        if emulator_phase["returncode"] != 0:
-            raise PipelinePhaseError("function_replay_device_failed", summary["phases"]["replay_device"])
-
-        replay_attempt_id = f"{attempt_id}.function_replay.{label}"
-        replay_root = attempt_root / "replay" / label
-        source_calls = [dict(call) for call in conversion["source_calls"]]
-        item = CanonicalRunLog(
-            task=args.task,
-            goal=str(run_log.get("goal") or args.task),
-            params=dict(run_log.get("task_parameters") or {}),
-            source_run_log=source_path,
-            replay_seed=SOURCE_SEED,
-            step_count=len(run_log.get("steps") or []),
-            meta={"function_replay_collection": True},
-        )
-        command_spec = build_task_command(
-            item,
-            android_world_root=args.android_world_root,
-            output_root=replay_root,
-            method_name="function_replay",
-            device_label=label,
-            serial=serial,
-            console_port=console_port,
-            adb_path=str(args.adb_path),
-            max_steps=SOURCE_MAX_STEPS,
-            timeout_sec=int(TASK_DEADLINE_SEC),
-            max_fallback_steps=0,
-            task_random_seed=SOURCE_SEED,
-            fixed_task_seed=True,
-            fixed_task_params=True,
-            task_params_override=dict(run_log.get("task_parameters") or {}),
-            perform_emulator_setup=True,
-            store_path=store_path,
-            omnitransfer_root=args.omnitransfer_root,
-            function_calls=source_calls,
-            python_executable=str(args.python_bin),
-            repo_root=args.repo,
-            run_dir_suffix="source_collection",
-        )
-        if command_spec.output_path is None:
-            raise RuntimeError("function_replay_collection_output_path_required")
-        environment = dict(os.environ)
-        environment.update(
-            {
-                **command_spec.env,
-                "PYTHONPATH": f"{args.repo}:{args.repo / 'src'}:{args.android_world_root}",
-            }
-        )
-        for key in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
-            environment.pop(key, None)
-        replay_result = run_logged_command(
-            command_spec.argv,
-            cwd=args.repo,
-            environment=environment,
-            log_path=command_spec.output_path.parent / "function_replay.log",
-            timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
-        )
-        result_root = command_spec.output_path
-        row = _last_jsonl_row(result_root / "task_results.jsonl")
-        replay_phase = {
-            **replay_result,
-            "status": "succeeded"
-            if replay_result["returncode"] == 0
-            and _official_success(row)
-            and _function_replay_success(row)
-            else "failed",
-            "official_validator_success": _official_success(row),
-            "function_replay_success": _function_replay_success(row),
-            "model_calls": int(row.get("model_calls") or 0),
-            "fallback_steps": int(row.get("fallback_steps") or 0),
-            "result_root": str(result_root),
-            "result_row": row,
-        }
-        summary["phases"]["replay"] = replay_phase
-        summary["status"] = (
-            "complete"
-            if replay_phase["status"] == "succeeded"
-            and replay_phase["model_calls"] == 0
-            and replay_phase["fallback_steps"] == 0
-            else "failed"
-        )
-    except Exception as error:
-        phase = getattr(error, "phase", {})
-        summary["error"] = f"{type(error).__name__}: {error}"
-        if phase:
-            summary["phases"]["failure"] = phase
-    summary["outer_wall_sec"] = deadline.elapsed
-    _write_json(attempt_root / "pipeline_summary.json", summary)
-    return summary
-
-
 def _blocked_all(
     *,
     args: argparse.Namespace,
@@ -3299,9 +2872,7 @@ def _blocked_all(
     stage: str,
     evidence: Path,
 ) -> None:
-    if getattr(args, "source_qualification_only", False) or getattr(
-        args, "source_only", False
-    ):
+    if getattr(args, "source_only", False):
         return
     completed = _concluded_results(args, outcomes_root, attempt_id)
     methods = _e2e_methods(args)
@@ -3346,34 +2917,6 @@ def _report(
             "task": args.task,
             "attempt_id": attempt_id,
             "status": "collected" if collected else "failed",
-            "source_seed": SOURCE_SEED,
-            "outer_wall_sec": deadline.elapsed,
-            "model_calls": sum(
-                int(phase.get("model_calls") or 0)
-                for phase in phases.values()
-                if isinstance(phase, dict)
-            ),
-            "total_tokens": sum(
-                int(phase.get("total_tokens") or 0)
-                for phase in phases.values()
-                if isinstance(phase, dict)
-            ),
-            "phases": phases,
-        }
-        _write_json(attempt_root / "pipeline_summary.json", summary)
-        return summary
-    if getattr(args, "source_qualification_only", False):
-        qualification = phases.get("source_qualification")
-        qualified = (
-            isinstance(qualification, dict)
-            and qualification.get("qualified") is True
-        )
-        summary = {
-            "schema_version": "omniflow.androidworld.source-qualification-report.v1",
-            "immutable": True,
-            "task": args.task,
-            "attempt_id": attempt_id,
-            "status": "qualified" if qualified else "failed",
             "source_seed": SOURCE_SEED,
             "outer_wall_sec": deadline.elapsed,
             "model_calls": sum(
@@ -3868,116 +3411,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             stage="function_asset",
             evidence=failure,
         )
-        return _report(
-            args=args,
-            attempt_id=attempt_id,
-            attempt_root=attempt_root,
-            outcomes_root=outcomes_root,
-            deadline=deadline,
-            phases=phases,
-        )
-
-    source_calls = (
-        phases.get("function", {}).get("source_calls")
-        if function_store is not None
-        else None
-    )
-    if not omniflow_selected:
-        phases["source_qualification"] = {
-            "status": "skipped",
-            "model_calls": 0,
-            "total_tokens": 0,
-            "reason": "method_not_selected",
-        }
-    elif function_store is None:
-        phases["source_qualification"] = {
-            "status": "skipped",
-            "model_calls": 0,
-            "total_tokens": 0,
-            "reason": "function_store_unavailable_non_function_methods_continue",
-        }
-    elif not isinstance(source_calls, list) or not source_calls:
-        failure = _write_json(
-            attempt_root / "source_qualification" / "failure.json",
-            {"error": "canonical_function_source_call_required"},
-        )
-        phases["source_qualification"] = {
-            "status": "failed",
-            "model_calls": 0,
-            "total_tokens": 0,
-            "error": "canonical_function_source_call_required",
-        }
-        blocked_methods["omniflow"] = (
-            "prep_failed",
-            "source_qualification",
-            str(failure),
-        )
-    else:
-        try:
-            qualification = _cached_source_function_qualification(
-                args=args,
-                source_path=source_path,
-                function_store=function_store,
-                source_calls=source_calls,
-            )
-            if qualification is None:
-                qualification = qualify_source_function(
-                    args=args,
-                    source_path=source_path,
-                    run_log=run_log,
-                    function_store=function_store,
-                    source_calls=source_calls,
-                    attempt_root=attempt_root,
-                    deadline=deadline,
-                )
-            qualifications = [qualification]
-            all_qualified = qualification.get("qualified") is True
-            phases["source_qualification"] = {
-                "status": "qualified" if all_qualified else "failed",
-                "qualified": all_qualified,
-                "functions": qualifications,
-                "model_calls": sum(
-                    int(item.get("model_calls") or 0) for item in qualifications
-                ),
-                "total_tokens": sum(
-                    int(item.get("total_tokens") or 0) for item in qualifications
-                ),
-            }
-            if not all_qualified:
-                failed_qualification = next(
-                    (
-                        item
-                        for item in qualifications
-                        if item.get("qualified") is not True
-                    ),
-                    {},
-                )
-                failure = Path(
-                    str(failed_qualification.get("log_path") or attempt_root)
-                ).resolve()
-                blocked_methods["omniflow"] = (
-                    "prep_failed",
-                    "source_qualification",
-                    str(failure),
-                )
-        except Exception as error:
-            failure = _write_json(
-                attempt_root / "source_qualification" / "failure.json",
-                {"error": f"{type(error).__name__}: {error}"},
-            )
-            phases["source_qualification"] = {
-                "status": "failed",
-                "model_calls": 0,
-                "total_tokens": 0,
-                "error": str(error),
-            }
-            blocked_methods["omniflow"] = (
-                "prep_failed",
-                "source_qualification",
-                str(failure),
-            )
-
-    if getattr(args, "source_qualification_only", False):
         return _report(
             args=args,
             attempt_id=attempt_id,
@@ -5436,17 +4869,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create and validate the task Function before E2E execution.",
     )
-    parser.add_argument("--source-qualification-only", action="store_true")
     parser.add_argument("--mobilegpt-memory-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--manual-source", action="store_true")
     parser.add_argument("--manual-reuse-emulator", action="store_true")
-    parser.add_argument(
-        "--function-replay-collection",
-        action="store_true",
-        help="Convert the successful source RunLog with enhance=false and replay it once.",
-    )
-    parser.add_argument("--replay-avd", default="OmniFlowTargetSmall")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -5583,8 +5009,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _resolve_args(build_parser().parse_args(argv))
     if args.environment == "bmoca":
         result = run_bmoca_pipeline(args)
-    elif getattr(args, "function_replay_collection", False):
-        result = run_function_replay_collection(args)
     else:
         result = run_pipeline(args)
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -5594,10 +5018,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.source_only:
         return 0 if result.get("status") == "collected" else 1
-    if args.source_qualification_only:
-        return 0 if result.get("status") == "qualified" else 1
-    if getattr(args, "function_replay_collection", False):
-        return 0 if result.get("status") == "complete" else 1
     counts = result.get("counts") if isinstance(result, dict) else None
     if result.get("function_retry_needed") is True:
         return 75

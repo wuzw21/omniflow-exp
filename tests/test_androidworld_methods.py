@@ -142,76 +142,15 @@ def test_omniflow_adapter_preserves_launcher_step_cap() -> None:
     assert captured["max_steps"] == 20
 
 
-def test_direct_function_is_a_method_adapter_not_a_runner_override() -> None:
-    captured: dict[str, object] = {}
-
-    def build_agent(**options: object) -> object:
-        captured.update(options)
-        return object()
-
-    context = MethodAdapterContext(
-        selector="omniflow",
-        env=SimpleNamespace(),
-        store_path="store.json",
-        adb_serial="emulator-5554",
-        direct_function_id="complete_task",
-        direct_function_arguments={"target": "Alarm"},
-        build_omniflow_agent=build_agent,
-    )
-
-    default_method_adapter_registry().build(context)
-
-    assert captured["direct_function_id"] == "complete_task"
-    assert captured["direct_function_arguments"] == {"target": "Alarm"}
-
-
-def test_direct_function_sequence_is_forwarded_to_androidworld_agent() -> None:
-    captured: dict[str, object] = {}
-    calls = [
-        {"function_id": "open_page", "arguments": {}},
-        {"function_id": "click_number", "arguments": {"number": "2"}},
-    ]
-
-    context = MethodAdapterContext(
-        selector="omniflow",
-        env=SimpleNamespace(),
-        store_path="store.json",
-        adb_serial="emulator-5554",
-        direct_function_calls=calls,
-        build_omniflow_agent=lambda **options: captured.update(options) or object(),
-    )
-
-    default_method_adapter_registry().build(context)
-
-    assert captured["direct_function_calls"] == calls
-
-
-def test_direct_function_keeps_online_planner_for_transfer_fallback(monkeypatch) -> None:
-    planner_options: dict[str, object] = {}
-
-    class CapturingPlanner:
-        def __init__(self, **options: object) -> None:
-            planner_options.update(options)
-
-    monkeypatch.setattr("omniflow.vlm.planner.VLMPlanner", CapturingPlanner)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
-    monkeypatch.setenv("OMNIFLOW_MODEL_ENDPOINT_PROFILE", "openai")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
-    context = MethodAdapterContext(
-        selector="omniflow",
-        env=SimpleNamespace(),
-        store_path="store.json",
-        adb_serial="emulator-5554",
-        direct_function_id="complete_task",
-        planner_provider="openai",
-        planner_model="GLM-4.6V",
-        model_endpoint_profile="openai",
-        build_omniflow_agent=lambda **options: SimpleNamespace(**options),
-    )
-
-    default_method_adapter_registry().build(context)
-
-    assert planner_options["model"] == "GLM-4.6V"
+def test_method_adapter_has_no_direct_function_interface() -> None:
+    with pytest.raises(TypeError, match="direct_function_id"):
+        MethodAdapterContext(
+            selector="omniflow",
+            env=SimpleNamespace(),
+            store_path="store.json",
+            adb_serial="emulator-5554",
+            direct_function_id="complete_task",
+        )
 
 
 def test_omniflow_adapter_uses_canonical_planner_configuration(
@@ -410,28 +349,12 @@ def test_androidworld_step_runs_one_complete_omniflow_cycle(
     assert agent.host.state["last_result"] is result
 
 
-def test_androidworld_direct_function_runs_through_episode_step_without_planner(
+def test_androidworld_agent_has_no_direct_function_interface(
     monkeypatch,
 ) -> None:
-    result = RunResult(
-        success=True,
-        function_id="complete_task",
-        actions_executed=3,
-        model_calls=0,
-        fallback_steps=0,
-        detail={"done_reason": "finished", "planner_steps": 0},
-    )
-    tool_calls: list[object] = []
-    store = SimpleNamespace(
-        functions={},
-        get_function=lambda function_id: object()
-        if function_id == "complete_task"
-        else None,
-    )
     flow = SimpleNamespace(
         config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=20)),
-        store=store,
-        call_tool=lambda tool_call, **_kwargs: (tool_calls.append(tool_call) or result),
+        store=SimpleNamespace(functions={}),
     )
     monkeypatch.setattr(
         "src.integrations.android_world.agent.OmniFlow",
@@ -460,21 +383,13 @@ def test_androidworld_direct_function_runs_through_episode_step_without_planner(
 
     from src.integrations.android_world.agent import build_agent
 
-    agent = build_agent(
-        env=SimpleNamespace(),
-        store_path="store.json",
-        max_steps=20,
-        direct_function_id="complete_task",
-        direct_function_arguments={"target": "Alarm"},
-    )
-
-    episode_result = agent.step("planner must not run")
-
-    assert episode_result.data["function_id"] == "complete_task"
-    assert len(tool_calls) == 1
-    assert tool_calls[0].name == "complete_task"
-    assert tool_calls[0].arguments == {"target": "Alarm"}
-    assert tool_calls[0].name != "planner must not run"
+    with pytest.raises(TypeError, match="direct_function_id"):
+        build_agent(
+            env=SimpleNamespace(),
+            store_path="store.json",
+            max_steps=20,
+            direct_function_id="complete_task",
+        )
 
 
 def test_androidworld_stops_at_the_planner_step_budget(monkeypatch) -> None:
