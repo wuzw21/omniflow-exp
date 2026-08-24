@@ -1046,6 +1046,60 @@ def test_androidworld_setup_repairs_chrome_before_snapshot(monkeypatch) -> None:
     ]
 
 
+def test_androidworld_chrome_repair_stops_on_settled_home(monkeypatch) -> None:
+    post_settle_probes: list[str] = []
+
+    class ChromeApp:
+        app_name = "chrome"
+
+    class Controller:
+        settled = False
+
+        def get_ui_elements(self):
+            label = "Search or type web address" if self.settled else "Use without an account"
+            return [SimpleNamespace(text=label, content_description=None)]
+
+        def click_resource_id(self, _resource_ids, **_kwargs):
+            raise ValueError("resource id unavailable")
+
+        def click_element(self, label):
+            if self.settled:
+                post_settle_probes.append(label)
+                raise ValueError("optional label unavailable")
+            if label == "Use without an account":
+                self.settled = True
+                return None
+            raise ValueError("label unavailable")
+
+    controller = Controller()
+    tools_module = SimpleNamespace(
+        AndroidToolController=lambda **_kwargs: controller
+    )
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.importlib.import_module",
+        lambda name: tools_module
+        if name == "android_world.env.tools"
+        else real_import_module(name),
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.time.sleep", lambda _seconds: None
+    )
+    adb_utils = SimpleNamespace(
+        launch_app=lambda *_args: None,
+        close_app=lambda *_args: None,
+    )
+
+    _repair_androidworld_chrome_first_run(
+        SimpleNamespace(controller=object()),
+        setup_module=SimpleNamespace(adb_utils=adb_utils),
+        setup_apps=(ChromeApp,),
+    )
+
+    assert controller.settled is True
+    assert not {"No thanks", "Not now", "Cancel"}.intersection(post_settle_probes)
+
+
 def test_androidworld_browser_setup_clears_file_picker_filters() -> None:
     calls: list[tuple[str, str]] = []
 

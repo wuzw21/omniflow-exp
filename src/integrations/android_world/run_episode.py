@@ -2135,7 +2135,27 @@ def _repair_androidworld_chrome_first_run(
                 )
             except ValueError:
                 clicked = False
+                visible_optional_labels: set[str] | None = None
+                if callable(get_ui_elements):
+                    visible_optional_labels = {
+                        str(value or "").strip().casefold()
+                        for element in get_ui_elements() or ()
+                        for value in (
+                            getattr(element, "text", None),
+                            getattr(element, "content_description", None),
+                        )
+                        if str(value or "").strip()
+                    }
+                    if not visible_optional_labels.intersection(
+                        {"no thanks", "not now", "cancel"}
+                    ):
+                        break
                 for label in ("No thanks", "Not now", "Cancel"):
+                    if (
+                        visible_optional_labels is not None
+                        and label.casefold() not in visible_optional_labels
+                    ):
+                        continue
                     try:
                         controller.click_element(label)
                     except ValueError:
