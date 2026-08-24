@@ -144,7 +144,10 @@ def test_function_recall_uses_one_lexical_and_page_score() -> None:
         "page_similarity": PAGE_SIMILARITY_WEIGHT,
         "goal_lexical": GOAL_LEXICAL_WEIGHT,
     }
-    assert result.audit["encoder"]["dimension"] == 512
+    assert result.audit["encoder"]["dimension"] == 1024
+    assert result.audit["encoder"]["architecture"] == (
+        "omnitransfer_point_conditioned_sparse_graph_v10"
+    )
     assert result.audit["page_similarity_threshold"] == 0.8
     assert FUNCTION_PAGE_SIMILARITY_THRESHOLD == 0.8
     assert GOAL_LEXICAL_WEIGHT > PAGE_SIMILARITY_WEIGHT

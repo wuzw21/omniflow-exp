@@ -76,8 +76,9 @@ Function 步骤失败，并回到 Planner 的正常 fallback；任何隐藏的 r
 node-id、坐标直通分支都违反这个接口。
 
 Function 工具可见性使用同一条两阶段路径：先按 goal 与 Function 的名称、描述
-粗筛，512D Page Embedding 只辅助候选排序；再用当前 observation 与首步 source
-observation 调用 canonical OmniTransfer。只有映射返回非 NULL target、absolute
+粗筛，OmniTransfer v10 learned state-attention 的 1024D Page Embedding 只辅助
+候选排序；再用当前 observation 与首步 source observation 调用 canonical
+OmniTransfer。只有映射返回非 NULL target、absolute
 contextual confidence 不低于 `0.8`、目标对该动作可执行，且 Planner 选择工具后
 页面仍与映射时一致，Function 才能执行。上述任一条件失败时，该 Function 不进入
 当轮 Planner 工具列表或在执行前失效，并回到正常原子动作规划。

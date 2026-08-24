@@ -137,14 +137,18 @@ async def recall_functions(
                 "name": encoder.name,
                 "version": encoder.version,
                 "dimension": encoder.dimension,
-                "weights_hash": encoder.weights.hash,
+                "weights_hash": getattr(encoder, "weights_hash", None),
+                "architecture": getattr(encoder, "architecture", None),
+                "backend": getattr(encoder, "backend", None),
                 "checkpoint_sha256": getattr(
                     encoder, "checkpoint_sha256", None
                 ),
             },
             "current_page": {
-                "element_count": (
-                    len(current_page.elements) if current_page is not None else 0
+                "node_count": (
+                    int(getattr(current_page, "node_count", 0))
+                    if current_page is not None
+                    else 0
                 ),
             },
             "ranking_weights": {
@@ -229,7 +233,7 @@ def match_function_page(
     current_observation: Observation | None = None,
     current: TreeEmbedding | None = None,
 ) -> dict[str, Any]:
-    """Apply the hard Function page-identity gate using the native 512D encoder."""
+    """Compare pages using the canonical learned OmniTransfer v10 readout."""
 
     if source_observation is None:
         return _page_match_failure("function_source_page_missing")
@@ -283,7 +287,8 @@ def _embed_page(
         if str(error) == "omnitransfer_page_xml_required":
             return None
         raise
-    if not page.elements or float(np.linalg.norm(page.vector)) <= 0.0:
+    node_count = int(getattr(page, "node_count", len(page.elements)))
+    if node_count <= 0 or float(np.linalg.norm(page.vector)) <= 0.0:
         return None
     return page
 

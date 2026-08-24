@@ -237,7 +237,7 @@ def _encode_page(observation: dict[str, Any], encoder: PageEncoder) -> TreeEmbed
             activity_name=_observation_string(observation, "activity_name"),
         )
     )
-    return embedded if embedded.elements else None
+    return embedded if embedded.node_count > 0 else None
 
 
 def _action_node(

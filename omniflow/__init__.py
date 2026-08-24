@@ -31,7 +31,6 @@ from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.runtime.engine import OmniFlow
 from omniflow.transfer.embedding import (
     ElementEmbedding,
-    EncoderWeights,
     PageEncoder,
     TreeEmbedding,
 )
@@ -57,7 +56,6 @@ __all__ = [
     "OMNIFLOW_RUN_LOG_SCHEMA_VERSION",
     "CheckerContext",
     "ElementEmbedding",
-    "EncoderWeights",
     "Experiment",
     "FUNCTION_ARTIFACT_VERSION",
     "Function",

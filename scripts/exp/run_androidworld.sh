@@ -103,8 +103,13 @@ validate_page_encoder_runtime() {
 from omniflow.transfer.embedding import PageEncoder
 
 encoder = PageEncoder()
-if encoder.dimension != 512:
-    raise SystemExit(f"native_page_encoder_dimension_mismatch:{encoder.dimension}")
+if encoder.dimension != 1024:
+    raise SystemExit(f"learned_v10_page_encoder_dimension_mismatch:{encoder.dimension}")
+if encoder.architecture != "omnitransfer_point_conditioned_sparse_graph_v10":
+    raise SystemExit(
+        "learned_v10_page_encoder_architecture_mismatch:"
+        f"{encoder.architecture}"
+    )
 PY
 }
 protocol_values="$("$python_bin" - <<'PY'
