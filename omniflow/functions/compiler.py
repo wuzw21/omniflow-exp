@@ -118,7 +118,7 @@ def compile_runlog_to_store(
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
 Return exactly one object with this shape:
-{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_task","name":"Complete task","description":"Execute the complete reusable workflow.","parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
+{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_form","name":"Complete form","description":"Enter the requested name and submit.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
 
 Do not output input_schema, bindings, steps, actions, coordinates, checker rules,
 agent_visible, schema_version, arguments, or source_state_id. The compiler owns
@@ -133,10 +133,12 @@ commits, submits, confirms, or advances the form; keep both in one Function.
 
 In functions, return zero or more reusable semantic actions or tightly coupled
 contiguous groups. Then author exactly one complete_function as an ordinary Function.
-Do not output source_step_indices for complete_function: the compiler assigns every
-source step exactly once in source order. The complete Function must be a semantic
-composition: lift all goal-dependent values into its own parameters, merge the
-reusable meanings into one coherent name and description, and never merely hard-code
+Select only the largest safe coherent source_step_indices for complete_function;
+it does not need to cover the whole RunLog. Omit retries, setup noise, checker actions,
+and observation-dependent repetitions. A Function is atomic: if an action result must
+be observed to calculate a later parameter, those actions cannot share one Function.
+The complete Function must lift its goal-dependent values into parameters, merge the
+selected meanings into one coherent name and description, and never merely hard-code
 the successful instance values. Do not invent a nesting or parent/child schema.
 A Function call is atomic: the Planner observes only after its last step. Never
 encode repetition count when the task requires reading changing UI after each
@@ -306,18 +308,6 @@ return no prose outside the JSON object.
         normalized_arguments[function.id] = dict(arguments)
     arguments_by_function = normalized_arguments
 
-    if selected_model is not None:
-        complete_functions = [
-            function
-            for function in functions
-            if _function_covers_source_trajectory(
-                bind_function(function, arguments_by_function[function.id]),
-                facts["steps"],
-            )
-        ]
-        if len(complete_functions) != 1:
-            raise ValueError("function_author_complete_function_invalid")
-
     function_ids = [function.id for function in functions]
 
     if source_states is not None and state_loader is not None:
@@ -486,6 +476,7 @@ def _materialize_authoring_plan(
     selected_source_indices: set[int] = set()
     semantic_parameter_targets: set[tuple[int, str]] = set()
     complete_parameter_targets: set[tuple[int, str]] = set()
+    complete_source_indices: set[int] = set()
     materialization_notes: list[str] = []
     function_fields = {
         "function_id",
@@ -494,7 +485,6 @@ def _materialize_authoring_plan(
         "source_step_indices",
         "parameters",
     }
-    complete_function_fields = function_fields - {"source_step_indices"}
     parameter_fields = {
         "name",
         "description",
@@ -506,17 +496,12 @@ def _materialize_authoring_plan(
         (raw_complete_function, True),
     ]
     for raw_function, is_complete in planned_functions:
-        expected_fields = complete_function_fields if is_complete else function_fields
-        if not isinstance(raw_function, dict) or set(raw_function) != expected_fields:
+        if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
             raise ValueError("function_author_plan_function_contract_invalid")
         function_id = str(raw_function.get("function_id") or "").strip()
         name = str(raw_function.get("name") or "").strip()
         description = str(raw_function.get("description") or "").strip()
-        raw_indices = (
-            list(range(len(source_steps)))
-            if is_complete
-            else raw_function.get("source_step_indices")
-        )
+        raw_indices = raw_function.get("source_step_indices")
         if (
             not function_id
             or not name
@@ -531,25 +516,25 @@ def _materialize_authoring_plan(
             indices != sorted(set(indices))
             or indices[0] < 0
             or indices[-1] >= len(source_steps)
-            or indices != list(range(indices[0], indices[-1] + 1))
+            or (
+                not is_complete
+                and indices != list(range(indices[0], indices[-1] + 1))
+            )
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
-        if is_complete:
-            atomicized_count = 0
-        else:
-            (
-                indices,
-                function_id,
-                name,
-                description,
-                atomicized_count,
-            ) = _atomicize_repeated_click_function(
-                indices,
-                source_steps,
-                function_id=function_id,
-                name=name,
-                description=description,
-            )
+        (
+            indices,
+            function_id,
+            name,
+            description,
+            atomicized_count,
+        ) = _atomicize_repeated_click_function(
+            indices,
+            source_steps,
+            function_id=function_id,
+            name=name,
+            description=description,
+        )
         if atomicized_count:
             materialization_notes.append(
                 f"Compiler reduced {atomicized_count} identical clicks in "
@@ -560,6 +545,8 @@ def _materialize_authoring_plan(
             if selected_source_indices.intersection(indices):
                 raise ValueError("function_author_plan_source_step_reused")
             selected_source_indices.update(indices)
+        else:
+            complete_source_indices.update(indices)
 
         function = {
             "schema_version": "omniflow.function.v2",
@@ -622,7 +609,12 @@ def _materialize_authoring_plan(
         functions.append(function)
         arguments[function_id] = source_arguments
 
-    if semantic_parameter_targets - complete_parameter_targets:
+    required_complete_parameters = {
+        target
+        for target in semantic_parameter_targets
+        if target[0] in complete_source_indices
+    }
+    if required_complete_parameters - complete_parameter_targets:
         raise ValueError("function_author_plan_complete_parameters_missing")
 
     normalized_reason = reason.strip()
@@ -817,22 +809,7 @@ def _restore_post_input_commit_steps(
         commit_state_id = str(commit_step.get("before_state_id") or "").strip()
         if not commit_state_id:
             continue
-        if any(
-            isinstance(step, dict)
-            and step.get("source_state_id") == commit_state_id
-            and step.get("action") == commit_action
-            for function in raw_functions
-            if isinstance(function, dict)
-            for step in (
-                function.get("steps")
-                if isinstance(function.get("steps"), list)
-                else ()
-            )
-        ):
-            continue
-
         input_state_id = str(source_step.get("before_state_id") or "").strip()
-        owner_steps: list[Any] | None = None
         for function in raw_functions:
             if not isinstance(function, dict):
                 continue
@@ -846,18 +823,16 @@ def _restore_post_input_commit_steps(
                 and isinstance(last_step.get("action"), dict)
                 and last_step["action"].get("tool") == "input_text"
             ):
-                owner_steps = candidate_steps
-                break
-        if owner_steps is None:
-            continue
-        owner_steps.append(
-            {
-                "step_index": len(owner_steps),
-                "source_state_id": commit_state_id,
-                "action": json.loads(json.dumps(commit_action, ensure_ascii=False)),
-            }
-        )
-        restored += 1
+                candidate_steps.append(
+                    {
+                        "step_index": len(candidate_steps),
+                        "source_state_id": commit_state_id,
+                        "action": json.loads(
+                            json.dumps(commit_action, ensure_ascii=False)
+                        ),
+                    }
+                )
+                restored += 1
     return restored
 
 
@@ -926,16 +901,3 @@ def _complete_function_artifact(
         "steps": steps,
         "agent_visible": True,
     }
-
-
-def _function_covers_source_trajectory(
-    function: Any,
-    source_steps: list[dict[str, Any]],
-) -> bool:
-    if len(function.steps) != len(source_steps):
-        return False
-    return all(
-        function_step.source_state_id == str(source_step["before_state_id"])
-        and function_step.action.to_dict() == source_step["action"]
-        for function_step, source_step in zip(function.steps, source_steps, strict=True)
-    )

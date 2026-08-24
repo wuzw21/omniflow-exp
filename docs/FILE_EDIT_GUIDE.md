@@ -87,7 +87,7 @@ rg --files -g '*.py' | sort
 | `omniflow/core/schemas.py` | 外部 action/payload 规范化；无 retired alias |
 | `omniflow/core/trajectory.py` | RunLog/trajectory 的结构与顺序不变量；旧截图 hash 只读兼容，新 RunLog 不写 hash |
 | `omniflow/functions/__init__.py` | Function 导出 |
-| `omniflow/functions/compiler.py` | 唯一 v2 RunLog compiler；物化 Agent 给出的 0+ 语义 Function 和恰好一个完整组合 Function，并校验完整覆盖与参数提升；写 `store.json`、`compile_report.json` 和 sibling `transfer_states.json` |
+| `omniflow/functions/compiler.py` | 唯一 v2 RunLog compiler；物化 Agent 给出的 0+ 语义 Function 和一个最大安全组合 Function；允许省略 RunLog 重复/重试/checker/观察依赖动作，并校验 schema、顺序、原子边界与参数提升；写 `store.json`、`compile_report.json` 和 sibling `transfer_states.json` |
 | `omniflow/functions/artifact.py` | v2 Function schema、binding 和参数校验 |
 | `omniflow/functions/store.py` | v2 Store reader/writer；禁止手改 Store |
 | `omniflow/functions/recall.py` | 只从已加载 Store 选择完整 Function；不创建 catalog |

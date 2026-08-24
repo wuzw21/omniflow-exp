@@ -221,11 +221,10 @@ bash scripts/exp/run_androidworld.sh --refresh-memory
 
 结果和中间证据写入 `data/`；Function 只通过 `compile_runlog_to_store` 写入
 v2 `store.json` 与 sibling `transfer_states.json`，
-成功 RunLog 由 authoring Agent 先拆成零个或多个语义 Function，再生成恰好一个
-覆盖全部 canonical 主流程 source actions、提升语义参数和 bindings 的普通完整
-Function；标为 checker 的 source actions 在 authoring 前已从主流程剥离，
-compiler 只做硬校验，不机械拼接。因此 Store 中 Function 数量始终大于等于一且
-不使用嵌套 schema。
+成功 RunLog 由 authoring Agent 先拆成零个或多个语义 Function，再生成一个最大
+安全组合 Function。重复、重试、checker 和需要中间 Planner observation 的 RunLog
+动作都可省略；compiler 负责 schema、顺序、原子边界和所选动作的参数提升硬校验。
+因此 Store 中 Function 数量始终大于等于一且不使用嵌套 schema。
 运行时只读取 `data/current.json`。内部实现路径不是额外入口。
 
 失败 source RunLog 的本地逐条重采集、系统提示词、截图和推理证据要求见

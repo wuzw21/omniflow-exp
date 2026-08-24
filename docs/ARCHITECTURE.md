@@ -119,12 +119,12 @@ RunLog pair 都进入同一去重数据集；失败样本缺少可信目标时�
 
 运行时只读取 `omniflow.function.v2`。Function 步骤按成功 source RunLog 的动作
 顺序保存，每步以唯一 `source_state_id` 引用同目录 `transfer_states.json` 中的
-source observation。Authoring Agent 先生成零个或多个语义 Function，再生成恰好
-一个覆盖全部 canonical 主流程 source actions 的普通完整 Function；`origin=checker`
-的 source actions 在 authoring 前进入 checker 证据，不属于主流程。完整 Function 自己合并
-语义、参数 schema 和 bindings。Compiler 只校验完整覆盖、source 顺序以及语义
-Function 已识别参数是否被提升到完整 Function，不机械拼接或猜测语义。最终数量
-大于等于一，不引入 Function 嵌套或 parent/child schema。Checker 使用独立
+source observation。Authoring Agent 先生成零个或多个语义 Function，再生成一个
+最大的安全组合 Function。RunLog 动作无需全部进入：重复、重试、`origin=checker`
+以及必须让 Planner 读取中间 observation 的动作都可留在组合 Function 之外。
+完整 Function 自己合并所选动作的语义、参数 schema 和 bindings；Compiler 校验
+schema、source 顺序、原子观察边界和所选动作的参数提升。最终数量大于等于一，
+不引入 Function 嵌套或 parent/child schema。Checker 使用独立
 `omniflow.checker_store.v1`，规则可跨
 Function 共享，触发预算在同一 Function 序列内共享。Store 本身不内联
 observation，也不接受 v3 `transfer_state_ids`。
