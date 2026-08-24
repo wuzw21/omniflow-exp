@@ -5,7 +5,7 @@ import numpy as np
 from omniflow.transfer.embedding import PageEncoder
 
 
-def test_page_encoder_uses_one_canonical_schema_for_learned_512d_words() -> None:
+def test_page_encoder_uses_one_canonical_schema_for_manual_512d_words() -> None:
     encoder = PageEncoder()
     parse_count = 0
     graph_from_record = encoder._schema._graph_from_record
@@ -23,12 +23,9 @@ def test_page_encoder_uses_one_canonical_schema_for_learned_512d_words() -> None
     )
 
     assert encoder.name == "page_vector"
-    assert encoder.version.startswith("page-vector.v3:")
+    assert encoder.version == "page-vector.v4:manual64:canonical-ui-graph"
     assert encoder.element_dimension == 64
     assert encoder.dimension == 512
-    assert encoder.checkpoint_sha256 == (
-        "c262f03c32c4b88d2933323fe2b33007281224ef1a8aae1418a9844d354de232"
-    )
     assert page.vector.shape == (512,)
     assert len(page.elements) == 1
     assert page.elements[0].id == "0.0"

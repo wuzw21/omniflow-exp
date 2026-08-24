@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib
-import inspect
 import json
 import os
 from pathlib import Path
@@ -16,11 +15,6 @@ import numpy as np
 from omniflow.core.model import Observation
 
 _GROUP_SIZES = (2, 5, 5, 7, 8)
-_UNIFIED_NODE_CHECKPOINT_SHA256 = (
-    "c262f03c32c4b88d2933323fe2b33007281224ef1a8aae1418a9844d354de232"
-)
-
-
 @dataclass(frozen=True)
 class EncoderWeights:
     view: tuple[float, ...]
@@ -294,88 +288,6 @@ class _CanonicalPageSchema:
         )
 
 
-class _UnifiedNodeEncoder:
-    """Produce learned 64D node descriptors without owning page pooling."""
-
-    dimension = 64
-
-    def __init__(self) -> None:
-        root = _canonical_omnitransfer_root()
-        checkpoint = (
-            root
-            / "src"
-            / "omnitransfer"
-            / "checkpoints"
-            / "omnitransfer_unified_association_v1_20260819"
-            / "relation_slots_l3_h64_seed17.npz"
-        )
-        if not checkpoint.is_file():
-            raise FileNotFoundError(
-                f"omnitransfer_node_checkpoint_missing:{checkpoint}"
-            )
-        self.checkpoint_sha256 = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-        if self.checkpoint_sha256 != _UNIFIED_NODE_CHECKPOINT_SHA256:
-            raise ValueError("omnitransfer_node_checkpoint_checksum_mismatch")
-        learned = _canonical_omnitransfer_module("omnitransfer.learned_matcher")
-        numpy_matcher = _canonical_omnitransfer_module(
-            "omnitransfer.numpy_v9_matcher"
-        )
-        self._matcher = numpy_matcher.NumpyGeometricAlignmentMatcher.from_checkpoint(
-            checkpoint
-        )
-        if int(self._matcher.config.hidden_dim) != self.dimension:
-            raise ValueError("omnitransfer_node_embedding_dimension_mismatch")
-        self._encode_graph = learned.encode_graph
-        self._visual_inputs = numpy_matcher._visual_inputs
-        self.version = (
-            f"{self._matcher.config.architecture}:"
-            f"{self._matcher.config.text_encoder}:{self._matcher.backend}"
-        )
-
-    def encode(
-        self,
-        page: _CanonicalPage,
-    ) -> np.ndarray:
-        graph = page.graph
-        if graph is None:
-            return np.zeros((0, self.dimension), dtype=np.float32)
-        encoded = self._encode_graph(
-            graph,
-            config=self._matcher.config,
-            feature_schema_id=self._matcher.feature_schema_id,
-        )
-        visual_parameters = inspect.signature(self._visual_inputs).parameters
-        visual_kwargs: dict[str, Any] = {
-            "patch_size": self._matcher.config.visual_patch_size,
-            "canvas_size": self._matcher.config.visual_canvas_size,
-        }
-        if "visual_encoder" in visual_parameters:
-            visual_kwargs["visual_encoder"] = self._matcher.config.visual_encoder
-        if "context_scale" in visual_parameters:
-            visual_kwargs["context_scale"] = getattr(
-                self._matcher.config, "visual_context_scale", 3.0
-            )
-        visual, visual_mask = self._visual_inputs(graph, **visual_kwargs)
-        vectors, _modalities = self._matcher._encode_nodes(
-            np.asarray(encoded.token_ids, dtype=np.int64),
-            np.asarray(encoded.numeric_features, dtype=np.float32),
-            visual,
-            visual_mask,
-        )
-        all_vectors = np.asarray(vectors, dtype=np.float32)
-        if all_vectors.shape != (len(graph.nodes), self.dimension):
-            raise ValueError(
-                "omnitransfer_node_embedding_alignment_failed:"
-                f"nodes={len(graph.nodes)}:vectors={all_vectors.shape}"
-            )
-        aligned = np.asarray(all_vectors[list(page.poolable_indices)], dtype=np.float32)
-        if aligned.shape != (len(page.elements), self.dimension):
-            raise ValueError("omnitransfer_poolable_node_projection_failed")
-        if not np.all(np.isfinite(aligned)):
-            raise ValueError("omnitransfer_node_embedding_unusable")
-        return aligned
-
-
 class PageEncoder:
     name = "page_vector"
     element_dimension = 64
@@ -384,9 +296,7 @@ class PageEncoder:
     def __init__(self, weights: EncoderWeights | None = None):
         self.weights = weights or EncoderWeights.manual_default()
         self._schema = _CanonicalPageSchema()
-        self._node_encoder = _UnifiedNodeEncoder()
-        self.checkpoint_sha256 = self._node_encoder.checkpoint_sha256
-        self.version = f"page-vector.v3:{self._node_encoder.version}"
+        self.version = "page-vector.v4:manual64:canonical-ui-graph"
 
     @classmethod
     def from_parameters(cls, parameters: np.ndarray) -> PageEncoder:
@@ -415,7 +325,7 @@ class PageEncoder:
                 self.version,
                 self.weights.hash,
             )
-        vectors = self._node_encoder.encode(page)
+        vectors = _embed_elements(elements, root_bounds, self.weights)
         masks = _slice_masks(elements, root_bounds)
         page_vector = _pool_tree(elements, vectors, masks, self.weights)
         embedded = tuple(
