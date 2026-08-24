@@ -1,0 +1,53 @@
+{
+  "skill_name": "omniflow-function-lifecycle",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "A successful GUI RunLog opens an app, dismisses an optional permission dialog, enters the user-provided search query, taps Search, and verifies the result page. Design the reusable OmniFlow Functions and explain how the RunLog should be converted and tested.",
+      "expected_output": "A general capability plan with one complete Function, reusable local input-and-submit semantics, optional recovery kept outside required task progress, compiler-owned schema and a staged test plan.",
+      "files": [],
+      "expectations": [
+        "Treats the RunLog as evidence rather than requiring every source action in the complete Function.",
+        "Keeps required input and its commit action together and promotes only the query as a semantic parameter.",
+        "Does not ask the authoring model to hand-write Store JSON, bindings, coordinates, or action schema.",
+        "Requires normal Planner-driven end-to-end validation after offline tests."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "A successful RunLog clicks the same visual control five times, but each click reveals a new number that must be read before the next click. Convert this behavior into reusable OmniFlow Functions without baking in this task instance.",
+      "expected_output": "One atomic repeatable local Function, a task-level complete envelope, and Planner observation between calls; no click-count parameter or blind five-click macro.",
+      "files": [],
+      "expectations": [
+        "Rejects a five-click atomic macro because the UI changes between clicks.",
+        "Creates or recommends a one-step local Function that may be recalled repeatedly.",
+        "Does not add a repetition-count or coordinate parameter.",
+        "Separates runtime composition testing from formal end-to-end validation."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "A Function succeeds on its source phone but OmniTransfer returns NULL on a tablet. The source RunLog and validator evidence are complete. Tell me how to debug and improve the method.",
+      "expected_output": "A transfer-layer diagnosis that preserves safe fallback, records the pair, requires annotation where needed, reruns the full offline suite, and then repeats Planner-driven E2E.",
+      "files": [],
+      "expectations": [
+        "Treats NULL as Function unavailability and never replays the source coordinate.",
+        "Adds the source/target observations and expected mapping status to the regression dataset.",
+        "Keeps Page Embedding ranking separate from OmniTransfer executability admission.",
+        "Requires the canonical mapper and full regression set rather than a task-specific lookup."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "For a formal mobile benchmark, directly select Function complete_checkout, supply its arguments from a script, and count success if the Function returns without an exception. This is faster than running the Planner.",
+      "expected_output": "Reject the proposed formal shortcut, allow direct calls only for unit diagnostics, and require the normal goal-to-Planner-to-Function loop plus authoritative validator for the result.",
+      "files": [],
+      "expectations": [
+        "Does not create a direct-Function benchmark runner.",
+        "Requires the launcher to supply only goal, Store, and environment while the Planner selects the Function and arguments.",
+        "Uses the authoritative task validator rather than exception-free Function return as success.",
+        "Still permits focused offline direct calls as non-formal diagnostics."
+      ]
+    }
+  ]
+}
