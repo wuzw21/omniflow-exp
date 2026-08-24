@@ -1188,7 +1188,8 @@ def _androidworld_index_bounds_from_xml(
     except ET.ParseError:
         return None
     elements: list[ET.Element] = []
-    for window in root.iter("window"):
+    windows = list(root.iter("window"))
+    for window in windows:
         ordered_nodes: list[tuple[int, ET.Element]] = []
         for element in window.iter("node"):
             raw_id = str(element.get("id") or "")
@@ -1205,6 +1206,15 @@ def _androidworld_index_bounds_from_xml(
                 or str(element.get("scrollable") or "").strip().lower() == "true"
             ):
                 elements.append(element)
+    if not windows:
+        # Native uiautomator XML is converted by AndroidWorld's
+        # ``xml_dump_to_ui_elements`` in preorder, excluding only the top
+        # application root node.  Older successful RunLogs persist this XML
+        # shape directly instead of an accessibility ``window`` forest.
+        top_nodes = [child for child in root if child.tag == "node"]
+        if len(top_nodes) != 1:
+            return None
+        elements = list(top_nodes[0].iter("node"))[1:]
     if not 0 <= index < len(elements):
         return None
     return _bounds(elements[index].get("bounds"))
