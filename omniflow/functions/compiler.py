@@ -75,6 +75,20 @@ def compile_runlog_to_store(
         if action_type in {"answer", "status", "unknown"}:
             omitted_action_types.add(action_type)
             continue
+        if (
+            action_type in {"click", "double_tap", "long_press", "swipe"}
+            and isinstance(next_observation, dict)
+            and before_state_id == after_state_id
+        ):
+            # A successful gesture that leaves the native observation exactly
+            # unchanged is not a reusable semantic capability.  Keeping it in
+            # a complete Function can make OmniTransfer select a non-clickable
+            # label or an inert container and abort an otherwise valid flow.
+            # Preserve the omission in the facts so authoring can account for
+            # it without turning the no-op into a recorded action.
+            omitted_action_types.add(f"noop_{action_type}")
+            previous_successful_step = step
+            continue
         projected_actions = project_androidworld_step_actions(
             step,
             previous_step=previous_successful_step,
@@ -156,6 +170,9 @@ outputs are intentionally not Function actions. The complete Function is only a
 reusable prefix; its name and description must say that the Planner must observe
 the returned page and provide the answer/status afterward. Do not claim that the
 Function itself answered the task.
+Actions listed as noop_* were successful gestures whose before and after native
+observations were identical; keep them omitted and explain the omission rather
+than reconstructing them as Function actions.
 
 In functions, return zero or more reusable semantic actions or tightly coupled
 contiguous groups. Then author exactly one complete_function as an ordinary Function.

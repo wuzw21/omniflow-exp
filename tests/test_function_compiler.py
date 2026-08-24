@@ -47,6 +47,41 @@ def test_default_compiler_registers_one_action_complete_function(
     assert result["function_ids"][0].startswith("complete_recorded_")
 
 
+def test_compiler_omits_successful_noop_gestures(
+    tmp_path: Path,
+) -> None:
+    launcher = androidworld_state("launcher", package_name="com.android.launcher")
+    app = androidworld_state("app")
+    done = androidworld_state("done")
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.app"},
+            {"action_type": "click", "x": 300, "y": 400},
+            {"action_type": "click", "x": 500, "y": 600},
+        ],
+        observations=[launcher, app, app],
+        goal="Open the app and complete the visible task.",
+    )
+    # The middle click succeeds but leaves the observation unchanged.
+    payload["steps"][0]["next_observation"] = app
+    payload["steps"][1]["next_observation"] = app
+    payload["steps"][2]["next_observation"] = done
+    _, source_states = import_run_log_evidence(payload)
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = next(iter(store["functions"].values()))
+    assert [step["action"]["tool"] for step in function["steps"]] == [
+        "open_app",
+        "click",
+    ]
+
+
 def test_compiler_promotes_launcher_app_click_to_global_open_app(
     tmp_path: Path,
 ) -> None:
