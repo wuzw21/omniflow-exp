@@ -2134,11 +2134,16 @@ def _repair_androidworld_chrome_first_run(
                     timeout_sec=2.0,
                 )
             except ValueError:
-                # The text snapshot can lag behind the first-run activity and
-                # make an already-settled Chrome home page look like an old
-                # optional dialog. The stable resource ID is the only bounded
-                # second-stage signal; absence means setup is complete.
-                break
+                clicked = False
+                for label in ("No thanks", "Not now", "Cancel"):
+                    try:
+                        controller.click_element(label)
+                    except ValueError:
+                        continue
+                    clicked = True
+                    break
+                if not clicked:
+                    break
             time.sleep(1.0)
     finally:
         adb_utils.close_app("chrome", env.controller)
@@ -2296,11 +2301,6 @@ def _run_androidworld_setup_apps(
         setup_module.setup_apps(
             setup_env,
             app_list=tuple(setup_apps),
-        )
-        _repair_androidworld_chrome_first_run(
-            setup_env,
-            setup_module=setup_module,
-            setup_apps=setup_apps,
         )
         _repair_androidworld_setup_postconditions(
             setup_env,
