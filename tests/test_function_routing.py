@@ -1261,7 +1261,8 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT
     assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
-    assert "Never substitute the display center for a named" in SYSTEM_PROMPT
+    assert "When you choose a projected node identified by `v`" in SYSTEM_PROMPT
+    assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
 
 
