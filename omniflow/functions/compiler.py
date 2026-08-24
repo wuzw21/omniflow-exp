@@ -195,6 +195,15 @@ action groups. Every retained replayable action must appear in at least one
 Function; every omitted action must be explained in reason. Do not label or
 classify Functions as semantic, full-flow, complete-task, root, or child.
 
+A Function call is atomic: the Planner receives only the observation after its
+last step. Never encode a repetition count in a Function name, description, or
+multi-step body when the task requires reading the changing UI after each
+repetition (for example, click five times and remember every displayed number).
+In that case, retain exactly one representative action as a one-step reusable
+Function, omit the later repeated source actions with an explicit explanation,
+and let the Planner call that one-step Function repeatedly so every fresh
+observation remains visible.
+
 Do not create a Function merely because one recorded action exists. A coordinate
 click without supporting goal, metadata, or neighboring-action evidence is not a
 named capability. Do not reinterpret an accidental installer, permission page,

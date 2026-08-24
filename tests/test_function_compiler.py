@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from runlog_fixtures import androidworld_run_log, androidworld_state
@@ -293,3 +294,82 @@ def test_compiler_registers_source_call_for_argumentless_authored_function(
     assert result["source_calls"] == [
         {"function_id": "open_settings", "arguments": {}}
     ]
+
+
+def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    bundle = {
+        "reason": "Keep the recorded navigation and wait together.",
+        "bundle": {
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": "source-run",
+            "checker_rules": [],
+            "arguments": {"open_settings": {}},
+            "functions": [
+                {
+                    "schema_version": "omniflow.function.v2",
+                    "function_id": "open_settings",
+                    "name": "Open Settings",
+                    "description": "Open Settings and wait for the page.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    "bindings": [],
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "source_state_id": "state_0",
+                            "action": {
+                                "tool": "open_app",
+                                "args": {"package_name": "com.android.settings"},
+                            },
+                        },
+                        {
+                            "step_index": 1,
+                            "source_state_id": "state_1",
+                            "action": {
+                                "tool": "wait",
+                                "args": {"duration_ms": 1000},
+                            },
+                        },
+                    ],
+                    "agent_visible": True,
+                }
+            ],
+        },
+    }
+
+    class Completions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(bundle))
+                    )
+                ],
+                usage=None,
+            )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+    compile_runlog_to_store(
+        _run_log(2),
+        tmp_path / "output",
+        source_states={
+            "state_0": {"state_id": "state_0"},
+            "state_1": {"state_id": "state_1"},
+        },
+        model="test-model",
+        client=client,
+    )
+
+    system_prompt = captured["messages"][0]["content"]
+    assert "Never encode a repetition count" in system_prompt
+    assert "let the Planner call that one-step Function repeatedly" in system_prompt
