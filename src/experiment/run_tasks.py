@@ -12,7 +12,7 @@ import json
 import os
 import random
 import re
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
 import threading
@@ -87,13 +87,6 @@ from src.integrations import mobilegpt_memory as mobilegpt_memory_runtime
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
 from src.integrations.official_forward import validate_autodroid_memory_root
-
-
-# The upstream MobileGPT Android client and Server both use the fixed TCP
-# port 12345.  Target devices may still run concurrently, but MobileGPT
-# client/server lifecycles must be serialized so one device cannot bind or
-# consume another device's server.
-_MOBILEGPT_EXECUTION_LOCK = threading.Lock()
 
 
 @contextmanager
@@ -2411,6 +2404,13 @@ def _androidworld_result_command(
                 str(getattr(args, "appagent_model", APPAGENT_MODEL)),
             )
         )
+    if method == "mobilegpt":
+        command.extend(
+            (
+                "--mobilegpt-port",
+                str(_mobilegpt_port_for_device(args, device)),
+            )
+        )
     if appagent_memory is not None:
         command.extend(("--appagent-memory-root", str(appagent_memory)))
     if method == "autodroid":
@@ -2444,6 +2444,30 @@ def _androidworld_result_command(
     if args.dry_run:
         command.append("--dry-run")
     return command
+
+
+def _mobilegpt_port_for_device(
+    args: argparse.Namespace,
+    device: tuple[str, str, int],
+) -> int:
+    """Allocate one deterministic Server port per selected target device.
+
+    The official MobileGPT Server still listens on one TCP socket per
+    process.  The scheduler launches one result child per device, so sharing
+    the historical 12345 port would serialize the workers or make later
+    servers fail to bind.  Keep the first selected device on 12345 for
+    backwards compatibility and use isolated slots for the remaining
+    devices.  This changes only the transport adapter; MobileGPT's client,
+    planner, executor, and memory code remain untouched.
+    """
+
+    base_port = int(os.environ.get("OMNIFLOW_MOBILEGPT_BASE_PORT", "12345"))
+    selected = _e2e_devices(args)
+    try:
+        slot = selected.index(device)
+    except ValueError:
+        slot = 0
+    return base_port + (slot * 10)
 
 
 def run_target_workers(
@@ -2540,41 +2564,35 @@ def run_target_workers(
                 method=method,
                 device=device,
             )
-            mobilegpt_lock = (
-                _MOBILEGPT_EXECUTION_LOCK
-                if method == "mobilegpt"
-                else nullcontext()
+            result = command_runner(
+                _androidworld_result_command(
+                    args=args,
+                    attempt_id=attempt_id,
+                    attempt_root=attempt_root,
+                    method=method,
+                    device=device,
+                    store_path=store_path,
+                    mobilegpt_memory=mobilegpt_memory,
+                    appagent_memory=appagent_memory,
+                    autodroid_memory=autodroid_memory,
+                    autodroid_task_params=autodroid_task_params,
+                ),
+                cwd=args.repo,
+                environment=_result_environment(
+                    args=args,
+                    attempt_id=attempt_id,
+                    attempt_root=attempt_root,
+                    method=method,
+                    device=device,
+                    store_path=store_path,
+                    mobilegpt_memory=mobilegpt_memory,
+                    appagent_memory=appagent_memory,
+                    autodroid_memory=autodroid_memory,
+                    runlog_attempt_id=runlog_attempt_id,
+                ),
+                log_path=log_path,
+                timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
             )
-            with mobilegpt_lock:
-                result = command_runner(
-                    _androidworld_result_command(
-                        args=args,
-                        attempt_id=attempt_id,
-                        attempt_root=attempt_root,
-                        method=method,
-                        device=device,
-                        store_path=store_path,
-                        mobilegpt_memory=mobilegpt_memory,
-                        appagent_memory=appagent_memory,
-                        autodroid_memory=autodroid_memory,
-                        autodroid_task_params=autodroid_task_params,
-                    ),
-                    cwd=args.repo,
-                    environment=_result_environment(
-                        args=args,
-                        attempt_id=attempt_id,
-                        attempt_root=attempt_root,
-                        method=method,
-                        device=device,
-                        store_path=store_path,
-                        mobilegpt_memory=mobilegpt_memory,
-                        appagent_memory=appagent_memory,
-                        autodroid_memory=autodroid_memory,
-                        runlog_attempt_id=runlog_attempt_id,
-                    ),
-                    log_path=log_path,
-                    timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
-                )
             artifact_root = (
                 attempt_root
                 / "target_attempts"

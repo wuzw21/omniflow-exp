@@ -37,6 +37,7 @@ from src.experiment.run_tasks import (
     _fixed_replay_source_step_width,
     _e2e_devices,
     _e2e_methods,
+    _androidworld_result_command,
     _autodroid_task_params_from_index,
     _supplemental_outcomes_root,
     _max_live_bmoca_results,
@@ -797,6 +798,32 @@ def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
     all_selected = SimpleNamespace(e2e_method="all", e2e_device="all")
     assert _e2e_methods(all_selected) == METHODS
     assert _e2e_devices(all_selected) == DEVICES
+
+
+def test_mobilegpt_result_children_get_isolated_server_ports(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = "all"
+
+    ports = []
+    for device in DEVICES:
+        command = _androidworld_result_command(
+            args=args,
+            attempt_id="attempt-test",
+            attempt_root=tmp_path / "attempt",
+            method="mobilegpt",
+            device=device,
+            store_path=None,
+            mobilegpt_memory=tmp_path / "memory",
+            appagent_memory=None,
+        )
+        port_index = command.index("--mobilegpt-port")
+        ports.append(int(command[port_index + 1]))
+
+    assert ports == [12345, 12355, 12365]
+    assert len(set(ports)) == len(ports)
 
 
 def test_autodroid_is_explicit_supplemental_only() -> None:
