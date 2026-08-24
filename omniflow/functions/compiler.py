@@ -118,7 +118,7 @@ def compile_runlog_to_store(
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
 Return exactly one object with this shape:
-{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_task","name":"Complete task","description":"Execute the complete reusable workflow.","source_step_indices":[0,1,2,3,4,5,6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
+{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_task","name":"Complete task","description":"Execute the complete reusable workflow.","parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
 
 Do not output input_schema, bindings, steps, actions, coordinates, checker rules,
 agent_visible, schema_version, arguments, or source_state_id. The compiler owns
@@ -131,11 +131,12 @@ and contiguous. Never omit a click immediately following input_text when that cl
 commits, submits, confirms, or advances the form; keep both in one Function.
 
 In functions, return zero or more reusable semantic actions or tightly coupled
-contiguous groups. Then author exactly one complete_function as an ordinary Function
-covering every source_step_index exactly once in source order. The complete Function
-must be a semantic composition: lift all goal-dependent values into its own parameters,
-merge the reusable meanings into one coherent name and description, and never merely
-hard-code the successful instance values. Do not invent a nesting or parent/child schema.
+contiguous groups. Then author exactly one complete_function as an ordinary Function.
+Do not output source_step_indices for complete_function: the compiler assigns every
+source step exactly once in source order. The complete Function must be a semantic
+composition: lift all goal-dependent values into its own parameters, merge the
+reusable meanings into one coherent name and description, and never merely hard-code
+the successful instance values. Do not invent a nesting or parent/child schema.
 A Function call is atomic: the Planner observes only after its last step. Never
 encode repetition count when the task requires reading changing UI after each
 repeat. Keep one representative action as a one-step Function and let the Planner
@@ -492,6 +493,7 @@ def _materialize_authoring_plan(
         "source_step_indices",
         "parameters",
     }
+    complete_function_fields = function_fields - {"source_step_indices"}
     parameter_fields = {
         "name",
         "description",
@@ -503,12 +505,17 @@ def _materialize_authoring_plan(
         (raw_complete_function, True),
     ]
     for raw_function, is_complete in planned_functions:
-        if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
+        expected_fields = complete_function_fields if is_complete else function_fields
+        if not isinstance(raw_function, dict) or set(raw_function) != expected_fields:
             raise ValueError("function_author_plan_function_contract_invalid")
         function_id = str(raw_function.get("function_id") or "").strip()
         name = str(raw_function.get("name") or "").strip()
         description = str(raw_function.get("description") or "").strip()
-        raw_indices = raw_function.get("source_step_indices")
+        raw_indices = (
+            list(range(len(source_steps)))
+            if is_complete
+            else raw_function.get("source_step_indices")
+        )
         if (
             not function_id
             or not name
@@ -527,10 +534,6 @@ def _materialize_authoring_plan(
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
         if is_complete:
-            if indices != list(range(len(source_steps))):
-                raise ValueError(
-                    "function_author_plan_complete_source_steps_invalid"
-                )
             atomicized_count = 0
         else:
             (

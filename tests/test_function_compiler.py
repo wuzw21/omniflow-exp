@@ -351,7 +351,6 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
                 "function_id": "open_settings",
                 "name": "Open Settings",
                 "description": "Open Settings and wait for the page.",
-                "source_step_indices": [0, 1],
                 "parameters": [],
             },
         },
@@ -386,8 +385,8 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     system_prompt = captured["messages"][0]["content"]
     assert "encode repetition count" in system_prompt
     assert "call it repeatedly" in system_prompt
-    assert "covering every source_step_index exactly once" in system_prompt
-    assert "never merely\nhard-code the successful instance values" in system_prompt
+    assert "compiler assigns every\nsource step exactly once" in system_prompt
+    assert "never merely hard-code\nthe successful instance values" in system_prompt
     assert "Do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
     assert captured["max_tokens"] == 512
@@ -466,7 +465,6 @@ def test_model_plan_materializes_schema_binding_and_source_arguments(
                 "function_id": "complete_product_form",
                 "name": "Enter and submit product",
                 "description": "Enter the requested product and submit the form.",
-                "source_step_indices": [0, 1],
                 "parameters": [
                     {
                         "name": "product",
@@ -561,7 +559,6 @@ def test_model_plan_atomicizes_observation_dependent_repeated_clicks(
                 "function_id": "complete_multiply_workflow",
                 "name": "Complete multiplication workflow",
                 "description": "Click five times and compute the product.",
-                "source_step_indices": [0, 1, 2, 3, 4],
                 "parameters": [],
             },
         },
@@ -626,7 +623,6 @@ def test_model_plan_keeps_fragments_and_agent_authored_complete_function(
                 "function_id": "complete_settings_workflow",
                 "name": "Open Settings and wait",
                 "description": "Open Settings and wait for the page.",
-                "source_step_indices": [0, 1],
                 "parameters": [],
             },
         },
