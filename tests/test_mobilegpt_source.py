@@ -343,6 +343,44 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
         )
 
 
+def test_registration_replaces_stale_prepared_memory_scan_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "new_bundle"
+    calls: list[dict[str, object]] = []
+
+    def fake_refresh(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {
+            "canonical": {
+                "prepared_memories": {
+                    "SystemBluetoothTurnOn": {"memory_sha256": "new"}
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        "src.experiment.data_index.refresh_data_index_from_pointer",
+        fake_refresh,
+    )
+
+    registered = mobilegpt_source._register_mobilegpt_memory(
+        memory_index=tmp_path / "current.json",
+        bundle_root=bundle,
+        task_name="SystemBluetoothTurnOn",
+    )
+
+    assert registered["memory_sha256"] == "new"
+    assert calls == [
+        {
+            "memory_index": tmp_path / "current.json",
+            "additional_prepared_memory_roots": (bundle,),
+            "replace_prepared_memory_roots": True,
+        }
+    ]
+
+
 def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     memory = bundle / "memory"

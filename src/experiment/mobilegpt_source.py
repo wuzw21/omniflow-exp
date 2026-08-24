@@ -246,6 +246,7 @@ def _register_mobilegpt_memory(
     report = refresh_data_index_from_pointer(
         memory_index=memory_index,
         additional_prepared_memory_roots=(bundle_root,),
+        replace_prepared_memory_roots=True,
     )
     registered = report.get("canonical", {}).get("prepared_memories", {}).get(
         str(task_name)

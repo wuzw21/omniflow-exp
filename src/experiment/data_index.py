@@ -2342,6 +2342,7 @@ def refresh_data_index_from_pointer(
     additional_prepared_memory_roots: Sequence[str | Path] = (),
     additional_baseline_batch_reports: Sequence[str | Path] = (),
     replace_recorded_roots: bool = False,
+    replace_prepared_memory_roots: bool = False,
 ) -> dict[str, Any]:
     """Refresh a memory using its recorded inputs plus newly completed evidence."""
 
@@ -2377,7 +2378,7 @@ def refresh_data_index_from_pointer(
             str(Path(value).expanduser().resolve())
             for value in additional_prepared_memory_roots
         }
-        if replace_recorded_roots:
+        if replace_recorded_roots or replace_prepared_memory_roots:
             # An explicit refresh may replace stale task-local MobileGPT
             # bundles just like run-log and result roots.  Keeping the old
             # roots in the scan would validate them against the newly
