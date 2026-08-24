@@ -188,6 +188,14 @@ def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     assert completed.stderr == ""
 
 
+def test_mobilegpt_provider_harness_uses_the_canonical_checkout() -> None:
+    provider_script = (
+        REPO / "scripts" / "exp" / "test_provider.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'export MOBILEGPT_TEST_ROOT="$OMNIFLOW_MOBILEGPT_ROOT"' in provider_script
+
+
 def test_setup_uses_all_protocol_devices() -> None:
     devices = _devices()
 

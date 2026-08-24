@@ -45,6 +45,9 @@ run_provider() {
     mobilegpt)
       module="src.experiment.mobilegpt_source"
       keyword="mobilegpt"
+      if [[ -z "${MOBILEGPT_TEST_ROOT:-}" && -n "${OMNIFLOW_MOBILEGPT_ROOT:-}" ]]; then
+        export MOBILEGPT_TEST_ROOT="$OMNIFLOW_MOBILEGPT_ROOT"
+      fi
       tests=(
         "$repo/tests/test_mobilegpt_source.py"
         "$repo/tests/test_mobilegpt_converter.py"
