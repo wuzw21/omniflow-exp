@@ -177,6 +177,11 @@ class VLMPlanner:
         tools.extend(
             function_tools(tuple(function_catalog.values()), include_summary=False)
         )
+        installed_package_names = frozenset(
+            str(package).strip()
+            for package in (installed_apps or {}).values()
+            if str(package).strip()
+        )
         visible_tool_names = {
             str(tool.get("function", {}).get("name") or "")
             for tool in tools
@@ -225,6 +230,16 @@ class VLMPlanner:
                         arguments,
                     )
                 else:
+                    package_name = arguments.get("package_name")
+                    if (
+                        tool_name == "open_app"
+                        and isinstance(package_name, str)
+                        and package_name.strip() not in installed_package_names
+                    ):
+                        raise ValueError(
+                            "planner_open_app_package_not_installed:"
+                            f"{package_name.strip()}"
+                        )
                     arguments, _adapter_metadata = adapt_tool_arguments(
                         tool=tool_name,
                         arguments=arguments,

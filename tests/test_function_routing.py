@@ -880,6 +880,50 @@ def test_vlm_planner_retries_invalid_coordinates_with_only_rejected_tool() -> No
     ]
 
 
+def test_vlm_planner_retries_open_app_outside_installed_package_enum() -> None:
+    completions = SequenceCompletions(
+        [
+            _planner_response(
+                "open_app",
+                {"package_name": "com.android.filemanager"},
+            ),
+            _planner_response(
+                "open_app",
+                {"package_name": "com.google.android.documentsui"},
+            ),
+        ]
+    )
+    planner = VLMPlanner(
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    installed_apps = {"Files": "com.google.android.documentsui"}
+
+    planned = asyncio.run(
+        planner.one_step_tool_call(
+            "Open Downloads in Files",
+            Observation(extra={"display": {"width": 720, "height": 1280}}),
+            installed_apps=installed_apps,
+        )
+    )
+
+    assert planned == ToolCall(
+        "open_app",
+        {"package_name": "com.google.android.documentsui"},
+    )
+    assert len(completions.requests) == 2
+    retry_tools = completions.requests[1]["tools"]
+    assert [tool["function"]["name"] for tool in retry_tools] == ["open_app"]
+    correction = completions.requests[1]["messages"][-1]["content"]
+    assert (
+        "planner_open_app_package_not_installed:com.android.filemanager"
+        in correction
+    )
+    assert planner.take_metadata()["rejected_tool_calls"][0]["arguments"] == {
+        "package_name": "com.android.filemanager"
+    }
+
+
 def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     response = SimpleNamespace(
         choices=[
