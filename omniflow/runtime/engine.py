@@ -477,6 +477,17 @@ class OmniFlow:
                 planner_usage = _take_llm_usage(self.planner)
                 merge_usage(llm_usage, planner_usage, component="planner")
                 model_calls += _usage_model_calls(planner_usage, fallback=1)
+                if _recoverable_planner_turn_error(error):
+                    # A malformed model tool payload is a failed Planner turn,
+                    # not a transport failure. Keep the same online loop so the
+                    # next turn receives the current screenshot and the exact
+                    # parser error; never resend the same request here.
+                    previous_action_error = f"vlm_planner_failed:{error}"
+                    previous_action = None
+                    if fallback_this_turn:
+                        fallback_steps += 1
+                    runtime_steps_used += 1
+                    continue
                 return finish(
                     False,
                     profile=profile,
@@ -1195,6 +1206,20 @@ def _optional_step_index(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return step_index if step_index >= 0 else None
+
+
+def _recoverable_planner_turn_error(error: Exception) -> bool:
+    """Classify model-output validation errors as normal loop failures.
+
+    Transport, authentication, timeout, and provider errors remain fatal and
+    are never retried.  Only the canonical tool/action contract errors can be
+    corrected by a subsequent Planner turn with the same live observation.
+    """
+
+    if not isinstance(error, (TypeError, ValueError)):
+        return False
+    message = str(error).strip()
+    return message.startswith(("canonical_action_", "tool_call_", "action_"))
 
 
 async def _await(value: Any) -> Any:

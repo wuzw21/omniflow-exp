@@ -60,6 +60,42 @@ def test_planner_disables_hidden_openai_transport_retries(
     assert options["max_retries"] == 0
 
 
+def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) -> None:
+    class MalformedThenFinishPlanner(FinishingPlanner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def one_step_tool_call(
+            self,
+            _goal: str,
+            observation: Observation,
+            functions: tuple[Function, ...],
+            installed_apps: dict[str, str],
+        ) -> ToolCall:
+            self.calls += 1
+            self.observations.append(observation)
+            if self.calls == 1:
+                raise ValueError(
+                    "canonical_action_args_unknown:input_text:text"
+                )
+            return ToolCall("finished", {"content": "done"})
+
+    planner = MalformedThenFinishPlanner()
+    result = OmniFlow(
+        tmp_path / "store.json",
+        host=RecordingHost(),
+        planner=planner,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    ).run("Finish the task")
+
+    assert result.success is True
+    assert planner.calls == 2
+    assert planner.observations[1].extra["previous_action_error"] == (
+        "vlm_planner_failed:canonical_action_args_unknown:input_text:text"
+    )
+
+
 class RecordingHost:
     def __init__(self) -> None:
         self.package_name = "com.android.launcher"
