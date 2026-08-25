@@ -231,6 +231,8 @@ def _planner_needs_screenshot(
         return True
     recent_actions = extra.get("recent_actions")
     if isinstance(recent_actions, list):
+        if _has_repeated_successful_action(recent_actions):
+            return True
         for item in recent_actions:
             if not isinstance(item, dict):
                 continue
@@ -252,6 +254,26 @@ def _planner_needs_screenshot(
             "grounding",
         )
     )
+
+
+def _has_repeated_successful_action(value: Any) -> bool:
+    """Detect a repeated successful native action that needs visual recovery."""
+
+    if not isinstance(value, list) or len(value) < 2:
+        return False
+    previous: tuple[str, str] | None = None
+    for item in reversed(value):
+        if not isinstance(item, dict) or item.get("success") is not True:
+            break
+        tool = str(item.get("tool") or "").strip().lower()
+        args = item.get("args")
+        if not tool or not isinstance(args, dict):
+            break
+        current = (tool, json.dumps(args, ensure_ascii=False, sort_keys=True))
+        if previous == current:
+            return True
+        previous = current
+    return False
 
 
 def _state_has_screenshot(state: dict[str, Any]) -> bool:
@@ -594,6 +616,13 @@ def _turn_text(
                 "Use the recent action history and error before selecting again. "
                 "Do not repeat the same action when it already succeeded or made no "
                 "progress; choose a different schema-valid action, finish, or abort."
+            )
+        if _has_repeated_successful_action(context.get("recent_actions")):
+            lines.append(
+                "The same native action has just succeeded repeatedly. Treat this "
+                "as a grounding error: do not emit that same action again. Re-read "
+                "the current XML and screenshot, select the next semantic target, "
+                "or use a recovery action such as delete/backspace when needed."
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))

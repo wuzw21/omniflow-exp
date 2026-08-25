@@ -1756,6 +1756,41 @@ def test_planner_defaults_to_xml_without_uploading_native_screenshot() -> None:
     assert "Screenshot upload is omitted" in content[0]["text"]
 
 
+def test_planner_uploads_screenshot_after_repeated_successful_action() -> None:
+    request = build_model_turn_request(
+        goal="Enter the requested value",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node text="4" clickable="true" '
+                'bounds="[184,460][296,572]" /></hierarchy>'
+            ),
+            "image_base64": "recovery-screenshot",
+            "display": {"width": 720, "height": 1280},
+            "extra": {
+                "recent_actions": [
+                    {
+                        "tool": "click",
+                        "args": {"x": 240, "y": 516},
+                        "success": True,
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"x": 240, "y": 516},
+                        "success": True,
+                    },
+                ]
+            },
+        },
+        max_steps=8,
+        turn_index=2,
+    )
+
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+    assert "same native action has just succeeded repeatedly" in content[0]["text"]
+
+
 def test_planner_keeps_screenshot_for_webview_grounding() -> None:
     request = build_model_turn_request(
         goal="Click Chrome in the web page",
