@@ -2250,6 +2250,65 @@ def test_target_workers_parallelize_devices_and_serialize_methods(
     )
 
 
+def test_target_workers_generate_one_shared_evaluation_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "mobilegpt"
+    args.e2e_device = "all"
+    generated: list[tuple[str, int]] = []
+    generated_lock = threading.Lock()
+    commands: list[list[str]] = []
+    commands_lock = threading.Lock()
+
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._concluded_results",
+        lambda *_: set(),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.record_result_outcome",
+        lambda **_: tmp_path / "outcome.json",
+    )
+
+    def generate(*, task: str, source_seed: int) -> dict[str, object]:
+        with generated_lock:
+            generated.append((task, source_seed))
+            generation = len(generated)
+        return {"shared_generation": generation}
+
+    monkeypatch.setattr(
+        "src.experiment.run_tasks._generate_missing_androidworld_task_params",
+        generate,
+    )
+
+    def runner(command: list[str], **_: object) -> dict[str, object]:
+        with commands_lock:
+            commands.append(command)
+        return {"returncode": 0, "timed_out": False, "wall_sec": 0}
+
+    run_target_workers(
+        args=args,
+        deadline=Deadline(10),
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        outcomes_root=tmp_path / "outcomes",
+        store_path=None,
+        mobilegpt_memory=tmp_path / "mobilegpt",
+        appagent_memory=None,
+        blocked_methods={},
+        command_runner=runner,
+    )
+
+    task_params = [
+        command[command.index("--task-params-json") + 1]
+        for command in commands
+    ]
+    assert generated == [(args.task, TASK_SEED)]
+    assert len(task_params) == len(DEVICES)
+    assert set(task_params) == {'{"shared_generation":1}'}
+
+
 def test_target_workers_fail_stop_after_pending_environment_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

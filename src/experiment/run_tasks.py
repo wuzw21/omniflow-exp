@@ -38,7 +38,10 @@ from src.experiment.batch_outcomes import (
     record_result_outcome,
     summarize_results,
 )
-from src.experiment.result_registry import registered_result_plan
+from src.experiment.result_registry import (
+    registered_result_keys_matching_task_params,
+    registered_result_plan,
+)
 from src.experiment.paths import resolve_path, safe_component
 from src.experiment.androidworld_paths import (
     canonical_device_model,
@@ -1772,6 +1775,7 @@ def _concluded_results(
     args: argparse.Namespace,
     outcomes_root: Path,
     attempt_id: str,
+    evaluation_task_params: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     methods = _e2e_methods(args)
     devices = _e2e_devices(args)
@@ -1826,6 +1830,19 @@ def _concluded_results(
         / ".archive"
         / "result_registry"
     )
+    if evaluation_task_params is not None and verified_mobilegpt:
+        verified_mobilegpt.intersection_update(
+            registered_result_keys_matching_task_params(
+                runs_root=registry_root,
+                task_name=args.task,
+                methods=("mobilegpt",),
+                devices=tuple(device[0] for device in devices),
+                source_seed=source_seed,
+                evaluation_seed=evaluation_seed,
+                task_params=evaluation_task_params,
+                device_models=_e2e_device_models(args),
+            )
+        )
     if registry_root.is_dir():
         registered = registered_result_plan(
             runs_root=registry_root,
@@ -2294,6 +2311,7 @@ def _androidworld_result_command(
     appagent_memory: Path | None,
     autodroid_memory: Path | None = None,
     autodroid_task_params: dict[str, Any] | None = None,
+    evaluation_task_params: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build the one child command for an AndroidWorld result.
 
@@ -2363,26 +2381,18 @@ def _androidworld_result_command(
         "--device",
         f"{label}:{serial}:{int(console_port)}",
     ]
-    evaluation_params: dict[str, Any] | None = None
-    if method != "autodroid":
-        try:
-            evaluation_params = _generate_missing_androidworld_task_params(
-                task=str(args.task),
-                source_seed=_e2e_evaluation_seed(args),
-            )
-        except (ImportError, ValueError, TypeError, AttributeError):
-            # Keep the existing seed-driven AndroidWorld behavior for tasks
-            # whose generator cannot be imported in a lightweight scheduler
-            # test or whose official task requires externally supplied params.
-            evaluation_params = None
-    if evaluation_params is None and not FIXED_TASK_PARAMS and method != "autodroid":
+    if (
+        evaluation_task_params is None
+        and not FIXED_TASK_PARAMS
+        and method != "autodroid"
+    ):
         command.extend(("--no-fixed-task-params", "--task-params-json", ""))
-    elif evaluation_params is not None:
+    elif evaluation_task_params is not None and method != "autodroid":
         command.extend(
             (
                 "--task-params-json",
                 json.dumps(
-                    evaluation_params,
+                    evaluation_task_params,
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ),
@@ -2477,7 +2487,6 @@ def run_target_workers(
 ) -> list[dict[str, Any]]:
     """Run methods sequentially per device and devices concurrently."""
 
-    completed = _concluded_results(args, outcomes_root, attempt_id)
     methods = _e2e_methods(args)
     devices = _e2e_devices(args)
     source_seed = _e2e_source_seed(args)
@@ -2487,6 +2496,27 @@ def run_target_workers(
         _autodroid_task_params_from_index(args.memory_index, args.task)
         if "autodroid" in methods
         else None
+    )
+    evaluation_task_params: dict[str, Any] | None = None
+    if any(method != "autodroid" for method in methods):
+        try:
+            # AndroidWorld's task generator temporarily seeds Python's global
+            # RNG. Generate the evaluation instance once before worker threads
+            # start so every target device receives the exact same task.
+            evaluation_task_params = _generate_missing_androidworld_task_params(
+                task=str(args.task),
+                source_seed=evaluation_seed,
+            )
+        except (ImportError, ValueError, TypeError, AttributeError):
+            # Keep the existing seed-driven AndroidWorld behavior for tasks
+            # whose generator cannot be imported in a lightweight scheduler
+            # test or whose official task requires externally supplied params.
+            evaluation_task_params = None
+    completed = _concluded_results(
+        args,
+        outcomes_root,
+        attempt_id,
+        evaluation_task_params,
     )
     for method, (status, stage, evidence) in blocked_methods.items():
         if method not in methods:
@@ -2567,6 +2597,7 @@ def run_target_workers(
                     appagent_memory=appagent_memory,
                     autodroid_memory=autodroid_memory,
                     autodroid_task_params=autodroid_task_params,
+                    evaluation_task_params=evaluation_task_params,
                 ),
                 cwd=args.repo,
                 environment=_result_environment(

@@ -28,6 +28,7 @@ def test_legacy_canonical_source_digest_is_rehydrated(tmp_path: Path) -> None:
 from src.experiment.result_registry import (
     legacy_external_result_protocol_compatible,
     register_attempt_summary,
+    registered_result_keys_matching_task_params,
     registered_result_plan,
 )
 from src.experiment.result_schema import RESULT_FIELDS
@@ -259,6 +260,53 @@ def test_registered_result_plan_skips_success_but_retries_validator_failure(
         ("omniflow", "small5554"),
         ("omniflow", "fold5564"),
     ]
+
+
+def test_registered_result_task_params_reject_cross_device_rng_drift(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "SimpleCalendarAddOneEvent"
+    _write_registered_result(
+        runs_root,
+        task=task,
+        method="mobilegpt",
+        device="small5554",
+        success=False,
+    )
+    _write_registered_result(
+        runs_root,
+        task=task,
+        method="mobilegpt",
+        device="fold5564",
+        success=False,
+    )
+    fold_result = next(
+        (runs_root / task / "mobilegpt" / "fold5564").glob(
+            "*/registered_result.json"
+        )
+    )
+    fold_payload = json.loads(fold_result.read_text(encoding="utf-8"))
+    fold_payload["rows"][0]["task_params"] = {"seed": "thread-raced"}
+    _write_json(fold_result, fold_payload)
+    fold_manifest = fold_result.with_name("registration_manifest.json")
+    manifest_payload = json.loads(fold_manifest.read_text(encoding="utf-8"))
+    manifest_payload["registered_result_sha256"] = hashlib.sha256(
+        fold_result.read_bytes()
+    ).hexdigest()
+    _write_json(fold_manifest, manifest_payload)
+
+    matched = registered_result_keys_matching_task_params(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("mobilegpt",),
+        devices=("small5554", "fold5564"),
+        source_seed=111,
+        evaluation_seed=113,
+        task_params={"seed": 1859998934},
+    )
+
+    assert matched == {("mobilegpt", "small5554")}
 
 
 def test_registered_result_plan_rejects_legacy_coordinate_fixed_replay(

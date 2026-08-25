@@ -440,6 +440,68 @@ def registered_result_plan(
     }
 
 
+def registered_result_keys_matching_task_params(
+    *,
+    runs_root: Path,
+    task_name: str,
+    methods: tuple[str, ...],
+    devices: tuple[str, ...],
+    source_seed: int,
+    evaluation_seed: int,
+    task_params: Mapping[str, Any],
+    device_models: Mapping[str, str] | None = None,
+) -> set[tuple[str, str]]:
+    """Return immutable conclusions for the exact generated task instance.
+
+    The evaluation seed alone is insufficient evidence when multiple device
+    workers race through AndroidWorld's global-RNG parameter generator.  Keep
+    every historical registration immutable, but only reuse a cell whose
+    recorded parameters equal the canonical instance generated for that seed.
+    """
+
+    root = runs_root.expanduser().resolve()
+    expected_params = dict(task_params)
+    matched: set[tuple[str, str]] = set()
+    for method in methods:
+        for device in devices:
+            result_root = root / task_name / method / device
+            for path in sorted(result_root.glob("*/registered_result.json")):
+                summary = _load_verified_registered_result(path)
+                if (
+                    str(summary.get("task_name") or "") != task_name
+                    or summary.get("source_seed") != source_seed
+                    or summary.get("evaluation_seed") != evaluation_seed
+                ):
+                    continue
+                public_row = summary["rows"][0]
+                detail_row = next(
+                    (
+                        detail
+                        for detail in summary.get("details") or []
+                        if isinstance(detail, dict)
+                        and str(detail.get("method") or "") == method
+                        and str(detail.get("device") or "") == device
+                    ),
+                    public_row,
+                )
+                if (
+                    str(public_row.get("method") or "") != method
+                    or str(public_row.get("device") or "") != device
+                    or not has_official_validator_conclusion(detail_row)
+                    or formal_result_environment_failure_reasons(detail_row)
+                    or detail_row.get("task_params") != expected_params
+                ):
+                    continue
+                expected_model = (device_models or {}).get(device)
+                if expected_model and not registered_result_matches_device_model(
+                    detail_row, expected_model
+                ):
+                    continue
+                matched.add((method, device))
+                break
+    return matched
+
+
 @contextmanager
 def _registry_lock(registry_root: Path):
     registry_root.mkdir(parents=True, exist_ok=True)
