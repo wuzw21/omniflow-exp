@@ -311,33 +311,6 @@ def _source_seed_output_root(output_root: str | Path, source_seed: int) -> Path:
 
 
 
-def _method_root(output_root: str | Path, task: str, method: str) -> Path:
-    return resolve_path(output_root) / _safe_stem(task) / _safe_stem(method)
-
-
-def _method_memory_root(
-    output_root: str | Path,
-    task: str,
-    method: str,
-    *,
-    device: DeviceTarget | None = None,
-    run_id: str = "",
-) -> Path:
-    root = _method_root(output_root, task, canonical_method_name(method))
-    if device is not None:
-        path = root / canonical_device_seed_name(
-            label=device.label,
-            serial=device.serial,
-            console_port=device.console_port,
-            source_seed=SOURCE_SEED,
-            evaluation_seed=TASK_SEED,
-        ) / "memory"
-        if str(run_id or "").strip():
-            path = path / _safe_relative_path(run_id, fallback="run")
-        return path
-    return root / "_memory"
-
-
 _SOURCE_XML_EVIDENCE_KEYS = {
     "page",
     "xml",
@@ -3704,13 +3677,7 @@ def _run_result_mobilegpt(
         expected_source_method=source_method,
     )
 
-    memory_root = _method_memory_root(
-        output_root,
-        item.task,
-        method,
-        device=targets[0],
-        run_id=attempt_id,
-    )
+    memory_root = resolve_path(args.output_path) / "mobilegpt_memory"
     memory_root.mkdir(parents=True, exist_ok=True)
     frozen_memory_root = memory_root / "frozen_memory"
     frozen_memory_manifest_path = memory_root / "frozen_memory_manifest.json"
@@ -4166,13 +4133,7 @@ def run_task(args: argparse.Namespace) -> int:
     failed = 0
 
     for method in methods:
-        memory_root = _method_memory_root(
-            output_root,
-            item.task,
-            method,
-            device=targets[0],
-            run_id=attempt_id,
-        )
+        memory_root = attempt_root / "memory" / method
         _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
         appagent_docs_root: Path | None = None
