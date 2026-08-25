@@ -15,6 +15,7 @@ from src.integrations.mobilegpt_oob_client import (
     _require_oob_backend,
     _run_mobilegpt_oob_transport,
     _stats_terminal_reason,
+    _ensure_mobilegpt_indices,
 )
 
 
@@ -92,6 +93,22 @@ def test_official_index_action_is_mapped_to_current_oob_bounds() -> None:
     mapped = _action_with_bounds(action, xml)
 
     assert mapped["parameters"]["oob_bounds"] == "[100,200][300,400]"
+
+
+def test_oob_node_indices_preserve_mobilegpt_official_ids() -> None:
+    xml = (
+        '<hierarchy><node id="72" bounds="[0,0][100,100]" />'
+        '<node id="73" resource-id="calendar_fab" '
+        'bounds="[576,1088][688,1200]" /></hierarchy>'
+    )
+
+    indexed = _ensure_mobilegpt_indices(xml)
+    mapped = _action_with_bounds(
+        {"name": "click", "parameters": {"index": 73}},
+        indexed,
+    )
+
+    assert mapped["parameters"]["oob_bounds"] == "[576,1088][688,1200]"
 
 
 def test_oob_action_executes_official_click_and_input_schema() -> None:
@@ -191,7 +208,7 @@ def test_explicit_model_telemetry_reports_an_empty_server_response(tmp_path) -> 
 def test_server_planner_failure_is_not_misclassified_as_oob_environment() -> None:
     assert _is_oob_environment_failure("mobilegpt_server_no_action") is False
     assert _is_oob_environment_failure("mobilegpt_server_handler_failed") is False
-    assert _is_oob_environment_failure("mobilegpt_oob_action_target_missing") is False
+    assert _is_oob_environment_failure("mobilegpt_oob_action_target_missing") is True
     assert _is_oob_environment_failure("mobilegpt_oob_action_json_invalid") is False
     assert _is_oob_environment_failure("mobilegpt_oob_action_unsupported:tap") is False
     assert _is_oob_environment_failure("mobilegpt_target_app_not_ready:contacts") is True

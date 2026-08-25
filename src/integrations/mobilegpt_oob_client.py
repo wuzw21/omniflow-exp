@@ -54,7 +54,13 @@ def _ensure_mobilegpt_indices(xml: str) -> str:
 
     root = ET.fromstring(xml)
     for index, node in enumerate(root.iter("node")):
-        node.set("index", str(index))
+        # MobileGPT's official XML encoder exposes the source node ``id`` as
+        # the HTML action index. OOB XML can contain non-node wrapper elements,
+        # so re-enumerating only ``node`` elements shifts those IDs and clicks
+        # the wrong target. Preserve the official ID; enumerate only legacy
+        # observations that genuinely do not provide one.
+        official_id = str(node.attrib.get("id") or "").strip()
+        node.set("index", official_id or str(index))
     return ET.tostring(root, encoding="unicode")
 
 
@@ -234,6 +240,10 @@ def _is_oob_environment_failure(reason: str) -> bool:
     """Classify physical OOB/setup failures separately from planner errors."""
 
     value = str(reason or "").strip()
+    if value == "mobilegpt_oob_action_target_missing":
+        # A valid official index that cannot be resolved to the same OOB node
+        # is a physical-adapter integrity failure, not a planner conclusion.
+        return True
     if value.startswith("mobilegpt_oob_action_"):
         # These failures occur after a valid OOB observation when the official
         # Planner response cannot be represented as an executable action.

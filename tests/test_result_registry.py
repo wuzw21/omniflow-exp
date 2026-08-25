@@ -312,6 +312,33 @@ def test_registered_result_task_params_reject_cross_device_rng_drift(
     assert matched == {("mobilegpt", "small5554")}
 
 
+def test_registered_result_task_params_reject_oob_index_mapping_failure(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "SimpleCalendarAddRepeatingEvent"
+    _write_registered_result(
+        runs_root,
+        task=task,
+        method="mobilegpt",
+        device="small5554",
+        success=False,
+        runtime_integrity_error="mobilegpt_oob_action_target_missing",
+    )
+
+    matched = registered_result_keys_matching_task_params(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("mobilegpt",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        task_params={"seed": 113},
+    )
+
+    assert matched == set()
+
+
 def test_registered_result_plan_rejects_legacy_coordinate_fixed_replay(
     tmp_path: Path,
 ) -> None:

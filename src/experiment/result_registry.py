@@ -497,6 +497,8 @@ def registered_result_keys_matching_task_params(
                     or str(public_row.get("device") or "") != device
                     or not has_official_validator_conclusion(detail_row)
                     or formal_result_environment_failure_reasons(detail_row)
+                    or detail_row.get("runtime_integrity_error")
+                    == "mobilegpt_oob_action_target_missing"
                     or recorded_params != expected_params
                 ):
                     continue
