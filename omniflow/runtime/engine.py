@@ -554,7 +554,19 @@ class OmniFlow:
                 observation = replay.final_state or observation
                 if replay.success:
                     function_session.mark_completed()
-                    previous_action_error = None
+                    return finish(
+                        True,
+                        profile=profile,
+                        trace=trace,
+                        function_id=function_session.selected_id,
+                        actions_executed=actions_executed,
+                        model_calls=model_calls,
+                        llm_usage=llm_usage,
+                        fallback_steps=fallback_steps,
+                        final_state=observation,
+                        planner_diagnostics=planner_diagnostics,
+                        terminal_detail={"done_reason": "function_completed"},
+                    )
                 else:
                     function_session.mark_failed(replay, observation)
                     previous_action_error = replay.error or "function_replay_failed"
@@ -721,9 +733,21 @@ class OmniFlow:
                     if replay.success:
                         resume_event["status"] = "succeeded"
                         function_session.mark_completed()
-                        last_error = "function_replay_completed_e2e_unverified"
-                        previous_action_error = None
-                        previous_action = None
+                        return finish(
+                            True,
+                            profile=profile,
+                            trace=trace,
+                            function_id=function_session.selected_id,
+                            actions_executed=actions_executed,
+                            model_calls=model_calls,
+                            llm_usage=llm_usage,
+                            fallback_steps=fallback_steps,
+                            final_state=observation,
+                            planner_diagnostics=planner_diagnostics,
+                            terminal_detail={
+                                "done_reason": "function_completed_after_resume"
+                            },
+                        )
                     else:
                         resume_event["status"] = "failed"
                         resume_event["error"] = (
@@ -1140,14 +1164,16 @@ def _function_execution_evidence(
     final_state_id = str(final_observation.extra.get("state_id") or "").strip()
     if not final_state_id and steps:
         final_state_id = str(steps[-1]["after_state_id"] or "").strip()
+    core_description = _function_core_description(function)
     return {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function.id,
         "function_name": function.name,
-        "core_description": _function_core_description(function),
+        "core_description": core_description,
         "replay_status": "actions_succeeded" if succeeded else "actions_failed",
         "completion_summary": (
-            "All Function actions completed; task validation is pending."
+            f"Completed Function: {core_description} "
+            f"All {len(steps)} actions succeeded."
             if succeeded
             else "Function actions did not complete; Planner fallback is required."
         ),
