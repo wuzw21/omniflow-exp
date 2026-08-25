@@ -5,15 +5,23 @@
 磁盘、依赖、AVD 或已完成结果。
 
 ```bash
-bash scripts/exp/run_androidworld.sh \
+bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device standard45562 \
-  --source-seed 111 \
-  --evaluation-seed 113
+  --memory /path/to/store.json
 ```
 
 全部参数都可省略，默认值来自 `config/paper_androidworld.json`。
+
+Memory 可省略；入口不会查 index 或自动寻找历史 Memory。转换 Memory：
+
+```bash
+bash scripts/exp/run_androidworld.sh convert-memory \
+  --task CameraTakePhoto --method omniflow \
+  --source-run-log /path/to/run_log.json \
+  --memory /path/to/output-memory
+```
 
 五个 AndroidWorld 方法只在 Memory 准备方式上不同。Memory 就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方

@@ -117,19 +117,12 @@ if [[ "$remote" == 0 ]]; then
   fi
 
   if [[ "$skip_data" != 1 ]] && ! { [[ "$reuse_remote" == 1 ]] && ssh "${ssh_opts[@]}" "$ssh_host" "test -s '$remote_root/data/current.json'"; }; then
-    log "migrating authoritative data and registered assets"
-    bash "$repo/scripts/exp/migrate_authoritative_data.sh" \
-      --source-data "$source_data" \
-      --target-host "$ssh_host" \
-      --target-data "$remote_root/data" \
-      --sync
+    log "copying experiment data"
+    ssh "${ssh_opts[@]}" "$ssh_host" "mkdir -p '$remote_root/data'"
+    rsync -az "$source_data/" "$ssh_host:$remote_root/data/"
     if [[ -d "$repo/vendor/androidworld" ]]; then
       rsync -az "$repo/vendor/androidworld/" \
         "$ssh_host:$remote_root/vendor/androidworld/"
-    fi
-    if [[ -d "$repo/vendor/autodroid" ]]; then
-      rsync -az "$repo/vendor/autodroid/" \
-        "$ssh_host:$remote_root/vendor/autodroid/"
     fi
   fi
   remote_args=(--remote --remote-root "$remote_root" --mode "$mode")

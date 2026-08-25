@@ -83,11 +83,6 @@ def reuse_metrics(
         unit = "decision_round"
         evidence = "exact_native_document_rounds" if denominator else "unavailable"
         artifact_used = numerator > 0
-    elif normalized == "autodroid":
-        numerator = denominator = actions
-        unit = "droidbot_replay_event"
-        evidence = "exact_native_droidbot_replay" if actions else "unavailable"
-        artifact_used = actions > 0
     elif normalized == "t3a_hint":
         hint = dict(source_action_hint or {})
         hint_active = bool(

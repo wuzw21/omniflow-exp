@@ -13,12 +13,11 @@ episode 负责，入口不做 preflight。
 常用参数都是可选的：
 
 ```bash
-bash scripts/exp/run_androidworld.sh \
+bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device standard45562 \
-  --source-seed 111 \
-  --evaluation-seed 113
+  --memory /path/to/store.json
 ```
 
 可选方法为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`；
@@ -29,8 +28,16 @@ deadline 和 model 会原样进入本次运行，不要求等于配置中的默�
 bash scripts/exp/run_androidworld.sh --help
 ```
 
-实验数据仍分别位于 `data/androidworld/` 和 `data/bmoca/`，运行时索引为
-`data/current.json`。OmniTransfer 使用 canonical checkout
-`~/Projects/Omni/OmniTransfer`。
+Memory 转换也使用同一个入口，不读取 index：
+
+```bash
+bash scripts/exp/run_androidworld.sh convert-memory \
+  --task CameraTakePhoto \
+  --method omniflow \
+  --source-run-log /path/to/run_log.json \
+  --memory /path/to/output-memory
+```
+
+OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`。
 
 架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。

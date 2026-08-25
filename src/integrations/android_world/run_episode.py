@@ -30,10 +30,9 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from omniflow.core.trajectory import observation_xml
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
-from omniflow.core.trajectory import observation_xml
-from src.experiment.checks import ensure_oob_device_ready
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
@@ -56,13 +55,13 @@ from src.integrations.android_world.environment import (
     AndroidWorldExperimentEnvironment,
 )
 from src.integrations.android_world.host import make_agent_result
-from src.integrations.android_world.oob_control import (
-    CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
-)
 from src.integrations.android_world.methods import (
     MethodAdapterContext,
     default_method_adapter_registry,
     reuse_metrics,
+)
+from src.integrations.android_world.oob_control import (
+    CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
@@ -3148,18 +3147,6 @@ def _prepare_androidworld_episode_after_reset(
         console_port=int(console_port),
         adb_path=str(adb_path or ""),
     )
-    serial = f"emulator-{int(console_port)}"
-    readiness = ensure_oob_device_ready(
-        str(adb_path or "adb"),
-        serial,
-        timeout_seconds=30,
-        repair=True,
-    )
-    if readiness.get("ready") is not True:
-        raise RuntimeError(
-            "oob_post_reset_readiness_failed:"
-            + json.dumps(readiness, ensure_ascii=False, sort_keys=True)
-        )
 
 
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:

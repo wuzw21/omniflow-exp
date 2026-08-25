@@ -12,7 +12,6 @@
 | MobileGPT Memory 转换 | `src/integrations/mobilegpt.py` |
 | AppAgent Memory 转换 | `src/experiment/appagent_source.py` |
 | 运行时协议默认值 | `config/paper_androidworld.json`、`src/experiment/protocol.py` |
-| OOB 设备就绪（episode 内） | `src/experiment/checks.py` |
 | AndroidWorld 证据写入 | `src/experiment/observation_evidence.py` |
 
 判断一个文件是否保留，只问：正式实验入口能否到达它，以及删除后真实 task、Memory、

@@ -1,9 +1,7 @@
 """Small boundary for launching the pinned external baselines.
 
-This module deliberately does not know how an external baseline plans or
-executes an action.  It only makes the official checkout look like the
-official README expects.  AutoDroid receives its original DroidBot memory and
-is launched through the original ``droidbot.start`` replay entrypoint.
+This module makes the official MobileGPT and AppAgent checkouts look like
+their upstream launchers expect.
 """
 
 from __future__ import annotations
@@ -24,31 +22,7 @@ import sys
 import time
 from typing import Any, Iterator, Sequence
 
-from src.experiment.autodroid_contract import (
-    AUTODROID_MEMORY_MANIFEST_FORMAT,
-    AUTODROID_RESULT_SCHEMA,
-)
 from src.integrations.android_world.oob_control import OobControlClient
-
-
-_AUTODROID_APP_ALIASES = {
-    "audio recorder": "audio",
-    "broccoli app": "recipe",
-    "pro expense": "expense",
-    "retro music": "retro",
-    "simple calendar pro": "calendar",
-    "simple draw pro": "draw",
-    "simple gallery pro": "gallery",
-    "simple sms messenger": "sms",
-}
-
-_AUTODROID_OFFICIAL_MEMORY_KEYS = {
-    "audio": "voicerecorder",
-    "files": "filemanager",
-    "sms": "messenger",
-    "recipe": "notes",
-}
-
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -174,26 +148,10 @@ def _mobilegpt_stats_summary(path: str | Path) -> dict[str, Any]:
     return summarize_mobilegpt_stats(stats_path)
 
 
-def _autodroid_memory_app_name(app_name: str) -> str:
-    normalized = " ".join(str(app_name or "").strip().lower().split())
-    return _AUTODROID_APP_ALIASES.get(normalized, normalized)
 
 
-def _autodroid_official_memory_key(app_name: str) -> str:
-    normalized = _autodroid_memory_app_name(app_name)
-    return _AUTODROID_OFFICIAL_MEMORY_KEYS.get(normalized, normalized)
 
 
-def _autodroid_task_app_name(task: Any) -> str:
-    declared = [
-        " ".join(str(value or "").strip().lower().split())
-        for value in tuple(getattr(task, "app_names", ()) or ())
-    ]
-    declared = [value for value in declared if value]
-    if not declared:
-        raise ValueError("autodroid_task_app_missing")
-    mapped = list(dict.fromkeys(_autodroid_memory_app_name(value) for value in declared))
-    return mapped[0]
 
 
 @contextmanager
@@ -212,6 +170,7 @@ def _androidworld_task_startup(
     """Prepare one official task through the canonical AndroidWorld seam."""
 
     from android_world.env import adb_utils
+
     from src.integrations.android_world.run_episode import (
         _patch_androidworld_current_activity,
         start_androidworld_task_session,
@@ -246,126 +205,10 @@ def _androidworld_task_startup(
                     close()
 
 
-def validate_autodroid_memory_root(memory_root: str | Path) -> dict[str, Any]:
-    """Validate one local copy of official AutoDroid/DroidBot memory.
-
-    AutoDroid memory is intentionally not converted into an OmniFlow schema.
-    The runner only checks the official replay inputs that it will read.
-    """
-
-    root = Path(memory_root).expanduser().resolve()
-    manifest_path = root / "memory_manifest.json"
-    if not root.is_dir():
-        raise FileNotFoundError(f"autodroid_memory_root_missing:{root}")
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"autodroid_memory_manifest_missing:{manifest_path}")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"autodroid_memory_manifest_invalid:{manifest_path}") from error
-    if manifest.get("format") != AUTODROID_MEMORY_MANIFEST_FORMAT:
-        raise ValueError("autodroid_memory_manifest_format_invalid")
-    apps = manifest.get("apps")
-    if not isinstance(apps, list) or not apps:
-        raise ValueError("autodroid_memory_apps_missing")
-    return {
-        "memory_root": str(root),
-        "manifest_path": str(manifest_path),
-        "manifest_sha256": hashlib.sha256(
-            manifest_path.read_bytes()
-        ).hexdigest(),
-        "app_count": len(apps),
-        "device": dict(manifest.get("device") or {}),
-    }
 
 
-def _autodroid_active_package(
-    *,
-    adb_path: str,
-    serial: str,
-) -> str:
-    output = _run_adb(
-        adb_path,
-        serial,
-        ["shell", "dumpsys", "activity", "activities"],
-        check=False,
-    ).stdout
-    patterns = (
-        r"mResumedActivity:.*?\s([A-Za-z0-9_.]+)/(?:[A-Za-z0-9_.$]+)",
-        r"mCurrentFocus=Window\{[^}]*\s([A-Za-z0-9_.]+)/(?:[A-Za-z0-9_.$]+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, output)
-        if match:
-            return match.group(1)
-    return ""
 
 
-def _autodroid_memory_for_app(
-    *,
-    memory_root: str | Path,
-    adb_path: str,
-    serial: str,
-    app_name: str = "",
-    require_events: bool = True,
-) -> dict[str, Any]:
-    root = Path(memory_root).expanduser().resolve()
-    validate_autodroid_memory_root(root)
-    runs_root = root / "runs"
-    apks_root = root / "apks"
-    requested = _autodroid_memory_app_name(app_name)
-    candidates = sorted(
-        path for path in runs_root.iterdir() if path.is_dir()
-    ) if runs_root.is_dir() else []
-    selected = next((path for path in candidates if path.name == requested), None)
-    active_package = ""
-    if selected is None and not requested:
-        active_package = _autodroid_active_package(
-            adb_path=adb_path,
-            serial=serial,
-        )
-        for path in candidates:
-            package_files = path.glob("dumpsys_package_*.txt")
-            if any(
-                file.name.removeprefix("dumpsys_package_").removesuffix(".txt")
-                == active_package
-                for file in package_files
-            ):
-                selected = path
-                break
-    if selected is None:
-        detail = requested or active_package or "active_package_unknown"
-        raise ValueError(f"autodroid_memory_app_not_found:{detail}")
-    package_files = sorted(selected.glob("dumpsys_package_*.txt"))
-    package = (
-        package_files[0].name.removeprefix("dumpsys_package_").removesuffix(".txt")
-        if package_files
-        else ""
-    )
-    apk = apks_root / f"{selected.name}.apk"
-    if not apk.is_file():
-        raise FileNotFoundError(f"autodroid_memory_apk_missing:{apk}")
-    events = sorted((selected / "events").glob("event_*.json"))
-    if require_events and not events:
-        raise ValueError(f"autodroid_memory_events_missing:{selected}")
-    invalid = []
-    for event in events:
-        try:
-            json.loads(event.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            invalid.append(event.name)
-    if require_events and invalid:
-        raise ValueError(
-            "autodroid_memory_events_invalid:" + ",".join(invalid)
-        )
-    return {
-        "app_name": selected.name,
-        "package": package,
-        "memory": str(selected),
-        "apk": str(apk),
-        "event_count": str(len(events)),
-        "active_package": active_package,
-    }
 
 
 def resolve_mobilegpt_client_host(
@@ -1770,108 +1613,10 @@ def _run_adb(
     )
 
 
-def _autodroid_display_ids(display_dump: str) -> tuple[int, ...]:
-    return tuple(
-        sorted(
-            {
-                int(value)
-                for value in re.findall(
-                    r"\bmDisplayId\s*=\s*(\d+)", str(display_dump or "")
-                )
-            }
-        )
-    )
 
 
-def _prepare_autodroid_device(
-    *,
-    adb_path: str,
-    serial: str,
-    package: str,
-) -> dict[str, Any]:
-    """Normalize system UI before handing control to the official policy."""
-
-    result: dict[str, Any] = {
-        "serial": str(serial),
-        "package": str(package or ""),
-        "display_ids": [],
-        "multiple_displays": False,
-        "actions": [],
-    }
-    for name, args in (
-        ("home", ["shell", "input", "keyevent", "KEYCODE_HOME"]),
-        ("collapse_statusbar", ["shell", "cmd", "statusbar", "collapse"]),
-    ):
-        try:
-            completed = _run_adb(adb_path, serial, args, check=False)
-            result["actions"].append(
-                {"name": name, "returncode": int(completed.returncode)}
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            result["actions"].append(
-                {"name": name, "error": type(error).__name__}
-            )
-
-    try:
-        display_probe = _run_adb(
-            adb_path,
-            serial,
-            ["shell", "dumpsys", "display"],
-            check=False,
-        )
-        display_ids = _autodroid_display_ids(display_probe.stdout)
-    except (OSError, subprocess.SubprocessError) as error:
-        result["actions"].append(
-            {"name": "display_probe", "error": type(error).__name__}
-        )
-        display_ids = ()
-    result["display_ids"] = list(display_ids)
-    result["multiple_displays"] = len(display_ids) > 1
-
-    if display_ids and len(display_ids) > 1 and str(package or "").strip():
-        try:
-            completed = _run_adb(
-                adb_path,
-                serial,
-                [
-                    "shell",
-                    "am",
-                    "start",
-                    "--display",
-                    "0",
-                    "-W",
-                    "-a",
-                    "android.intent.action.MAIN",
-                    "-c",
-                    "android.intent.category.LAUNCHER",
-                    "-p",
-                    str(package).strip(),
-                ],
-                check=False,
-            )
-            result["actions"].append(
-                {
-                    "name": "launch_on_primary_display",
-                    "returncode": int(completed.returncode),
-                }
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            result["actions"].append(
-                {
-                    "name": "launch_on_primary_display",
-                    "error": type(error).__name__,
-                }
-            )
-    return result
 
 
-def _count_droidbot_output_events(output_root: str | Path) -> int:
-    """Count events that the official DroidBot actually emitted."""
-
-    root = Path(output_root)
-    if not root.is_dir():
-        return 0
-    return sum(1 for _ in root.rglob("events/event_*.json"))
 
 
 def _count_mobilegpt_device_actions(stats_path: Path) -> int:
@@ -3098,466 +2843,12 @@ def run_appagent_executor(
     return process_returncode
 
 
-def run_autodroid_replay(
-    *,
-    official_root: str | Path,
-    memory_root: str | Path,
-    serial: str,
-    adb_path: str,
-    output_root: str | Path,
-    timeout_sec: float,
-    max_events: int,
-    android_world_root: str | Path,
-    task_name: str,
-    task_params_json: str,
-    task_seed: int,
-    console_port: int,
-    grpc_port: int,
-    app_name: str = "",
-    goal: str = "",
-    policy: str = "replay",
-    perform_emulator_setup: bool = True,
-) -> int:
-    """Run one official AutoDroid policy inside the shared task lifecycle."""
-
-    if policy not in {"replay", "task"}:
-        raise ValueError(f"autodroid_policy_invalid:{policy}")
-
-    root = Path(official_root).expanduser().resolve()
-    output = Path(output_root).expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    if not (root / "droidbot" / "start.py").is_file():
-        raise FileNotFoundError(f"official_autodroid_entry_missing:{root}")
-    task_params = json.loads(str(task_params_json or "{}"))
-    if not isinstance(task_params, dict):
-        raise ValueError("autodroid_task_params_must_be_object")
-    memory_info = None
-    started = time.monotonic()
-    with _androidworld_task_startup(
-        android_world_root=android_world_root,
-        task_name=task_name,
-        task_params_json=task_params_json,
-        task_seed=task_seed,
-        console_port=console_port,
-        grpc_port=grpc_port,
-        adb_path=adb_path,
-        perform_emulator_setup=perform_emulator_setup,
-    ) as (env, task):
-        explicit_app_name = _autodroid_memory_app_name(app_name)
-        task_app_names = [
-            " ".join(str(value or "").strip().lower().split())
-            for value in tuple(getattr(task, "app_names", ()) or ())
-        ]
-        task_app_names = [value for value in task_app_names if value]
-        task_app_name = (
-            _autodroid_task_app_name(task) if not explicit_app_name else ""
-        )
-        memory_info = _autodroid_memory_for_app(
-            memory_root=memory_root,
-            adb_path=adb_path,
-            serial=serial,
-            app_name=explicit_app_name or task_app_name,
-            require_events=policy == "replay",
-        )
-        official_memory_key = _autodroid_official_memory_key(
-            memory_info["app_name"]
-        )
-        official_memory_root = root / "memory"
-        if policy == "task" and not (
-            (official_memory_root / "node_filtered_elements.json").is_file()
-            and (official_memory_root / "element_description.json").is_file()
-            and (official_memory_root / "embedded_elements_desc.json").is_file()
-        ):
-            raise FileNotFoundError(
-                f"autodroid_official_memory_assets_missing:{official_memory_root}"
-            )
-        if policy == "task":
-            try:
-                node_elements = json.loads(
-                    (official_memory_root / "node_filtered_elements.json").read_text(
-                        encoding="utf-8"
-                    )
-                )
-            except (OSError, json.JSONDecodeError) as error:
-                raise ValueError(
-                    f"autodroid_official_memory_assets_invalid:{official_memory_root}"
-                ) from error
-            if official_memory_key not in node_elements:
-                raise ValueError(
-                    f"autodroid_official_memory_app_missing:{official_memory_key}"
-                )
-        memory_info.update(
-            {
-                "task_app_names": task_app_names,
-                "task_app_name": task_app_name,
-                "official_memory_key": official_memory_key,
-                "task_app_selection": (
-                    "explicit_app_name" if explicit_app_name else "task_declared_first"
-                ),
-            }
-        )
-        device_preflight = _prepare_autodroid_device(
-            adb_path=adb_path,
-            serial=serial,
-            package=str(memory_info.get("package") or ""),
-        )
-        (output / "device_preflight.json").write_text(
-            json.dumps(device_preflight, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        droidbot_output = output / "droidbot"
-        if policy == "task":
-            droidbot_output /= official_memory_key
-        official_launcher = "from droidbot.start import main; main()"
-        replay_stats_path = output / "autodroid_replay_stats.json"
-        if policy == "replay":
-            official_launcher = "\n".join(
-                (
-                    "import atexit, json, os",
-                    "import re",
-                    "from droidbot.device import Device as _Device",
-                    "def _get_top_activity_name(self):",
-                    "    output = self.adb.shell('dumpsys activity activities')",
-                    "    match = re.search(r'\\*\\s+Hist\\s+#\\d+:\\s+ActivityRecord\\{[^ ]+\\s+[^ ]+\\s+([^ ]+)\\s+t\\d+\\}', output)",
-                    "    if match:",
-                    "        return match.group(1)",
-                    "    match = re.search(r'(?:mResumedActivity|mCurrentFocus).*?\\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)', output)",
-                    "    return match.group(1) if match else None",
-                    "_Device.get_top_activity_name = _get_top_activity_name",
-                    "from droidbot.input_policy import UtgReplayPolicy",
-                    "_official_generate_event = UtgReplayPolicy.generate_event",
-                    "_replay_stats_path = os.environ.get('AUTODROID_REPLAY_STATS_PATH', '')",
-                    "_replay_emitted = 0",
-                    "def _generate_replay_event(self, input_manager=None):",
-                    "    global _replay_emitted",
-                    "    event = _official_generate_event(self)",
-                    "    if event is not None:",
-                    "        _replay_emitted += 1",
-                    "    return event",
-                    "def _write_replay_stats():",
-                    "    if _replay_stats_path:",
-                    "        with open(_replay_stats_path, 'w', encoding='utf-8') as handle:",
-                    "            json.dump({'replayed_events': _replay_emitted}, handle)",
-                    "atexit.register(_write_replay_stats)",
-                    "UtgReplayPolicy.generate_event = _generate_replay_event",
-                    official_launcher,
-                )
-            )
-        else:
-            task_literal = json.dumps(
-                str(goal or getattr(task, "goal", "") or task_name),
-                ensure_ascii=False,
-            )
-            official_launcher = "\n".join(
-                (
-                    "import json, os, re, sys, time",
-                    "from pathlib import Path",
-                    "try:",
-                    "    import pkg_resources",
-                    "except ModuleNotFoundError:",
-                    "    import importlib.util, types",
-                    "    _pkg_resources = types.ModuleType('pkg_resources')",
-                    "    def _resource_filename(package, resource):",
-                    "        _spec = importlib.util.find_spec(package)",
-                    "        _base = next(iter(_spec.submodule_search_locations), Path(_spec.origin).parent)",
-                    "        return str(Path(_base) / resource)",
-                    "    _pkg_resources.resource_filename = _resource_filename",
-                    "    sys.modules['pkg_resources'] = _pkg_resources",
-                    "from openai import OpenAI",
-                    "import tools",
-                    "_stats = Path(os.environ['AUTODROID_STATS_PATH'])",
-                    "_stats.parent.mkdir(parents=True, exist_ok=True)",
-                    "def _append(row):",
-                    "    with _stats.open('a', encoding='utf-8') as handle:",
-                    "        handle.write(json.dumps(row) + '\\n')",
-                    "_AUTODROID_LLM_TIMEOUT_SEC = float(os.environ.get('AUTODROID_LLM_TIMEOUT_SEC', '60'))",
-                    "_AUTODROID_LLM_MAX_ATTEMPTS = max(1, int(os.environ.get('AUTODROID_LLM_MAX_ATTEMPTS', '3')))",
-                    "def _query(prompt):",
-                    "    client_kwargs = {'api_key': os.environ.get('APIKey') or os.environ.get('OPENAI_API_KEY'), 'max_retries': 0}",
-                    "    if os.environ.get('OPENAI_BASE_URL'):",
-                    "        client_kwargs['base_url'] = os.environ['OPENAI_BASE_URL']",
-                    "    model = os.environ.get('AUTODROID_MODEL', 'gpt-3.5-turbo')",
-                    "    for attempt in range(1, _AUTODROID_LLM_MAX_ATTEMPTS + 1):",
-                    "        started = time.monotonic()",
-                    "        try:",
-                    "            completion = OpenAI(**client_kwargs).chat.completions.create(messages=[{'role': 'user', 'content': prompt}], model=model, temperature=float(os.environ.get('AUTODROID_TEMPERATURE', '0.25')), timeout=_AUTODROID_LLM_TIMEOUT_SEC)",
-                    "        except Exception as error:",
-                    "            _append({'event': 'chat_call', 'model': model, 'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'error': type(error).__name__, 'attempt': attempt, 'max_attempts': _AUTODROID_LLM_MAX_ATTEMPTS, 'elapsed_sec': round(time.monotonic() - started, 6)})",
-                    "            if attempt >= _AUTODROID_LLM_MAX_ATTEMPTS:",
-                    "                raise",
-                    "            time.sleep(min(2.0, 0.5 * attempt))",
-                    "            continue",
-                    "        usage = getattr(completion, 'usage', None)",
-                    "        _append({'event': 'chat_call', 'model': model, 'prompt_tokens': int(getattr(usage, 'prompt_tokens', 0) or 0), 'completion_tokens': int(getattr(usage, 'completion_tokens', 0) or 0), 'total_tokens': int(getattr(usage, 'total_tokens', 0) or 0), 'attempt': attempt, 'max_attempts': _AUTODROID_LLM_MAX_ATTEMPTS, 'elapsed_sec': round(time.monotonic() - started, 6)})",
-                    "        return completion.choices[0].message.content",
-                    "tools.query_gpt = _query",
-                    "_instructor_model_path = os.environ.get('AUTODROID_INSTRUCTOR_MODEL_PATH', '').strip()",
-                    "if _instructor_model_path:",
-                    "    import InstructorEmbedding as _instructor_embedding",
-                    "    _official_instructor = _instructor_embedding.INSTRUCTOR",
-                    "    def _offline_instructor(model_name_or_path, *args, **kwargs):",
-                    "        if model_name_or_path == 'hkunlp/instructor-xl':",
-                    "            model_name_or_path = _instructor_model_path",
-                    "        model = _official_instructor(model_name_or_path, *args, **kwargs)",
-                    "        if not hasattr(model, '_text_length'):",
-                    "            model._text_length = lambda sentence: len(sentence[1] if isinstance(sentence, list) else sentence)",
-                    "        return model",
-                    "    _instructor_embedding.INSTRUCTOR = _offline_instructor",
-                    "from droidbot.input_policy import TaskPolicy as _TaskPolicy",
-                    "_official_task_policy_init = _TaskPolicy.__init__",
-                    "def _init_task_policy_with_memory(self, *args, **kwargs):",
-                    "    kwargs['use_memory'] = True",
-                    "    return _official_task_policy_init(self, *args, **kwargs)",
-                    "_TaskPolicy.__init__ = _init_task_policy_with_memory",
-                    "from droidbot.input_manager import InputManager as _InputManager",
-                    "_official_input_start = _InputManager.start",
-                    "def _start_with_app(self):",
-                    "    self.device.start_app(self.app)",
-                    "    time.sleep(2)",
-                    "    return _official_input_start(self)",
-                    "_InputManager.start = _start_with_app",
-                    "from droidbot.device import Device as _Device",
-                    "def _get_top_activity_name(self):",
-                    "    output = self.adb.shell('dumpsys activity activities')",
-                    "    match = re.search(r'\\*\\s+Hist\\s+#\\d+:\\s+ActivityRecord\\{[^ ]+\\s+[^ ]+\\s+([^ ]+)\\s+t\\d+\\}', output)",
-                    "    if match:",
-                    "        return match.group(1)",
-                    "    match = re.search(r'(?:mResumedActivity|mCurrentFocus).*?\\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)', output)",
-                    "    return match.group(1) if match else None",
-                    "_Device.get_top_activity_name = _get_top_activity_name",
-                    f"_task_goal = {task_literal}",
-                    "from droidbot.droidbot import DroidBot as _DroidBot",
-                    "_official_droidbot_init = _DroidBot.__init__",
-                    "def _init_with_task(self, *args, **kwargs):",
-                    "    kwargs['task'] = _task_goal",
-                    "    return _official_droidbot_init(self, *args, **kwargs)",
-                    "_DroidBot.__init__ = _init_with_task",
-                    "import droidbot.start as _start",
-                    "_official_parse_args = _start.parse_args",
-                    "def _parse_args_with_task():",
-                    "    _original_argv = list(sys.argv)",
-                    "    _argv = list(_original_argv)",
-                    "    if '-task' in _argv:",
-                    "        _index = _argv.index('-task')",
-                    "        del _argv[_index:_index + 2]",
-                    "    sys.argv = _argv",
-                    "    try:",
-                    "        _options = _official_parse_args()",
-                    "    finally:",
-                    "        sys.argv = _original_argv",
-                    "    _options.task = _task_goal",
-                    "    return _options",
-                    "_start.parse_args = _parse_args_with_task",
-                    "try:",
-                    "    _start.main()",
-                    "except BaseException:",
-                    "    raise",
-                    "os._exit(0)",
-                )
-            )
-        command = [
-            sys.executable,
-            "-c",
-            official_launcher,
-            "-d",
-            serial,
-            "-a",
-            memory_info["apk"],
-            "-o",
-            str(droidbot_output),
-            "-policy",
-            policy,
-            "-count",
-            str(max(1, int(max_events))),
-            "-interval",
-            "0",
-            "-timeout",
-            str(max(1, int(timeout_sec))),
-            "-keep_app",
-            "-keep_env",
-            "-grant_perm",
-            "-is_emulator",
-            "-accessibility_auto",
-        ]
-        if policy == "replay":
-            command.extend(("-replay_output", memory_info["memory"]))
-        else:
-            command.extend(("-task", str(goal or getattr(task, "goal", "") or task_name)))
-        env_vars = dict(os.environ)
-        for proxy_name in (
-            "ALL_PROXY",
-            "all_proxy",
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-        ):
-            env_vars.pop(proxy_name, None)
-        if policy == "task":
-            env_vars["APIKey"] = str(
-                env_vars.get("APIKey") or env_vars.get("OPENAI_API_KEY") or ""
-            )
-            env_vars["AUTODROID_STATS_PATH"] = str(output / "autodroid_stats.jsonl")
-        if policy == "replay":
-            env_vars["AUTODROID_REPLAY_STATS_PATH"] = str(replay_stats_path)
-        env_vars["PYTHONPATH"] = os.pathsep.join(
-            value
-            for value in (str(root), env_vars.get("PYTHONPATH", ""))
-            if value
-        )
-        official_adb_proxy = write_adb_proxy(
-            output / "official_adb",
-            serial=serial,
-            adb_path=adb_path,
-        )
-        adb_parent = official_adb_proxy.parent
-        env_vars["PATH"] = os.pathsep.join(
-            value
-            for value in (str(adb_parent), env_vars.get("PATH", ""))
-            if value
-        )
-        try:
-            process = subprocess.run(
-                command,
-                cwd=str(root),
-                env=env_vars,
-                check=False,
-                timeout=max(1.0, float(timeout_sec)),
-            )
-            returncode = int(process.returncode)
-        except subprocess.TimeoutExpired:
-            returncode = 124
-        validator_used = returncode == 0
-        reward = float(task.is_successful(env)) if validator_used else 0.0
-        success = validator_used and reward > 0.5
-        if policy == "replay":
-            replayed_event_count = None
-            if replay_stats_path.is_file():
-                try:
-                    replayed_event_count = int(
-                        json.loads(replay_stats_path.read_text(encoding="utf-8"))
-                        .get("replayed_events", 0)
-                    )
-                except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                    replayed_event_count = None
-            if replayed_event_count is None:
-                replayed_event_count = _count_droidbot_output_events(droidbot_output)
-            replay_requested_event_count = min(
-                int(memory_info["event_count"]), max(1, int(max_events))
-            )
-        else:
-            replayed_event_count = len(
-                sorted(droidbot_output.glob("events/event_*.json"))
-            )
-            replay_requested_event_count = replayed_event_count
-        result = {
-            "schema_version": AUTODROID_RESULT_SCHEMA,
-            "task": task_name,
-            "task_params": task_params,
-            "task_params_sha256": hashlib.sha256(
-                json.dumps(
-                    task_params,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                ).encode("utf-8")
-            ).hexdigest(),
-            "method": "autodroid",
-            "policy": policy,
-            "device": serial,
-            "task_random_seed": int(task_seed),
-            "fixed_task_seed": True,
-            "fixed_task_params": True,
-            "max_steps": max(1, int(max_events)),
-            "memory": memory_info,
-            "official_validator_used": validator_used,
-            "official_validator_success": success,
-            "official_validator_coverage_rate": 1.0 if validator_used else 0.0,
-            "androidworld_validator_result": {
-                "validator": "androidworld_official",
-                "success": success,
-                "reward": reward,
-            },
-            "process_returncode": returncode,
-            "classification": (
-                "success"
-                if success
-                else "method_failure"
-                if returncode == 0
-                else "environment_failure"
-            ),
-            "actions_executed": replayed_event_count,
-            "replay_event_limit": max(1, int(max_events)),
-            "replay_requested_event_count": replay_requested_event_count,
-            "replay_completed": validator_used,
-            "replay_step_completed_count": (
-                replayed_event_count if validator_used else 0
-            ),
-            "replay_step_total": replay_requested_event_count,
-            "replay_step_completed_rate": (
-                min(
-                    1.0,
-                    replayed_event_count / replay_requested_event_count,
-                )
-                if validator_used and replay_requested_event_count
-                else 0.0
-            ),
-            "model_calls": 0,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "fallback_steps": 0,
-            "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
-        }
-        stats_path = output / "autodroid_stats.jsonl"
-        if policy == "task" and stats_path.is_file():
-            stats_rows = []
-            for line in stats_path.read_text(encoding="utf-8").splitlines():
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(value, dict):
-                    stats_rows.append(value)
-            result.update(
-                {
-                    "model_calls": sum(row.get("event") == "chat_call" for row in stats_rows),
-                    "prompt_tokens": sum(int(row.get("prompt_tokens") or 0) for row in stats_rows),
-                    "completion_tokens": sum(int(row.get("completion_tokens") or 0) for row in stats_rows),
-                    "total_tokens": sum(int(row.get("total_tokens") or 0) for row in stats_rows),
-                    "token_usage_status": "tracked" if stats_rows else "unavailable",
-                }
-            )
-        result["official_policy"] = policy
-        result["memory_injection"] = policy == "task"
-        result["autodroid_temperature"] = float(
-            os.environ.get("AUTODROID_TEMPERATURE", "0.25")
-        ) if policy == "task" else None
-        (output / "autodroid_result.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (output / "task_results.jsonl").write_text(
-            json.dumps(
-                {
-                    **result,
-                    "task_name": task_name,
-                    "goal": str(getattr(task, "goal", "") or task_name),
-                    "agent": f"autodroid_official_{policy}",
-                    "backend": "official_droidbot",
-                },
-                ensure_ascii=False,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return 0 if success else (returncode or 1)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward one task to an official baseline")
     parser.add_argument(
-        "--baseline", choices=("mobilegpt", "appagent", "autodroid"), default="mobilegpt"
+        "--baseline", choices=("mobilegpt", "appagent"), default="mobilegpt"
     )
     parser.add_argument("--root")
     parser.add_argument("--serial", default="")
@@ -3575,11 +2866,8 @@ def main() -> int:
     parser.add_argument("--no-perform-emulator-setup", action="store_true")
     parser.add_argument("--executor")
     parser.add_argument("--app-name")
-    parser.add_argument("--policy", choices=("replay", "task"), default="replay")
     parser.add_argument("--workspace")
     parser.add_argument("--goal", default="")
-    parser.add_argument("--memory-root", default="")
-    parser.add_argument("--max-events", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--server-port", type=int, default=12345)
     parser.add_argument(
@@ -3619,37 +2907,6 @@ def main() -> int:
             server_port=args.server_port,
             handshake_timeout_sec=args.handshake_timeout_sec,
             server_log_path=args.server_log,
-        )
-    if args.baseline == "autodroid":
-        required = {
-            "root": args.root,
-            "memory-root": args.memory_root,
-            "serial": args.serial,
-            "output": args.output,
-            "task": args.task,
-            "android-world-root": args.android_world_root,
-        }
-        missing = [name for name, value in required.items() if not str(value or "").strip()]
-        if missing:
-            parser.error("autodroid arguments required: " + ",".join(missing))
-        return run_autodroid_replay(
-            official_root=args.root,
-            memory_root=args.memory_root,
-            serial=args.serial,
-            adb_path=args.adb,
-            output_root=args.output,
-            timeout_sec=args.timeout,
-            max_events=args.max_events,
-            android_world_root=args.android_world_root,
-            task_name=args.task,
-            task_params_json=args.task_params_json,
-            task_seed=args.task_seed,
-            console_port=args.console_port,
-            grpc_port=args.grpc_port,
-            app_name=args.app_name or "",
-            goal=args.goal,
-            policy=args.policy,
-            perform_emulator_setup=not args.no_perform_emulator_setup,
         )
     required = {
         "executor": args.executor,

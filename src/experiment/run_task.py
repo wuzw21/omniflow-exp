@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import datetime
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +15,7 @@ import socket
 import subprocess
 import sys
 import time
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -26,13 +24,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from omniflow.core.trajectory import (
     canonicalize_run_log,
-    require_complete_source_run_log,
 )
-from omniflow.functions.store import FunctionStore
-from omniflow.transfer.runtime import (
-    audit_transfer_action_sources,
-    load_transfer_state_catalog,
-    transfer_state_coverage,
+from src.experiment.androidworld_paths import (
+    canonical_device_seed_name,
+    canonical_method_name,
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
@@ -40,7 +35,6 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
@@ -51,10 +45,6 @@ from src.experiment.paths import (
     safe_relative_path,
     sha256_file,
 )
-from src.experiment.androidworld_paths import (
-    canonical_device_seed_name,
-    canonical_method_name,
-)
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     APPAGENT_MODEL,
@@ -64,47 +54,17 @@ from src.experiment.protocol import (
     FORMAL_MODEL_BASE_URL,
     MAX_STEPS,
     METHODS,
-    RESULT_COMMANDS_FILE,
-    RESULT_MARKDOWN_FILE,
-    RESULT_SCHEMA,
-    RESULT_SUMMARY_FILE,
     SOURCE_SEED,
-    SUPPLEMENTAL_METHODS,
-    STEP_TIMEOUT_SEC,
     TASK_SEED,
 )
-from src.experiment.result_registry import register_attempt_summary
-from src.experiment.result_schema import (
-    RESULT_FIELDS,
-    compact_result_row,
-    function_metrics_from_result_row,
-    performance_metrics_from_result_row,
-)
-from src.experiment.performance_metrics import aggregate_performance_metrics
 from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
-from src.integrations.mobilegpt import validate_memory_manifest
-from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.android_world.apps import resolve_androidworld_package
-from src.integrations.appagent import validate_appagent_memory
+from src.integrations.mobilegpt import validate_memory_manifest
 from src.integrations.official_forward import (
     resolve_mobilegpt_client_host,
-    validate_autodroid_memory_root,
 )
-
-
-def _load_mobilegpt_stats_summary(
-    *,
-    summary_path: str | Path | None,
-    stats_jsonl_path: str | Path | None,
-) -> dict[str, Any]:
-    """Load the shared MobileGPT stats summary for result-row accounting."""
-
-    return mobilegpt_memory._load_mobilegpt_stats_summary(
-        summary_path=summary_path,
-        stats_jsonl_path=stats_jsonl_path,
-    )
 
 DEFAULT_DATA_INDEX = REPO_ROOT / "data" / "current.json"
 DEFAULT_ANDROID_WORLD_ROOT = (
@@ -176,11 +136,6 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _rate(numerator: int | float, denominator: int | float) -> float:
-    denominator = float(denominator or 0)
-    if denominator <= 0:
-        return 0.0
-    return round(float(numerator) / denominator, 6)
 
 
 def _local_dotenv_env(*, repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -263,48 +218,8 @@ def _subprocess_env(
     return env
 
 
-@contextmanager
-def _temporary_env(updates: dict[str, str | None]):
-    previous = {key: os.environ.get(key) for key in updates}
-    try:
-        for key, value in updates.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
-def _canonical_source_ref_path(
-    value: str | Path,
-    *,
-    index_path: Path,
-    repo_root: Path = REPO_ROOT,
-) -> Path:
-    path = Path(value).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-
-    index_relative = (index_path.parent / path).resolve()
-    if index_relative.exists():
-        return index_relative
-
-    for index_ancestor in index_path.parents:
-        ancestor_relative = (index_ancestor / path).resolve()
-        if ancestor_relative.exists():
-            return ancestor_relative
-
-    repo_relative = resolve_path(path, root=repo_root)
-    if repo_relative.exists():
-        return repo_relative
-
-    return repo_relative
 
 
 def _safe_stem(value: str, *, fallback: str = "task") -> str:
@@ -316,22 +231,8 @@ def _safe_stem(value: str, *, fallback: str = "task") -> str:
     )
 
 
-def _stable_json_hash(payload: Any) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
-    )
 
 
 def _safe_relative_path(value: str, *, fallback: str = "run") -> Path:
@@ -389,24 +290,8 @@ def _experiment_run_dir(
     return path
 
 
-def _androidworld_validator_root(*, repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "data" / "androidworld" / ".archive" / "result_registry"
 
 
-def _result_registry_root(
-    args: argparse.Namespace,
-    *,
-    attempt_root: Path,
-) -> Path:
-    explicit_runs = str(getattr(args, "result_registry_root", "") or "").strip()
-    if explicit_runs:
-        return resolve_path(explicit_runs)
-
-    index_path = resolve_path(args.index)
-    for candidate in (index_path.parent, *index_path.parents):
-        if candidate.name == "androidworld_validator":
-            return candidate / "runs"
-    return attempt_root.parent / "_androidworld_result_registry"
 
 
 def _task_managed_output_root(
@@ -414,13 +299,9 @@ def _task_managed_output_root(
     *,
     repo_root: Path = REPO_ROOT,
 ) -> tuple[Path, str]:
-    """Keep the caller's exact immutable attempt root authoritative."""
+    """Return the caller's temporary working directory."""
     resolved = resolve_path(output_root, root=repo_root)
-    canonical_shared_root = _androidworld_validator_root(repo_root=repo_root) / "runs"
-    if resolved == canonical_shared_root:
-        raise ValueError(
-            f"output_root_must_be_fresh_attempt_child:{canonical_shared_root}"
-        )
+    resolved.mkdir(parents=True, exist_ok=True)
     return resolved, ""
 
 
@@ -428,42 +309,6 @@ def _source_seed_output_root(output_root: str | Path, source_seed: int) -> Path:
     return resolve_path(output_root) / f"source_seed_{int(source_seed)}"
 
 
-def _claim_result_attempt(
-    output_root: str | Path,
-    *,
-    task: str,
-    methods: Sequence[str],
-    source_seed: int,
-    evaluation_seed: int | None,
-    dry_run: bool = False,
-) -> Path:
-    root = resolve_path(output_root)
-    root.mkdir(parents=True, exist_ok=True)
-    manifest_path = root / "attempt_manifest.json"
-    runner_path = Path(__file__).resolve()
-    provenance: dict[str, Any] = {
-        "runner": str(runner_path),
-        "runner_sha256": sha256_file(runner_path),
-    }
-    manifest = {
-        "schema_version": "omniflow.androidworld_attempt.v1",
-        "attempt_id": root.name,
-        "task_name": task,
-        "methods": list(methods),
-        "source_seed": int(source_seed),
-        "evaluation_seed": evaluation_seed,
-        "dry_run": bool(dry_run),
-        "immutable": True,
-        "provenance": provenance,
-        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    }
-    try:
-        with manifest_path.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(manifest, indent=2, ensure_ascii=False))
-            handle.write("\n")
-    except FileExistsError as exc:
-        raise FileExistsError(f"immutable_attempt_exists:{root}") from exc
-    return manifest_path.resolve()
 
 
 def _method_root(output_root: str | Path, task: str, method: str) -> Path:
@@ -599,183 +444,14 @@ def _drop_empty_input_text_cards(payload: dict[str, Any]) -> int:
     return removed_count
 
 
-def _parse_single_quoted_goal_field(goal: str, marker: str) -> str:
-    match = re.search(rf"{re.escape(marker)}\s+'([^']*)'", goal)
-    return str(match.group(1) if match else "").strip()
 
 
-def _calendar_epoch_utc(
-    *,
-    year: int,
-    month: int,
-    day: int,
-    hour: int,
-    minute: int = 0,
-) -> int:
-    dt = datetime.datetime(
-        int(year),
-        int(month),
-        int(day),
-        int(hour),
-        int(minute),
-        tzinfo=datetime.timezone.utc,
-    )
-    return int(dt.timestamp())
 
 
-def _calendar_row_from_flat_params(params: dict[str, Any]) -> dict[str, Any] | None:
-    try:
-        year = _coerce_int(params.get("year"), 2023)
-        month = _coerce_int(params.get("month"), 10)
-        day = _coerce_int(params.get("day"), 0)
-        hour = _coerce_int(params.get("hour"), 0)
-        duration_mins = _coerce_int(params.get("duration_mins"), 0)
-    except Exception:
-        return None
-    title = str(params.get("event_title") or "").strip()
-    if not day or not duration_mins or not title:
-        return None
-    start_ts = _calendar_epoch_utc(year=year, month=month, day=day, hour=hour)
-    end_ts = start_ts + (duration_mins * 60)
-    return {
-        "start_ts": start_ts,
-        "end_ts": end_ts,
-        "title": title,
-        "location": "",
-        "description": str(params.get("event_description") or ""),
-        "repeat_interval": 0,
-        "repeat_rule": 0,
-        "reminder_1_minutes": -1,
-        "reminder_2_minutes": -1,
-        "reminder_3_minutes": -1,
-        "reminder_1_type": 0,
-        "reminder_2_type": 0,
-        "reminder_3_type": 0,
-        "repeat_limit": 0,
-        "repetition_exceptions": "[]",
-        "attendees": "",
-        "import_id": "",
-        "time_zone": "UTC",
-        "flags": 0,
-        "event_type": 1,
-        "parent_id": 0,
-        "last_updated": 0,
-        "source": "imported-ics",
-        "availability": 0,
-        "color": 0,
-        "type": 0,
-        "id": -1,
-    }
 
 
-def complete_androidworld_task_params(
-    task: str,
-    goal: str,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    """Normalize archived source params for AndroidWorld validators."""
-
-    completed = dict(params)
-    if task.startswith("RecipeAdd") and "row_objects" not in completed:
-        title = str(completed.get("title") or "").strip()
-        if title:
-            completed["row_objects"] = [
-                {
-                    "title": title,
-                    "description": str(completed.get("description") or ""),
-                    "servings": str(completed.get("servings") or ""),
-                    "preparationTime": str(completed.get("preparationTime") or ""),
-                    "source": str(completed.get("source") or ""),
-                    "ingredients": str(completed.get("ingredients") or ""),
-                    "directions": str(completed.get("directions") or ""),
-                    "favorite": _coerce_int(completed.get("favorite"), 0),
-                    "imageName": str(completed.get("imageName") or ""),
-                    "recipeId": _coerce_int(completed.get("recipeId"), -1),
-                }
-            ]
-            completed.setdefault("noise_row_objects", [])
-            completed.setdefault("text_representation_type", "text_block")
-
-    if task.startswith("SimpleCalendarAddOneEvent") and "row_objects" not in completed:
-        completed.setdefault("year", 2023)
-        completed.setdefault("month", 10)
-        if "event_title" not in completed:
-            title = _parse_single_quoted_goal_field(goal, "title")
-            if title:
-                completed["event_title"] = title
-        if "event_description" not in completed:
-            description = _parse_single_quoted_goal_field(goal, "description")
-            if description:
-                completed["event_description"] = description
-        row = _calendar_row_from_flat_params(completed)
-        if row is not None:
-            completed["row_objects"] = [row]
-            completed.setdefault("noise_row_objects", [])
-
-    return completed
 
 
-def load_canonical_source_index(
-    index_path: str | Path = DEFAULT_DATA_INDEX,
-    *,
-    repo_root: Path = REPO_ROOT,
-) -> list[CanonicalRunLog]:
-    path = resolve_path(index_path, root=repo_root)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"Canonical data index must be a JSON object: {path}")
-    canonical_data = data.get("canonical") if isinstance(data.get("canonical"), dict) else {}
-    source_data = data
-    if data.get("schema_version") == "omniflow.data-index.v2":
-        source_data = data.get("source_index")
-        if not isinstance(source_data, dict):
-            raise ValueError(f"Current data index has no source index: {path}")
-
-    source_items: list[CanonicalRunLog] = []
-    for task, raw_meta in source_data.items():
-        if not isinstance(raw_meta, dict):
-            continue
-        retained = str(raw_meta.get("retained_source_run_log") or "").strip()
-        if not retained:
-            if raw_meta.get("latest_official_success_source") is not True:
-                continue
-            # A partially refreshed 116-task index may still contain an
-            # official-success marker for a task whose source artifact has
-            # not been materialized yet.  That task is unavailable, but it
-            # must not prevent a single-task result from selecting another
-            # complete source entry.  _select_from_args reports a clear
-            # missing-task error if the requested task itself is unavailable.
-            continue
-        params = (
-            raw_meta.get("params") if isinstance(raw_meta.get("params"), dict) else {}
-        )
-        params = complete_androidworld_task_params(
-            str(task), str(raw_meta.get("goal") or ""), params
-        )
-        seed = _coerce_int(
-            raw_meta.get("source_seed")
-            or raw_meta.get("replay_seed")
-            or raw_meta.get("collect_seed")
-            or raw_meta.get("task_random_seed"),
-            30,
-        )
-        source_items.append(
-            CanonicalRunLog(
-                task=str(task),
-                goal=str(raw_meta.get("goal") or ""),
-                params=dict(params),
-                source_run_log=_canonical_source_ref_path(
-                    retained,
-                    index_path=path,
-                    repo_root=repo_root,
-                ),
-                replay_seed=seed,
-                step_count=_coerce_int(raw_meta.get("step_count"), 0),
-                meta=dict(raw_meta),
-            )
-        )
-
-    return source_items
 
 
 def profile_source_run_log(item: CanonicalRunLog) -> SourceRunLogProfile:
@@ -1425,8 +1101,6 @@ def build_task_command(
             run_dir_suffix,
             fallback="run",
         )
-    if resolved_agent == "omniflow" and not str(store_path or "").strip():
-        raise ValueError("omniflow_function_store_required")
     resolved_store_path = (
         resolve_path(store_path, root=repo_root)
         if store_path
@@ -1500,7 +1174,7 @@ def build_task_command(
         argv.append("--fixed-task-seed")
     if perform_emulator_setup:
         argv.append("--perform-emulator-setup")
-    if resolved_agent == "omniflow":
+    if resolved_agent == "omniflow" and resolved_store_path is not None:
         argv.extend(["--store-path", str(resolved_store_path)])
         if planner_provider.strip():
             argv.extend(["--planner-provider", planner_provider.strip()])
@@ -1538,7 +1212,7 @@ def build_task_command(
             "run_dir_suffix": str(_safe_relative_path(run_dir_suffix, fallback="run"))
             if str(run_dir_suffix or "").strip()
             else "",
-            "store_path": str(resolved_store_path),
+            "store_path": str(resolved_store_path or ""),
             "omnitransfer_root": str(resolved_omnitransfer_root or ""),
             "perform_emulator_setup": bool(perform_emulator_setup),
             "fixed_task_seed": bool(fixed_task_seed),
@@ -1616,48 +1290,6 @@ def task_goal_for_params(
     return str(fallback_goal)
 
 
-def validate_omniflow_transfer_assets(
-    store_path: str | Path,
-    *,
-    require_action_transfer: bool = True,
-) -> dict[str, Any]:
-    resolved_store_path = resolve_path(store_path)
-    if not resolved_store_path.is_file():
-        raise FileNotFoundError(
-            f"validated v2 Function Store not found: {resolved_store_path}"
-        )
-    store = FunctionStore(resolved_store_path)
-    if store.load_errors:
-        raise ValueError(
-            "validated v2 Function Store has invalid Functions:"
-            + ",".join(sorted(store.load_errors))
-        )
-    if not store.functions:
-        raise ValueError("validated v2 Function Store contains no Functions")
-    transfer_state_path = resolved_store_path.with_name("transfer_states.json")
-    transfer_states = load_transfer_state_catalog(transfer_state_path)
-    coverage = transfer_state_coverage(store.functions, transfer_states)
-    if not coverage["complete"]:
-        raise ValueError(
-            "function_transfer_states_missing:"
-            + ",".join(coverage["missing_state_ids"])
-        )
-    source_target_audit = (
-        audit_transfer_action_sources(store.functions, transfer_states)
-        if require_action_transfer
-        else None
-    )
-    return {
-        "store_path": str(resolved_store_path),
-        "transfer_states_path": str(transfer_state_path),
-        "required_state_ids": list(coverage["required_state_ids"]),
-        "missing_state_ids": list(coverage["missing_state_ids"]),
-        "required_state_count": int(coverage["required_state_count"]),
-        "available_state_count": int(coverage["available_state_count"]),
-        "complete": bool(coverage["complete"]),
-        "require_action_transfer": bool(require_action_transfer),
-        "source_target_audit": source_target_audit,
-    }
 
 
 def _command_line(spec: CommandSpec) -> str:
@@ -2393,543 +2025,32 @@ def run_command(spec: CommandSpec, *, dry_run: bool = False) -> int:
     return int(result["returncode"])
 
 
-def _iter_jsonl_rows(path: Path) -> Iterable[dict[str, Any]]:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            decoded = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict):
-            yield decoded
 
 
-def _is_metrics_result_file(path: Path) -> bool:
-    return path.name in {"task_results.jsonl", "all_latest.jsonl"}
 
 
-def discover_task_result_files(paths: Sequence[str | Path]) -> list[Path]:
-    seen: set[Path] = set()
-    files: list[Path] = []
-    for raw_path in paths:
-        path = resolve_path(raw_path)
-        candidates = (
-            [path]
-            if path.is_file()
-            else sorted(
-                candidate
-                for candidate in path.rglob("*.jsonl")
-                if _is_metrics_result_file(candidate)
-            )
-        )
-        for candidate in candidates:
-            if "_memory" in candidate.parts:
-                continue
-            if "_init_audit" in candidate.parts or "init_audit" in candidate.parts:
-                continue
-            if not _is_metrics_result_file(candidate):
-                continue
-            resolved = candidate.resolve()
-            if resolved not in seen:
-                seen.add(resolved)
-                files.append(resolved)
-    return files
 
 
-def _validator_success(row: dict[str, Any]) -> bool:
-    if isinstance(row.get("official_validator_success"), bool):
-        return bool(row["official_validator_success"])
-    validator = row.get("androidworld_validator_result")
-    if isinstance(validator, dict) and "success" in validator:
-        return bool(validator.get("success"))
-    return bool(row.get("success"))
 
 
-def _official_validator_used(row: dict[str, Any]) -> bool:
-    if "official_validator_used" in row:
-        return bool(row.get("official_validator_used"))
-    if "uses_androidworld_official_validator" in row:
-        return bool(row.get("uses_androidworld_official_validator"))
-    if "validator" in row:
-        return row.get("validator") == "androidworld_official"
-    validator = row.get("androidworld_validator_result")
-    if not isinstance(validator, dict):
-        return False
-    if "uses_androidworld_official_validator" in validator:
-        return bool(validator.get("uses_androidworld_official_validator"))
-    if "validator" in validator:
-        return validator.get("validator") == "androidworld_official"
-    return False
 
 
-def _official_validator_success(row: dict[str, Any]) -> bool:
-    return _official_validator_used(row) and _validator_success(row)
 
 
-def _task_result_path_context(path: Path) -> dict[str, str]:
-    if path.name != "task_results.jsonl":
-        return {}
-    known_methods = {
-        "fixed_replay",
-        "omniflow",
-        "mobilegpt",
-        "t3a_hint",
-        "appagent",
-        *SUPPLEMENTAL_METHODS,
-    }
-    stage = ""
-    run_dir = path.parent
-    device_dir = run_dir
-    if run_dir.name in {"androidworld_init", "androidworld_validate"}:
-        stage = run_dir.name
-        device_dir = run_dir.parent
-    method_dir = device_dir.parent
-    task_dir = method_dir.parent
-    if method_dir.name not in known_methods:
-        # The native AndroidWorld runner publishes external-agent results as
-        # ``task/method/avd/runlog/attempt/task_results.jsonl``.  The older
-        # layout was ``task/method/device/run/task_results.jsonl``; recover
-        # the same semantic context from the method component and the device
-        # suffix in the immutable attempt directory.
-        parts = path.parts
-        method_index = next(
-            (
-                index
-                for index in range(len(parts) - 1, -1, -1)
-                if parts[index] in known_methods
-            ),
-            -1,
-        )
-        if method_index < 1:
-            return {}
-        method_name = parts[method_index]
-        task_name = parts[method_index - 1]
-        device = ""
-        for value in reversed(parts[method_index + 1 :]):
-            match = re.search(r"(?:^|[._-])((?:small|fold|source)\d+)$", value)
-            if match:
-                device = match.group(1)
-                break
-        context = {
-            "task_name": task_name,
-            "method": method_name,
-            "device": device,
-            "run_dir": str(path.parent),
-        }
-        if stage:
-            context["stage"] = stage
-        return context
-    context = {
-        "task_name": task_dir.name,
-        "method": method_dir.name,
-        "device": device_dir.name,
-        "run_dir": str(run_dir),
-    }
-    if stage:
-        context["stage"] = stage
-    return context
 
 
-def _compact_relocation_diagnostic(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        return {}
-    return {
-        key: value.get(key)
-        for key in (
-            "schema_version",
-            "dir",
-            "manifest_path",
-            "source_xml_path",
-            "target_xml_path",
-            "target_mapping_xml_path",
-            "source_screenshot_path",
-            "target_screenshot_path",
-            "source_screenshot_available",
-            "target_screenshot_available",
-            "failure_reason",
-            "error",
-        )
-        if value.get(key) not in (None, "")
-    }
 
 
-def _extract_relocation_diagnostics(
-    value: Any, *, limit: int = 20
-) -> list[dict[str, Any]]:
-    diagnostics: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    def _add(candidate: Any) -> None:
-        compact = _compact_relocation_diagnostic(candidate)
-        if not compact:
-            return
-        identity = str(
-            compact.get("manifest_path")
-            or compact.get("dir")
-            or compact.get("target_xml_path")
-            or compact
-        )
-        if identity in seen:
-            return
-        seen.add(identity)
-        diagnostics.append(compact)
-
-    def _walk(item: Any, depth: int = 0) -> None:
-        if len(diagnostics) >= limit or depth > 8:
-            return
-        if isinstance(item, dict):
-            if "relocation_diagnostics" in item and isinstance(
-                item.get("relocation_diagnostics"),
-                list,
-            ):
-                for diagnostic in item.get("relocation_diagnostics") or []:
-                    _add(diagnostic)
-            if "relocation_diagnostic" in item:
-                _add(item.get("relocation_diagnostic"))
-            if str(item.get("schema_version") or "").startswith(
-                "omniflow.relocation_failure."
-            ):
-                _add(item)
-            for nested in item.values():
-                _walk(nested, depth + 1)
-        elif isinstance(item, list):
-            for nested in item:
-                _walk(nested, depth + 1)
-
-    _walk(value)
-    return diagnostics
 
 
-def _canonical_run_has_replay_material(canonical: dict[str, Any]) -> bool:
-    if "replay_completed" in canonical:
-        return True
-    for step in canonical.get("steps") or []:
-        if not isinstance(step, dict):
-            continue
-        provider_detail = step.get("provider_detail")
-        if not isinstance(provider_detail, dict):
-            continue
-        if isinstance(provider_detail.get("run_function_result"), dict):
-            return True
-    return False
 
 
-def _canonical_replay_completed(row: dict[str, Any]) -> bool | None:
-    direct_value = row.get("replay_completed")
-    if isinstance(direct_value, bool):
-        return direct_value
-    canonical = row.get("canonical_run")
-    if not isinstance(canonical, dict) or not _canonical_run_has_replay_material(
-        canonical
-    ):
-        return None
-    if "replay_completed" in canonical:
-        return bool(canonical.get("replay_completed"))
-    if "completed" in canonical:
-        return bool(canonical.get("completed"))
-    return None
 
 
-def _extract_replay_step_stats(row: dict[str, Any]) -> tuple[int, int]:
-    direct_total = _coerce_int(row.get("replay_step_total"), 0)
-    direct_completed = min(
-        _coerce_int(row.get("replay_step_completed_count"), 0),
-        direct_total,
-    )
-    if direct_total > 0:
-        return direct_completed, direct_total
-    canonical = row.get("canonical_run")
-    if not isinstance(canonical, dict):
-        return (0, 0)
-
-    completed = 0
-    total = 0
-    has_run_function_result = False
-    for step in canonical.get("steps") or []:
-        if not isinstance(step, dict):
-            continue
-        provider_detail = step.get("provider_detail")
-        if not isinstance(provider_detail, dict):
-            continue
-        run_result = provider_detail.get("run_function_result")
-        if not isinstance(run_result, dict):
-            continue
-        has_run_function_result = True
-        replay = run_result.get("replay")
-        if not isinstance(replay, dict):
-            continue
-        step_total = _coerce_int(
-            replay.get("active_step_count")
-            or replay.get("step_count")
-            or replay.get("actions_executed"),
-            0,
-        )
-        step_completed = _coerce_int(
-            replay.get("completed_step_count"),
-            0,
-        )
-        if step_total <= 0:
-            continue
-        total += step_total
-        completed += min(step_completed, step_total)
-
-    if total > 0:
-        return completed, total
-    fallback_total = _coerce_int(
-        canonical.get("actions_executed") or row.get("actions_executed"),
-        0,
-    )
-    if not has_run_function_result:
-        return (0, 0)
-    replay_completed = _canonical_replay_completed(row)
-    return (fallback_total if replay_completed else 0, fallback_total)
 
 
-def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
-    task_result_files = discover_task_result_files(paths)
-    rows: list[tuple[Path, dict[str, Any]]] = []
-    for file_path in task_result_files:
-        rows.extend((file_path, row) for row in _iter_jsonl_rows(file_path))
-
-    official_validator_task_count = sum(
-        1 for _, row in rows if _official_validator_used(row)
-    )
-    official_validator_success_count = sum(
-        1 for _, row in rows if _official_validator_success(row)
-    )
-    replay_states = [_canonical_replay_completed(row) for _, row in rows]
-    replay_task_count = sum(1 for value in replay_states if value is not None)
-    replay_completed_count = sum(1 for value in replay_states if value is True)
-    duration_ms = sum(_coerce_float(row.get("duration_ms")) for _, row in rows)
-    actions_executed = 0
-    model_calls = sum(_coerce_int(row.get("model_calls")) for _, row in rows)
-    fallback_steps = sum(_coerce_int(row.get("fallback_steps")) for _, row in rows)
-    total_tokens = sum(_coerce_int(row.get("total_tokens")) for _, row in rows)
-    replay_step_completed = 0
-    replay_step_total = 0
-    relocation_diagnostic_count = 0
-    function_hit_task_count = 0
-    function_covered_step_count = 0
-    function_total_step_count = 0
-    performance_rows: list[dict[str, Any]] = []
-    per_task: list[dict[str, Any]] = []
-
-    for file_path, row in rows:
-        path_context = _task_result_path_context(file_path)
-        task_name = (
-            row.get("task_name") or row.get("task") or path_context.get("task_name")
-        )
-        method = row.get("method") or path_context.get("method")
-        device = row.get("device") or path_context.get("device")
-        row_actions_executed = _coerce_int(row.get("actions_executed"))
-        if row_actions_executed <= 0 and (
-            str(row.get("agent") or "").startswith(("official:", "autodroid_"))
-            or str(method or "") in {"autodroid", "t3a_hint"}
-        ):
-            row_actions_executed = max(
-                row_actions_executed,
-                _coerce_int(row.get("step_count")),
-            )
-        actions_executed += row_actions_executed
-        step_completed, step_total = _extract_replay_step_stats(row)
-        replay_step_completed += step_completed
-        replay_step_total += step_total
-        relocation_diagnostics = _extract_relocation_diagnostics(row)
-        relocation_diagnostic_count += len(relocation_diagnostics)
-        function_metrics = function_metrics_from_result_row(
-            {**row, "method": method}
-        )
-        performance_metrics = performance_metrics_from_result_row(row)
-        if isinstance(row.get("performance_metrics"), dict):
-            performance_rows.append({**row, "method": method})
-        function_hit_task_count += int(function_metrics["function_hit"])
-        function_covered_step_count += int(function_metrics["function_covered_steps"])
-        function_total_step_count += int(function_metrics["function_total_steps"])
-        official_validator_used = _official_validator_used(row)
-        official_validator_success = (
-            _official_validator_success(row) if official_validator_used else None
-        )
-        per_task.append(
-            {
-                "task_name": task_name,
-                "task": row.get("task"),
-                "goal": row.get("goal"),
-                "task_params": row.get("task_params"),
-                "task_params_sha256": row.get("task_params_sha256"),
-                "agent": row.get("agent"),
-                "backend": row.get("backend"),
-                "method": method,
-                "device": device,
-                "run_dir": row.get("run_dir") or path_context.get("run_dir"),
-                "stage": row.get("stage") or path_context.get("stage"),
-                "result_file": str(file_path),
-                "replay_track": row.get("replay_track"),
-                "official_validator_used": official_validator_used,
-                "official_validator_success": official_validator_success,
-                "replay_completed": _canonical_replay_completed(row),
-                "duration_ms": round(_coerce_float(row.get("duration_ms")), 3),
-                "duration_sec": round(
-                    _coerce_float(row.get("duration_ms")) / 1000.0,
-                    3,
-                ),
-                "actions_executed": row_actions_executed,
-                "replay_step_completed_count": step_completed,
-                "replay_step_total": step_total,
-                "replay_step_completed_rate": _rate(step_completed, step_total),
-                "model_calls": _coerce_int(row.get("model_calls")),
-                "fallback_steps": _coerce_int(row.get("fallback_steps")),
-                "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
-                "completion_tokens": _coerce_int(row.get("completion_tokens")),
-                "total_tokens": _coerce_int(row.get("total_tokens")),
-                "token_usage_status": row.get("token_usage_status"),
-                "model": row.get("model"),
-                "model_base_url": row.get("model_base_url"),
-                "artifact_kind": row.get("artifact_kind"),
-                "artifact_ref": row.get("artifact_ref"),
-                "performance_metrics": row.get("performance_metrics"),
-                "performance_sidecar_path": row.get("performance_sidecar_path"),
-                "run_log_path": row.get("run_log_path")
-                or row.get("target_run_log_path"),
-                "target_transfer_states_path": row.get("target_transfer_states_path"),
-                "target_transfer_states_sha256": row.get(
-                    "target_transfer_states_sha256"
-                ),
-                "target_transfer_state_audit": row.get("target_transfer_state_audit"),
-                "relocation_diagnostic_count": len(relocation_diagnostics),
-                "relocation_diagnostics": relocation_diagnostics,
-                "error": row.get("error"),
-                "runtime_integrity_error": row.get("runtime_integrity_error"),
-                "environment_failure": row.get("environment_failure"),
-                "physical_backend": row.get("physical_backend"),
-                "mobilegpt_protocol": row.get("mobilegpt_protocol"),
-                "mobilegpt_native_action_index_protocol": row.get(
-                    "mobilegpt_native_action_index_protocol"
-                ),
-                "action_backend": row.get("action_backend"),
-                "observe_backend": row.get("observe_backend"),
-                "oob_action_index_protocol": row.get(
-                    "oob_action_index_protocol"
-                ),
-                **function_metrics,
-                **performance_metrics,
-            }
-        )
-
-    task_count = len(rows)
-    return {
-        "schema_version": "omniflow.androidworld_replay_pipeline_summary.v4",
-        "task_count": task_count,
-        "task_results_files": [str(path) for path in task_result_files],
-        "official_validator_task_count": official_validator_task_count,
-        "official_validator_success_count": official_validator_success_count,
-        "official_validator_success_rate": _rate(
-            official_validator_success_count,
-            official_validator_task_count,
-        ),
-        "official_validator_coverage_rate": _rate(
-            official_validator_task_count,
-            task_count,
-        ),
-        "replay_task_count": replay_task_count,
-        "replay_completed_count": replay_completed_count,
-        "replay_completed_rate": _rate(replay_completed_count, replay_task_count),
-        "replay_coverage_rate": _rate(replay_task_count, task_count),
-        "duration_ms": round(duration_ms, 3),
-        "duration_sec": round(duration_ms / 1000.0, 3),
-        "avg_duration_ms": round(duration_ms / max(1, task_count), 3),
-        "avg_duration_sec": round((duration_ms / max(1, task_count)) / 1000.0, 3),
-        "actions_executed": actions_executed,
-        "avg_actions_per_task": round(actions_executed / max(1, task_count), 3),
-        "avg_ms_per_action": round(duration_ms / max(1, actions_executed), 3),
-        "replay_step_completed_count": replay_step_completed,
-        "replay_step_total": replay_step_total,
-        "replay_step_completed_rate": _rate(
-            replay_step_completed,
-            replay_step_total,
-        ),
-        "model_calls": model_calls,
-        "total_tokens": total_tokens,
-        "fallback_steps": fallback_steps,
-        "relocation_diagnostic_count": relocation_diagnostic_count,
-        "function_hit_task_count": function_hit_task_count,
-        "function_hit_task_rate": _rate(function_hit_task_count, task_count),
-        "function_covered_step_count": function_covered_step_count,
-        "function_total_step_count": function_total_step_count,
-        "function_step_coverage_rate": _rate(
-            function_covered_step_count,
-            function_total_step_count,
-        ),
-        "performance_metrics": aggregate_performance_metrics(performance_rows),
-        "per_task": per_task,
-    }
 
 
-def write_metrics_summary(summary: dict[str, Any], output_path: str | Path) -> None:
-    path = resolve_path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    md_lines = [
-        "# AndroidWorld Replay Pipeline Summary",
-        "",
-        f"- task_count: `{summary['task_count']}`",
-        (
-            "- validator: `"
-            f"{summary['official_validator_success_count']}/"
-            f"{summary['official_validator_task_count']}`"
-        ),
-        f"- replay_completed: `{summary['replay_completed_count']}/{summary['replay_task_count']}`",
-        f"- replay_coverage: `{summary['replay_task_count']}/{summary['task_count']}`",
-        f"- replay_step_completed: `{summary['replay_step_completed_count']}/{summary['replay_step_total']}`",
-        f"- actions_executed: `{summary['actions_executed']}`",
-        f"- relocation_diagnostics: `{summary.get('relocation_diagnostic_count', 0)}`",
-        f"- duration_s: `{round(_coerce_float(summary['duration_ms']) / 1000.0, 3)}`",
-        f"- model_calls: `{summary.get('model_calls', 0)}`",
-        f"- total_tokens: `{summary.get('total_tokens', 0)}`",
-        f"- function_hit_task_rate: `{summary.get('function_hit_task_rate', 0.0)}`",
-        f"- function_step_coverage_rate: `{summary.get('function_step_coverage_rate', 0.0)}`",
-        f"- vlm_latency_ms: `{round(sum(_coerce_float(item.get('vlm_latency_ms')) for item in summary.get('per_task') or []), 3)}`",
-        f"- energy_mwh: `{round(sum(_coerce_float(item.get('energy_mwh')) for item in summary.get('per_task') or []), 6)}`",
-    ]
-    md_lines.extend(
-        [
-            "",
-            "| task | validator | replay_completed | actions | function_hit | function_coverage | model_calls | vlm_latency_ms | total_tokens | energy_mwh | sec | error |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
-        ]
-    )
-    for item in summary.get("per_task") or []:
-        md_lines.append(
-            "| "
-            + " | ".join(
-                [
-                    str(item.get("task_name") or item.get("task") or ""),
-                    "1" if item.get("official_validator_success") else "0",
-                    ""
-                    if item.get("replay_completed") is None
-                    else "1"
-                    if item.get("replay_completed")
-                    else "0",
-                    str(item.get("actions_executed") or 0),
-                    "1" if item.get("function_hit") else "0",
-                    f"{item.get('function_covered_steps') or 0}/{item.get('function_total_steps') or 0}",
-                    str(item.get("model_calls") or 0),
-                    str(round(_coerce_float(item.get("vlm_latency_ms")), 3)),
-                    str(item.get("total_tokens") or 0),
-                    "" if item.get("energy_mwh") is None else str(round(_coerce_float(item.get("energy_mwh")), 6)),
-                    str(round(_coerce_float(item.get("duration_ms")) / 1000.0, 3)),
-                    str(item.get("error") or ""),
-                ]
-            )
-            + " |"
-        )
-    path.with_suffix(".md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
 
 
 def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
@@ -2958,22 +2079,26 @@ def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _select_from_args(args: argparse.Namespace) -> list[CanonicalRunLog]:
-    source_items = load_canonical_source_index(args.index)
-    by_name = {item.task: item for item in source_items}
-    selected: list[CanonicalRunLog] = []
-    missing: list[str] = []
-    for raw_name in str(args.task or "").split(","):
-        name = raw_name.strip()
-        if not name:
-            continue
-        item = by_name.get(name)
-        if item is None:
-            missing.append(name)
-        else:
-            selected.append(item)
-    if missing:
-        raise KeyError(f"Tasks not found in canonical data index: {', '.join(missing)}")
-    return selected
+    source_text = str(getattr(args, "source_run_log", "") or "").strip()
+    source = Path(source_text).expanduser() if source_text else Path()
+    payload: dict[str, Any] = {}
+    if source_text:
+        payload = _read_object(source)
+    params = payload.get("task_parameters")
+    if not isinstance(params, dict):
+        params = _task_params_override_from_args(args) or {}
+    steps = payload.get("steps")
+    return [
+        CanonicalRunLog(
+            task=str(args.task),
+            goal=str(payload.get("goal") or args.task),
+            params=dict(params),
+            source_run_log=source,
+            replay_seed=int(payload.get("seed") or args.source_seed),
+            step_count=len(steps) if isinstance(steps, list) else 0,
+            meta={},
+        )
+    ]
 
 
 
@@ -2990,32 +2115,8 @@ def _is_mobilegpt_method(method: str) -> bool:
     return str(method or "").strip() == "mobilegpt"
 
 
-def _result_record_has_formal_result(record: dict[str, Any]) -> bool:
-    if bool(record.get("summary_exclude")):
-        return False
-    if str(record.get("status") or "").strip() in _RESULT_NON_EXECUTED_STATUSES:
-        return False
-    return bool(str(record.get("output_path") or "").strip())
 
 
-def _formal_result_paths(record: dict[str, Any]) -> list[Path]:
-    if not _result_record_has_formal_result(record):
-        return []
-    metadata = record.get("metadata")
-    if isinstance(metadata, dict):
-        published_files = [
-            resolve_path(str(path))
-            for path in metadata.get("official_result_files") or ()
-            if str(path).strip()
-        ]
-        if published_files:
-            return published_files
-    output_path = resolve_path(str(record.get("output_path") or ""))
-    if output_path.is_dir():
-        result_files = sorted(output_path.rglob("task_results.jsonl"))
-        if result_files:
-            return result_files
-    return [output_path]
 
 
 def _task_params_override_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -3171,24 +2272,6 @@ def _t3a_hint_step_action(step: Any) -> tuple[str, dict[str, Any]]:
     return "", {}
 
 
-def _t3a_hint_action_identity(step: Any) -> str:
-    name, params = _t3a_hint_step_action(step)
-    action = name.strip().lower()
-    key = str(params.get("key") or params.get("key_name") or "").strip().lower()
-    if action in {"press_key", "key_event", "presskey"}:
-        action = {
-            "back": "navigate_back",
-            "home": "navigate_home",
-            "enter": "keyboard_enter",
-        }.get(key, action)
-    action = {
-        "back": "navigate_back",
-        "press_back": "navigate_back",
-        "home": "navigate_home",
-        "press_home": "navigate_home",
-        "enter": "keyboard_enter",
-    }.get(action, action)
-    return action
 
 
 def _t3a_hint_target(
@@ -4161,111 +3244,8 @@ def _stop_background_command(process: subprocess.Popen[Any] | None) -> None:
     stop_process(process, timeout_sec=5)
 
 
-def _normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(row)
-
-    episode_model_calls = _coerce_int(
-        normalized.get("episode_model_calls") or normalized.get("warm_model_calls")
-    )
-    episode_prompt_tokens = _coerce_int(
-        normalized.get("episode_prompt_tokens") or normalized.get("warm_prompt_tokens")
-    )
-    episode_completion_tokens = _coerce_int(
-        normalized.get("episode_completion_tokens")
-        or normalized.get("warm_completion_tokens")
-    )
-    episode_total_tokens = _coerce_int(
-        normalized.get("episode_total_tokens") or normalized.get("warm_total_tokens")
-    )
-    shared_model_calls = _coerce_int(normalized.get("shared_model_calls"))
-    shared_prompt_tokens = _coerce_int(normalized.get("shared_prompt_tokens"))
-    shared_completion_tokens = _coerce_int(normalized.get("shared_completion_tokens"))
-    shared_total_tokens = _coerce_int(
-        normalized.get("shared_total_tokens") or normalized.get("shared_tokens")
-    )
-
-    if episode_model_calls > 0:
-        normalized["model_calls"] = episode_model_calls
-        normalized["model_calls_source"] = "mobilegpt_episode_stats"
-    if episode_prompt_tokens > 0:
-        normalized["prompt_tokens"] = episode_prompt_tokens
-    if episode_completion_tokens > 0:
-        normalized["completion_tokens"] = episode_completion_tokens
-    if episode_total_tokens > 0:
-        normalized["total_tokens"] = episode_total_tokens
-        normalized["total_tokens_source"] = "mobilegpt_episode_stats"
-
-    if _coerce_int(normalized.get("model_calls")) <= 0 and shared_model_calls > 0:
-        normalized["model_calls"] = shared_model_calls
-        normalized["model_calls_source"] = "mobilegpt_stats"
-    if _coerce_int(normalized.get("prompt_tokens")) <= 0 and shared_prompt_tokens > 0:
-        normalized["prompt_tokens"] = shared_prompt_tokens
-    if (
-        _coerce_int(normalized.get("completion_tokens")) <= 0
-        and shared_completion_tokens > 0
-    ):
-        normalized["completion_tokens"] = shared_completion_tokens
-
-    total_tokens = _coerce_int(
-        normalized.get("total_tokens") or normalized.get("tokens")
-    )
-    if total_tokens <= 0 and shared_total_tokens > 0:
-        total_tokens = shared_total_tokens
-        normalized["total_tokens_source"] = "mobilegpt_stats"
-    if total_tokens <= 0:
-        total_tokens = _coerce_int(normalized.get("prompt_tokens")) + _coerce_int(
-            normalized.get("completion_tokens")
-        )
-    normalized["total_tokens"] = total_tokens
-    normalized["model_calls"] = _coerce_int(normalized.get("model_calls"))
-    if "episode_actions_executed" in normalized:
-        normalized["actions_executed"] = _coerce_int(
-            normalized.get("episode_actions_executed")
-        )
-        normalized["actions_executed_source"] = "mobilegpt_episode_stats"
-    if "episode_fallback_count" in normalized:
-        normalized["fallback_steps"] = _coerce_int(
-            normalized.get("episode_fallback_count")
-        )
-        normalized["fallback_steps_source"] = "mobilegpt_episode_stats"
-    if normalized.get("total_tokens_source") in {
-        "mobilegpt_episode_stats",
-        "mobilegpt_stats",
-    }:
-        normalized["token_usage_status"] = str(
-            normalized.get("episode_token_usage_status")
-            or (
-                "tracked"
-                if _coerce_int(normalized.get("model_calls")) > 0
-                and total_tokens > 0
-                and total_tokens
-                == _coerce_int(normalized.get("prompt_tokens"))
-                + _coerce_int(normalized.get("completion_tokens"))
-                else "inconsistent"
-            )
-        )
-
-    wall_sec = _coerce_float(normalized.get("wall_sec"))
-    if wall_sec <= 0:
-        wall_sec = _coerce_float(normalized.get("duration_sec"))
-    if wall_sec > 0:
-        normalized["wall_sec"] = round(wall_sec, 3)
-
-    normalized["reuse_metrics"] = reuse_metrics_from_result_row(normalized)
-    normalized.update(function_metrics_from_result_row(normalized))
-    normalized.update(performance_metrics_from_result_row(normalized))
-    return normalized
 
 
-def _result_row_value(row: dict[str, Any], key: str) -> str:
-    value = row.get(key)
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (list, tuple)):
-        return "; ".join(str(item) for item in value)
-    return str(value)
 
 
 _RESULT_METADATA_ROW_KEYS = (
@@ -4301,701 +3281,16 @@ _RESULT_METADATA_ROW_KEYS = (
 )
 
 
-def _promote_result_metadata_to_row(
-    row: dict[str, Any],
-    records: Sequence[dict[str, Any]],
-) -> None:
-    for record in records:
-        metadata = (
-            record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-        )
-        for key in _RESULT_METADATA_ROW_KEYS:
-            if key in row and row.get(key) not in (None, "", {}, []):
-                continue
-            value = metadata.get(key)
-            if value not in (None, "", {}, []):
-                row[key] = value
-    init_audit = row.get("init_audit")
-    if isinstance(init_audit, dict):
-        for source_key, row_key in (
-            ("init_audit_enabled", "init_audit_enabled"),
-            ("init_audit_status", "init_audit_status"),
-            ("initialized", "initialized"),
-            ("init_called", "init_called"),
-            ("init_audit_returncode", "init_audit_returncode"),
-            ("init_audit_init_summary", "init_audit_init_summary"),
-        ):
-            if row.get(row_key) in (None, "", {}, []):
-                row[row_key] = init_audit.get(source_key)
 
 
-def _record_wall_sec(record: dict[str, Any]) -> float:
-    metadata = (
-        record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    )
-    value = metadata.get("wall_sec") if metadata else record.get("wall_sec")
-    return _coerce_float(value)
 
 
-def _result_summary_rows(
-    *,
-    task: str,
-    command_records: Sequence[dict[str, Any]],
-    aggregate_summary: dict[str, Any],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    by_method_device: dict[tuple[str, str], dict[str, Any]] = {}
-    device_aliases: dict[tuple[str, str], str] = {}
-    mobilegpt_episode_stats: dict[tuple[str, str], dict[str, Any]] = {}
-    mobilegpt_teacher_stats: dict[str, dict[str, Any]] = {}
-    teacher_wait_by_method: dict[str, dict[str, Any]] = {}
-    teacher_wall_sec_by_method: dict[str, float] = {}
-    method_devices: dict[str, set[str]] = {}
-    dry_run_summary = any(
-        bool((record.get("metadata") or {}).get("dry_run"))
-        for record in command_records
-        if isinstance(record.get("metadata"), dict)
-    )
-
-    for record in command_records:
-        method = str(record.get("method") or "").strip()
-        device = str(record.get("device") or "").strip()
-        metadata = record.get("metadata")
-        target = metadata.get("device_target") if isinstance(metadata, dict) else {}
-        serial = str(target.get("serial") or "").strip() if isinstance(target, dict) else ""
-        if method and device and serial:
-            device_aliases[(method, serial)] = device
-        if method and device:
-            method_devices.setdefault(method, set()).add(device)
-
-    for record in command_records:
-        metadata = (
-            record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-        )
-        method = str(record.get("method") or metadata.get("method") or "").strip()
-        device = str(record.get("device") or metadata.get("device") or "").strip()
-        status = str(record.get("status") or "").strip()
-        memory_root_value = str(metadata.get("memory_root") or "").strip()
-        if (
-            _is_mobilegpt_method(method)
-            and status in {"teacher_memory_write", "cold_memory_write"}
-            and isinstance(metadata.get("mobilegpt_wait_result"), dict)
-        ):
-            teacher_wait_by_method[method] = {
-                "start": dict(metadata.get("mobilegpt_start_wait_result") or {}),
-                "finish": dict(metadata.get("mobilegpt_wait_result") or {}),
-            }
-        if _is_mobilegpt_method(method) and status in {
-            "teacher_memory_write",
-            "cold_memory_write",
-        }:
-            teacher_wall_sec_by_method[method] = round(
-                teacher_wall_sec_by_method.get(method, 0.0) + _record_wall_sec(record),
-                3,
-            )
-        if not _is_mobilegpt_method(method) or not memory_root_value:
-            continue
-        if dry_run_summary:
-            continue
-        memory_root = resolve_path(memory_root_value)
-        if status in {"teacher_memory_write", "cold_memory_write"}:
-            teacher_stats = _load_mobilegpt_stats_summary(
-                summary_path=memory_root / "mobilegpt_stats_summary.json",
-                stats_jsonl_path=memory_root / "mobilegpt_stats.jsonl",
-            )
-            if teacher_stats:
-                mobilegpt_teacher_stats[method] = teacher_stats
-            continue
-        explicit_episode_summary = str(
-            metadata.get("mobilegpt_stats_summary") or ""
-        ).strip()
-        explicit_episode_jsonl = str(
-            metadata.get("mobilegpt_stats_jsonl") or ""
-        ).strip()
-        if not device or not (explicit_episode_summary or explicit_episode_jsonl):
-            continue
-        episode_stats = _load_mobilegpt_stats_summary(
-            summary_path=(
-                resolve_path(explicit_episode_summary)
-                if explicit_episode_summary
-                else None
-            ),
-            stats_jsonl_path=(
-                resolve_path(explicit_episode_jsonl) if explicit_episode_jsonl else None
-            ),
-        )
-        if episode_stats:
-            mobilegpt_episode_stats[(method, device)] = episode_stats
-
-    def _row_rank(row: dict[str, Any]) -> int:
-        stage = str(row.get("stage") or "").strip()
-        if stage == "androidworld_validate":
-            return 4
-        if not stage and row.get("official_validator_used"):
-            return 3
-        if not stage:
-            return 2
-        if stage == "androidworld_init":
-            return 1
-        return 0
-
-    for row in aggregate_summary.get("per_task") or []:
-        if str(row.get("task_name") or row.get("task") or "") != task:
-            continue
-        method = str(row.get("method") or "").strip()
-        device = str(row.get("device") or "").strip()
-        if method and device:
-            device = device_aliases.get((method, device), device)
-            row = {**row, "device": device}
-            key = (method, device)
-            existing = by_method_device.get(key)
-            if existing is None or _row_rank(row) >= _row_rank(existing):
-                by_method_device[key] = dict(row)
-        elif method:
-            # Native AndroidWorld result rows do not always carry the target
-            # label; in a one-task runner the command record is the unique
-            # authoritative device context for that method.
-            candidates = method_devices.get(method) or set()
-            if len(candidates) == 1:
-                resolved_device = next(iter(candidates))
-                row = {**row, "device": resolved_device}
-                by_method_device[(method, resolved_device)] = dict(row)
-
-    grouped_records: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for record in command_records:
-        if bool(record.get("summary_exclude")):
-            continue
-        method = str(record.get("method") or "").strip()
-        device = str(record.get("device") or "").strip()
-        if not method or not device:
-            continue
-        key = (method, device)
-        grouped_records.setdefault(key, []).append(dict(record))
-
-    seen: set[tuple[str, str]] = set()
-    for key, records in grouped_records.items():
-        method, device = key
-        seen.add(key)
-        explicit_statuses = [
-            str(record.get("status") or "").strip()
-            for record in records
-            if str(record.get("status") or "").strip()
-        ]
-        has_non_executed_status = any(
-            status in _RESULT_NON_EXECUTED_STATUSES for status in explicit_statuses
-        )
-        row = {} if has_non_executed_status else dict(by_method_device.get(key) or {})
-        returncodes = [int(record.get("returncode") or 0) for record in records]
-        wall_sec = sum(_record_wall_sec(record) for record in records)
-        status = explicit_statuses[-1] if explicit_statuses else ""
-        if not status:
-            status = (
-                "completed"
-                if all(code == 0 for code in returncodes)
-                else "command_failed"
-            )
-        errors = [
-            str(record.get("error") or "").strip()
-            for record in records
-            if str(record.get("error") or "").strip()
-        ]
-        row.update(
-            {
-                "task_name": row.get("task_name") or task,
-                "method": method,
-                "device": device,
-                "status": status,
-                "returncode": max(returncodes or [0]),
-                "command_count": len(records),
-                "command": records[-1].get("command") or "",
-                "commands": [record.get("command") or "" for record in records],
-                "output_path": records[-1].get("output_path")
-                or row.get("run_dir")
-                or "",
-                "error": row.get("error") or "; ".join(errors),
-            }
-        )
-        _promote_result_metadata_to_row(row, records)
-        if wall_sec > 0:
-            row["wall_sec"] = round(wall_sec, 3)
-        if _is_mobilegpt_method(method):
-            row["episode_wall_sec"] = round(wall_sec, 3) if wall_sec > 0 else 0
-            teacher_wall_sec = teacher_wall_sec_by_method.get(method, 0.0)
-            if teacher_wall_sec > 0:
-                row["teacher_wall_sec"] = round(teacher_wall_sec, 3)
-        teacher_stats = mobilegpt_teacher_stats.get(method) or {}
-        episode_stats = mobilegpt_episode_stats.get(key) or {}
-        mobilegpt_prep: dict[str, Any] = {}
-        for record in reversed(records):
-            metadata = record.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            prep_candidate = metadata.get("mobilegpt_prep")
-            if isinstance(prep_candidate, dict) and prep_candidate:
-                mobilegpt_prep = dict(prep_candidate)
-                break
-        if mobilegpt_prep:
-            prep_stats = dict(mobilegpt_prep.get("stats") or {})
-            prep_fields = mobilegpt_memory.mobilegpt_stats_row_fields("prep", prep_stats)
-            row.update(prep_fields)
-            row.update(
-                {
-                    "prep_type": str(mobilegpt_prep.get("type") or ""),
-                    "prep_duration_sec": prep_fields["prep_task_elapsed_sec"],
-                    "prep_wall_sec": _coerce_float(mobilegpt_prep.get("wall_sec")),
-                    "prep_official_validator_success": mobilegpt_prep.get(
-                        "official_validator_success"
-                    ),
-                    "prep_manifest": str(mobilegpt_prep.get("manifest_path") or ""),
-                    "prep_manifest_sha256": str(
-                        mobilegpt_prep.get("manifest_sha256") or ""
-                    ),
-                    "prep_memory_sha256": str(
-                        mobilegpt_prep.get("memory_sha256") or ""
-                    ),
-                    "prep_shared_across_targets": bool(
-                        mobilegpt_prep.get("shared_across_targets")
-                    ),
-                }
-            )
-        appagent_prep: dict[str, Any] = {}
-        for record in reversed(records):
-            metadata = record.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            prep_candidate = metadata.get("appagent_prep")
-            if isinstance(prep_candidate, dict) and prep_candidate:
-                appagent_prep = dict(prep_candidate)
-                break
-        if appagent_prep:
-            row.update(
-                {
-                    "prep_type": str(appagent_prep.get("type") or ""),
-                    "prep_model_calls": _coerce_int(appagent_prep.get("model_calls")),
-                    "prep_prompt_tokens": _coerce_int(
-                        appagent_prep.get("prompt_tokens")
-                    ),
-                    "prep_completion_tokens": _coerce_int(
-                        appagent_prep.get("completion_tokens")
-                    ),
-                    "prep_total_tokens": _coerce_int(appagent_prep.get("total_tokens")),
-                    "prep_token_usage_status": str(
-                        appagent_prep.get("token_usage_status") or ""
-                    ),
-                    "prep_duration_sec": _coerce_float(appagent_prep.get("wall_sec")),
-                    "prep_wall_sec": _coerce_float(appagent_prep.get("wall_sec")),
-                    "prep_source_episode_duration_sec": _coerce_float(
-                        appagent_prep.get("source_episode_duration_sec")
-                    ),
-                    "prep_source_episode_wall_sec": _coerce_float(
-                        appagent_prep.get("source_episode_wall_sec")
-                    ),
-                    "prep_document_generation_wall_sec": _coerce_float(
-                        appagent_prep.get("document_generation_wall_sec")
-                    ),
-                    "prep_official_validator_success": appagent_prep.get(
-                        "official_validator_success"
-                    ),
-                    "prep_manifest": str(appagent_prep.get("manifest_path") or ""),
-                    "prep_manifest_sha256": str(
-                        appagent_prep.get("manifest_sha256") or ""
-                    ),
-                    "prep_demo_sha256": str(appagent_prep.get("demo_sha256") or ""),
-                    "prep_demo_docs_sha256": str(
-                        appagent_prep.get("demo_docs_sha256") or ""
-                    ),
-                    "prep_shared_across_targets": bool(
-                        appagent_prep.get("shared_across_targets")
-                    ),
-                }
-            )
-        if teacher_stats:
-            teacher_fields = mobilegpt_memory.mobilegpt_stats_row_fields("teacher", teacher_stats)
-            row.update(teacher_fields)
-            row.update(
-                {
-                    "prep_type": row.get("prep_type")
-                    or MOBILEGPT_PREP_TYPE,
-                    "prep_model_calls": teacher_fields["teacher_model_calls"],
-                    "prep_total_tokens": teacher_fields["teacher_total_tokens"],
-                    "prep_prompt_tokens": teacher_fields["teacher_prompt_tokens"],
-                    "prep_completion_tokens": teacher_fields[
-                        "teacher_completion_tokens"
-                    ],
-                    "prep_duration_sec": teacher_fields["teacher_task_elapsed_sec"]
-                    or row.get("teacher_wall_sec")
-                    or 0,
-                    "prep_stats_summary": teacher_fields["teacher_stats_summary"],
-                    "prep_stats_jsonl": teacher_fields["teacher_stats_jsonl"],
-                    "mobilegpt_teacher_action_count": _coerce_int(
-                        teacher_stats.get("teacher_action_count")
-                    ),
-                    "mobilegpt_teacher_groundable_action_count": _coerce_int(
-                        teacher_stats.get("teacher_groundable_action_count")
-                    ),
-                    "mobilegpt_teacher_miss_count": _coerce_int(
-                        teacher_stats.get("teacher_miss_count")
-                    ),
-                    "mobilegpt_teacher_vlm_fallback_count": _coerce_int(
-                        teacher_stats.get("teacher_vlm_fallback_count")
-                    ),
-                    "mobilegpt_teacher_unrecovered_miss_count": _coerce_int(
-                        teacher_stats.get("teacher_unrecovered_miss_count")
-                    ),
-                    "mobilegpt_native_vlm_fallback_only": bool(
-                        teacher_stats.get("native_vlm_fallback_only")
-                    ),
-                }
-            )
-        if episode_stats:
-            episode_fields = mobilegpt_memory.mobilegpt_stats_row_fields("episode", episode_stats)
-            row.update(
-                {
-                    **episode_fields,
-                    "episode_stats_scope": "task_device",
-                    "shared_model_calls": episode_fields["episode_model_calls"],
-                    "chat_model_calls": episode_fields["episode_chat_model_calls"],
-                    "embedding_model_calls": episode_fields[
-                        "episode_embedding_model_calls"
-                    ],
-                    "chat_models": episode_fields["episode_chat_models"],
-                    "embedding_models": episode_fields["episode_embedding_models"],
-                    "shared_tokens": episode_fields["episode_total_tokens"],
-                    "shared_prompt_tokens": episode_fields["episode_prompt_tokens"],
-                    "shared_completion_tokens": episode_fields[
-                        "episode_completion_tokens"
-                    ],
-                    "shared_chat_latency_sec": episode_fields[
-                        "episode_chat_latency_sec"
-                    ],
-                    "shared_embedding_latency_sec": episode_fields[
-                        "episode_embedding_latency_sec"
-                    ],
-                    "mobilegpt_task_started_count": episode_fields[
-                        "episode_task_started_count"
-                    ],
-                    "mobilegpt_task_finished_count": episode_fields[
-                        "episode_task_finished_count"
-                    ],
-                    "memory_lookup_count": episode_fields[
-                        "episode_memory_lookup_count"
-                    ],
-                    "memory_hit_count": episode_fields["episode_memory_hit_count"],
-                    "memory_hit_rate": episode_fields["episode_memory_hit_rate"],
-                    "memory_explore_count": episode_fields[
-                        "episode_memory_explore_count"
-                    ],
-                    "memory_action_recalled_count": episode_fields[
-                        "episode_memory_action_recalled_count"
-                    ],
-                    "memory_action_use_rate": episode_fields[
-                        "episode_memory_action_use_rate"
-                    ],
-                    "memory_hit": (
-                        episode_fields["episode_memory_hit_count"] > 0
-                    ),
-                    "memory_covered_steps": episode_fields[
-                        "episode_memory_hit_count"
-                    ],
-                    "memory_total_steps": episode_fields[
-                        "episode_memory_lookup_count"
-                    ],
-                    "fallback_steps": episode_fields["episode_fallback_count"],
-                    "episode_task_elapsed_status": (
-                        "complete"
-                        if episode_fields["episode_task_finished_count"] > 0
-                        else "not_emitted_before_androidworld_termination"
-                    ),
-                    "episode_duration_source": "androidworld_task_results",
-                    "mobilegpt_stats_summary": episode_fields["episode_stats_summary"],
-                }
-            )
-        teacher_wait = teacher_wait_by_method.get(method)
-        if teacher_wait:
-            teacher_start = teacher_wait.get("start") or {}
-            teacher_finish = teacher_wait.get("finish") or {}
-            row.update(
-                {
-                    "mobilegpt_teacher_started": teacher_start.get("seen"),
-                    "mobilegpt_teacher_finished": teacher_finish.get("seen"),
-                    "mobilegpt_teacher_wait_timeout_sec": teacher_finish.get(
-                        "timeout_sec"
-                    ),
-                    "mobilegpt_teacher_wait_elapsed_sec": teacher_finish.get(
-                        "elapsed_sec"
-                    ),
-                }
-            )
-        run_wait_records = [
-            dict(record.get("metadata") or {})
-            for record in records
-            if isinstance(record.get("metadata"), dict)
-            and isinstance(
-                record.get("metadata", {}).get("mobilegpt_wait_result"),
-                dict,
-            )
-        ]
-        if run_wait_records:
-            run_wait_metadata = run_wait_records[-1]
-            run_start = dict(run_wait_metadata.get("mobilegpt_start_wait_result") or {})
-            run_finish = dict(run_wait_metadata.get("mobilegpt_wait_result") or {})
-            row.update(
-                {
-                    "mobilegpt_episode_started": run_start.get("seen"),
-                    "mobilegpt_episode_finished": run_finish.get("seen"),
-                    "mobilegpt_episode_wait_timeout_sec": run_finish.get("timeout_sec"),
-                    "mobilegpt_episode_wait_elapsed_sec": run_finish.get("elapsed_sec"),
-                }
-            )
-        rows.append(row)
-
-    for key, row in sorted(by_method_device.items()):
-        if key in seen:
-            continue
-        rows.append({**row, "status": "completed", "returncode": 0})
-    return [_normalize_result_row(row) for row in rows]
 
 
-def _aggregate_normalized_result_rows(
-    aggregate_summary: dict[str, Any],
-    rows: Sequence[dict[str, Any]],
-) -> dict[str, Any]:
-    """Recompute the result aggregate from its final canonical rows."""
-    aggregate = dict(aggregate_summary)
-    for detailed_usage_field in (
-        "model_calls",
-        "prompt_tokens",
-        "completion_tokens",
-        "total_tokens",
-        "chat_model_calls",
-        "embedding_model_calls",
-    ):
-        aggregate.pop(detailed_usage_field, None)
-    canonical_rows = [dict(row) for row in rows]
-    task_count = len(canonical_rows)
-    official_rows = [
-        row for row in canonical_rows if bool(row.get("official_validator_used"))
-    ]
-    official_success_count = sum(
-        1 for row in official_rows if bool(row.get("official_validator_success"))
-    )
-    replay_rows = [
-        row for row in canonical_rows if row.get("replay_completed") is not None
-    ]
-    replay_completed_count = sum(
-        1 for row in replay_rows if row.get("replay_completed") is True
-    )
-    duration_ms = sum(
-        _coerce_float(row.get("duration_ms"))
-        or _coerce_float(row.get("duration_sec")) * 1000.0
-        for row in canonical_rows
-    )
-    actions_executed = sum(
-        _coerce_int(row.get("actions_executed")) for row in canonical_rows
-    )
-    replay_step_completed = sum(
-        _coerce_int(row.get("replay_step_completed_count")) for row in canonical_rows
-    )
-    replay_step_total = sum(
-        _coerce_int(row.get("replay_step_total")) for row in canonical_rows
-    )
-    normalized_metrics = [
-        {
-            **row,
-            **function_metrics_from_result_row(row),
-            **performance_metrics_from_result_row(row),
-        }
-        for row in canonical_rows
-    ]
-    function_hit_task_count = sum(
-        bool(row.get("function_hit")) for row in normalized_metrics
-    )
-    function_covered_step_count = sum(
-        _coerce_int(row.get("function_covered_steps")) for row in normalized_metrics
-    )
-    function_total_step_count = sum(
-        _coerce_int(row.get("function_total_steps")) for row in normalized_metrics
-    )
-    performance_rows = [
-        row for row in normalized_metrics if isinstance(row.get("performance_metrics"), dict)
-    ]
-
-    aggregate.update(
-        {
-            "task_count": task_count,
-            "official_validator_task_count": len(official_rows),
-            "official_validator_success_count": official_success_count,
-            "official_validator_success_rate": _rate(
-                official_success_count,
-                len(official_rows),
-            ),
-            "official_validator_coverage_rate": _rate(
-                len(official_rows),
-                task_count,
-            ),
-            "replay_task_count": len(replay_rows),
-            "replay_completed_count": replay_completed_count,
-            "replay_completed_rate": _rate(
-                replay_completed_count,
-                len(replay_rows),
-            ),
-            "replay_coverage_rate": _rate(len(replay_rows), task_count),
-            "duration_ms": round(duration_ms, 3),
-            "duration_sec": round(duration_ms / 1000.0, 3),
-            "avg_duration_ms": round(duration_ms / max(1, task_count), 3),
-            "avg_duration_sec": round(
-                (duration_ms / max(1, task_count)) / 1000.0,
-                3,
-            ),
-            "actions_executed": actions_executed,
-            "avg_actions_per_task": round(
-                actions_executed / max(1, task_count),
-                3,
-            ),
-            "avg_ms_per_action": round(
-                duration_ms / max(1, actions_executed),
-                3,
-            ),
-            "model_calls": sum(
-                _coerce_int(row.get("model_calls")) for row in canonical_rows
-            ),
-            "total_tokens": sum(
-                _coerce_int(row.get("total_tokens")) for row in canonical_rows
-            ),
-            "vlm_calls": sum(
-                _coerce_int(row.get("vlm_calls") or row.get("model_calls"))
-                for row in normalized_metrics
-            ),
-            "vlm_latency_ms": round(
-                sum(_coerce_float(row.get("vlm_latency_ms")) for row in normalized_metrics),
-                6,
-            ),
-            "latency_sec": round(
-                sum(_coerce_float(row.get("latency_sec")) for row in normalized_metrics),
-                6,
-            ),
-            "energy_mwh": round(
-                sum(
-                    _coerce_float(row.get("energy_mwh"))
-                    for row in normalized_metrics
-                    if row.get("energy_mwh") is not None
-                ),
-                6,
-            ),
-            "energy_measurement_available_count": sum(
-                bool(row.get("energy_measurement_available"))
-                for row in normalized_metrics
-            ),
-            "function_hit_task_count": function_hit_task_count,
-            "function_hit_task_rate": _rate(function_hit_task_count, task_count),
-            "function_covered_step_count": function_covered_step_count,
-            "function_total_step_count": function_total_step_count,
-            "function_step_coverage_rate": _rate(
-                function_covered_step_count,
-                function_total_step_count,
-            ),
-            "performance_metrics": aggregate_performance_metrics(performance_rows),
-            "replay_step_completed_count": replay_step_completed,
-            "replay_step_total": replay_step_total,
-            "replay_step_completed_rate": _rate(
-                replay_step_completed,
-                replay_step_total,
-            ),
-            "fallback_steps": sum(
-                _coerce_int(row.get("fallback_steps")) for row in canonical_rows
-            ),
-            "relocation_diagnostic_count": sum(
-                _coerce_int(row.get("relocation_diagnostic_count"))
-                for row in canonical_rows
-            ),
-            "per_task": canonical_rows,
-        }
-    )
-    return aggregate
 
 
-def _write_result_summary(
-    *,
-    result_root: str | Path,
-    task: str,
-    source_seed: int,
-    evaluation_seed: int,
-    command_records: Sequence[dict[str, Any]],
-    aggregate_summary: dict[str, Any],
-) -> dict[str, Any]:
-    task_root = resolve_path(result_root)
-    task_root.mkdir(parents=True, exist_ok=True)
-    rows = _result_summary_rows(
-        task=task,
-        command_records=command_records,
-        aggregate_summary=aggregate_summary,
-    )
-    compact_rows = [
-        compact_result_row(
-            row,
-            source_seed=source_seed,
-            evaluation_seed=evaluation_seed,
-        )
-        for row in rows
-    ]
-    canonical_aggregate = _aggregate_normalized_result_rows(
-        aggregate_summary,
-        rows,
-    )
-    summary = {
-        "schema_version": RESULT_SCHEMA,
-        "task_name": task,
-        "task_root": str(task_root),
-        "rows": compact_rows,
-        "details": rows,
-        "aggregate": canonical_aggregate,
-    }
-    summary_path = task_root / RESULT_SUMMARY_FILE
-    summary_path.write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    commands_path = task_root / RESULT_COMMANDS_FILE
-    commands_path.write_text(
-        "\n".join(json.dumps(record, ensure_ascii=False) for record in command_records)
-        + "\n",
-        encoding="utf-8",
-    )
-
-    visible_columns = [(field, field) for field in RESULT_FIELDS]
-    md_lines = [
-        f"# AndroidWorld Result Summary: {task}",
-        "",
-        "| " + " | ".join(label for _, label in visible_columns) + " |",
-        "|" + "|".join("---" for _ in visible_columns) + "|",
-    ]
-    for row in compact_rows:
-        md_lines.append(
-            "| "
-            + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
-            + " |"
-        )
-    (task_root / RESULT_MARKDOWN_FILE).write_text(
-        "\n".join(md_lines) + "\n",
-        encoding="utf-8",
-    )
-    return summary
 
 
-def _print_result_summary(summary: dict[str, Any]) -> None:
-    visible_columns = [(field, field) for field in RESULT_FIELDS]
-    print(
-        "| " + " | ".join(label for _, label in visible_columns) + " |",
-        flush=True,
-    )
-    print("|" + "|".join("---" for _ in visible_columns) + "|", flush=True)
-    for row in summary.get("rows") or []:
-        print(
-            "| "
-            + " | ".join(_result_row_value(row, key) for key, _ in visible_columns)
-            + " |",
-            flush=True,
-        )
 
 
 def build_mobilegpt_command(
@@ -5337,140 +3632,6 @@ def build_appagent_command(
             "log_path": str(log_path),
         },
     )
-
-
-def build_autodroid_command(
-    item: CanonicalRunLog,
-    *,
-    method_name: str,
-    target: DeviceTarget,
-    android_world_root: str | Path,
-    output_root: str | Path,
-    autodroid_root: str | Path,
-    autodroid_memory_root: str | Path,
-    autodroid_app: str = "",
-    autodroid_policy: str = "replay",
-    max_steps: int,
-    timeout_sec: int,
-    task_random_seed: int | None,
-    fixed_task_seed: bool,
-    fixed_task_params: bool,
-    task_params_override: dict[str, Any] | None,
-    perform_emulator_setup: bool,
-    adb_path: str,
-    python_executable: str = sys.executable,
-    repo_root: Path = REPO_ROOT,
-) -> CommandSpec:
-    """Build one official AutoDroid policy run forwarded through AndroidWorld."""
-
-    del fixed_task_seed
-    if autodroid_policy not in {"replay", "task"}:
-        raise ValueError(f"autodroid_policy_invalid:{autodroid_policy}")
-    resolved_root = resolve_path(autodroid_root, root=repo_root)
-    resolved_memory = resolve_path(autodroid_memory_root, root=repo_root)
-    validate_autodroid_memory_root(resolved_memory)
-    resolved_device = _device_label(
-        explicit_label=target.label,
-        serial=target.serial,
-        console_port=target.console_port,
-    )
-    resolved_output = _experiment_run_dir(
-        output_root,
-        task=item.task,
-        method=_safe_stem(method_name, fallback="autodroid"),
-        device=resolved_device,
-        serial=target.serial,
-        console_port=target.console_port,
-        repo_root=repo_root,
-    )
-    runtime_env = _subprocess_env({})
-    argv = [
-        python_executable,
-        "-m",
-        "src.integrations.official_forward",
-        "--baseline",
-        "autodroid",
-        "--root",
-        str(resolved_root),
-        "--memory-root",
-        str(resolved_memory),
-        "--serial",
-        target.serial,
-        "--adb",
-        str(adb_path or "adb"),
-        "--output",
-        str(resolved_output),
-        "--timeout",
-        str(float(timeout_sec)),
-        "--max-events",
-        str(max(1, int(max_steps))),
-        "--android-world-root",
-        str(resolve_path(android_world_root, root=repo_root)),
-        "--task",
-        item.task,
-        "--goal",
-        item.goal,
-        "--task-params-json",
-        json.dumps(
-            dict(task_params_override or item.params)
-            if fixed_task_params
-            else {},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-        "--task-seed",
-        str(int(task_random_seed if task_random_seed is not None else item.replay_seed)),
-        "--console-port",
-        str(int(target.console_port)),
-        "--grpc-port",
-        str(int(target.console_port) + 3000),
-    ]
-    if str(autodroid_app or "").strip():
-        argv.extend(("--app-name", str(autodroid_app).strip()))
-    argv.extend(("--policy", str(autodroid_policy)))
-    if not perform_emulator_setup:
-        argv.append("--no-perform-emulator-setup")
-    child_environment = {
-        "ANDROID_SERIAL": target.serial,
-        "PATH": runtime_env.get("PATH", ""),
-    }
-    android_sdk_root = str(
-        runtime_env.get("ANDROID_SDK_ROOT")
-        or runtime_env.get("ANDROID_HOME")
-        or runtime_env.get("OMNIFLOW_ANDROID_SDK_ROOT")
-        or ""
-    ).strip()
-    if android_sdk_root:
-        child_environment["ANDROID_SDK_ROOT"] = android_sdk_root
-        child_environment["ANDROID_HOME"] = android_sdk_root
-    adb_server_port = str(runtime_env.get("ANDROID_ADB_SERVER_PORT") or "").strip()
-    if adb_server_port:
-        child_environment["ANDROID_ADB_SERVER_PORT"] = adb_server_port
-    return CommandSpec(
-        label=f"autodroid:official:{target.label}",
-        argv=argv,
-        env=child_environment,
-        cwd=repo_root,
-        output_path=resolved_output,
-        timeout_sec=float(timeout_sec) if timeout_sec and timeout_sec > 0 else None,
-        metadata={
-            "mode": f"autodroid_official_{autodroid_policy}",
-            "agent": f"autodroid_official_{autodroid_policy}",
-            "device_target": target.to_dict(),
-            "autodroid_root": str(resolved_root),
-            "autodroid_memory_root": str(resolved_memory),
-            "autodroid_app": str(autodroid_app or "").strip(),
-            "official_entry": str(resolved_root / "droidbot" / "start.py"),
-            "official_policy": str(autodroid_policy),
-            "official_memory_format": "droidbot_utg_events",
-            "state_backend": f"androidworld_task_plus_droidbot_{autodroid_policy}",
-            "action_backend": "official_droidbot",
-            "external_forward_only": True,
-            "model": str(runtime_env.get("OPENAI_MODEL") or "").strip(),
-        },
-    )
-
-
 def _configure_mobilegpt_formal_server(
     spec: CommandSpec,
     *,
@@ -5512,11 +3673,6 @@ def _run_result_mobilegpt(
     if not targets:
         raise ValueError("mobilegpt_device_target_required")
 
-    if item.meta.get("latest_official_success_source") is not True:
-        raise ValueError(
-            "mobilegpt_requires_official_success_source:"
-            f"task={item.task}"
-        )
     source_memory_value = str(
         getattr(args, "mobilegpt_source_memory_root", "")
     ).strip()
@@ -5962,6 +4118,14 @@ def _run_result_mobilegpt(
 
 
 def run_task(args: argparse.Namespace) -> int:
+    memory = str(getattr(args, "memory", "") or "").strip()
+    if memory:
+        if args.method == "omniflow":
+            args.store_path = memory
+        elif args.method == "mobilegpt":
+            args.mobilegpt_source_memory_root = memory
+        elif args.method == "appagent":
+            args.appagent_memory_root = memory
     selected = _select_from_args(args)
     if len(selected) != 1:
         raise ValueError("result requires exactly one selected --task entry")
@@ -5972,7 +4136,7 @@ def run_task(args: argparse.Namespace) -> int:
         raise ValueError("result requires exactly one device")
     mobilegpt_source_run_log = item.source_run_log
     mobilegpt_source_run_log_sha256s: tuple[str, ...] = ()
-    if args.method != "autodroid":
+    if str(item.source_run_log) not in {"", "."} and item.source_run_log.is_file():
         mobilegpt_source_run_log_sha256s = (
             sha256_file(mobilegpt_source_run_log),
         )
@@ -5997,14 +4161,6 @@ def run_task(args: argparse.Namespace) -> int:
         random.randint(1, 2**31 - 1)
         if bool(args.random_task_seed)
         else args.task_random_seed
-    )
-    attempt_manifest_path = _claim_result_attempt(
-        attempt_root,
-        task=item.task,
-        methods=methods,
-        source_seed=source_seed,
-        evaluation_seed=task_seed,
-        dry_run=bool(args.dry_run),
     )
     command_records: list[dict[str, Any]] = []
     failed = 0
@@ -6042,173 +4198,18 @@ def run_task(args: argparse.Namespace) -> int:
 
         if method == "omniflow":
             store_text = str(args.store_path or "").strip()
-            if not store_text:
-                raise ValueError(
-                    f"--store-path is required when result includes {method}"
-                )
-            store_path = resolve_path(store_text)
+            store_path = resolve_path(store_text) if store_text else None
         else:
             store_path = memory_root / "unused-store.json"
 
-        if method == "omniflow":
-            transfer_asset_audit: dict[str, Any] = {}
-            if not args.dry_run:
-                transfer_asset_audit = validate_omniflow_transfer_assets(
-                    store_path,
-                    require_action_transfer=True,
-                )
-            _write_method_memory_manifest(
-                memory_root=memory_root,
-                task=item.task,
-                method=method,
-                memory_mode="omniflow_function_store",
-                source_seed=source_seed,
-                evaluation_seed=task_seed,
-                attempt_id=attempt_id,
-                source_run_log=item.source_run_log,
-                artifacts={
-                    "store_path": str(store_path),
-                    "store_sha256": sha256_file(store_path)
-                    if store_path.is_file()
-                    else None,
-                    "recorded_source_seed": item.replay_seed,
-                    "function_authoring": "external_agent_skill",
-                    "transfer_asset_audit": transfer_asset_audit,
-                },
-            )
         if method == "appagent":
-            source_memory_text = str(
-                getattr(args, "appagent_memory_root", "") or ""
-            ).strip()
-            if not source_memory_text:
-                raise ValueError("appagent requires --appagent-memory-root")
-            source_memory_root = resolve_path(source_memory_text)
+            source_memory_root = resolve_path(args.appagent_memory_root)
             appagent_manifest = _read_object(
                 source_memory_root / "appagent_manifest.json"
             )
-            appagent_source = Path(
-                str(appagent_manifest.get("source_run_log") or "")
-            ).expanduser().resolve()
-            appagent_source_payload = require_complete_source_run_log(
-                _read_object(appagent_source)
-            )
-            if (
-                appagent_source_payload.get("task_name") != item.task
-                or appagent_source_payload.get("seed") != source_seed
-            ):
-                raise ValueError("appagent_memory_source_lineage_invalid")
-            provenance = validate_appagent_memory(
-                source_memory_root,
-                task_name=item.task,
-                source_run_log=appagent_source,
-            )
-            appagent_docs_root = Path(provenance["demo_docs_root"]).resolve()
-            source_metrics = dict(provenance["source_episode_metrics"])
-            document_usage = dict(provenance["doc_generation_usage"])
-            prep_model_calls = _coerce_int(
-                source_metrics.get("model_calls")
-            ) + _coerce_int(document_usage.get("model_calls"))
-            prep_prompt_tokens = _coerce_int(
-                source_metrics.get("prompt_tokens")
-            ) + _coerce_int(document_usage.get("prompt_tokens"))
-            prep_completion_tokens = _coerce_int(
-                source_metrics.get("completion_tokens")
-            ) + _coerce_int(document_usage.get("completion_tokens"))
-            prep_total_tokens = prep_prompt_tokens + prep_completion_tokens
-            source_memory_manifest = source_memory_root / "appagent_manifest.json"
-            appagent_prep = {
-                "type": "appagent_native_source_demo_docs",
-                "model_calls": prep_model_calls,
-                "prompt_tokens": prep_prompt_tokens,
-                "completion_tokens": prep_completion_tokens,
-                "total_tokens": prep_total_tokens,
-                "token_usage_status": (
-                    "tracked" if prep_model_calls > 0 else "not_applicable"
-                ),
-                "wall_sec": _coerce_float(provenance.get("prep_wall_sec")),
-                "source_episode_duration_sec": _coerce_float(
-                    source_metrics.get("duration_sec")
-                ),
-                "source_episode_wall_sec": _coerce_float(
-                    source_metrics.get("wall_sec")
-                ),
-                "document_generation_wall_sec": _coerce_float(
-                    document_usage.get("wall_sec")
-                ),
-                "official_validator_success": bool(
-                    provenance.get("official_source_success")
-                ),
-                "manifest_path": str(source_memory_manifest),
-                "manifest_sha256": sha256_file(source_memory_manifest),
-                "demo_sha256": str(provenance.get("demo_sha256") or ""),
-                "demo_docs_sha256": str(provenance.get("demo_docs_sha256") or ""),
-                "shared_across_targets": True,
-            }
-            memory_mode = "appagent_native_demo_docs"
-            artifacts = {
-                "source_memory_root": str(source_memory_root),
-                "source_memory_manifest": str(
-                    source_memory_root / "appagent_manifest.json"
-                ),
-                "source_memory_manifest_sha256": sha256_file(
-                    source_memory_root / "appagent_manifest.json"
-                ),
-                "demo_docs_root": str(appagent_docs_root),
-                "demo_docs_sha256": provenance["demo_docs_sha256"],
-                "official_appagent_revision": provenance[
-                    "official_appagent_revision"
-                ],
-                "uses_appagent_docs": True,
-                "uses_omniflow_function": False,
-                "memory_read_only": True,
-            }
-            _write_method_memory_manifest(
-                memory_root=memory_root,
-                task=item.task,
-                method=method,
-                memory_mode=memory_mode,
-                source_seed=source_seed,
-                evaluation_seed=task_seed,
-                attempt_id=attempt_id,
-                source_run_log=item.source_run_log,
-                artifacts=artifacts,
-            )
-        if method == "autodroid":
-            source_memory_text = str(
-                getattr(args, "autodroid_memory_root", "") or ""
-            ).strip()
-            if not source_memory_text:
-                raise ValueError("autodroid requires --autodroid-memory-root")
-            source_memory_root = resolve_path(source_memory_text)
-            memory_validation = validate_autodroid_memory_root(source_memory_root)
-            _write_method_memory_manifest(
-                memory_root=memory_root,
-                task=item.task,
-                method=method,
-                memory_mode="autodroid_native_utg_replay",
-                source_seed=source_seed,
-                evaluation_seed=task_seed,
-                attempt_id=attempt_id,
-                artifacts={
-                    "autodroid_root": str(
-                        resolve_path(
-                            str(getattr(args, "autodroid_root", "")),
-                        )
-                    ),
-                    "source_memory_root": str(source_memory_root),
-                    "source_memory_manifest": memory_validation["manifest_path"],
-                    "source_memory_manifest_sha256": memory_validation[
-                        "manifest_sha256"
-                    ],
-                    "task_reference_index": str(args.index),
-                    "task_reference_params": dict(item.params),
-                    "source_memory_app_count": memory_validation["app_count"],
-                    "uses_autodroid_memory": True,
-                    "uses_omniflow_function": False,
-                    "memory_read_only": True,
-                    "official_policy": "replay",
-                },
-            )
+            appagent_docs_root = Path(
+                str(appagent_manifest.get("demo_docs_root") or "")
+            ).expanduser()
         if method == "fixed_replay":
             replay_run_log, replay_materialization, replay_profile = (
                 _materialize_replay_run_log_for_memory(
@@ -6315,26 +4316,6 @@ def run_task(args: argparse.Namespace) -> int:
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     adb_path=args.adb_path,
                 )
-            elif method == "autodroid":
-                spec = build_autodroid_command(
-                    item,
-                    method_name=method,
-                    target=target,
-                    android_world_root=args.android_world_root,
-                    output_root=output_root,
-                    autodroid_root=args.autodroid_root,
-                    autodroid_memory_root=args.autodroid_memory_root,
-                    autodroid_app=getattr(args, "autodroid_app", ""),
-                    autodroid_policy=getattr(args, "autodroid_policy", "replay"),
-                    max_steps=int(args.max_steps or MAX_STEPS),
-                    timeout_sec=int(args.timeout_sec or 0),
-                    task_random_seed=task_seed,
-                    fixed_task_seed=not bool(args.no_fixed_task_seed),
-                    fixed_task_params=not bool(args.no_fixed_task_params),
-                    task_params_override=task_params_override,
-                    perform_emulator_setup=bool(args.perform_emulator_setup),
-                    adb_path=args.adb_path,
-                )
             elif method == "t3a_hint":
                 spec = build_official_command(
                     item,
@@ -6383,53 +4364,6 @@ def run_task(args: argparse.Namespace) -> int:
             if appagent_prep:
                 spec.metadata["appagent_prep"] = dict(appagent_prep)
             returncode = run_command(spec, dry_run=args.dry_run)
-            target_result_files = (
-                sorted(spec.output_path.rglob("task_results.jsonl"))
-                if method == "autodroid"
-                and spec.output_path is not None
-                and spec.output_path.is_dir()
-                else []
-            )
-            published_result_files: list[Path] = []
-            if not bool(args.dry_run):
-                published_attempt = str(
-                    os.environ.get("OMNIFLOW_BATCH_ATTEMPT_ID") or ""
-                ).strip()
-                published_root = _experiment_run_dir(
-                    output_root,
-                    task=item.task,
-                    method=method,
-                    device=target.label,
-                    serial=target.serial,
-                    console_port=target.console_port,
-                    attempt_id=published_attempt,
-                )
-                published_result_files = sorted(
-                    published_root.rglob("task_results.jsonl")
-                    if published_root.is_dir()
-                    else []
-                )
-            official_result_files = sorted(
-                set(target_result_files + published_result_files)
-            )
-            status = "completed" if returncode == 0 else "command_failed"
-            command_records.append(
-                _command_record_from_spec(
-                    spec,
-                    task=item.task,
-                    method=method,
-                    device=target.label,
-                    returncode=returncode,
-                    status=status,
-                    summary_exclude=bool(target_result_files),
-                    extra_metadata={
-                        "device_target": target.to_dict(),
-                        "official_result_files": [
-                            str(path) for path in official_result_files
-                        ],
-                    },
-                )
-            )
             if returncode != 0:
                 failed += 1
                 if args.fail_fast:
@@ -6437,79 +4371,18 @@ def run_task(args: argparse.Namespace) -> int:
         if failed and args.fail_fast:
             break
 
-    if bool(args.dry_run):
-        for record in command_records:
-            metadata = dict(record.get("metadata") or {})
-            metadata["dry_run"] = True
-            record["metadata"] = metadata
-
-    aggregate_paths: list[Path] = []
-    for record in command_records:
-        if bool(record.get("summary_exclude")):
-            metadata = dict(record.get("metadata") or {})
-            aggregate_paths.extend(
-                resolve_path(str(path))
-                for path in metadata.get("official_result_files") or []
-                if str(path).strip()
-            )
-            continue
-        aggregate_paths.extend(_formal_result_paths(record))
-    aggregate_summary = aggregate_task_results([] if args.dry_run else aggregate_paths)
-    # The official AndroidWorld runner owns the published
-    # ``task/method/device/runlog/attempt_NNN`` directory and writes its own
-    # result_summary.json there.  Keep the scheduler's aggregate summary in
-    # the immutable scheduler attempt so the two result contracts cannot
-    # overwrite one another before registration.
-    result_root = attempt_root / "scheduler"
-    summary = _write_result_summary(
-        result_root=result_root,
-        task=item.task,
-        source_seed=source_seed,
-        evaluation_seed=task_seed,
-        command_records=command_records,
-        aggregate_summary=aggregate_summary,
-    )
-    result_registration: dict[str, Any] = {}
-    summary_path = result_root / RESULT_SUMMARY_FILE
-    if not bool(args.dry_run):
-        result_registry_root = _result_registry_root(
-            args,
-            attempt_root=attempt_root,
-        )
-        configured_index = (
-            Path(os.environ["OMNIFLOW_EXP_MEMORY_INDEX"]).expanduser()
-            if os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX")
-            else None
-        )
-        # A standalone run may deliberately use an external, read-only
-        # snapshot of current.json to bypass one previously registered cell.
-        # Register its immutable result, but do not make an unrelated index
-        # snapshot refresh gate the episode on legacy assets elsewhere in the
-        # data tree.  The canonical current.json keeps its normal writer path.
-        result_registration = register_attempt_summary(
-            summary_path=summary_path,
-            attempt_manifest_path=attempt_manifest_path,
-            runs_root=result_registry_root,
-            local_data_index=(
-                configured_index
-                if configured_index and configured_index.name == "current.json"
-                and os.environ.get("OMNIFLOW_BATCH_DEFER_INDEX_REFRESH") != "1"
-                else None
-            ),
-        )
-    _print_result_summary(summary)
     print(
-        f"[result] summary={summary_path}",
+        json.dumps(
+            {
+                "task": item.task,
+                "method": args.method,
+                "device": targets[0].label,
+                "status": "completed" if failed == 0 else "failed",
+            },
+            ensure_ascii=False,
+        ),
         flush=True,
     )
-    if result_registration:
-        print(
-            "[result] registered="
-            f"{result_registration.get('registered_results_count', 0)} "
-            f"ledger_appended={result_registration.get('ledger_records_appended', 0)} "
-            f"registry={result_registry_root}",
-            flush=True,
-        )
     return 1 if failed else 0
 
 
@@ -6528,7 +4401,6 @@ def build_parser() -> argparse.ArgumentParser:
             "task"
         ),
     )
-    result_parser.add_argument("--index", default=str(DEFAULT_DATA_INDEX))
     result_parser.add_argument(
         "--android-world-root", default=str(DEFAULT_ANDROID_WORLD_ROOT)
     )
@@ -6536,24 +4408,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-path",
         dest="output_path",
         default=str(DEFAULT_OUTPUT_ROOT),
-        help=(
-            "Exact fresh immutable attempt directory. The shared canonical "
-            "AndroidWorld result registry root is rejected."
-        ),
-    )
-    result_parser.add_argument(
-        "--result-registry-root",
-        default=os.environ.get("ANDROIDWORLD_RESULT_REGISTRY_ROOT", ""),
-        help=(
-            "Canonical immutable task/method/device/attempt registry. Defaults "
-            "to the hidden AndroidWorld result registry containing --index."
-        ),
+        help="Temporary working directory for this episode.",
     )
     result_parser.add_argument("--task", required=True)
+    result_parser.add_argument("--source-run-log", default="")
+    result_parser.add_argument(
+        "--memory",
+        default="",
+        help="Optional method-specific Memory path, passed through unchanged.",
+    )
     result_parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
     result_parser.add_argument(
         "--method",
-        choices=(*METHODS, *SUPPLEMENTAL_METHODS),
+        choices=METHODS,
         default=DEFAULT_SOURCE_METHOD,
         help="One paper method for this AndroidWorld result.",
     )
@@ -6561,11 +4428,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--store-path",
         default="",
         help=("Validated omniflow.store.v2 required by the OmniFlow methods."),
-    )
-    result_parser.add_argument(
-        "--store-index",
-        default="",
-        help="Canonical task-to-Store index used by frozen source assets.",
     )
     result_parser.add_argument(
         "--omnitransfer-root",
@@ -6633,30 +4495,7 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument(
         "--appagent-memory-root",
         default="",
-        help=(
-            "Sealed source-111 AppAgent human-demo workspace required by appagent."
-        ),
-    )
-    result_parser.add_argument(
-        "--autodroid-root",
-        default=str(REPO_ROOT / "data" / "runtime" / "external" / "autodroid"),
-        help="Pinned official AutoDroid/DroidBot checkout.",
-    )
-    result_parser.add_argument(
-        "--autodroid-memory-root",
-        default=str(REPO_ROOT / "data" / "runtime" / "autodroid" / "androidworld_apps"),
-        help="Local official AutoDroid memory dataset; no OmniFlow conversion is applied.",
-    )
-    result_parser.add_argument(
-        "--autodroid-app",
-        default="",
-        help="Optional AutoDroid app directory name; otherwise match the active Android package.",
-    )
-    result_parser.add_argument(
-        "--autodroid-policy",
-        choices=("replay", "task"),
-        default="replay",
-        help="Official DroidBot policy: replay or task.",
+        help="Optional AppAgent demo workspace.",
     )
     result_parser.add_argument("--mobilegpt-server-host", default="0.0.0.0")
     result_parser.add_argument("--mobilegpt-port", type=int, default=12345)

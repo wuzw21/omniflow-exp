@@ -17,7 +17,6 @@ import sys
 import tempfile
 import time
 from typing import Any, Callable, Iterator, Sequence
-import xml.dom.minidom
 import xml.etree.ElementTree as ET
 
 from omniflow.core.model import Action
@@ -3458,31 +3457,6 @@ def convert_runlog_to_mobilegpt_memory(
         embedding_provider=embedding_provider,
         semantic_query_provider=semantic_query_provider,
     )
-def load_canonical_source_item(index_path: str | Path, *, task_name: str) -> Any:
-    """Resolve the one successful AndroidWorld RunLog used for authoring."""
-
-    from src.experiment import run_task as pipeline
-
-    matches = [
-        item
-        for item in pipeline.load_canonical_source_index(index_path)
-        if item.task == str(task_name)
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            f"mobilegpt_source_task_resolution_failed:task={task_name}:matches={len(matches)}"
-        )
-    item = matches[0]
-    if item.meta.get("latest_official_success_source") is not True:
-        raise ValueError(f"mobilegpt_source_official_success_required:task={task_name}")
-    source = import_run_log(json.loads(item.source_run_log.read_text(encoding="utf-8")))
-    if (
-        source.get("status") != "succeeded"
-        or source.get("success") is not True
-        or not source.get("steps")
-    ):
-        raise ValueError(f"mobilegpt_source_runlog_not_successful:task={task_name}")
-    return item
 
 
 def convert_runlog_to_mobilegpt_bundle(
@@ -3494,7 +3468,6 @@ def convert_runlog_to_mobilegpt_bundle(
     embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     target_package: str = "",
     target_app: str = "",
-    preflight_audit: dict[str, Any] | None = None,
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
     semantic_query_provider: Callable[..., Any] | None = None,
     source_seed: int | None = None,
@@ -3507,7 +3480,6 @@ def convert_runlog_to_mobilegpt_bundle(
     """
 
     from src.experiment import run_task as pipeline
-    from src.experiment.paths import sha256_file
     from src.integrations import mobilegpt_memory
 
     normalized_model = str(model or "").strip()
@@ -3540,22 +3512,6 @@ def convert_runlog_to_mobilegpt_bundle(
     if bundle_root.exists():
         raise FileExistsError(f"immutable_mobilegpt_memory_exists:{bundle_root}")
     bundle_root.mkdir(parents=True)
-    (bundle_root / "conversion_preflight.json").write_text(
-        json.dumps(
-            preflight_audit
-            or {
-                "schema_version": "omniflow.mobilegpt.source-check.v2",
-                "grounding_source": "canonical_androidworld_run_log",
-                "source_run_log": str(source_path),
-                "source_run_log_sha256": sha256_file(source_path),
-                "report": report,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
     memory_root = bundle_root / "memory"
     stats_path = bundle_root / "source_stats.jsonl"
     stats_summary_path = bundle_root / "source_stats_summary.json"

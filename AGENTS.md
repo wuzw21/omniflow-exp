@@ -1,5 +1,25 @@
 # OmniFlow-exp 工作规则
 
+## AndroidWorld 极简运行长期规则（2026-08-25）
+
+- 仓库只保留一个通用入口 `scripts/exp/run_androidworld.sh`，以及各 method 的
+  Memory 转换实现。入口只支持两件事：`convert-memory` 和 `run`。
+- `run` 只接收 task、method、device 和可选 Memory 路径；传入 Memory 就原样交给
+  对应 method，不传就按无 Memory 启动或由真实运行自然报错。
+- `convert-memory` 只接收 source RunLog、method 和目标 Memory 路径；禁止通过
+  `data/current.json`、catalog、registry、ledger 或历史结果扫描选择输入。
+- 禁止为 seed 111/113、固定 checkout 路径、固定模型、endpoint、AVD 状态或已完成
+  结果增加启动硬门槛。通用运行时错误检查可以保留，但不能写死实验值。
+- `data_index.py`、`data_migration.py`、启动 preflight、结果 registry、scheduler
+  manifest/summary、旧数据搬运和重复校验层不属于真实实验运行，禁止重新引入。
+- 临时调研、一次性教研脚本、排障文件、临时测试代码和生成产物不得写入仓库；放在
+  系统临时目录或外部配置中。仓库不维护分散的专项测试脚本，只保留通用运行入口。
+- 实际需要持久化的只有用户指定的 Memory 和 AndroidWorld 官方 RunLog/结果；转换
+  中间文件与调度日志必须放系统临时目录并自动删除。
+
+本节是当前 AndroidWorld 运行的最高优先级项目规则；下文涉及旧 index、migration、
+seed/path preflight、结果注册或专项测试的历史描述不再适用。
+
 本仓库只做论文 AndroidWorld 实验和 B-MoCA 验证。改代码前先读：
 
 1. `README.md`
