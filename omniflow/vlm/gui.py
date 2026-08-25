@@ -266,7 +266,8 @@ def _compact_image_data_uri(value: str) -> str:
         return value
     try:
         image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
-        image.thumbnail((360, 640), Image.Resampling.LANCZOS)
+        thumbnail_box = (640, 360) if image.width > image.height else (360, 640)
+        image.thumbnail(thumbnail_box, Image.Resampling.LANCZOS)
         output = BytesIO()
         image.save(output, format="JPEG", quality=60, optimize=True)
         compact = base64.b64encode(output.getvalue()).decode("ascii")
