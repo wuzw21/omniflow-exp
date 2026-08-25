@@ -495,6 +495,8 @@ def _turn_text(
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
+        previous_action = context.pop("previous_action", None)
+        recent_actions = context.pop("recent_actions", None)
         if has_successful_function_action(context):
             completion_review_required = True
             completion_execution_history = execution_history
@@ -507,7 +509,7 @@ def _turn_text(
                 "condition. Never repeat a completed Function step or navigate "
                 "backward merely to verify it."
             )
-        if context.get("previous_action_error") or context.get("recent_actions"):
+        if context.get("previous_action_error") or recent_actions:
             lines.append(
                 "Inspect the action history, observed results, and any previous "
                 "error before selecting again. The latest accessibility state is "
@@ -517,8 +519,22 @@ def _turn_text(
             )
         if execution_history and not completion_review_required:
             lines.extend(("Completed tool-call history:", execution_history))
-        context.pop("recent_actions", None)
-        context.pop("previous_action", None)
+        structured_history: dict[str, Any] = {}
+        if isinstance(previous_action, dict):
+            structured_history["previous_action"] = previous_action
+        if isinstance(recent_actions, list) and recent_actions:
+            structured_history["recent_actions"] = recent_actions[-3:]
+        if structured_history:
+            lines.extend(
+                (
+                    "Structured recent action evidence:",
+                    json.dumps(
+                        structured_history,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
         if context:
             lines.extend(
                 (
