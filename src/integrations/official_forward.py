@@ -28,6 +28,7 @@ from src.experiment.autodroid_contract import (
     AUTODROID_MEMORY_MANIFEST_FORMAT,
     AUTODROID_RESULT_SCHEMA,
 )
+from src.integrations.android_world.oob_control import OobControlClient
 
 
 _AUTODROID_APP_ALIASES = {
@@ -2740,35 +2741,37 @@ def run_appagent_executor(
             # AppAgent's stock executor starts from the launcher and expects
             # its VLM to discover the target app icon.  The AndroidWorld
             # launcher on the Fold profile does not expose the camera icon in
-            # the clickable XML, so the official agent can repeat the same
-            # tap forever without ever entering the target app.  Initialize
-            # the known AndroidWorld app before invoking the untouched
-            # executor; AppAgent still owns all subsequent observe/act/model
-            # decisions and its source checkout is not modified.
+            # the clickable XML, so initialize that known app through the
+            # same canonical OOB transport used by the staged AppAgent
+            # controller.  ADB remains only the IPC carrier for OOB and never
+            # launches the target app directly.
             prelaunch_package = {
                 "camera2": "com.android.camera2",
             }.get(str(app_name).strip().lower(), "")
             if prelaunch_package:
-                prelaunch_adb = shutil.which("adb") or str(adb_path)
-                prelaunch = subprocess.run(
-                    [
-                        prelaunch_adb,
-                        "-s",
-                        str(serial),
-                        "shell",
-                        "am",
-                        "start",
-                        "-W",
-                        "-n",
-                        f"{prelaunch_package}/com.android.camera.CaptureActivity",
-                    ],
-                    check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=30.0,
+                oob = OobControlClient(
+                    env,
+                    adb_serial=str(serial),
+                    adb_path=str(adb_path),
                 )
-                prelaunch_returncode = int(prelaunch.returncode)
+                oob.observe(wait_to_stabilize=True)
+                oob.act(
+                    {
+                        "tool": "open_app",
+                        "args": {"package_name": prelaunch_package},
+                    }
+                )
+                launch_deadline = time.monotonic() + 20.0
+                while time.monotonic() < launch_deadline:
+                    observed = oob.observe(wait_to_stabilize=True)
+                    if str(observed.get("package_name") or "").strip() == prelaunch_package:
+                        prelaunch_returncode = 0
+                        break
+                    time.sleep(0.25)
+                if prelaunch_returncode != 0:
+                    raise RuntimeError(
+                        "appagent_oob_target_app_not_ready:" + prelaunch_package
+                    )
             staged_executor = Path(workspace).expanduser().resolve() / "scripts" / "task_executor.py"
             executor_path = staged_executor if staged_executor.is_file() else Path(executor)
             official_log = output / "official_appagent.log"

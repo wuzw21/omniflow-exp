@@ -747,6 +747,73 @@ def test_appagent_forwarder_writes_validator_evidence(
     )
 
 
+def test_appagent_camera_prelaunch_uses_oob_instead_of_adb(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Task:
+        def is_successful(self, _env: object) -> float:
+            return 1.0
+
+    class FakeOob:
+        instances: list["FakeOob"] = []
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.actions: list[dict] = []
+            self.instances.append(self)
+
+        def observe(self, *, wait_to_stabilize: bool = False) -> dict:
+            del wait_to_stabilize
+            return {"package_name": "com.android.camera2"}
+
+        def act(self, action: dict) -> dict:
+            self.actions.append(action)
+            return {"success": True}
+
+    monkeypatch.setattr(
+        "src.integrations.official_forward._androidworld_task_startup",
+        lambda **_kwargs: _fake_androidworld_session(Task()),
+    )
+    monkeypatch.setattr(
+        "src.integrations.official_forward.OobControlClient",
+        FakeOob,
+        raising=False,
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = tmp_path / "task_executor.py"
+    executor.write_text("print('official')\n", encoding="utf-8")
+    output = tmp_path / "result"
+
+    assert run_appagent_executor(
+        python_executable=sys.executable,
+        executor=executor,
+        app_name="camera2",
+        serial="emulator-5554",
+        workspace=workspace,
+        goal="Take a photo",
+        timeout_sec=10,
+        android_world_root=tmp_path / "android-world",
+        task_name="CameraTakePhoto",
+        task_params_json="{}",
+        task_seed=113,
+        console_port=5554,
+        grpc_port=8554,
+        adb_path="adb",
+        output_root=output,
+        perform_emulator_setup=False,
+    ) == 0
+
+    assert len(FakeOob.instances) == 1
+    assert FakeOob.instances[0].actions == [
+        {"tool": "open_app", "args": {"package_name": "com.android.camera2"}}
+    ]
+    row = json.loads((output / "task_results.jsonl").read_text())
+    assert row["target_app_prelaunch_package"] == "com.android.camera2"
+    assert row["target_app_prelaunch_returncode"] == 0
+
+
 def test_appagent_action_count_strips_ansi_and_excludes_finish() -> None:
     log = (
         "\x1b[33mRound 1\n"
