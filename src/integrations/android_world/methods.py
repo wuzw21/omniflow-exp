@@ -21,7 +21,10 @@ _UNSUPPORTED_SELECTOR_ERROR = (
     "baseline forwarder."
 )
 
-REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v1"
+REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v2"
+_PHYSICAL_ACTION_TOOLS = frozenset(
+    {"click", "long_press", "input_text", "swipe", "open_app", "press_key"}
+)
 
 
 def reuse_metrics(
@@ -39,6 +42,12 @@ def reuse_metrics(
 
     normalized = str(method or "").strip()
     actions = max(0, int(actions_executed or 0))
+    physical_trace = _physical_execution_trace(canonical_run)
+    physical_actions = len(physical_trace)
+    state_changing_trace = [
+        step for step in physical_trace if _execution_step_changed_state(step)
+    ]
+    state_changing_actions = len(state_changing_trace)
     numerator = 0
     denominator = 0
     unit = ""
@@ -46,20 +55,23 @@ def reuse_metrics(
     artifact_used = False
 
     if normalized == "fixed_replay":
-        numerator = denominator = actions
+        numerator = denominator = physical_actions or actions
         unit = "gui_action"
         evidence = "exact_source_replay_actions" if actions else "unavailable"
         artifact_used = actions > 0
     elif normalized == "omniflow":
-        trace = _canonical_execution_trace(canonical_run)
         numerator = sum(
             1
-            for step in trace
+            for step in physical_trace
             if str((step.get("metadata") or {}).get("function_id") or "").strip()
         )
-        denominator = actions
+        denominator = physical_actions
         unit = "gui_action"
-        evidence = "exact_function_trace" if trace or actions == 0 else "unavailable"
+        evidence = (
+            "exact_function_trace"
+            if physical_trace or actions == 0
+            else "unavailable"
+        )
         artifact_used = bool(canonical_run) or numerator > 0
     elif normalized == "mobilegpt":
         stats = dict(mobilegpt_stats or {})
@@ -89,8 +101,8 @@ def reuse_metrics(
             uses_source_action_hints
             or int(hint.get("rendered_steps") or 0) > 0
         )
-        denominator = actions
-        numerator = actions if hint_active else 0
+        denominator = physical_actions or actions
+        numerator = denominator if hint_active else 0
         unit = "gui_action"
         evidence = "exact_goal_hint_injection" if denominator else "unavailable"
         artifact_used = hint_active and denominator > 0
@@ -98,6 +110,11 @@ def reuse_metrics(
     rate = (
         round(float(numerator) / float(denominator), 6)
         if denominator > 0 and evidence != "unavailable"
+        else None
+    )
+    state_change_rate = (
+        round(float(state_changing_actions) / float(physical_actions), 6)
+        if physical_actions > 0
         else None
     )
     return {
@@ -108,6 +125,9 @@ def reuse_metrics(
         "reuse_rate": rate,
         "reuse_unit": unit,
         "evidence_status": evidence,
+        "physical_action_count": physical_actions,
+        "state_changing_physical_action_count": state_changing_actions,
+        "state_changing_physical_action_rate": state_change_rate,
     }
 
 
@@ -179,6 +199,29 @@ def _canonical_execution_trace(
     diagnostics = run.get("diagnostics")
     trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
     return [step for step in trace or [] if isinstance(step, dict)]
+
+
+def _physical_execution_trace(
+    canonical_run: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    physical: list[dict[str, Any]] = []
+    for step in _canonical_execution_trace(canonical_run):
+        action = step.get("action")
+        result = step.get("result")
+        tool = str(action.get("tool") or "") if isinstance(action, dict) else ""
+        if (
+            tool in _PHYSICAL_ACTION_TOOLS
+            and isinstance(result, dict)
+            and result.get("success") is True
+        ):
+            physical.append(step)
+    return physical
+
+
+def _execution_step_changed_state(step: dict[str, Any]) -> bool:
+    metadata = step.get("metadata")
+    effect = metadata.get("action_effect") if isinstance(metadata, dict) else None
+    return isinstance(effect, dict) and effect.get("state_changed") is True
 
 
 def _appagent_log_usage(path: Path) -> dict[str, int]:
