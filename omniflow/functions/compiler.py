@@ -63,6 +63,15 @@ def compile_runlog_to_store(
         result = step.get("result") if isinstance(step.get("result"), dict) else {}
         if result.get("success") is not True:
             continue
+        if _is_transient_system_action(step):
+            # Source collection can legitimately dismiss an incidental Android
+            # crash/permission dialog before continuing.  That click is part
+            # of collection recovery, not of the task's reusable semantics;
+            # retaining it would make a clean target page fail transfer before
+            # the Planner gets a chance to act.
+            omitted_action_types.add("transient_system_dialog")
+            previous_successful_step = step
+            continue
         observation = step["observation"]
         before_state_id = state_id(observation)
         next_observation = step.get("next_observation")
@@ -1432,3 +1441,37 @@ def _append_terminal_handoff_description(
         "inspect it and provide the task answer or status afterward."
     )
     return description if description.endswith(suffix) else f"{description}{suffix}"
+
+
+def _is_transient_system_action(step: dict[str, Any]) -> bool:
+    """Return whether a successful source click only dismisses system noise."""
+    action = step.get("action") if isinstance(step.get("action"), dict) else {}
+    if str(action.get("action_type") or "") != "click":
+        return False
+    index = action.get("index")
+    if isinstance(index, bool) or not isinstance(index, int):
+        return False
+    observation = step.get("observation")
+    if not isinstance(observation, dict):
+        return False
+    xml = observation.get("xml")
+    if not isinstance(xml, str) or not xml.strip():
+        return False
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    nodes = root.iter("node")
+    for node in nodes:
+        if str(node.get("id") or "") != str(index):
+            continue
+        resource_id = str(node.get("resource-id") or "")
+        package = str(node.get("package") or "")
+        text = str(node.get("text") or "").strip().lower()
+        if package == "android" and (
+            resource_id.startswith("android:id/aerr_")
+            or text in {"close app", "app info", "wait"}
+        ):
+            return True
+        break
+    return False

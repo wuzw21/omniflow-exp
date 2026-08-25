@@ -82,6 +82,49 @@ def test_compiler_omits_successful_noop_gestures(
     ]
 
 
+def test_compiler_omits_incidental_android_crash_dialog_dismissal(
+    tmp_path: Path,
+) -> None:
+    launcher = androidworld_state("launcher", package_name="com.google.android.apps.nexuslauncher")
+    crash_dialog = androidworld_state(
+        "crash_dialog",
+        package_name="android",
+        forest=(
+            '<hierarchy><node package="android"><node id="1" '
+            'class="android.widget.Button" text="Close app" '
+            'resource-id="android:id/aerr_close" clickable="true" '
+            'bounds="[50,710][670,806]" /></node></hierarchy>'
+        ),
+    )
+    app = androidworld_state("app", package_name="com.example.app")
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.app"},
+            {"action_type": "click", "index": 1},
+            {"action_type": "click", "index": 2},
+        ],
+        observations=[launcher, crash_dialog, app],
+        goal="Open the app and select the visible item.",
+    )
+    payload["steps"][0]["next_observation"] = crash_dialog
+    payload["steps"][1]["next_observation"] = app
+    payload["steps"][2]["next_observation"] = app
+    _, source_states = import_run_log_evidence(payload)
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text())
+    function = next(iter(store["functions"].values()))
+    assert [step["action"]["tool"] for step in function["steps"]] == [
+        "open_app",
+        "click",
+    ]
+
+
 def test_compiler_promotes_launcher_app_click_to_global_open_app(
     tmp_path: Path,
 ) -> None:
