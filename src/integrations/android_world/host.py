@@ -297,6 +297,7 @@ class AndroidWorldHost:
         else:
             raise ValueError(f"androidworld_control_backend_invalid:{control_backend}")
         self.performance_metrics = performance_metrics
+        self._last_screen_size: tuple[float, float] | None = None
         self.open_app_ready_timeout_seconds = max(
             0.0, float(open_app_ready_timeout_seconds or 0.0)
         )
@@ -505,7 +506,7 @@ class AndroidWorldHost:
             if metrics is not None
             else nullcontext()
         ):
-            display_width, display_height = self._screen_size()
+            display_width, display_height = self._screen_size(state)
             xml_text = ""
             graph_source = ""
             forest = getattr(state, "forest", None)
@@ -615,7 +616,7 @@ class AndroidWorldHost:
             },
         )
 
-    def _screen_size(self) -> tuple[float, float]:
+    def _screen_size(self, state: Any | None = None) -> tuple[float, float]:
         # AndroidWorld coordinates and accessibility bounds are expressed in
         # the logical application display.  On Fold profiles the physical
         # size can be a rotated, different resolution (for example
@@ -623,6 +624,29 @@ class AndroidWorldHost:
         # size here corrupts XML completeness checks and pixel/canonical
         # coordinate conversion, so it is only a fallback when the logical
         # display is unavailable.
+        auxiliaries = getattr(state, "auxiliaries", None)
+        display = (
+            auxiliaries.get("display")
+            if isinstance(auxiliaries, dict)
+            else None
+        )
+        if isinstance(display, dict):
+            try:
+                width = float(display.get("width") or 0)
+                height = float(display.get("height") or 0)
+            except (TypeError, ValueError):
+                width = height = 0.0
+            if width > 0 and height > 0:
+                self._last_screen_size = (width, height)
+                return width, height
+        pixels = getattr(state, "pixels", None)
+        shape = tuple(getattr(pixels, "shape", ()) or ())
+        if len(shape) >= 2 and float(shape[1]) > 0 and float(shape[0]) > 0:
+            size = float(shape[1]), float(shape[0])
+            self._last_screen_size = size
+            return size
+        if self._last_screen_size is not None:
+            return self._last_screen_size
         for attribute in ("logical_screen_size", "device_screen_size"):
             value = tuple(getattr(self.env, attribute, ()) or ())
             if len(value) == 2 and float(value[0]) > 0 and float(value[1]) > 0:
