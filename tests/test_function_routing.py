@@ -1947,6 +1947,48 @@ def test_qwen_plus_coordinate_pair_is_repaired_without_another_model_call() -> N
     assert metadata["model_adapter"]["name"] == "qwen_vl_coordinate_arrays.v1"
 
 
+def test_qwen_plus_raw_bounds_are_centered_and_normalized() -> None:
+    display = {"width": 720, "height": 1280}
+    bounds = [304, 460, 416, 572]
+    response = {
+        "requested_model": "Qwen3.6-Plus",
+        "resolved_model": "Qwen3.6-Plus",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "Tap digit 4",
+                            "x": bounds,
+                            "y": bounds,
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="Qwen3.6-Plus",
+        turn_index=1,
+        display=display,
+        state={"xml": "<hierarchy />", "display": display},
+        goal="Enter 41 minutes and 55 seconds",
+    )
+
+    assert tool_call.arguments["x"] == 500
+    assert tool_call.arguments["y"] == pytest.approx(403.125)
+    assert metadata["model_adapter"]["changes"] == [
+        {
+            "source_fields": ["x", "y"],
+            "source_shape": "duplicated_raw_bounds",
+            "target_fields": ["x", "y"],
+        }
+    ]
+
+
 def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:
     request = build_model_turn_request(
         goal="Enter 41 minutes and 55 seconds",

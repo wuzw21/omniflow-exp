@@ -77,6 +77,29 @@ def _adapt_coordinate_pair(
         display_width is not None
         and display_height is not None
         and isinstance(x_value, list)
+        and len(x_value) == 4
+        and x_value == y_value
+        and all(_is_number(value) for value in x_value)
+    ):
+        left, top, right, bottom = (float(value) for value in x_value)
+        if (
+            0 <= left <= right <= display_width
+            and 0 <= top <= bottom <= display_height
+        ):
+            arguments[x_field] = (left + right) / 2.0 / display_width * 1000.0
+            arguments[y_field] = (top + bottom) / 2.0 / display_height * 1000.0
+            changes.append(
+                {
+                    "source_fields": [x_field, y_field],
+                    "source_shape": "duplicated_raw_bounds",
+                    "target_fields": [x_field, y_field],
+                }
+            )
+            return
+    if (
+        display_width is not None
+        and display_height is not None
+        and isinstance(x_value, list)
         and len(x_value) == 2
         and all(_is_number(value) for value in x_value)
         and isinstance(y_value, list)
