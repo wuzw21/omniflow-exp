@@ -227,7 +227,6 @@ def _execution_step_changed_state(step: dict[str, Any]) -> bool:
 def _appagent_log_usage(path: Path) -> dict[str, int]:
     decision_round_count = 0
     documentation_round_count = 0
-    startup_action_count = 0
     if not path.is_file():
         return {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -236,8 +235,6 @@ def _appagent_log_usage(path: Path) -> dict[str, int]:
         except json.JSONDecodeError:
             continue
         if not isinstance(row, dict) or "round" not in row or "response" not in row:
-            if isinstance(row, dict) and row.get("event") == "startup_action":
-                startup_action_count += 1
             continue
         decision_round_count += 1
         if row.get("visible_document_uids"):
@@ -245,7 +242,6 @@ def _appagent_log_usage(path: Path) -> dict[str, int]:
     return {
         "decision_round_count": decision_round_count,
         "documentation_round_count": documentation_round_count,
-        "startup_action_count": startup_action_count,
     }
 
 

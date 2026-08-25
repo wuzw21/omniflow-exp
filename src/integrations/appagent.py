@@ -471,7 +471,6 @@ class AppAgentAndroidWorldAgent:
         self.task_name = ""
         self.goal = ""
         self.task_context: dict[str, Any] = {}
-        self.app_name = ""
         self.round_count = 0
         self.documentation_round_count = 0
         self.actions_executed = 0
@@ -479,8 +478,6 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._app_prepared = False
-        self._startup_action_count = 0
         self._max_steps = MAX_STEPS
         self._log_path = self.output_root / "appagent_task_log.jsonl"
 
@@ -498,16 +495,9 @@ class AppAgentAndroidWorldAgent:
         self.grid_on = False
         self.grid_rows = 0
         self.grid_columns = 0
-        self._app_prepared = False
-        self._startup_action_count = 0
 
     def update_current_task_context(self, task: Any) -> dict[str, Any]:
-        app_names = [
-            str(value).strip()
-            for value in tuple(getattr(task, "app_names", ()) or ())
-            if str(value).strip()
-        ]
-        return {"app_names": app_names}
+        return {}
 
     def set_current_task(
         self,
@@ -518,14 +508,6 @@ class AppAgentAndroidWorldAgent:
         self.task_name = str(task_name or "").strip()
         self.goal = str(goal or "").strip()
         self.task_context = dict(task_context or {})
-        app_names = [
-            str(value).strip()
-            for value in self.task_context.get("app_names") or ()
-            if str(value).strip()
-        ]
-        if len(app_names) > 1:
-            raise ValueError("appagent_multi_app_task_unsupported")
-        self.app_name = app_names[0] if app_names else ""
 
     def step(self, goal: str) -> Any:
         self.goal = str(goal or self.goal or "").strip()
@@ -535,7 +517,6 @@ class AppAgentAndroidWorldAgent:
                 data=self._result_data(error="appagent_max_steps_reached"),
             )
         try:
-            self._prepare_task_app()
             self.round_count += 1
             round_started = time.perf_counter()
             xml_path, raw_image_path = self._capture_round(self.round_count)
@@ -643,30 +624,6 @@ class AppAgentAndroidWorldAgent:
                 }
             )
             return make_agent_result(done=True, data=self._result_data(error=str(exc)))
-
-    def _prepare_task_app(self) -> None:
-        if self._app_prepared:
-            return
-        if self.app_name:
-            from android_world.env import adb_utils
-
-            launched_app = adb_utils.launch_app(
-                self.app_name,
-                getattr(self.env, "controller", None),
-            )
-            if not launched_app:
-                raise RuntimeError(f"appagent_task_app_launch_failed:{self.app_name}")
-            self._startup_action_count = 1
-            self._append_log(
-                {
-                    "event": "environment_setup",
-                    "action_type": "open_app",
-                    "task_app_name": self.app_name,
-                    "androidworld_app_name": launched_app,
-                    "execution_backend": "androidworld_task_setup",
-                }
-            )
-        self._app_prepared = True
 
     def _capture_round(self, round_index: int) -> tuple[Path, Path]:
         prefix = f"round_{round_index:03d}"
@@ -824,7 +781,6 @@ class AppAgentAndroidWorldAgent:
             "actions_executed": self.actions_executed,
             "uses_demo_docs": self.docs_root is not None,
             "docs_root": str(self.docs_root or ""),
-            "startup_actions_executed": self._startup_action_count,
             "error": str(error or "") or None,
         }
 

@@ -23,7 +23,6 @@ import tempfile
 import time
 from typing import Any, Iterator, Sequence
 
-from src.integrations.android_world.oob_control import OobControlClient
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -2706,43 +2705,7 @@ def run_appagent_executor(
     ) as (env, task):
         process_returncode = 1
         runtime_integrity_error = ""
-        prelaunch_package = ""
-        prelaunch_returncode = None
         try:
-            # AppAgent's stock executor starts from the launcher and expects
-            # its VLM to discover the target app icon.  The AndroidWorld
-            # launcher on the Fold profile does not expose the camera icon in
-            # the clickable XML, so initialize that known app through the
-            # same canonical OOB transport used by the staged AppAgent
-            # controller.  ADB remains only the IPC carrier for OOB and never
-            # launches the target app directly.
-            prelaunch_package = {
-                "camera2": "com.android.camera2",
-            }.get(str(app_name).strip().lower(), "")
-            if prelaunch_package:
-                oob = OobControlClient(
-                    env,
-                    adb_serial=str(serial),
-                    adb_path=str(adb_path),
-                )
-                oob.observe(wait_to_stabilize=True)
-                oob.act(
-                    {
-                        "tool": "open_app",
-                        "args": {"package_name": prelaunch_package},
-                    }
-                )
-                launch_deadline = time.monotonic() + 20.0
-                while time.monotonic() < launch_deadline:
-                    observed = oob.observe(wait_to_stabilize=True)
-                    if str(observed.get("package_name") or "").strip() == prelaunch_package:
-                        prelaunch_returncode = 0
-                        break
-                    time.sleep(0.25)
-                if prelaunch_returncode != 0:
-                    raise RuntimeError(
-                        "appagent_oob_target_app_not_ready:" + prelaunch_package
-                    )
             staged_executor = Path(workspace).expanduser().resolve() / "scripts" / "task_executor.py"
             executor_path = staged_executor if staged_executor.is_file() else Path(executor)
             official_log = output / "official_appagent.log"
@@ -2873,8 +2836,6 @@ def run_appagent_executor(
             "appagent_stats_jsonl": str(output / "appagent_stats.jsonl"),
             "appagent_empty_responses": appagent_stats["empty_responses"],
             "appagent_model_errors": appagent_stats["errors"],
-            "target_app_prelaunch_package": prelaunch_package,
-            "target_app_prelaunch_returncode": prelaunch_returncode,
             "runtime_integrity_error": runtime_integrity_error,
         }
         (output / "task_results.jsonl").write_text(

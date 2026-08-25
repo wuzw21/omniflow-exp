@@ -5928,9 +5928,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "documentation_round_count": _coerce_int(
                             getattr(agent, "documentation_round_count", 0)
                         ),
-                        "startup_action_count": _coerce_int(
-                            getattr(agent, "_startup_action_count", 0)
-                        ),
                     }
                 task_result_record["reuse_metrics"] = reuse_metrics(
                     selected_agent,
