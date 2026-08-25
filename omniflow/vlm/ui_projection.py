@@ -22,7 +22,10 @@ _ACTION_ATTRIBUTES = (
 _ENGLISH_TOKEN = re.compile(r"[a-z0-9]+")
 _CHINESE_TOKEN = re.compile(r"[\u4e00-\u9fff]+")
 _NUMERIC_CONTROL_SUMMARY = re.compile(
-    r"(?:digit|number|key|button|\u6570\u5b57|\u6309\u952e|\u6309\u94ae)\s*['\"]?(\d{1,2})(?!\d)",
+    r"(?:"
+    r"(?:digit|number|key|button|\u6570\u5b57|\u6309\u952e|\u6309\u94ae)\s*"
+    r"|(?:tap|click|press|select|\u70b9\u51fb|\u6309\u4e0b|\u9009\u62e9)\s+(?:the\s+)?"
+    r")['\"]?(\d{1,2})(?!\d)",
     re.IGNORECASE,
 )
 _VISUAL_GOAL_MARKERS = ("广告", "弹窗", "遮挡", "popup", "overlay", "close ad")

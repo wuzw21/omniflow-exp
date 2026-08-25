@@ -2010,7 +2010,7 @@ def test_qwen_numeric_summary_overrides_mismatched_bounds() -> None:
                     "name": "click",
                     "arguments": json.dumps(
                         {
-                            "summary": "Tap digit 4 to enter the minutes",
+                            "summary": "Tap 4 to enter the minutes",
                             "x": wrong_bounds,
                             "y": wrong_bounds,
                         }
