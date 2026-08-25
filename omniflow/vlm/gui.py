@@ -177,7 +177,7 @@ def build_model_turn_request(
         ],
         "max_tokens": 512,
         "temperature": 0,
-        "stream": True,
+        "stream": False,
         "tools": tools,
         "tool_choice": tool_choice,
         "parallel_tool_calls": False,
