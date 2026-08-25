@@ -89,6 +89,9 @@ def build_model_turn_request(
             include_all_nodes=completion_review,
         )
     )
+    visual_coordinate_mode = (
+        projection.visual_context_required and _state_has_screenshot(state)
+    )
     text = _turn_text(
         goal=goal,
         state=state,
@@ -102,6 +105,15 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    if visual_coordinate_mode:
+        content[0]["text"] = (
+            f"{content[0]['text']}\n"
+            "Visual-only click contract: when the intended target is visible in "
+            "the current screenshot but has no labeled accessibility node, do not "
+            "guess an A-reference. Set target_description to a short phrase starting "
+            "with `visual:` and provide x and y as current-screen relative 0..1000 "
+            "coordinates. Continue to use an exact A-reference for labeled XML targets."
+        )
     include_image = (
         not text_only_model
         and not lightweight_retry
@@ -133,6 +145,8 @@ def build_model_turn_request(
             vlm_action_tools(include_summary=True),
             display,
         )
+        if visual_coordinate_mode:
+            tools = _enable_visual_click_coordinates(tools)
         visible_functions = functions
     tools.extend(function_tools(visible_functions, include_summary=True))
     if retry_tool_name:
@@ -187,6 +201,52 @@ def _planner_needs_screenshot(
         bool(extra.get(key))
         for key in ("visual_grounding_required", "screenshot_required")
     )
+
+
+def _state_has_screenshot(state: dict[str, Any]) -> bool:
+    return bool(
+        str(state.get("image_base64") or "").strip()
+        or str(state.get("screenshot_path") or "").strip()
+    )
+
+
+def _enable_visual_click_coordinates(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    for tool in tools:
+        function = tool.get("function")
+        if not isinstance(function, dict) or function.get("name") != "click":
+            continue
+        parameters = function.get("parameters")
+        properties = (
+            parameters.get("properties") if isinstance(parameters, dict) else None
+        )
+        if not isinstance(properties, dict):
+            continue
+        target = properties.get("target_description")
+        if isinstance(target, dict):
+            target.pop("pattern", None)
+            target["description"] = (
+                "Use an exact A-reference for a labeled XML node. For an unlabeled "
+                "target visible only in the screenshot, use `visual: <target>`."
+            )
+        for field, axis in (("x", "X"), ("y", "Y")):
+            properties[field] = {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000,
+                "description": (
+                    f"Current-screen relative {axis} coordinate in 0..1000. Required "
+                    "for a `visual:` target; ignored when an A-reference is grounded."
+                ),
+            }
+        required = list(parameters.get("required") or ())
+        for field in ("x", "y"):
+            if field not in required:
+                required.append(field)
+        parameters["required"] = required
+        break
+    return tools
 
 
 def _state_image_data_uri(state: dict[str, Any]) -> str:
