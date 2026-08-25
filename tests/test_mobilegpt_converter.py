@@ -381,6 +381,25 @@ def test_conversion_skips_delete_key_used_only_to_clean_input_text_newline(
     ]
 
 
+def test_conversion_normalizes_android_keyboard_back_to_official_back(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "press_keyboard", "keycode": "KEYCODE_BACK"}],
+        forests=["<hierarchy />"],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+    report = preflight_runlog_conversion(path)
+
+    assert trajectory["transitions"][0].action == {
+        "action_type": "navigate_back"
+    }
+    assert report["ready"] is True
+    assert report["action_type_counts"] == {"navigate_back": 1}
+
+
 def test_scroll_source_is_passed_to_official_authoring_boundary(tmp_path: Path) -> None:
     source = _write_runlog(
         tmp_path / "source.json",

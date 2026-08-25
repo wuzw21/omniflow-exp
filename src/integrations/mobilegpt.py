@@ -560,6 +560,20 @@ def _action_type(action: dict[str, Any]) -> str:
     return str(action.get("action_type") or action.get("type") or "").strip()
 
 
+def _normalize_androidworld_source_action(
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(action)
+    if _action_type(normalized) != "press_keyboard":
+        return normalized
+    keycode = str(
+        normalized.get("keycode") or normalized.get("key") or ""
+    ).strip().lower()
+    if keycode in {"back", "keycode_back"}:
+        return {"action_type": "navigate_back"}
+    return normalized
+
+
 def _package_from_observation(observation: dict[str, Any]) -> str:
     """Return the real foreground package, including forest-only observations.
 
@@ -675,7 +689,7 @@ def _load_runlog_trajectory(
         action = raw_step.get("action")
         if not isinstance(action, dict):
             raise MobileGPTConversionError("source_action_missing", step_index=step_index)
-        action = dict(action)
+        action = _normalize_androidworld_source_action(action)
         action_type = _action_type(action)
         observation = _observation_for_step(raw_step)
         action = _ground_indexed_action(action, observation)
@@ -957,6 +971,7 @@ def _load_compact_runlog_trajectory(
             state=before,
             step_index=ordinal,
         )
+        action = _normalize_androidworld_source_action(action)
         action_type = _action_type(action)
         observation = _compact_observation(before)
         launched_package = (
