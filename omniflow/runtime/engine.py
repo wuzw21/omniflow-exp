@@ -999,15 +999,17 @@ def _recent_actions(
         action = step["action"]
         result = step["result"]
         metadata = step.get("metadata") or {}
-        history.append(
-            {
-                "tool": str(action.get("tool") or ""),
-                "args": dict(action.get("args") or {}),
-                "success": result.get("success") is True,
-                "error": result.get("error"),
-                "function_id": metadata.get("function_id") or None,
-            }
-        )
+        item = {
+            "tool": str(action.get("tool") or ""),
+            "args": dict(action.get("args") or {}),
+            "success": result.get("success") is True,
+            "error": result.get("error"),
+            "function_id": metadata.get("function_id") or None,
+        }
+        summary = str(metadata.get("summary") or "").strip()
+        if summary:
+            item["summary"] = summary
+        history.append(item)
     return history
 
 
@@ -1052,6 +1054,13 @@ def _execution_history(
                 else "unknown execution error"
             )
             description = f"Action `{action.tool}` failed: {error}."
+        summary = (
+            str(metadata.get("summary") or "").strip()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if summary:
+            description = f'{description} Step memory: "{summary}"'
         lines.append(f"{index}. [{source}] {description}")
     lines.extend(
         [

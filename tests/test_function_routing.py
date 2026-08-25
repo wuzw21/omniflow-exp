@@ -24,7 +24,11 @@ from omniflow.core.model import FunctionStep, TransferResult
 from omniflow.core.trajectory import state_id
 from omniflow.functions.artifact import FUNCTION_ARTIFACT_VERSION
 from omniflow.functions.store import FunctionStore
-from omniflow.runtime.engine import _same_entry_observation
+from omniflow.runtime.engine import (
+    _execution_history,
+    _recent_actions,
+    _same_entry_observation,
+)
 from omniflow.vlm.gui import (
     SYSTEM_PROMPT,
     ModelToolCallError,
@@ -1594,6 +1598,7 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
                             "tool": "click",
                             "args": {"x": 120, "y": 240},
                             "success": True,
+                            "summary": "Open the cart; expect cart contents",
                         }
                     ],
                     "execution_history": "1. [Planner] Clicked the item successfully.",
@@ -1622,9 +1627,33 @@ def test_vlm_planner_sends_execution_history_to_model() -> None:
     assert "Completed tool-call history:" in turn_text
     assert "1. [Planner] Clicked the item successfully." in turn_text
     assert '"tool":"click"' in turn_text
+    assert '"summary":"Open the cart; expect cart contents"' in turn_text
     assert '"official_validator_status":"pending"' in turn_text
     assert '"state_id":"state_after"' in turn_text
     assert "Do not repeat the same action" in turn_text
+
+
+def test_runtime_preserves_m3a_style_step_memory() -> None:
+    trace = [
+        {
+            "action": {
+                "tool": "click",
+                "args": {"target_description": "Cart", "x": 120, "y": 240},
+            },
+            "result": {"success": True},
+            "metadata": {
+                "summary": "Open cart; expect the requested item to be visible"
+            },
+        }
+    ]
+
+    assert _recent_actions(trace)[0]["summary"] == (
+        "Open cart; expect the requested item to be visible"
+    )
+    assert (
+        'Step memory: "Open cart; expect the requested item to be visible"'
+        in _execution_history(trace)
+    )
 
 
 def test_bridge_planner_exposes_packages_only_through_open_app_tool() -> None:
@@ -1761,9 +1790,13 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["enable_thinking"] is False
     assert request["thinking"] == {"type": "disabled"}
     assert "summary of at most 12 words" in SYSTEM_PROMPT
+    assert "Work step by step like a strong general Android agent" in SYSTEM_PROMPT
+    assert "A recalled Function is a learned reusable Android skill" in SYSTEM_PROMPT
+    assert "Prefer an applicable\nFunction" in SYSTEM_PROMPT
+    assert "Function success does not by itself prove task success" in SYSTEM_PROMPT
     assert "Do not emit analysis, chain-of-thought" in SYSTEM_PROMPT
     assert "return only the tool call" in SYSTEM_PROMPT
-    assert "Never call a recalled Function merely because it matches" in SYSTEM_PROMPT
+    assert "Never call a recalled Function merely because" in SYSTEM_PROMPT
     assert "finish onboarding and navigation" in SYSTEM_PROMPT
     assert "provides search" in SYSTEM_PROMPT
     assert "history, recent, suggestion" in SYSTEM_PROMPT

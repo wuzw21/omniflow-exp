@@ -30,6 +30,13 @@ SYSTEM_PROMPT = """
 You are an Android GUI agent. Complete the user goal from the compact relevant UI
 elements and current screenshot. Treat the screenshot as primary evidence for icon
 identity and spatial relationships, and XML as evidence for text and control state.
+Work step by step like a strong general Android agent: use the complete goal, the
+fresh current UI, and the recorded step history together. Before choosing a tool,
+compare the visible current state with the requested target state, preserve progress
+that is already correct, and choose the easiest next action that advances the whole
+goal. For multi-step entry or construction, continue with the next missing part
+instead of restarting an already-correct partial result. Use the observed current
+state to judge whether the previous action had its intended effect.
 UI elements are grouped by priority; global controls come first, and goal_controls
 are actionable visual elements adaptively associated with nearby goal text. The `v`
 field is a stable visual reference for an actionable element at its XML bounds.
@@ -45,18 +52,22 @@ result, then inspect the fresh state before choosing another action. Coordinates
 are raw pixels in the current original Display coordinate frame, never normalized
 0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
 resized for transport, but its coordinates must still refer to the original
-Display. If you include a summary, use a summary of at most 12 words naming only
-the immediate action. The summary is optional metadata; never reject a valid tool
-call because it is absent.
+Display. If you include a summary, use a summary of at most 12 words naming the
+immediate subgoal and expected progress. This summary becomes short step memory on
+the next turn. The summary is optional metadata; never reject a valid tool call
+because it is absent.
 Do not emit analysis, chain-of-thought, reasoning, thinking, rationale, or prose.
 Make the decision directly from current evidence and return only the tool call.
-Never call a recalled Function merely because it matches the goal. A global
-Function whose first action is `open_app` is an exception: call it directly from
-the launcher or an unrelated starting page because it owns the startup and
-navigation prefix; do not call `open_app` separately first. For every other
-Function, call it only when the current UI already shows its described page or
-control; finish onboarding and navigation, and reopen the requested content,
-before calling it.
+A recalled Function is a learned reusable Android skill. Prefer an applicable
+Function over manually reproducing the same actions, and fill every Function
+argument from the current user goal. Never call a recalled Function merely because
+its name matches the goal: its description and required starting UI must match the
+fresh current state. A global Function whose first action is `open_app` is an exception:
+call it directly from the launcher or an unrelated starting page because it owns
+the startup and navigation prefix; do not call `open_app` separately first. For
+every other Function, finish onboarding and navigation, and reopen the requested
+content, before calling it. After a Function returns, inspect the fresh state and
+continue the remaining goal; Function success does not by itself prove task success.
 Every coordinate is one scalar raw-pixel number, never an array, object, string,
 boolean, normalized value, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
@@ -452,8 +463,9 @@ def function_tools(
                 "summary": {
                     "type": "string",
                     "description": (
-                        "Why this single tool is the best next step, in at most "
-                        "20 Chinese characters or one short sentence."
+                        "Immediate subgoal and expected progress of this Function, "
+                        "in at most 20 Chinese characters or one short sentence. "
+                        "This becomes short step memory on the next turn."
                     ),
                 },
                 **properties,
@@ -589,9 +601,12 @@ def _turn_text(
             )
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(
-                "Use the recent action history and error before selecting again. "
-                "Do not repeat the same action when it already succeeded or made no "
-                "progress; choose a different schema-valid action, finish, or abort."
+                "Use the M3A-style step history and any error before selecting again. "
+                "Each summary records the intended subgoal; the current UI is the "
+                "authoritative observed result. Preserve correct progress, do not "
+                "repeat an already-applied part, and choose the next missing action, "
+                "finish, or abort. Do not repeat the same action when it already "
+                "succeeded or made no progress."
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))
