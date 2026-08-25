@@ -630,6 +630,7 @@ def _materialize_authoring_plan(
     }
     observation_dependent_input_indices = _observation_dependent_input_indices(facts)
     functions: list[dict[str, Any]] = []
+    materialized_function_ids: set[str] = set()
     arguments: dict[str, dict[str, Any]] = {}
     selected_source_indices: set[int] = set()
     semantic_parameter_targets: set[tuple[int, str]] = set()
@@ -941,6 +942,9 @@ def _materialize_authoring_plan(
             source_steps=source_steps,
             source_indices=indices,
         )
+        if function_id in materialized_function_ids:
+            raise ValueError("function_author_plan_duplicate_function_id")
+        materialized_function_ids.add(function_id)
         functions.append(function)
         arguments[function_id] = source_arguments
 
