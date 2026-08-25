@@ -490,12 +490,14 @@ def _turn_text(
         else None
     )
     completion_review_required = False
+    completion_execution_history = ""
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
         if has_successful_function_action(context):
             completion_review_required = True
+            completion_execution_history = execution_history
             lines.append(
                 "The recalled Function action plan finished successfully and its "
                 "effects are already applied. Manually judge the complete user "
@@ -513,7 +515,7 @@ def _turn_text(
                 "sequence; choose a different visible control or path, finish, "
                 "or abort."
             )
-        if execution_history:
+        if execution_history and not completion_review_required:
             lines.extend(("Completed tool-call history:", execution_history))
         context.pop("recent_actions", None)
         context.pop("previous_action", None)
@@ -545,6 +547,9 @@ def _turn_text(
                     "Compact keys: k=class/tag, i=node id, t=text, d=description, "
                     "h=hint, r=resource id, b=bounds, a=actions, v=action reference."
                 ),
+                f"Goal under review: {goal}",
+                "Registered completed Function and Action history:",
+                completion_execution_history,
                 (
                     "Judge the user goal from both the completed Function history "
                     "and every current node. Lines without v remain valid state "
@@ -563,6 +568,16 @@ def _turn_text(
 def has_successful_function_action(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
+    function_execution = value.get("function_execution")
+    if isinstance(function_execution, dict) and str(
+        function_execution.get("replay_status") or ""
+    ).strip() == "actions_succeeded":
+        steps = function_execution.get("steps")
+        if isinstance(steps, list) and steps and all(
+            isinstance(item, dict) and item.get("success") is True
+            for item in steps
+        ):
+            return True
     recent_actions = value.get("recent_actions")
     return isinstance(recent_actions, list) and any(
         isinstance(item, dict)

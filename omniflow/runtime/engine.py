@@ -48,6 +48,7 @@ class _FunctionSession:
     failed_step_index: int | None = None
     fallback_observations: list[Observation] = field(default_factory=list)
     completed: Function | None = None
+    invocation_summary: str = ""
     resume_events: list[dict[str, Any]] = field(default_factory=list)
     resume_trigger: str | None = None
     excluded_ids: set[str] = field(default_factory=set)
@@ -195,6 +196,7 @@ class OmniFlow:
                         function=evidence_function,
                         final_observation=final_observation,
                         succeeded=function_session.completed is not None,
+                        invocation_summary=function_session.invocation_summary,
                     )
                 )
                 kwargs["terminal_detail"] = terminal_detail
@@ -400,7 +402,11 @@ class OmniFlow:
                 )
             recent_actions = _recent_actions(trace)
             execution_history = (
-                _execution_history(trace, completed_function=function_session.completed)
+                _execution_history(
+                    trace,
+                    completed_function=function_session.completed,
+                    invocation_summary=function_session.invocation_summary,
+                )
                 if trace
                 else None
             )
@@ -413,6 +419,7 @@ class OmniFlow:
                     function=evidence_function,
                     final_observation=observation,
                     succeeded=function_session.completed is not None,
+                    invocation_summary=function_session.invocation_summary,
                 )
                 if evidence_function is not None
                 else None
@@ -516,6 +523,9 @@ class OmniFlow:
             selected_function = planner_function_catalog.get(planned_call.name)
             if selected_function is not None:
                 function_session.selected_id = selected_function.id
+                function_session.invocation_summary = str(
+                    planner_metadata.get("summary") or ""
+                ).strip()
                 try:
                     function_session.bound = bind_function(
                         selected_function,
@@ -1021,6 +1031,7 @@ def _execution_history(
     trace: list[dict[str, Any]],
     *,
     completed_function: Function | None = None,
+    invocation_summary: str = "",
     limit: int = 3,
 ) -> str:
     lines = ["Action execution history on the target device:"]
@@ -1051,6 +1062,11 @@ def _execution_history(
                 "Completed Function action plan (already executed):",
             ]
         )
+        if invocation_summary:
+            lines.insert(
+                -1,
+                f'Planner selected this Function for: "{invocation_summary}".',
+            )
     recent_trace = (
         completed_function_steps + other_steps[-max(1, int(limit)) :]
         if completed_function is not None
@@ -1088,14 +1104,6 @@ def _execution_history(
         )
         if summary:
             description = f'{description} Planner intent: "{summary}".'
-        action_effect = (
-            metadata.get("action_effect") if isinstance(metadata, dict) else None
-        )
-        if isinstance(action_effect, dict):
-            description = (
-                f"{description} Page changed: "
-                f"{action_effect.get('state_changed') is True}."
-            )
         index = int(step.get("step_index") or fallback_index - 1) + 1
         lines.append(f"{index}. [{source}] {description}")
     lines.extend(
@@ -1124,6 +1132,7 @@ def _function_execution_evidence(
     function: Function,
     final_observation: Observation,
     succeeded: bool,
+    invocation_summary: str = "",
 ) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     for raw_step in trace:
@@ -1148,9 +1157,6 @@ def _function_execution_evidence(
             "action_summary": _describe_completed_action(action),
             "success": success,
         }
-        action_effect = metadata.get("action_effect")
-        if isinstance(action_effect, dict):
-            step["state_changed"] = action_effect.get("state_changed") is True
         if not success and isinstance(result, dict) and str(
             result.get("error") or ""
         ).strip():
@@ -1160,7 +1166,7 @@ def _function_execution_evidence(
     if not final_state_id and steps:
         final_state_id = str(steps[-1]["after_state_id"] or "").strip()
     core_description = _function_core_description(function)
-    return {
+    evidence = {
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function.id,
         "function_name": function.name,
@@ -1180,14 +1186,15 @@ def _function_execution_evidence(
             "activity_name": str(final_observation.activity_name or ""),
         },
     }
+    if invocation_summary:
+        evidence["invocation_summary"] = invocation_summary
+    return evidence
 
 
 def _function_core_description(function: Function) -> str:
     description = " ".join(str(function.description or "").split()).strip()
     if description:
-        first_sentence = description.split(". ", 1)[0].rstrip(".")
-        if first_sentence:
-            return first_sentence[:240] + "."
+        return description[:1200]
     return f"Complete {function.name}."
 
 

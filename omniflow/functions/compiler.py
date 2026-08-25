@@ -130,9 +130,17 @@ def compile_runlog_to_store(
             continue
         action_metadata = {
             key: metadata[key]
-            for key in ("summary", "thinking", "action_description")
+            for key in ("summary", "action_description")
             if str(metadata.get(key) or "").strip()
         }
+        purpose = str(
+            metadata.get("action_description")
+            or metadata.get("summary")
+            or metadata.get("reasoning")
+            or ""
+        ).strip()
+        if purpose:
+            action_metadata["purpose"] = purpose
         if promoted_launcher_entry:
             action_metadata["fixed_open_app_package"] = True
         for action in projected_actions:
@@ -171,7 +179,7 @@ def compile_runlog_to_store(
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
 Return exactly one object with this shape:
-{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Enter the name requested by the user.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_form","name":"Complete form","description":"Enter the requested name and submit.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
+{"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Fill the requested name and submit it so the form reaches its completed state.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_form","name":"Complete form","description":"Complete the form by entering the requested name and submitting it; the final submit action produces the requested completed form.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
 
 Do not output input_schema, bindings, steps, actions, coordinates, checker rules,
 agent_visible, schema_version, arguments, or source_state_id. The compiler owns
@@ -183,6 +191,8 @@ source index. Actions already marked origin=checker were removed before this pla
 do not reconstruct them in the main flow. Within one Function, source_step_indices must be strictly increasing
 and contiguous. Never omit a click immediately following input_text when that click
 commits, submits, confirms, or advances the form; keep both in one Function.
+Each source step's metadata.purpose explains what that action accomplishes. Preserve
+those purposes in the Function's ordered action description and core effect.
 
 If source_run.omitted_action_types contains answer or status, those terminal
 outputs are intentionally not Function actions. The complete Function is only a
@@ -205,7 +215,9 @@ parameter. The Planner must observe the returned page and continue with ordinary
 native tools or a separately recalled Function.
 The complete Function must lift its goal-dependent values into parameters, merge the
 selected meanings into one coherent name and description, and never merely hard-code
-the successful instance values. Do not invent a nesting or parent/child schema.
+the successful instance values. Its description must state the task-level core effect,
+explain why the final selected action achieves that effect, and distinguish a completed
+task from a navigation-only handoff. Do not invent a nesting or parent/child schema.
 A Function call is atomic: the Planner observes only after its last step. Never
 encode repetition count when the task requires reading changing UI after each
 repeat. Keep one representative action as a one-step Function and let the Planner
@@ -228,13 +240,13 @@ Parameterize only entries copied exactly from parameter_candidates, and only whe
 the same Function selects that source_step_index. Never parameterize an
 observation-dependent input: such a step is a runtime handoff boundary and any
 Function containing it is omitted by the compiler. Choose a stable identifier name
-and concise description. Every (source_step_index, arg_name) pair must occur
+and precise description. Every (source_step_index, arg_name) pair must occur
 literally in parameter_candidates; never invent file, folder, click-count, integer,
 coordinate, or other parameters absent from that list. Usually target_description
 is a stable UI label, not a goal-dependent value. The complete_function must repeat
 every parameter target selected by a semantic Function. Use parameters=[] for fixed
 recorded values. Coordinates never appear in candidates and can never become
-Function inputs. Keep reason under 40 words, each description under 20 words, and
+Function inputs. Keep reason under 40 words, each description under 120 words, and
 return no prose outside the JSON object.
 
 For a global Function whose first action is open_app, keep the canonical recorded
@@ -775,12 +787,6 @@ def _materialize_authoring_plan(
                 name=name,
                 description=description,
             )
-        if is_complete and source_starts_with_open_app:
-            description = (
-                f"{description} This is the global workflow entry; call it "
-                "directly from the launcher because it opens the app and owns "
-                "the startup navigation prefix."
-            )
         if atomicized_count:
             materialization_notes.append(
                 f"Compiler reduced {atomicized_count} identical clicks in "
@@ -929,6 +935,12 @@ def _materialize_authoring_plan(
             )
             source_arguments[parameter_name] = candidate["recorded_value"]
         apply_parameters(function, parameter_proposals, facts)
+        function["description"] = _append_registered_action_plan(
+            function["description"],
+            function=function,
+            source_steps=source_steps,
+            source_indices=indices,
+        )
         functions.append(function)
         arguments[function_id] = source_arguments
 
@@ -1523,6 +1535,7 @@ def _default_bundle(
         prefix_facts = dict(facts)
         prefix_facts["steps"] = safe_prefix
         function = _complete_function_artifact(prefix_facts)
+        function_source_steps = safe_prefix
         if boundary in dynamic_indices:
             handoff_description = (
                 "Stop before the value-dependent input and let the Planner "
@@ -1536,6 +1549,7 @@ def _default_bundle(
         function["description"] = f"{function['description']} {handoff_description}"
     else:
         function = _complete_function_artifact(facts)
+        function_source_steps = source_steps
     task_parameter_proposals = _task_parameter_proposals(function, facts)
     task_parameter_values = {
         str(proposal["name"]): str(proposal["recorded_value"])
@@ -1554,6 +1568,12 @@ def _default_bundle(
             ],
             {"steps": facts.get("steps") or []},
         )
+    function["description"] = _append_registered_action_plan(
+        function["description"],
+        function=function,
+        source_steps=function_source_steps,
+        source_indices=list(range(len(function.get("steps") or ()))),
+    )
     function["description"] = _append_terminal_handoff_description(
         function["description"],
         facts,
@@ -1604,7 +1624,7 @@ def _complete_function_artifact(
         "schema_version": "omniflow.function.v2",
         "function_id": function_id,
         "name": goal[:120],
-        "description": f"Execute the complete recorded workflow: {goal}",
+        "description": goal,
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -1615,6 +1635,90 @@ def _complete_function_artifact(
         "steps": steps,
         "agent_visible": True,
     }
+
+
+def _append_registered_action_plan(
+    description: str,
+    *,
+    function: dict[str, Any],
+    source_steps: list[dict[str, Any]],
+    source_indices: list[int],
+) -> str:
+    core_effect = " ".join(str(description or "").split()).strip().rstrip(".")
+    core = (
+        core_effect
+        if core_effect.casefold().startswith("core effect:")
+        else f"Core effect: {core_effect}"
+    )
+    plan: list[str] = []
+    for local_index, function_step in enumerate(function.get("steps") or ()):
+        action = (
+            function_step.get("action")
+            if isinstance(function_step, dict)
+            else None
+        )
+        if not isinstance(action, dict):
+            continue
+        source_index = (
+            source_indices[local_index]
+            if local_index < len(source_indices)
+            else local_index
+        )
+        source_step = (
+            source_steps[source_index]
+            if source_index in range(len(source_steps))
+            else {}
+        )
+        metadata = (
+            source_step.get("metadata")
+            if isinstance(source_step, dict)
+            and isinstance(source_step.get("metadata"), dict)
+            else {}
+        )
+        purpose = str(
+            metadata.get("purpose")
+            or metadata.get("action_description")
+            or metadata.get("summary")
+            or ""
+        ).strip().rstrip(".")
+        action_detail = _registered_action_detail(action)
+        detail = (
+            f"{purpose}; action: {action_detail}"
+            if purpose
+            else action_detail
+        )
+        plan.append(f"{local_index + 1}) {detail.rstrip('.')}.")
+    if not plan:
+        return f"{core}."
+    return f"{core}. Action plan: {' '.join(plan)}"
+
+
+def _registered_action_detail(action: dict[str, Any]) -> str:
+    tool = str(action.get("tool") or "action").strip()
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    target = str(args.get("target_description") or "").strip()
+    if tool == "open_app":
+        package_name = str(args.get("package_name") or "").strip()
+        return f'open app package "{package_name}" to enter the workflow'
+    if tool == "click":
+        return (
+            f'click "{target}" to advance the registered workflow'
+            if target
+            else "click the registered UI target to advance the workflow"
+        )
+    if tool == "input_text":
+        text = str(args.get("text") or "").strip()
+        target_text = f' in "{target}"' if target else ""
+        return f'enter "{text}"{target_text}'
+    if tool == "swipe":
+        direction = str(args.get("direction") or "").strip()
+        return (
+            f"swipe {direction or 'the registered direction'} "
+            "to reveal the next controls"
+        )
+    if target:
+        return f'{tool} "{target}"'
+    return f"execute {tool} with its registered arguments"
 
 
 def _append_terminal_handoff_description(
