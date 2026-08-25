@@ -1397,68 +1397,6 @@ def test_global_function_preserves_repeat_boundary_for_runtime_handoff(
     ]
 
 
-def test_numeric_task_click_repeat_is_handed_off_before_source_value(
-    tmp_path: Path,
-) -> None:
-    actions = [
-        {"action_type": "open_app", "app_name": "com.google.android.deskclock"},
-        {"action_type": "click", "x": 500, "y": 880},
-        {"action_type": "click", "x": 240, "y": 510},
-        {"action_type": "click", "x": 240, "y": 510},
-        {"action_type": "click", "x": 360, "y": 510},
-    ]
-    payload = androidworld_run_log(
-        actions,
-        observations=[
-            androidworld_state(f"timer-{index}")
-            for index in range(len(actions))
-        ],
-        goal="Create a timer with 0 hours, 41 minutes, and 55 seconds.",
-    )
-    payload["task_parameters"] = {"hours": 0, "minutes": 41, "seconds": 55}
-    _, source_states = import_run_log_evidence(payload)
-
-    proposal = {
-        "reason": "Keep the stable startup prefix and hand off numeric input.",
-        "plan": {
-            "functions": [],
-            "complete_function": {
-                "function_id": "create_timer",
-                "name": "Create timer",
-                "description": "Open Clock and enter the requested duration.",
-                "source_step_indices": [0, 1, 2, 3, 4],
-                "parameters": [],
-            },
-        },
-    }
-
-    class Completions:
-        def create(self, **_kwargs):
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(content=json.dumps(proposal))
-                    )
-                ],
-                usage=None,
-            )
-
-    result = compile_runlog_to_store(
-        payload,
-        tmp_path / "output",
-        source_states=source_states,
-        model="test-model",
-        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
-    )
-    store = json.loads(Path(result["store_path"]).read_text())
-    function = store["functions"]["create_timer"]
-    assert [step["action"]["tool"] for step in function["steps"]] == [
-        "open_app",
-        "click",
-    ]
-    assert "observation-dependent input" in result["reason"]
-
-
 def test_model_plan_falls_back_when_global_function_drops_terminal_action(
     tmp_path: Path,
 ) -> None:

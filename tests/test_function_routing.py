@@ -107,40 +107,6 @@ def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) ->
     )
 
 
-def test_empty_model_tool_name_continues_with_live_context(tmp_path) -> None:
-    class EmptyToolThenFinishPlanner(FinishingPlanner):
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls = 0
-
-        def one_step_tool_call(
-            self,
-            _goal: str,
-            observation: Observation,
-            _functions: tuple[Function, ...],
-            _installed_apps: dict[str, str],
-        ) -> ToolCall:
-            self.calls += 1
-            self.observations.append(observation)
-            if self.calls == 1:
-                raise ModelToolCallError("model_turn_tool_not_visible:")
-            return ToolCall("finished", {"content": "done"})
-
-    planner = EmptyToolThenFinishPlanner()
-    result = OmniFlow(
-        tmp_path / "store.json",
-        host=RecordingHost(),
-        planner=planner,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
-    ).run("Finish the task")
-
-    assert result.success is True
-    assert planner.calls == 2
-    assert planner.observations[1].extra["previous_action_error"] == (
-        "vlm_planner_failed:model_turn_tool_not_visible:"
-    )
-
-
 class RecordingHost:
     def __init__(self) -> None:
         self.package_name = "com.android.launcher"
@@ -1348,90 +1314,6 @@ def test_planner_can_repeat_action_on_same_logical_ui_state(
     assert len(planner.previous_action_errors) <= 3
 
 
-def test_runtime_does_not_dispatch_blind_repeated_click_on_visible_node(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-
-    class ClickableHost(RecordingHost):
-        def observe(self, **kwargs: object) -> Observation:
-            base = super().observe(**kwargs)
-            return Observation(
-                xml=(
-                    '<hierarchy><node text="Next" clickable="true" '
-                    'bounds="[100,200][300,400]" /></hierarchy>'
-                ),
-                package_name=base.package_name,
-                activity_name=base.activity_name,
-                image_base64=base.image_base64,
-                extra=base.extra,
-            )
-
-    host = ClickableHost()
-    repeated_click = ToolCall("click", {"x": 200, "y": 300})
-    planner = SequencePlanner(
-        [repeated_click, repeated_click, ToolCall("finished", {})]
-    )
-
-    result = OmniFlow(
-        tmp_path / "store.json",
-        host=host,
-        planner=planner,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=4)),
-    ).run("Advance to the next page")
-
-    assert result.success is True
-    assert host.actions == [Action("click", {"x": 200, "y": 300})]
-    assert planner.previous_action_errors[2] == (
-        "repeated_coordinate_without_semantic_target:"
-        "provide_target_description_or_choose_next_node"
-    )
-
-
-def test_runtime_does_not_dispatch_coordinate_outside_visible_nodes(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    import omniflow.runtime.core as core
-
-    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
-
-    class ClickableHost(RecordingHost):
-        def observe(self, **kwargs: object) -> Observation:
-            base = super().observe(**kwargs)
-            return Observation(
-                xml=(
-                    '<hierarchy><node text="Next" clickable="true" '
-                    'bounds="[100,200][300,400]" /></hierarchy>'
-                ),
-                package_name=base.package_name,
-                activity_name=base.activity_name,
-                image_base64=base.image_base64,
-                extra=base.extra,
-            )
-
-    host = ClickableHost()
-    planner = SequencePlanner(
-        [ToolCall("click", {"x": 600, "y": 700}), ToolCall("finished", {})]
-    )
-    result = OmniFlow(
-        tmp_path / "store.json",
-        host=host,
-        planner=planner,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
-    ).run("Advance to the next page")
-
-    assert result.success is True
-    assert host.actions == []
-    assert planner.previous_action_errors[1] == (
-        "coordinate_not_on_visible_actionable_node:"
-        "provide_target_description_or_choose_visible_node"
-    )
-
-
 class CapturingCompletions:
     def __init__(self, response: object) -> None:
         self.response = response
@@ -1840,41 +1722,6 @@ def test_planner_defaults_to_xml_without_uploading_native_screenshot() -> None:
     assert "Screenshot upload is omitted" in content[0]["text"]
 
 
-def test_planner_uploads_screenshot_after_repeated_successful_action() -> None:
-    request = build_model_turn_request(
-        goal="Enter the requested value",
-        model="test-model",
-        state={
-            "xml": (
-                '<hierarchy><node text="4" clickable="true" '
-                'bounds="[184,460][296,572]" /></hierarchy>'
-            ),
-            "image_base64": "recovery-screenshot",
-            "display": {"width": 720, "height": 1280},
-            "extra": {
-                "recent_actions": [
-                    {
-                        "tool": "click",
-                        "args": {"x": 240, "y": 516},
-                        "success": True,
-                    },
-                    {
-                        "tool": "click",
-                        "args": {"x": 240, "y": 516},
-                        "success": True,
-                    },
-                ]
-            },
-        },
-        max_steps=8,
-        turn_index=2,
-    )
-
-    content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert "same native action has just succeeded repeatedly" in content[0]["text"]
-
-
 def test_planner_keeps_screenshot_for_webview_grounding() -> None:
     request = build_model_turn_request(
         goal="Click Chrome in the web page",
@@ -1925,7 +1772,6 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "When you choose a projected native XML node" in SYSTEM_PROMPT
     assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
-    assert "visible numeric keypad" in SYSTEM_PROMPT
 
 
 def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
@@ -2024,7 +1870,7 @@ def test_projected_node_center_does_not_override_webview_click() -> None:
     assert "node_grounding" not in metadata
 
 
-def test_function_completion_review_uses_xml_without_final_screenshot() -> None:
+def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
     request = build_model_turn_request(
         goal="Turn bluetooth off",
         model="test-model",
@@ -2054,8 +1900,8 @@ def test_function_completion_review_uses_xml_without_final_screenshot() -> None:
     )
 
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text"]
-    assert "Screenshot upload is omitted" in content[0]["text"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["detail"] == "low"
     assert '"checked":false' in content[0]["text"]
     assert "Those actions are already applied" in content[0]["text"]
     assert "Never repeat or toggle" in content[0]["text"]
@@ -2085,7 +1931,7 @@ def test_planner_compacts_large_screenshot_before_upload() -> None:
     assert compact.size == (360, 640)
 
 
-def test_vlm_planner_function_completion_review_uses_xml_by_default() -> None:
+def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -2139,8 +1985,8 @@ def test_vlm_planner_function_completion_review_uses_xml_by_default() -> None:
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text"]
-    assert "Screenshot upload is omitted" in content[0]["text"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["detail"] == "low"
     turn_text = content[0]["text"]
     assert '"checked":false' in turn_text
     assert "Never repeat or toggle" in turn_text

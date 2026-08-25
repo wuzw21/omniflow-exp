@@ -73,11 +73,6 @@ next action in the exact projected bounds or choose a different visible control.
 If the previous action succeeded and the state changed, reassess the fresh page before
 repeating the same semantic target; repeat it only when the current evidence shows it
 is still the required next action, never as timeout or recovery behavior.
-For a visible numeric keypad, treat the displayed numeric value as the current
-prefix and enter the requested value from left to right. Do not repeat a digit
-that is already present, and do not alternate between a digit and Backspace during
-recovery; choose the next required digit from the goal. Include the exact visible
-digit label in target_description so the runtime can ground its bounds center.
 Prefer stable, reusable navigation. When the current app or page provides search,
 use search and type the requested text directly before browsing long menus or
 swiping. Do not select history, recent, suggestion, or cached-value items when the
@@ -234,18 +229,14 @@ def _planner_needs_screenshot(
         for key in ("visual_grounding_required", "screenshot_required")
     ):
         return True
+    if extra.get("function_execution"):
+        return True
     recent_actions = extra.get("recent_actions")
     if isinstance(recent_actions, list):
-        if _has_repeated_successful_action(recent_actions):
-            return True
         for item in recent_actions:
             if not isinstance(item, dict):
                 continue
-            # A successful Function action is already represented by the live
-            # XML and execution history.  Do not turn every post-Function
-            # Planner turn into a vision request; only failed actions need
-            # visual diagnosis here.  WebView/visual cases were handled above.
-            if item.get("success") is False:
+            if item.get("function_id") or item.get("success") is False:
                 return True
     error = str(extra.get("previous_action_error") or "").casefold()
     return any(
@@ -259,26 +250,6 @@ def _planner_needs_screenshot(
             "grounding",
         )
     )
-
-
-def _has_repeated_successful_action(value: Any) -> bool:
-    """Detect a repeated successful native action that needs visual recovery."""
-
-    if not isinstance(value, list) or len(value) < 2:
-        return False
-    previous: tuple[str, str] | None = None
-    for item in reversed(value):
-        if not isinstance(item, dict) or item.get("success") is not True:
-            break
-        tool = str(item.get("tool") or "").strip().lower()
-        args = item.get("args")
-        if not tool or not isinstance(args, dict):
-            break
-        current = (tool, json.dumps(args, ensure_ascii=False, sort_keys=True))
-        if previous == current:
-            return True
-        previous = current
-    return False
 
 
 def _state_has_screenshot(state: dict[str, Any]) -> bool:
@@ -621,13 +592,6 @@ def _turn_text(
                 "Use the recent action history and error before selecting again. "
                 "Do not repeat the same action when it already succeeded or made no "
                 "progress; choose a different schema-valid action, finish, or abort."
-            )
-        if _has_repeated_successful_action(context.get("recent_actions")):
-            lines.append(
-                "The same native action has just succeeded repeatedly. Treat this "
-                "as a grounding error: do not emit that same action again. Re-read "
-                "the current XML and screenshot, select the next semantic target, "
-                "or use a recovery action such as delete/backspace when needed."
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))
