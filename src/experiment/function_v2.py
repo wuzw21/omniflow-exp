@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from typing import Any
 
 from omniflow.functions.compiler import compile_runlog_to_store
@@ -72,6 +73,12 @@ def compile_function_v2(
     finally:
         if client is not None:
             client.close()
+    if isinstance(run_log, (str, Path)):
+        source_path = Path(run_log).expanduser().resolve()
+        shutil.copy2(source_path, root / "run_log.json")
+        source_screenshots = source_path.parent / "screenshots"
+        if source_screenshots.is_dir():
+            shutil.copytree(source_screenshots, root / "screenshots")
     report["enhanced"] = bool(enhance)
     if authoring_trace is not None:
         authoring_trace.append(
