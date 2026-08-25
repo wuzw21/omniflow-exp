@@ -167,7 +167,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         source_path = (
             root.parent / str(source_record.get("relative_path") or "")
         ).resolve()
-        return mobilegpt_memory.validate_mobilegpt_adapted_memory(
+        validated = mobilegpt_memory.validate_mobilegpt_adapted_memory(
             root,
             task_name=str(payload.get("task_name") or ""),
             source_seed=int(payload.get("source_seed") or -1),
@@ -175,6 +175,17 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
             expected_model=str(payload.get("source_model") or ""),
             expected_source_method=MOBILEGPT_RUNLOG_SOURCE_METHOD,
         )
+        # Keep the public preflight result shape stable across the native-cold
+        # and RunLog-direct schemas.  The scheduler uses these fields before
+        # it starts the target episode.
+        return {
+            **validated,
+            "task_name": str(payload.get("task_name") or ""),
+            "source_seed": int(payload.get("source_seed") or -1),
+            "source_method": MOBILEGPT_RUNLOG_SOURCE_METHOD,
+            "native_mobilegpt_learning": False,
+            "physical_backend": "mobilegpt_official_accessibility",
+        }
     if payload.get("source_seed") != SOURCE_SEED:
         raise ValueError("mobilegpt_memory_source_seed_invalid")
     provenance = payload.get("provenance")

@@ -458,6 +458,8 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
         source_model="",
     )
     validated = validate_memory_manifest(memory)
+    assert validated["task_name"] == "SystemBluetoothTurnOn"
+    assert validated["source_seed"] == 111
     assert validated["manifest"]["schema_version"] == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
     assert validated["manifest"]["source_method"] == MOBILEGPT_RUNLOG_SOURCE_METHOD
     manifest_path = bundle / MOBILEGPT_MEMORY_MANIFEST
