@@ -616,6 +616,85 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     }
 
 
+def test_compiler_keeps_generic_surface_as_runtime_handoff(
+    tmp_path: Path,
+) -> None:
+    calendar_xml = (
+        '<hierarchy><node package="com.simplemobiletools.calendar.pro">'
+        '<node resource-id="com.simplemobiletools.calendar.pro:id/'
+        'month_view_background" clickable="true" bounds="[0,0][720,1280]" />'
+        "</node></hierarchy>"
+    )
+    payload = androidworld_run_log(
+        [
+            {"action_type": "open_app", "app_name": "com.example.calendar"},
+            {"action_type": "click", "x": 500, "y": 500},
+            {"action_type": "click", "x": 500, "y": 500},
+        ],
+        observations=[
+            androidworld_state(
+                "launcher",
+                package_name="com.google.android.apps.nexuslauncher",
+                width=720,
+                height=1280,
+            ),
+            androidworld_state(
+                "calendar-month-1",
+                package_name="com.simplemobiletools.calendar.pro",
+                forest=calendar_xml,
+                width=720,
+                height=1280,
+            ),
+            androidworld_state(
+                "calendar-month-2",
+                package_name="com.simplemobiletools.calendar.pro",
+                forest=calendar_xml,
+                width=720,
+                height=1280,
+            ),
+        ],
+        goal="Find the requested calendar event.",
+    )
+    _, source_states = import_run_log_evidence(payload)
+    proposal = {
+        "reason": "Keep app launch and let the Planner choose the visible date.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_calendar",
+                "name": "Open calendar",
+                "description": "Open the calendar and inspect the requested date.",
+                "source_step_indices": [0, 1, 2],
+                "parameters": [],
+            },
+        },
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+                usage=None,
+            )
+
+    result = compile_runlog_to_store(
+        payload,
+        tmp_path / "output",
+        source_states=source_states,
+        model="test-model",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+
+    store = json.loads(Path(result["store_path"]).read_text(encoding="utf-8"))
+    function = store["functions"]["open_calendar"]
+    assert [step["action"]["tool"] for step in function["steps"]] == ["open_app"]
+    assert "generic surface" in function["description"]
+
+
 def test_model_plan_exposes_global_open_app_as_function_input(
     tmp_path: Path,
 ) -> None:

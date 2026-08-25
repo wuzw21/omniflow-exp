@@ -152,6 +152,9 @@ def compile_runlog_to_store(
         "steps": steps,
         "omitted_action_types": sorted(omitted_action_types),
     }
+    facts["observation_dependent_handoff_indices"] = sorted(
+        _generic_coordinate_surface_indices(facts)
+    )
     default_bundle = _default_bundle(facts, recovery_examples)
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Convert successful GUI source facts into a reusable Function plan.
@@ -250,7 +253,10 @@ app or package; a model must never invent an app package from a friendly app nam
             "reason": (
                 "Registered the safe reusable prefix; the Planner resumes at the "
                 "observation-dependent handoff."
-                if _observation_dependent_input_indices(facts)
+                if (
+                    _observation_dependent_input_indices(facts)
+                    or _observation_dependent_handoff_indices(facts)
+                )
                 else "Registered one complete recorded Function."
             ),
             "bundle": default_bundle,
@@ -655,6 +661,7 @@ def _materialize_authoring_plan(
         source_starts_with_open_app = bool(source_steps) and (
             source_steps[0].get("action", {}).get("tool") == "open_app"
         )
+        handoff_indices = _observation_dependent_handoff_indices(facts)
         if is_complete and observation_dependent_input_indices:
             dynamic_indices = [
                 index
@@ -694,11 +701,46 @@ def _materialize_authoring_plan(
             )
         if skip_function:
             continue
+        if handoff_indices:
+            generic_indices = [
+                index for index in indices if index in handoff_indices
+            ]
+            if generic_indices:
+                if is_complete:
+                    boundary = min(generic_indices)
+                    safe_indices = [index for index in indices if index < boundary]
+                    if safe_indices:
+                        indices = safe_indices
+                        description = (
+                            f"{description} Stop before the generic surface so "
+                            "the Planner can inspect the current page and choose "
+                            "the target."
+                        )
+                        materialization_notes.append(
+                            "Compiler split the global Function at a generic "
+                            f"coordinate surface (source step {boundary})."
+                        )
+                    else:
+                        skip_function = True
+                        materialization_notes.append(
+                            "Compiler omitted a global Function with no safe "
+                            "prefix before a generic coordinate surface."
+                        )
+                else:
+                    skip_function = True
+                    materialization_notes.append(
+                        "Compiler omitted a semantic Function containing a "
+                        "generic coordinate surface; the Planner owns the "
+                        "runtime handoff."
+                    )
+            if skip_function:
+                continue
         if is_complete:
             restored_indices = _restore_omitted_complete_actions(
                 indices,
                 source_steps,
                 observation_dependent_input_indices,
+                excluded_indices=handoff_indices,
             )
             if restored_indices:
                 indices = sorted(set(indices).union(restored_indices))
@@ -899,6 +941,67 @@ def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int
     return frozenset(indices)
 
 
+_GENERIC_COORDINATE_SURFACE_MARKERS = frozenset(
+    {
+        "background",
+        "canvas",
+        "calendar background",
+        "calendar canvas",
+        "calendar grid",
+        "drawing canvas",
+        "drawing surface",
+        "grid cell",
+        "map surface",
+        "map view",
+        "month view background",
+        "month view grid",
+        "webview",
+        "web view",
+    }
+)
+
+
+def _generic_coordinate_surface_indices(
+    facts: dict[str, Any],
+) -> frozenset[int]:
+    """Find coordinate actions whose meaning is only the current surface."""
+
+    indices: set[int] = set()
+    for index, step in enumerate(facts.get("steps") or ()):
+        action = step.get("action") if isinstance(step, dict) else None
+        if not isinstance(action, dict) or action.get("tool") not in {
+            "click",
+            "double_click",
+            "long_press",
+        }:
+            continue
+        args = action.get("args")
+        if not isinstance(args, dict) or args.get("x") is None or args.get("y") is None:
+            continue
+        target = " ".join(
+            str(args.get("target_description") or "")
+            .replace("_", " ")
+            .casefold()
+            .split()
+        )
+        if target in _GENERIC_COORDINATE_SURFACE_MARKERS:
+            indices.add(index)
+    return frozenset(indices)
+
+
+def _observation_dependent_handoff_indices(
+    facts: dict[str, Any],
+) -> frozenset[int]:
+    raw = facts.get("observation_dependent_handoff_indices")
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return _generic_coordinate_surface_indices(facts)
+    return frozenset(
+        int(index)
+        for index in raw
+        if isinstance(index, int) and not isinstance(index, bool)
+    )
+
+
 def _goal_allows_dynamic_app_package(goal: Any) -> bool:
     normalized = " ".join(str(goal or "").casefold().split())
     return any(
@@ -984,6 +1087,8 @@ def _restore_omitted_complete_actions(
     indices: list[int],
     source_steps: list[dict[str, Any]],
     observation_dependent_input_indices: frozenset[int],
+    *,
+    excluded_indices: frozenset[int] = frozenset(),
 ) -> list[int]:
     """Restore essential recorded actions accidentally omitted by authoring."""
 
@@ -1003,6 +1108,7 @@ def _restore_omitted_complete_actions(
         for index, step in enumerate(source_steps)
         if index < boundary
         and index not in selected
+        and index not in excluded_indices
         and str((step.get("action") or {}).get("tool") or "") in essential_tools
     ]
 
@@ -1219,24 +1325,33 @@ def _default_bundle(
     if not source_steps:
         return None
     dynamic_indices = _observation_dependent_input_indices(facts)
-    if dynamic_indices:
-        boundary = min(dynamic_indices)
+    handoff_indices = _observation_dependent_handoff_indices(facts)
+    boundary_indices = dynamic_indices.union(handoff_indices)
+    if boundary_indices:
+        boundary = min(boundary_indices)
         safe_prefix = source_steps[:boundary]
         if not safe_prefix:
             safe_prefix = [
                 step
                 for index, step in enumerate(source_steps)
-                if index not in dynamic_indices
+                if index not in boundary_indices
             ][:1]
         if not safe_prefix:
             return None
         prefix_facts = dict(facts)
         prefix_facts["steps"] = safe_prefix
         function = _complete_function_artifact(prefix_facts)
-        function["description"] = (
-            f"{function['description']} Stop before the value-dependent input "
-            "and let the Planner continue from the observed page."
-        )
+        if boundary in dynamic_indices:
+            handoff_description = (
+                "Stop before the value-dependent input and let the Planner "
+                "continue from the observed page."
+            )
+        else:
+            handoff_description = (
+                "Stop before the generic surface and let the Planner inspect "
+                "the current page and choose the target."
+            )
+        function["description"] = f"{function['description']} {handoff_description}"
     else:
         function = _complete_function_artifact(facts)
     function["description"] = _append_terminal_handoff_description(
