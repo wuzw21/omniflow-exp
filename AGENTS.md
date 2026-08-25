@@ -26,6 +26,14 @@
   只有未安装或显式要求 rebuild 时才构建 APK，禁止每个 episode 重复 Gradle/install。
   自主探索成功后保存 MobileGPT 官方原生 Memory，后续实验只复用该 Memory；不再把
   AndroidWorld source RunLog 转换成 MobileGPT Memory。
+- MobileGPT、AndroidWorld baseline 和 OmniFlow 共用同一套已初始化设备。OOB APK、
+  benchmark APK、权限和 app snapshot 只在设备初始化阶段准备一次；正式
+  task 只做 AndroidWorld 官方 task reset 和页面初始化，不重复 Gradle、APK
+  install 或整套 app setup。只有 APK 版本变化或用户显式要求重建设备时
+  才重新安装。
+- OOB 只能在本地 canonical OpenOmniBot checkout 编译；4090 和 9207 只接收
+  编译好的 APK，禁止向远程上传 OOB 源码、保留 OOB 编译 checkout 或
+  执行 Gradle/OOB 构建。
 
 本节是当前 AndroidWorld 运行的最高优先级项目规则；下文涉及旧 index、migration、
 seed/path preflight、结果注册或专项测试的历史描述不再适用。

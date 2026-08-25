@@ -2034,7 +2034,7 @@ def run_command(spec: CommandSpec, *, dry_run: bool = False) -> int:
 
 def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
     perform_setup_default = (
-        str(os.environ.get("OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP", "1"))
+        str(os.environ.get("OMNIFLOW_ANDROIDWORLD_PERFORM_EMULATOR_SETUP", "0"))
         .strip()
         .lower()
         not in {"0", "false", "no", "off"}
@@ -2045,15 +2045,16 @@ def _add_androidworld_setup_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=perform_setup_default,
         help=(
-            "Run AndroidWorld app setup before the task suite so each task "
-            "initialize_task(env) can restore a fresh snapshot. Default: on."
+            "One-time device initialization: install/setup AndroidWorld apps and "
+            "save snapshots before running tasks. Default: off; normal runs reuse "
+            "the initialized device."
         ),
     )
     parser.add_argument(
         "--no-perform-emulator-setup",
         dest="perform_emulator_setup",
         action="store_false",
-        help="Skip AndroidWorld app setup; use only for targeted debugging.",
+        help="Reuse the initialized device without repeating app setup (default).",
     )
 
 
