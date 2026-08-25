@@ -77,7 +77,7 @@ def test_planner_uses_http_proxy_instead_of_ambient_socks_proxy(
     assert _configured_http_proxy() == "http://127.0.0.1:7890"
 
 
-def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) -> None:
+def test_malformed_planner_tool_payload_terminates_without_retry(tmp_path) -> None:
     class MalformedThenFinishPlanner(FinishingPlanner):
         def __init__(self) -> None:
             super().__init__()
@@ -106,9 +106,9 @@ def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) ->
         config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
     ).run("Finish the task")
 
-    assert result.success is True
-    assert planner.calls == 2
-    assert planner.observations[1].extra["previous_action_error"] == (
+    assert result.success is False
+    assert planner.calls == 1
+    assert result.error == (
         "vlm_planner_failed:canonical_action_args_unknown:input_text:text"
     )
 
@@ -1910,6 +1910,41 @@ def test_planner_coordinates_are_device_independent_relative_values() -> None:
     )
     assert physical["args"]["x"] == pytest.approx(483.84)
     assert physical["args"]["y"] == pytest.approx(747.52)
+
+
+def test_qwen_plus_coordinate_pair_is_repaired_without_another_model_call() -> None:
+    display = {"width": 720, "height": 1280}
+    response = {
+        "requested_model": "Qwen3.6-Plus",
+        "resolved_model": "Qwen3.6-Plus",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "Clear timer",
+                            "x": [672, 584],
+                            "y": [584],
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="Qwen3.6-Plus",
+        turn_index=1,
+        display=display,
+        state={"xml": "<hierarchy />", "display": display},
+        goal="Clear the current timer value",
+    )
+
+    assert tool_call.arguments["x"] == 672
+    assert tool_call.arguments["y"] == 584
+    assert metadata["model_adapter"]["name"] == "qwen_vl_coordinate_arrays.v1"
 
 
 def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:

@@ -186,7 +186,7 @@ supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot resto
 `androidworld/<task>/autodroid/<device_model_seed>/`。
 
 固定实验值：source seed `111`、evaluation seed `113`。OmniFlow Planner 使用
-`GLM-5.1` 的 XML-only、非流式单工具请求；需要图片输入的外部视觉方法继续使用
+`Qwen3.6-Plus` 的非流式单工具请求；需要图片输入的外部视觉方法继续使用
 `GLM-4.6V`。
 `--control-backend oob` 用于 OOB observe/act transport。
 

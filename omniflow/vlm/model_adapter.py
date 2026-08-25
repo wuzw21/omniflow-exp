@@ -5,8 +5,8 @@ import re
 from typing import Any
 
 _ADAPTER_NAME = "qwen_vl_coordinate_arrays.v1"
-_QWEN_VL_MODEL = re.compile(
-    r"(?:^|[^a-z0-9])qwen(?:\d+(?:\.\d+)?)?[-_.]?vl(?:[^a-z0-9]|$)",
+_QWEN_MODEL = re.compile(
+    r"(?:^|[^a-z0-9])qwen(?:[0-9]|[^a-z0-9]|$)",
     re.IGNORECASE,
 )
 _COORDINATE_PAIRS = {
@@ -57,7 +57,7 @@ def adapt_tool_arguments(
 def _adapter_model(requested_model: str, resolved_model: str) -> str:
     for candidate in (resolved_model, requested_model):
         normalized = str(candidate or "").strip()
-        if normalized and _QWEN_VL_MODEL.search(normalized):
+        if normalized and _QWEN_MODEL.search(normalized):
             return normalized
     return ""
 

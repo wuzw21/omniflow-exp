@@ -47,7 +47,7 @@
     "fold_state": 2,
     "fold_size": "2208x1840",
     "model": "GLM-4.6V",
-    "omniflow_planner_model": "GLM-5.1",
+    "omniflow_planner_model": "Qwen3.6-Plus",
     "appagent_model": "GLM-4.6V",
     "model_endpoint_profile": "llmthu",
     "model_base_url": "https://llmapi.paratera.com/v1",
