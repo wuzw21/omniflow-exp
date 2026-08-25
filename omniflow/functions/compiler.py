@@ -677,10 +677,6 @@ def _materialize_authoring_plan(
             indices != sorted(set(indices))
             or indices[0] < 0
             or indices[-1] >= len(source_steps)
-            or (
-                not is_complete
-                and indices != list(range(indices[0], indices[-1] + 1))
-            )
         ):
             raise ValueError("function_author_plan_source_steps_invalid")
         source_starts_with_open_app = bool(source_steps) and (
@@ -760,19 +756,6 @@ def _materialize_authoring_plan(
                     )
             if skip_function:
                 continue
-        if is_complete:
-            restored_indices = _restore_omitted_complete_actions(
-                indices,
-                source_steps,
-                observation_dependent_input_indices,
-                excluded_indices=handoff_indices,
-            )
-            if restored_indices:
-                indices = sorted(set(indices).union(restored_indices))
-                materialization_notes.append(
-                    "Compiler restored omitted executable source steps "
-                    f"{restored_indices} in the complete Function."
-                )
         atomicized_count = 0
         if not (is_complete and source_starts_with_open_app):
             (
@@ -1279,36 +1262,6 @@ def _primary_observation_package(observation: Any) -> str:
         if "systemui" not in package.casefold():
             return package
     return ""
-
-
-def _restore_omitted_complete_actions(
-    indices: list[int],
-    source_steps: list[dict[str, Any]],
-    observation_dependent_input_indices: frozenset[int],
-    *,
-    excluded_indices: frozenset[int] = frozenset(),
-) -> list[int]:
-    """Restore essential recorded actions accidentally omitted by authoring."""
-
-    boundary = min(observation_dependent_input_indices, default=len(source_steps))
-    selected = set(indices)
-    essential_tools = {
-        "open_app",
-        "click",
-        "double_click",
-        "long_press",
-        "input_text",
-        "swipe",
-        "press_key",
-    }
-    return [
-        index
-        for index, step in enumerate(source_steps)
-        if index < boundary
-        and index not in selected
-        and index not in excluded_indices
-        and str((step.get("action") or {}).get("tool") or "") in essential_tools
-    ]
 
 
 def _atomicize_repeated_click_function(
