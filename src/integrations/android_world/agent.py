@@ -230,10 +230,11 @@ def build_agent(
                 },
             )
         state["goal"] = goal_text
-        result = flow.run(
+        planner_goal = _goal_with_task_parameters(
             goal_text,
-            experiment=Experiment(name="androidworld"),
+            state.get("task_parameters"),
         )
+        result = flow.run(planner_goal, experiment=Experiment(name="androidworld"))
         planner_steps = int(result.detail.get("planner_steps") or 0)
         finished_content = str(result.detail.get("finished_content") or "").strip()
         done_reason = str(result.detail.get("done_reason") or "").strip()
@@ -298,6 +299,28 @@ def build_agent(
     flow.step = step
     flow.get_captured_transfer_states = get_captured_transfer_states
     return flow
+
+
+def _goal_with_task_parameters(goal: str, task_parameters: Any) -> str:
+    """Give the Planner public task API values without changing the task goal."""
+
+    if not isinstance(task_parameters, dict) or not task_parameters:
+        return str(goal or "").strip()
+    public_parameters = {
+        str(name): value
+        for name, value in task_parameters.items()
+        if str(name).strip() and str(name).strip().casefold() != "seed"
+    }
+    if not public_parameters:
+        return str(goal or "").strip()
+    encoded = json.dumps(public_parameters, ensure_ascii=False, sort_keys=True)
+    return (
+        f"{str(goal or '').strip()}\n"
+        "Known task parameters are public Function API values. Copy each value "
+        "verbatim into the Function arguments; do not translate, approximate, "
+        "calculate, normalize, or substitute another representation:\n"
+        f"{encoded}"
+    ).strip()
 
 
 def _json_copy(value: Any) -> Any:

@@ -12,6 +12,7 @@ from src.integrations.android_world.methods import (
     default_method_adapter_registry,
     reuse_metrics,
 )
+from src.integrations.android_world.agent import _goal_with_task_parameters
 
 
 def _context(selector: str) -> MethodAdapterContext:
@@ -21,6 +22,17 @@ def _context(selector: str) -> MethodAdapterContext:
         store_path="store.json",
         adb_serial="emulator-5554",
     )
+
+
+def test_goal_with_task_parameters_preserves_public_values_verbatim() -> None:
+    prompt = _goal_with_task_parameters(
+        "Add a location marker for Balzers, Liechtenstein.",
+        {"location": "Balzers, Liechtenstein", "seed": 113},
+    )
+
+    assert '"location": "Balzers, Liechtenstein"' in prompt
+    assert "do not translate" in prompt
+    assert '"seed"' not in prompt
 
 
 def test_method_registry_resolves_exactly_one_adapter() -> None:
