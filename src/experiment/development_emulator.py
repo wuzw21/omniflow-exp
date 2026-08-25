@@ -28,14 +28,20 @@ def _grpc_ready(port: int) -> bool:
 
 
 def _adb_output(adb: Path, *arguments: str) -> str:
-    completed = subprocess.run(
-        [str(adb), *arguments],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        timeout=10,
-    )
+    try:
+        completed = subprocess.run(
+            [str(adb), *arguments],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        # An emulator transitioning between offline, booting, and ready can
+        # leave an individual adb probe hanging.  Readiness owns retry and
+        # relaunch; a single timed-out probe must not abort the whole task.
+        return ""
     return completed.stdout.replace("\r", "").strip()
 
 
