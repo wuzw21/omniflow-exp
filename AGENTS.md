@@ -24,6 +24,8 @@
   evaluation seed 生成参数，目标 app 来自官方 task 的 `app_names`，MobileGPT 只接收
   goal 与 Open App 目标后自主探索。已安装的官方 Accessibility client 必须直接复用；
   只有未安装或显式要求 rebuild 时才构建 APK，禁止每个 episode 重复 Gradle/install。
+  自主探索成功后保存 MobileGPT 官方原生 Memory，后续实验只复用该 Memory；不再把
+  AndroidWorld source RunLog 转换成 MobileGPT Memory。
 
 本节是当前 AndroidWorld 运行的最高优先级项目规则；下文涉及旧 index、migration、
 seed/path preflight、结果注册或专项测试的历史描述不再适用。

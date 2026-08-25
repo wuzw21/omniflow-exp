@@ -35,9 +35,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_PREP_TYPE_BY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
-    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.paths import (
     resolve_path,
@@ -61,7 +59,6 @@ from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
 from src.integrations.android_world.apps import resolve_androidworld_package
-from src.integrations.mobilegpt import validate_memory_manifest
 from src.integrations.official_forward import (
     resolve_mobilegpt_client_host,
 )
@@ -771,7 +768,7 @@ def build_replay_command(
         attempt_id=archive_attempt_id,
         repo_root=repo_root,
     )
-    resolved_output = _next_runlog_attempt(setting_root)
+    resolved_output = _next_attempt(setting_root, "runlog")
     if replay_memory_root:
         replay_run_log, source_materialization, profile = (
             _materialize_replay_run_log_for_memory(
@@ -923,7 +920,7 @@ def build_official_command(
         console_port=console_port,
         repo_root=repo_root,
     )
-    resolved_output = _next_runlog_attempt(setting_root)
+    resolved_output = _next_attempt(setting_root, "runlog")
     resolved_task_seed = int(
         item.replay_seed if task_random_seed is None else task_random_seed
     )
@@ -1071,7 +1068,7 @@ def build_task_command(
         console_port=console_port,
         repo_root=repo_root,
     )
-    resolved_output = _next_runlog_attempt(setting_root)
+    resolved_output = _next_attempt(setting_root, "runlog")
     if str(run_dir_suffix or "").strip():
         resolved_output = resolved_output / _safe_relative_path(
             run_dir_suffix,
@@ -3272,15 +3269,15 @@ _RESULT_METADATA_ROW_KEYS = (
 
 
 
-def _next_runlog_attempt(setting_root: Path) -> Path:
-    runlog_root = setting_root / "runlog"
+def _next_attempt(setting_root: Path, group: str) -> Path:
+    attempt_root = setting_root / group
     used = []
-    if runlog_root.is_dir():
-        for path in runlog_root.iterdir():
+    if attempt_root.is_dir():
+        for path in attempt_root.iterdir():
             match = re.fullmatch(r"attempt_(\d+)", path.name)
             if path.is_dir() and match:
                 used.append(int(match.group(1)))
-    return runlog_root / f"attempt_{max(used, default=0) + 1:03d}"
+    return attempt_root / f"attempt_{max(used, default=0) + 1:03d}"
 
 
 def build_mobilegpt_command(
@@ -3321,7 +3318,7 @@ def build_mobilegpt_command(
         console_port=target.console_port,
         repo_root=repo_root,
     )
-    resolved_output = _next_runlog_attempt(setting_root)
+    resolved_output = _next_attempt(setting_root, "runlog")
     if str(run_dir_suffix or "").strip():
         resolved_output = resolved_output / _safe_relative_path(
             run_dir_suffix,
@@ -3686,26 +3683,10 @@ def _run_result_mobilegpt(
             raise FileNotFoundError(
                 f"mobilegpt_source_memory_missing:{source_memory_root}"
             )
-        strong_memory_validation = validate_memory_manifest(source_memory_root)
-        if str(strong_memory_validation.get("task_name") or "") != item.task:
-            raise ValueError("mobilegpt_source_memory_task_mismatch")
-        source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
-        source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
-        source_schema = str(source_manifest.get("schema_version") or "")
-        try:
-            source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[source_schema]
-            source_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[source_schema]
-        except KeyError as error:
-            raise ValueError("mobilegpt_source_memory_schema_invalid") from error
-        adapted_memory = mobilegpt_memory.validate_mobilegpt_adapted_memory(
-            source_memory_root,
-            task_name=item.task,
-            source_seed=int(args.source_seed),
-            source_run_log=source_run_log,
-            compatible_source_sha256s=compatible_source_sha256s,
-            expected_model=str(args.model or ""),
-            expected_source_method=source_method,
-        )
+        source_manifest_path = None
+        source_method = "mobilegpt_official_exploration"
+        source_prep_type = "mobilegpt_official_exploration"
+        adapted_memory = {}
 
     frozen_memory_root = memory_root / "frozen_memory"
     frozen_memory_manifest_path = memory_root / "frozen_memory_manifest.json"
@@ -3941,6 +3922,7 @@ def _run_result_mobilegpt(
                     device_target_package,
                 ),
                 target_task_name=args.task,
+                write_through_memory=bool(cold_start),
             )
             server_spec = _configure_mobilegpt_formal_server(
                 server_spec,
@@ -4060,6 +4042,20 @@ def _run_result_mobilegpt(
                     status="completed" if returncode == 0 else "command_failed",
                     summary_exclude=False,
                 )
+                if cold_start and returncode == 0 and not args.dry_run:
+                    setting_root = Path(episode_spec.output_path).parents[1]
+                    learned_attempt = _next_attempt(setting_root, "memory")
+                    learned_memory = learned_attempt / "memory"
+                    learned_attempt.mkdir(parents=True)
+                    shutil.copytree(episode_memory_root, learned_memory)
+                    episode_record.setdefault("metadata", {})[
+                        "learned_memory_root"
+                    ] = str(learned_memory)
+                    print(
+                        f"[mobilegpt] saved official exploration memory to "
+                        f"{learned_memory}",
+                        flush=True,
+                    )
                 records.append(episode_record)
                 failed += int(returncode != 0)
             finally:
