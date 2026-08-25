@@ -56,8 +56,8 @@ def _jsonl_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
     return rows
 
 
-def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
-    """Require immutable evidence that MobileGPT used OOB for all device I/O."""
+def _mobilegpt_native_conclusion(outcome: Mapping[str, Any]) -> bool:
+    """Require immutable evidence for the official Accessibility client path."""
 
     artifact_root_text = str(outcome.get("artifact_root") or "").strip()
     if not artifact_root_text:
@@ -76,7 +76,8 @@ def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
             if (
                 str(detail.get("method") or "") != method
                 or str(detail.get("device") or "") != device
-                or str(detail.get("action_backend") or "") != "oob_control"
+                or str(detail.get("action_backend") or "")
+                != "mobilegpt_official_accessibility"
             ):
                 continue
             try:
@@ -84,9 +85,8 @@ def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
             except ValueError:
                 continue
             if (
-                "src.integrations.mobilegpt_oob_client" not in command
-                or "src.integrations.official_forward" in command
-                or "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob" not in command
+                "src.integrations.official_forward" not in command
+                or "src.integrations.mobilegpt_oob_client" in command
             ):
                 continue
             result_file = Path(str(detail.get("result_file") or "")).expanduser()
@@ -103,7 +103,11 @@ def _mobilegpt_oob_conclusion(outcome: Mapping[str, Any]) -> bool:
             if (
                 str(result.get("method") or "") == "mobilegpt"
                 and isinstance(protocol, dict)
-                and protocol.get("transport") == "oob_control"
+                and protocol.get("transport") == "official_accessibility"
+                and str(result.get("physical_backend") or "")
+                == "mobilegpt_official_accessibility"
+                and str(result.get("mobilegpt_native_action_index_protocol") or "")
+                == "mobilegpt_official_accessibility_node_id_v1"
                 and official_instruction
                 and str(result.get("goal") or "").strip() == official_instruction
             ):
@@ -462,10 +466,11 @@ def concluded_result_keys(
                 continue
         else:
             continue
-        if method == "mobilegpt" and not _mobilegpt_oob_conclusion(payload):
+        if method == "mobilegpt" and not _mobilegpt_native_conclusion(payload):
             # Old outcomes remain immutable evidence, but they cannot close a
             # current MobileGPT cell unless launch/observe/act are proven to
-            # use OOB and the planner received the evaluated task instruction.
+            # use the official Accessibility client and the planner received
+            # the evaluated task instruction.
             continue
         expected_model = (device_models or {}).get(device)
         if expected_model:

@@ -189,12 +189,18 @@ def _installed_accessibility_services(adb: str, serial: str) -> tuple[str, ...]:
     return tuple(installed)
 
 
-def configure_default_device_services(adb: str, serial: str) -> dict[str, object]:
-    """Enable OOB and disable every legacy experiment accessibility service.
+def configure_default_device_services(
+    adb: str,
+    serial: str,
+    *,
+    profile: str = "oob",
+) -> dict[str, object]:
+    """Configure the one physical Accessibility owner for a formal profile.
 
     The operation is idempotent and preserves unrelated user-enabled
     services. It intentionally does not install APKs or modify provider source
-    code; a missing OOB service is reported for the caller to diagnose.
+    code. MobileGPT uses its official Accessibility client; other profiles
+    retain the canonical OOB service.
     """
 
     current = _run(
@@ -232,8 +238,17 @@ def configure_default_device_services(adb: str, serial: str) -> dict[str, object
         not in managed_identities
     ]
     installed = _installed_accessibility_services(adb, serial)
+    normalized_profile = str(profile or "oob").strip().lower()
+    desired_services = (
+        ("com.example.MobileGPT/.MobileGPTAccessibilityService",)
+        if normalized_profile == "mobilegpt"
+        else DEFAULT_ACCESSIBILITY_SERVICES
+    )
     for component in installed:
-        if component not in enabled:
+        if component in desired_services and component not in enabled:
+            enabled.append(component)
+    for component in desired_services:
+        if component in installed and component not in enabled:
             enabled.append(component)
     enabled = list(dict.fromkeys(enabled))
     value = ":".join(enabled)
@@ -1739,6 +1754,7 @@ def main(argv: list[str] | None = None) -> int:
                         configured = configure_default_device_services(
                             adb,
                             args.serial,
+                            profile="mobilegpt" if profile == "mobilegpt" else "oob",
                         )
                         add(
                             "device_services",

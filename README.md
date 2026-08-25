@@ -184,10 +184,9 @@ OMNIFLOW_ANDROIDWORLD_A11Y_APK=/absolute/accessibility_forwarder.apk \
 bash scripts/exp/run_androidworld.sh --setup-device all
 ```
 
-setup 会安装 OOB 及依赖 APK，但只启用并启动 OOB 服务；MobileGPT 与
-AndroidWorld accessibility forwarder 不参与物理 observe/act。随后检查
-AndroidWorld、AppAgent、MobileGPT、OmniTransfer 和模型环境，并通过 OOB observe
-bridge 验收设备；报告位于
+setup 会安装所需依赖 APK；OmniFlow 使用 OOB 服务，而 MobileGPT 正式运行由其
+官方 Accessibility client 接管物理 observe/act。随后检查 AndroidWorld、AppAgent、
+MobileGPT、OmniTransfer 和模型环境；报告位于
 `data/androidworld/.archive/setup/<UTC>/setup_report.json`。
 
 ## 其他入口

@@ -20,6 +20,7 @@ from src.experiment.run_task import (
     _select_mobilegpt_bootstrap_package,
     _read_object,
     _t3a_hint_source_node,
+    build_mobilegpt_command,
     build_mobilegpt_server_command,
     build_autodroid_command,
     build_task_command,
@@ -413,7 +414,7 @@ def test_result_summary_resolves_native_row_to_unique_command_device() -> None:
     assert rows[0]["official_validator_success"] is True
 
 
-def test_result_summary_preserves_mobilegpt_oob_action_index_protocol() -> None:
+def test_result_summary_preserves_mobilegpt_native_action_index_protocol() -> None:
     rows = _result_summary_rows(
         task="CameraTakePhoto",
         command_records=[
@@ -422,8 +423,11 @@ def test_result_summary_preserves_mobilegpt_oob_action_index_protocol() -> None:
                 "device": "small5554",
                 "status": "completed",
                 "returncode": 0,
-                "command": "python -m src.integrations.mobilegpt_oob_client",
-                "metadata": {"action_backend": "oob_control"},
+                "command": "python -m src.integrations.official_forward --baseline mobilegpt",
+                "metadata": {
+                    "action_backend": "mobilegpt_official_accessibility",
+                    "physical_backend": "mobilegpt_official_accessibility",
+                },
             }
         ],
         aggregate_summary={
@@ -434,13 +438,56 @@ def test_result_summary_preserves_mobilegpt_oob_action_index_protocol() -> None:
                     "device": "small5554",
                     "official_validator_used": True,
                     "official_validator_success": False,
-                    "oob_action_index_protocol": "mobilegpt_source_node_id_v1",
+                    "mobilegpt_native_action_index_protocol": "mobilegpt_official_accessibility_node_id_v1",
                 }
             ]
         },
     )
 
-    assert rows[0]["oob_action_index_protocol"] == "mobilegpt_source_node_id_v1"
+    assert rows[0]["mobilegpt_native_action_index_protocol"] == "mobilegpt_official_accessibility_node_id_v1"
+
+
+def test_mobilegpt_command_uses_only_official_accessibility_client(
+    tmp_path: Path,
+) -> None:
+    item = CanonicalRunLog(
+        task="SystemBluetoothTurnOn",
+        goal="Turn on Bluetooth.",
+        params={},
+        source_run_log=tmp_path / "source.run_log.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+    spec = build_mobilegpt_command(
+        item,
+        method_name="mobilegpt",
+        target=DeviceTarget("standard45562", "emulator-45562", 45562),
+        android_world_root=tmp_path / "android-world",
+        output_root=tmp_path / "results",
+        stats_jsonl=tmp_path / "stats.jsonl",
+        mobilegpt_root=tmp_path / "mobilegpt",
+        server_host="0.0.0.0",
+        server_port=12345,
+        target_package="com.android.settings",
+        max_steps=20,
+        task_random_seed=113,
+        fixed_task_seed=True,
+        fixed_task_params=True,
+        task_params_override={},
+        perform_emulator_setup=True,
+        adb_path="adb",
+        start_timeout_sec=60,
+        finish_timeout_sec=600,
+    )
+
+    assert "src.integrations.official_forward" in spec.argv
+    assert "--baseline" in spec.argv
+    assert spec.argv[spec.argv.index("--baseline") + 1] == "mobilegpt"
+    assert "src.integrations.mobilegpt_oob_client" not in spec.argv
+    assert spec.env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] == "native_accessibility"
+    assert spec.metadata["observe_backend"] == "mobilegpt_official_accessibility"
+    assert spec.metadata["action_backend"] == "mobilegpt_official_accessibility"
 
 
 def test_setup_command_failure_is_retryable_environment_failure(
@@ -1394,7 +1441,7 @@ def test_scheduler_reuses_sealed_native_mobilegpt_memory(
                     "validator_state_read": False,
                     "coordinate_replay": False,
                     "source_emulator_used": True,
-                    "physical_backend": "oob_control",
+                    "physical_backend": "mobilegpt_official_accessibility",
                 },
             }
         ),
@@ -2281,9 +2328,10 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
 
     assert result["status"] == "ready"
     assert result["cleaned_mobilegpt_server_pids"] == [4312]
-    assert lifecycle == ["cleanup", "command", "oob", "command"]
+    assert lifecycle == ["cleanup", "command", "command"]
     assert len(calls) == 2
     assert result["devices"][0]["oob_preflight"]["ready"] is True
+    assert result["devices"][0]["oob_preflight"]["backend"] == "mobilegpt_official_accessibility"
     preflight, preflight_kwargs = calls[1]
     assert preflight[:2] == [str(args.python_bin), str(args.runtime_preflight)]
     assert preflight[preflight.index("--profile") + 1] == "mobilegpt"

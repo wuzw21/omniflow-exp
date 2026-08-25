@@ -170,7 +170,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "function_conversion_enabled": False,
         "coordinate_replay": False,
         "source_emulator_used": True,
-        "physical_backend": "oob_control",
+        "physical_backend": "mobilegpt_official_accessibility",
     }
     if not isinstance(provenance, dict) or any(
         provenance.get(key) != value
@@ -217,7 +217,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         "memory_file_count": len(files),
         "task_file_count": len(task_files),
         "native_mobilegpt_learning": True,
-        "physical_backend": "oob_control",
+        "physical_backend": "mobilegpt_official_accessibility",
     }
 
 def validate_prepared_memory(

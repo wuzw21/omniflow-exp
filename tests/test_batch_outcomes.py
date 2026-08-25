@@ -12,13 +12,13 @@ from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 from src.integrations.android_world.run_episode import _summarize_task_results
 
 
-def _write_mobilegpt_oob_artifact(
+def _write_mobilegpt_native_artifact(
     root: Path,
     *,
     device: str,
     official_instruction: str = "Complete the evaluated task.",
 ) -> Path:
-    result_file = root / "oob_client" / "task_results.jsonl"
+    result_file = root / "official_accessibility_client" / "task_results.jsonl"
     result_file.parent.mkdir(parents=True, exist_ok=True)
     result_file.write_text(
         json.dumps(
@@ -26,7 +26,9 @@ def _write_mobilegpt_oob_artifact(
                 "method": "mobilegpt",
                 "goal": official_instruction,
                 "official_task_instruction": official_instruction,
-                "mobilegpt_protocol": {"transport": "oob_control"},
+                "mobilegpt_protocol": {"transport": "official_accessibility"},
+                "physical_backend": "mobilegpt_official_accessibility",
+                "mobilegpt_native_action_index_protocol": "mobilegpt_official_accessibility_node_id_v1",
             }
         )
         + "\n",
@@ -41,10 +43,11 @@ def _write_mobilegpt_oob_artifact(
                     {
                         "method": "mobilegpt",
                         "device": device,
-                        "action_backend": "oob_control",
+                        "action_backend": "mobilegpt_official_accessibility",
+                        "physical_backend": "mobilegpt_official_accessibility",
                         "command": (
-                            "env OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND=oob "
-                            "python -m src.integrations.mobilegpt_oob_client"
+                            "python -m src.integrations.official_forward "
+                            "--baseline mobilegpt"
                         ),
                         "result_file": str(result_file),
                     }
@@ -389,7 +392,7 @@ def test_summary_reads_registry_when_current_index_is_stale(tmp_path: Path) -> N
 
 
 def test_concluded_result_keys_skip_immutable_failure_on_resume(tmp_path: Path) -> None:
-    artifact_root = _write_mobilegpt_oob_artifact(
+    artifact_root = _write_mobilegpt_native_artifact(
         tmp_path / "artifact", device="fold5564"
     )
     record_result_outcome(
@@ -422,7 +425,7 @@ def test_concluded_result_keys_maps_historical_label_to_current_device_model(
     tmp_path: Path,
 ) -> None:
     outcomes_root = tmp_path / "outcomes"
-    artifact_root = _write_mobilegpt_oob_artifact(
+    artifact_root = _write_mobilegpt_native_artifact(
         tmp_path / "artifact", device="small5562"
     )
     record_result_outcome(

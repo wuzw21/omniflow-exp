@@ -151,6 +151,29 @@ def _load_appagent_stats(path: str | Path) -> dict[str, Any]:
     }
 
 
+def _mobilegpt_stats_summary(path: str | Path) -> dict[str, Any]:
+    """Read the shared MobileGPT telemetry without duplicating its schema."""
+
+    stats_path = Path(path).expanduser()
+    if not str(path).strip() or not stats_path.is_file():
+        return {
+            "model_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "token_usage_status": "unavailable",
+            "memory_lookup_count": 0,
+            "memory_hit_count": 0,
+            "memory_hit_rate": 0.0,
+            "fallback_count": 0,
+            "action_sent_count": 0,
+            "actions_executed": 0,
+        }
+    from src.integrations.mobilegpt_memory import summarize_mobilegpt_stats
+
+    return summarize_mobilegpt_stats(stats_path)
+
+
 def _autodroid_memory_app_name(app_name: str) -> str:
     normalized = " ".join(str(app_name or "").strip().lower().split())
     return _AUTODROID_APP_ALIASES.get(normalized, normalized)
@@ -2454,7 +2477,16 @@ def _run_mobilegpt_client(
         ["shell", "settings", "get", "secure", "enabled_accessibility_services"],
         check=False,
     ).stdout.strip()
-    services = [value for value in current.split(":") if value and value != "null"]
+    disabled_non_mobilegpt_services = {
+        "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
+        "com.google.androidenv.accessibilityforwarder/"
+        "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
+    }
+    services = [
+        value
+        for value in current.split(":")
+        if value and value != "null" and value not in disabled_non_mobilegpt_services
+    ]
     if service not in services:
         services.append(service)
     # Android may retain the old accessibility manager state across an APK
@@ -2495,42 +2527,9 @@ def _run_mobilegpt_client(
         # its wall-clock timeout while producing no action or telemetry.
         raise RuntimeError("mobilegpt_accessibility_service_not_bound")
     time.sleep(2.0)
-    target_package = str(os.environ.get("MOBILEGPT_TARGET_PACKAGE") or "").strip()
-    if target_package:
-        # AndroidWorld task setup can leave an app disabled/stopped after a
-        # prior reset.  MobileGPT launches the package through its official
-        # Accessibility client, so make that cold-start precondition explicit
-        # before sending the task broadcast.
-        _run_adb(
-            adb_path,
-            serial,
-            ["shell", "pm", "enable", target_package],
-            check=False,
-        )
-        _run_adb(
-            adb_path,
-            serial,
-            ["shell", "am", "force-stop", target_package],
-            check=False,
-        )
-        target_launch = _launch_mobilegpt_target_app(
-            adb_path,
-            serial,
-            target_package,
-        )
-        (output / "target_app_launch.json").write_text(
-            json.dumps(target_launch, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        if not target_launch.get("started"):
-            raise RuntimeError(
-                "mobilegpt_target_app_launch_failed:"
-                f"{target_package}:{target_launch.get('returncode')}"
-            )
-        # Give the target activity one scheduling turn before the official
-        # client receives the instruction. This closes the tablet-only race
-        # where the Accessibility service is bound but still sees Launcher.
-        time.sleep(1.0)
+    # The official Accessibility service receives the instruction below and
+    # launches the target package itself from the Server's package frame.
+    # There is deliberately no target-app adb launch or OOB prelaunch here.
     _run_adb(adb_path, serial, ["logcat", "-c"])
     _run_adb(
         adb_path,
@@ -2732,18 +2731,148 @@ def run_mobilegpt_client(
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     server_log_path: str | Path = "",
 ) -> int:
-    """Reject the retired MobileGPT Accessibility-client execution path.
+    """Run the pinned official MobileGPT client inside AndroidWorld.
 
-    Formal AndroidWorld execution is owned by ``run_task.py`` and always
-    launches ``src.integrations.mobilegpt_oob_client``.  Keeping this former
-    public function callable would allow a direct ``official_forward`` CLI
-    invocation to bypass the repository's OOB-only physical-layer contract.
+    MobileGPT owns all observation, target-app launch, action selection and
+    Accessibility execution.  This wrapper only supplies the canonical
+    AndroidWorld task lifecycle and records the official validator result.
     """
 
-    raise RuntimeError(
-        "mobilegpt_legacy_client_disabled_use_oob:"
-        "scripts/exp/run_androidworld.sh"
-    )
+    if not android_world_root or not task_name:
+        return _run_mobilegpt_client(
+            official_root=official_root,
+            serial=serial,
+            adb_path=adb_path,
+            host=host,
+            instruction=instruction,
+            output_root=output_root,
+            timeout_sec=timeout_sec,
+            max_steps=max_steps,
+            server_port=server_port,
+            handshake_timeout_sec=handshake_timeout_sec,
+            server_log_path=server_log_path,
+        )
+
+    task_params = json.loads(str(task_params_json or "{}"))
+    if not isinstance(task_params, dict):
+        raise ValueError("androidworld_task_params_must_be_object")
+    started = time.monotonic()
+    output = Path(output_root).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    with _androidworld_task_startup(
+        android_world_root=android_world_root,
+        task_name=task_name,
+        task_params_json=task_params_json,
+        task_seed=task_seed,
+        console_port=console_port,
+        grpc_port=grpc_port,
+        adb_path=adb_path,
+        perform_emulator_setup=perform_emulator_setup,
+        use_uiautomator=False,
+    ) as (env, task):
+        official_instruction = str(
+            getattr(task, "goal", "") or instruction or task_name
+        ).strip()
+        returncode = _run_mobilegpt_client(
+            official_root=official_root,
+            serial=serial,
+            adb_path=adb_path,
+            host=host,
+            instruction=official_instruction,
+            output_root=output,
+            timeout_sec=timeout_sec,
+            max_steps=max_steps,
+            server_port=server_port,
+            handshake_timeout_sec=handshake_timeout_sec,
+            server_log_path=server_log_path,
+        )
+        reward = float(task.is_successful(env))
+        probe_path = output / "protocol_probe.json"
+        try:
+            probe = json.loads(probe_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            probe = {}
+        if not isinstance(probe, dict):
+            probe = {}
+        stats_path = Path(
+            os.environ.get("MOBILEGPT_STATS_JSONL", "")
+        ).expanduser()
+        stats = _mobilegpt_stats_summary(stats_path)
+        reason = str(probe.get("failure_reason") or "").strip()
+        environment_failure = reward <= 0.5 and _mobilegpt_environment_failure(
+            failure_reason=reason,
+            returncode=returncode,
+        )
+        result_row = {
+            "schema_version": "omniflow.androidworld.result.v1",
+            "task_name": task_name,
+            "task": task_name,
+            "goal": official_instruction,
+            "requested_instruction": instruction,
+            "official_task_instruction": official_instruction,
+            "task_params": task_params,
+            "task_params_sha256": hashlib.sha256(
+                json.dumps(
+                    task_params,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest(),
+            "method": "mobilegpt",
+            "device": serial,
+            "task_random_seed": int(task_seed),
+            "fixed_task_seed": True,
+            "fixed_task_params": True,
+            "official_validator_used": True,
+            "official_validator_success": reward > 0.5,
+            "official_validator_coverage_rate": 1.0,
+            "androidworld_validator_result": {
+                "validator": "androidworld_official",
+                "success": reward > 0.5,
+                "reward": reward,
+            },
+            "process_returncode": int(returncode),
+            "classification": (
+                "success"
+                if reward > 0.5
+                else "environment_failure"
+                if environment_failure
+                else "method_failure"
+            ),
+            "actions_executed": int(probe.get("action_sent_count") or 0),
+            "planner_steps": int(probe.get("action_sent_count") or 0),
+            **stats,
+            "token_usage_status": str(
+                stats.get("token_usage_status") or "unavailable"
+            ),
+            "fallback_steps": int(stats.get("fallback_count") or 0),
+            "mobilegpt_native_action_index_protocol": (
+                "mobilegpt_official_accessibility_node_id_v1"
+            ),
+            "mobilegpt_stats_jsonl": str(stats_path),
+            "mobilegpt_protocol": {
+                "transport": "official_accessibility",
+                "action_index": "mobilegpt_official_accessibility_node_id_v1",
+                "server_host": str(host),
+                "server_port": int(server_port),
+                "task_finished": bool(probe.get("task_finished")),
+            },
+            "environment_failure": environment_failure,
+            "failure_reason": reason,
+            "runtime_integrity_error": reason,
+            "physical_backend": "mobilegpt_official_accessibility",
+            "observe_backend": "mobilegpt_official_accessibility",
+            "action_backend": "mobilegpt_official_accessibility",
+            "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+            "protocol_probe": str(probe_path),
+        }
+        (output / "task_results.jsonl").write_text(
+            json.dumps(result_row, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return int(returncode)
 
 
 def run_appagent_executor(

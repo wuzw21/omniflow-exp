@@ -394,7 +394,7 @@ def test_converted_memory_remains_read_only_evidence(tmp_path: Path) -> None:
     ) is None
 
 
-def test_native_cold_memory_seals_as_formal_oob_source(tmp_path: Path) -> None:
+def test_native_cold_memory_seals_as_formal_official_source(tmp_path: Path) -> None:
     _, source_run_log = _write_source_index(tmp_path / "source")
     bundle = tmp_path / "bundle"
     memory = bundle / "memory"
@@ -409,7 +409,7 @@ def test_native_cold_memory_seals_as_formal_oob_source(tmp_path: Path) -> None:
                 "method": "mobilegpt",
                 "official_validator_used": True,
                 "official_validator_success": True,
-                "action_backend": "oob_control",
+                "action_backend": "mobilegpt_official_accessibility",
             }
         )
         + "\n",
@@ -431,9 +431,9 @@ def test_native_cold_memory_seals_as_formal_oob_source(tmp_path: Path) -> None:
     assert sealed["manifest"]["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
     assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
     assert sealed["manifest"]["provenance"]["native_mobilegpt_learning"] is True
-    assert sealed["manifest"]["provenance"]["physical_backend"] == "oob_control"
+    assert sealed["manifest"]["provenance"]["physical_backend"] == "mobilegpt_official_accessibility"
     assert validated["native_mobilegpt_learning"] is True
-    assert validated["physical_backend"] == "oob_control"
+    assert validated["physical_backend"] == "mobilegpt_official_accessibility"
 
 
 def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
@@ -597,7 +597,7 @@ def test_source_preflight_is_read_only_and_uses_no_function_store(
     assert result["source_emulator_required"] is True
 
 
-def test_source_prepare_runs_native_cold_episode_through_oob(
+def test_source_prepare_runs_native_cold_episode_through_official_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -622,14 +622,14 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
     )
     episode_output = tmp_path / "bundle" / "_source_episode" / "episode"
     episode = pipeline.CommandSpec(
-        label="mobilegpt:oob:source5560",
-        argv=["oob-client"],
+        label="mobilegpt:official-accessibility:source5560",
+        argv=["official-client"],
         env={},
         cwd=tmp_path,
         output_path=episode_output,
         metadata={
-            "observe_backend": "oob_control",
-            "action_backend": "oob_control",
+            "observe_backend": "mobilegpt_official_accessibility",
+            "action_backend": "mobilegpt_official_accessibility",
         },
     )
     monkeypatch.setattr(
@@ -651,7 +651,7 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
     monkeypatch.setattr(pipeline, "_stop_background_command", lambda *a, **k: None)
 
     def run_episode(spec: object) -> int:
-        calls.append("native_oob_episode")
+        calls.append("native_official_episode")
         episode_output.mkdir(parents=True)
         (episode_output / "task_results.jsonl").write_text("{}\n", encoding="utf-8")
         _write_stats(tmp_path / "bundle" / "source_stats.jsonl")
@@ -669,11 +669,11 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
         model="qwen3-vl-plus",
     )
 
-    assert calls == ["native_oob_episode", "seal"]
+    assert calls == ["native_official_episode", "seal"]
     assert result["teacher_forcing"] is False
     assert result["actions_supplied_to_mobilegpt"] is False
     assert result["source_emulator_used"] is True
-    assert result["physical_backend"] == "oob_control"
+    assert result["physical_backend"] == "mobilegpt_official_accessibility"
     assert server_arguments["target_package"] == "com.android.settings"
     assert server_arguments["target_app"] == "settings"
 

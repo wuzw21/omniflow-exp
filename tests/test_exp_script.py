@@ -445,21 +445,16 @@ def test_selected_model_profile_is_exported_for_native_openai_clients() -> None:
     assert 'export OPENAI_BASE_URL="$selected_model_base_url"' in script_text
 
 
-def test_androidworld_public_launcher_requires_oob_physical_backend() -> None:
+def test_androidworld_public_launcher_accepts_official_mobilegpt_backend() -> None:
     script_text = SCRIPT.read_text(encoding="utf-8")
 
     assert (
         'control_backend="${OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND:-oob}"'
         in script_text
     )
-    assert (
-        'if [[ "$execution_environment" == "androidworld" && '
-        '"$control_backend" != "oob" ]]'
-        in script_text
-    )
-    assert '"$1" != "oob"' in script_text
-    assert "--control-backend requires oob for AndroidWorld experiments." in script_text
-    assert "AndroidWorld execution requires the OOB physical backend." in script_text
+    assert '"$1" != "oob" && "$1" != "native_accessibility"' in script_text
+    assert "--control-backend requires oob or native_accessibility" in script_text
+    assert "AndroidWorld execution requires an approved physical backend" in script_text
 
 
 def test_androidworld_public_launcher_forwards_configured_preflight_disk_floor() -> None:

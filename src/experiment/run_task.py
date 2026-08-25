@@ -92,6 +92,7 @@ from src.integrations.android_world.methods import reuse_metrics_from_result_row
 from src.integrations.android_world.apps import resolve_androidworld_package
 from src.integrations.appagent import validate_appagent_memory
 from src.integrations.official_forward import (
+    resolve_mobilegpt_client_host,
     validate_autodroid_memory_root,
 )
 
@@ -1725,7 +1726,7 @@ def seal_mobilegpt_source_memory(
     source_wall_sec: float = 0.0,
     source_model: str = "",
 ) -> dict[str, Any]:
-    """Seal native memory written by a successful OOB-backed cold episode."""
+    """Seal native memory written by a successful official cold episode."""
 
     if int(source_seed) != SOURCE_SEED:
         raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
@@ -1752,10 +1753,13 @@ def seal_mobilegpt_source_memory(
     if not any(_validator_success(row) for row in official_rows):
         raise ValueError("mobilegpt_cold_memory_official_source_failed")
     if any(
-        str(row.get("action_backend") or "oob_control") != "oob_control"
+        str(row.get("action_backend") or "")
+        != "mobilegpt_official_accessibility"
         for row in official_rows
     ):
-        raise ValueError("mobilegpt_cold_memory_non_oob_source_forbidden")
+        raise ValueError(
+            "mobilegpt_cold_memory_non_official_accessibility_source_forbidden"
+        )
 
     from src.integrations.mobilegpt import validate_mobilegpt_memory
 
@@ -1839,7 +1843,7 @@ def seal_mobilegpt_source_memory(
             "function_conversion_enabled": False,
             "coordinate_replay": False,
             "source_emulator_used": True,
-            "physical_backend": "oob_control",
+            "physical_backend": "mobilegpt_official_accessibility",
         },
     }
     with manifest_path.open("x", encoding="utf-8") as handle:
@@ -2932,6 +2936,13 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "error": row.get("error"),
                 "runtime_integrity_error": row.get("runtime_integrity_error"),
                 "environment_failure": row.get("environment_failure"),
+                "physical_backend": row.get("physical_backend"),
+                "mobilegpt_protocol": row.get("mobilegpt_protocol"),
+                "mobilegpt_native_action_index_protocol": row.get(
+                    "mobilegpt_native_action_index_protocol"
+                ),
+                "action_backend": row.get("action_backend"),
+                "observe_backend": row.get("observe_backend"),
                 "oob_action_index_protocol": row.get(
                     "oob_action_index_protocol"
                 ),
@@ -5161,7 +5172,7 @@ def build_mobilegpt_command(
             fallback="run",
         )
     client_runtime_env = _subprocess_env({})
-    client_output = resolved_output / "oob_client"
+    client_output = resolved_output / "official_accessibility_client"
     effective_params = dict(task_params_override or item.params or {})
     instruction = task_goal_for_params(
         item.task,
@@ -5169,16 +5180,25 @@ def build_mobilegpt_command(
         android_world_root=android_world_root,
         task_params=effective_params,
     )
+    client_host = resolve_mobilegpt_client_host(
+        server_host,
+        serial=target.serial,
+        adb_path=adb_path,
+    )
     client_argv = [
         sys.executable,
         "-m",
-        "src.integrations.mobilegpt_oob_client",
+        "src.integrations.official_forward",
+        "--baseline",
+        "mobilegpt",
+        "--root",
+        str(resolve_path(mobilegpt_root, root=repo_root)),
         "--serial",
         target.serial,
         "--adb",
         str(adb_path or "adb"),
-        "--server-host",
-        str(server_host),
+        "--host",
+        str(client_host),
         "--instruction",
         instruction,
         "--output",
@@ -5217,11 +5237,8 @@ def build_mobilegpt_command(
         "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
         "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
         "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-        "MOBILEGPT_OOB_SERVER_HOST": "127.0.0.1",
-        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": str(
-            os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
-        ).strip().lower()
-        or "oob",
+        "MOBILEGPT_CLIENT_MODE": "official_accessibility",
+        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "native_accessibility",
         "PYTHONPATH": os.pathsep.join(
             value
             for value in (
@@ -5237,7 +5254,7 @@ def build_mobilegpt_command(
         if value:
             client_environment[key] = value
     return CommandSpec(
-        label=f"mobilegpt:oob:{target.label}",
+        label=f"mobilegpt:official-accessibility:{target.label}",
         argv=client_argv,
         env=client_environment,
         cwd=repo_root,
@@ -5246,18 +5263,19 @@ def build_mobilegpt_command(
             float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
         ),
         metadata={
-            "mode": "mobilegpt_official_planner_oob_control",
+            "mode": "mobilegpt_official_planner_native_accessibility",
             "device_target": target.to_dict(),
             "mobilegpt_stats_jsonl": str(stats_jsonl),
             "mobilegpt_server_host": str(server_host),
             "mobilegpt_server_port": int(server_port),
             "target_package": str(target_package or "").strip(),
-            "official_lifecycle": "mobilegpt_server_and_oob_client",
+            "official_lifecycle": "mobilegpt_server_and_official_accessibility_client",
             "official_server_entry": "Server/main.py",
-            "official_client_entry": "src.integrations.mobilegpt_oob_client",
+            "official_client_entry": "src.integrations.official_forward",
+            "official_client_class": "MobileGPTAccessibilityService",
             "official_client_output": str(client_output),
-            "observe_backend": "oob_control",
-            "action_backend": "oob_control",
+            "observe_backend": "mobilegpt_official_accessibility",
+            "action_backend": "mobilegpt_official_accessibility",
             "external_forward_only": True,
             "app_ready_timeout_sec": float(app_ready_timeout_sec),
             "app_ready_poll_sec": float(app_ready_poll_sec),

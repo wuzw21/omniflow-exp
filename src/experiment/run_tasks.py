@@ -344,12 +344,19 @@ def ensure_source_device(
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
-    oob_preflight = ensure_oob_device_ready(
-        str(args.adb_path),
-        source_serial,
-        timeout_seconds=min(30.0, deadline.remaining(30)),
-        repair=True,
-    )
+    if _e2e_methods(args) == ("mobilegpt",):
+        oob_preflight = {
+            "ready": True,
+            "backend": "mobilegpt_official_accessibility",
+            "reason": "mobilegpt_official_client_owns_physical_io",
+        }
+    else:
+        oob_preflight = ensure_oob_device_ready(
+            str(args.adb_path),
+            source_serial,
+            timeout_seconds=min(30.0, deadline.remaining(30)),
+            repair=True,
+        )
     if oob_preflight.get("ready") is not True:
         raise PipelinePhaseError(
             "source_oob_preflight_failed",
@@ -460,12 +467,19 @@ def ensure_target_devices(
                     "total_tokens": 0,
                 },
             )
-        oob_preflight = ensure_oob_device_ready(
-            str(args.adb_path),
-            serial,
-            timeout_seconds=min(30.0, deadline.remaining(30)),
-            repair=True,
-        )
+        if mobilegpt_selected and _e2e_methods(args) == ("mobilegpt",):
+            oob_preflight = {
+                "ready": True,
+                "backend": "mobilegpt_official_accessibility",
+                "reason": "mobilegpt_official_client_owns_physical_io",
+            }
+        else:
+            oob_preflight = ensure_oob_device_ready(
+                str(args.adb_path),
+                serial,
+                timeout_seconds=min(30.0, deadline.remaining(30)),
+                repair=True,
+            )
         device_phase["oob_preflight"] = oob_preflight
         if oob_preflight.get("ready") is not True:
             raise PipelinePhaseError(

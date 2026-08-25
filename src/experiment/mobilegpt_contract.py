@@ -8,6 +8,11 @@ MOBILEGPT_PREP_TYPE = "mobilegpt_native_source_cold_memory"
 MOBILEGPT_LEARNING_MODE = "mobilegpt_native_cold"
 MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
 MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL = "mobilegpt_source_node_id_v1"
+MOBILEGPT_NATIVE_PHYSICAL_BACKEND = "mobilegpt_official_accessibility"
+MOBILEGPT_NATIVE_TRANSPORT = "official_accessibility"
+MOBILEGPT_NATIVE_ACTION_INDEX_PROTOCOL = (
+    "mobilegpt_official_accessibility_node_id_v1"
+)
 
 # Historical RunLog-direct bundles remain readable evidence, but are not
 # selectable as formal MobileGPT source memory.

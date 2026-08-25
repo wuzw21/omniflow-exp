@@ -41,10 +41,10 @@ MobileGPT and AppAgent leave this native episode path after
 formal experiment labels, but not AndroidWorld agent adapters.
 
 MobileGPT 的 pinned Server 只负责 Planner 和 memory 决策。唯一 target client 是
-`src/integrations/mobilegpt_oob_client.py`：目标应用 `open_app`、每次 observe 和每个
-物理 action 全部经过 `OobControlClient`。`official_forward.py` 中退役的官方
-Accessibility client 入口会明确失败；AndroidWorld 只保留 task setup 与官方
-validator，不能接管物理动作。
+官方 App 中的 `MobileGPTAccessibilityService`，由
+`src/integrations/official_forward.py` 负责构建、安装、绑定和协议启动；目标应用
+`open_app`、每次 observe 和每个物理 action 全部由官方 Accessibility client 完成。
+AndroidWorld 只保留 task setup 与官方 validator，不能接管 MobileGPT 物理动作。
 
 The boundaries inside this path are intentionally different:
 
@@ -150,8 +150,8 @@ baseline 记录时经过的五个位置：
 | `mobilegpt_source.py` | 如何在 seed 111 source emulator 上运行 MobileGPT 官方 cold learning，并封存其原生 Prepared Memory？ | MobileGPT Planner/Executor 内部、target 调度 |
 | `mobilegpt.py` | 如何启动/校验 MobileGPT Server 与官方原生 memory reader？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
-| `official_forward.py` | 如何准备 MobileGPT Server workspace，以及转发 AppAgent/AutoDroid？ | MobileGPT target client、provider memory 转换、官方 agent/action loop |
-| `mobilegpt_oob_client.py` | 如何把 MobileGPT Server 决策严格适配到唯一 OOB 物理层？ | memory 转换、Server Planner、AndroidWorld validator 实现 |
+| `official_forward.py` | 如何准备 MobileGPT Server workspace，并启动官方 Accessibility client？ | MobileGPT memory 转换、Server Planner、AndroidWorld validator 实现 |
+| `mobilegpt_oob_client.py` | 历史 OOB MobileGPT client 的只读兼容实现 | 正式 MobileGPT 调度和新结果登记 |
 | `checks.py` | 这次运行的依赖、root 设备、已安装 Accessibility 服务和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |

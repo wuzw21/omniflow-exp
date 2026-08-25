@@ -497,22 +497,30 @@ def _fake_androidworld_session(task: object):
     yield object(), task
 
 
-def test_legacy_mobilegpt_client_entry_is_disabled(
+def test_mobilegpt_client_entry_delegates_to_official_accessibility_client(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(
-        RuntimeError,
-        match="mobilegpt_legacy_client_disabled_use_oob",
-    ):
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        official_forward,
+        "_run_mobilegpt_client",
+        lambda **kwargs: calls.append(kwargs) or 0,
+    )
+    assert (
         official_forward.run_mobilegpt_client(
             official_root=tmp_path / "MobileGPT",
             serial="emulator-5560",
             adb_path="adb",
-            host="127.0.0.1",
+            host="10.0.2.2",
             instruction="Run the stopwatch.",
             output_root=tmp_path / "result",
             timeout_sec=10,
         )
+        == 0
+    )
+    assert calls[0]["official_root"] == tmp_path / "MobileGPT"
+    assert calls[0]["host"] == "10.0.2.2"
 
 
 def test_appagent_forwarder_only_mounts_official_inputs(tmp_path: Path) -> None:

@@ -321,7 +321,7 @@ def prepare_mobilegpt_source_memory(
     timeout_sec: float = 600.0,
     perform_emulator_setup: bool = True,
 ) -> dict[str, Any]:
-    """Run MobileGPT's native cold learning through the canonical OOB client."""
+    """Run MobileGPT's native cold learning through its official client."""
 
     normalized_model = str(model or "").strip()
     if not normalized_model:
@@ -393,7 +393,7 @@ def prepare_mobilegpt_source_memory(
             "learning_mode": MOBILEGPT_LEARNING_MODE,
             "teacher_forcing": False,
             "runlog_conversion_used": False,
-            "physical_backend": "oob_control",
+            "physical_backend": "mobilegpt_official_accessibility",
         },
     )
 
@@ -420,10 +420,10 @@ def prepare_mobilegpt_source_memory(
         timeout_sec=float(timeout_sec),
         server_log_path=str(server_spec.metadata.get("log_path") or ""),
     )
-    if episode_spec.metadata.get("action_backend") != "oob_control":
-        raise RuntimeError("mobilegpt_source_requires_oob_action_backend")
-    if episode_spec.metadata.get("observe_backend") != "oob_control":
-        raise RuntimeError("mobilegpt_source_requires_oob_observe_backend")
+    if episode_spec.metadata.get("action_backend") != "mobilegpt_official_accessibility":
+        raise RuntimeError("mobilegpt_source_requires_official_accessibility_actions")
+    if episode_spec.metadata.get("observe_backend") != "mobilegpt_official_accessibility":
+        raise RuntimeError("mobilegpt_source_requires_official_accessibility_observations")
     (bundle_root / "source_episode_command.json").write_text(
         json.dumps(
             {
@@ -433,7 +433,7 @@ def prepare_mobilegpt_source_memory(
                 "server_command": pipeline._command_line(server_spec),
                 "episode_command": pipeline._command_line(episode_spec),
                 "source_audit": source_audit,
-                "physical_backend": "oob_control",
+                "physical_backend": "mobilegpt_official_accessibility",
             },
             ensure_ascii=False,
             indent=2,
@@ -490,7 +490,7 @@ def prepare_mobilegpt_source_memory(
         "actions_supplied_to_mobilegpt": False,
         "runlog_conversion_used": False,
         "source_emulator_used": True,
-        "physical_backend": "oob_control",
+        "physical_backend": "mobilegpt_official_accessibility",
         "source_stats": str(stats_path),
         "source_stats_summary": str(stats_summary_path),
         "official_source_result": str(result_path),

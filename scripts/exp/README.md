@@ -39,11 +39,10 @@ SHA 或对象仓库。不会再
 
 ## 一键安装并启动设备
 
-同一个入口也负责设备 setup；它会安装 OOB 及所需依赖 APK，但设备上只启用
-OOB Accessibility 服务。MobileGPT client 和 AndroidWorld forwarder 即使作为
-依赖存在也会从 enabled service 列表移除。setup 随后检查
-AndroidWorld/OmniTransfer/AppAgent/MobileGPT 的 host 环境，并用当前 OOB observe
-bridge 做最小通信探针：
+同一个入口也负责设备 setup；它会安装所需依赖 APK。OmniFlow 使用 OOB
+Accessibility 服务，MobileGPT 正式运行则由官方 MobileGPT Accessibility client
+接管服务、目标应用启动、observe 和 act。setup 随后检查
+AndroidWorld/OmniTransfer/AppAgent/MobileGPT 的 host 环境：
 
 ```bash
 PYTHON_BIN=/absolute/.venv/bin/python \
@@ -54,9 +53,9 @@ bash scripts/exp/run_androidworld.sh --setup-device tablet45554
 
 `--setup-device` 可接单个 label、逗号列表或 `all`；`all` 包含三个 target
 和 source 设备。报告写到
-`data/androidworld/.archive/setup/<UTC>/setup_report.json`。缺少 OOB
-的当前 `OBSERVE_OMNIFLOW`/`CONTROL_OMNIFLOW` receiver、缺少 APK、协议版本
-不匹配或 accessibility 未 bound 都会失败，不会开始实验。默认会补齐 Python
+`data/androidworld/.archive/setup/<UTC>/setup_report.json`。缺少所选方法需要的
+Accessibility service、缺少 APK、协议版本不匹配或 accessibility 未 bound 都会
+失败，不会开始实验。默认会补齐 Python
 依赖；AndroidWorld 音频任务需要的 `ffmpeg` 也由 setup 以用户态
 `imageio-ffmpeg` 安装并暴露到 `~/.local/bin`，不需要 sudo。只做已有环境验收时
 设 `OMNIFLOW_SETUP_INSTALL_PYTHON=0`。
@@ -77,7 +76,7 @@ bash scripts/exp/run_androidworld.sh --setup-device tablet45554
 
 MobileGPT 的可复用 memory 只能由 seed 111 的 source emulator 冷启动学习生成。
 统一 setup 创建 AndroidWorld task；MobileGPT 官方 Server 执行原生 Explore、Select、
-Derive 和 memory 保存，物理 `open_app`、observe、act 仍只经过 OOB。成功 RunLog 只
+Derive 和 memory 保存；官方 Accessibility client 执行物理 `open_app`、observe、act。成功 RunLog 只
 提供 task/source 身份和不可变 provenance，不向 MobileGPT 注入动作，也不转换成
 正式 memory；cold episode 必须由官方 validator 判定成功，完整原生 memory 图才会
 封存并注册。只准备/校验 memory 而不启动 seed 113 target 时使用：
@@ -85,11 +84,9 @@ Derive 和 memory 保存，物理 `open_app`、observe、act 仍只经过 OOB。
 MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试的环境/
 适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
 因此完成跳过不会把连接或 Server 崩溃误登记成 method failure。
-目标 episode 在连接 MobileGPT Planner 之前，必须先由 OOB `open_app` 启动并验证
-前台包；Planner 只选择后续动作，不能接管或绕过物理启动。Planner 没有返回动作时，
-保留已经完成的 OOB 启动证据，并把空响应单独登记为方法/协议错误。
-正式执行不会安装或启动 MobileGPT Android Accessibility client；直接调用历史
-`official_forward.py --baseline mobilegpt` 会硬失败。
+目标 episode 由官方 Accessibility client 根据 Server 返回的目标包名启动；Planner
+和 Executor 均保持 MobileGPT 官方实现。Planner 没有返回动作时，保留官方协议证据，
+并把空响应单独登记为方法/协议错误。
 
 ```bash
 bash scripts/exp/run_androidworld.sh \
@@ -188,7 +185,8 @@ supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot resto
 固定实验值：source seed `111`、evaluation seed `113`。OmniFlow Planner 使用
 `Qwen3.6-Plus` 的非流式单工具请求；需要图片输入的外部视觉方法继续使用
 `GLM-4.6V`。
-`--control-backend oob` 用于 OOB observe/act transport。
+`--control-backend oob` 用于 OmniFlow 的 OOB observe/act；MobileGPT 使用
+`--control-backend native_accessibility` 或其唯一官方 launcher profile。
 
 ## 环境变量
 
