@@ -2668,10 +2668,44 @@ def _run_official_mobilegpt_authoring(
         ),
     )
 
+    authoring_page_similarity_threshold = float(
+        os.getenv("MOBILEGPT_AUTHORING_PAGE_SIMILARITY_THRESHOLD", "1.0")
+    )
+    if not 0.0 < authoring_page_similarity_threshold <= 1.0:
+        raise MobileGPTConversionError(
+            "official_authoring_page_similarity_threshold_invalid"
+        )
+
     with tempfile.TemporaryDirectory(prefix="mobilegpt-official-authoring-") as temp:
         workspace = Path(temp)
         server_root = workspace / "Server"
         shutil.copytree(server_source, server_root)
+        # Authoring must preserve every observed source state as evidence.
+        # Upstream's 0.95 page threshold can collapse two different settings
+        # screens with similar widget structure into one page, which stores a
+        # later action under the wrong observation and makes cross-device
+        # recall impossible.  Exact repeats still match at 1.0; distinct
+        # RunLog states are authored as distinct official MobileGPT pages.
+        memory_manager_path = server_root / "memory" / "memory_manager.py"
+        memory_manager_source = memory_manager_path.read_text(encoding="utf-8")
+        threshold_anchor = "            if highest_similarity > 0.95:\n"
+        threshold_replacement = (
+            "            authoring_threshold = float(os.getenv(\n"
+            "                \"MOBILEGPT_AUTHORING_PAGE_SIMILARITY_THRESHOLD\", \"1.0\"))\n"
+            "            if highest_similarity > authoring_threshold:\n"
+        )
+        if threshold_anchor not in memory_manager_source:
+            raise MobileGPTConversionError(
+                "official_authoring_page_threshold_anchor_missing"
+            )
+        memory_manager_path.write_text(
+            memory_manager_source.replace(
+                threshold_anchor,
+                threshold_replacement,
+                1,
+            ),
+            encoding="utf-8",
+        )
         # Keep the upstream OpenAI helper on direct JSON content by disabling
         # the optional reasoning channel. This does not change any MobileGPT
         # prompt or agent logic.
@@ -2700,6 +2734,9 @@ def _run_official_mobilegpt_authoring(
             "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
             "MOBILEGPT_TARGET_TASK_NAME": str(trajectory["task_name"]),
             "MOBILEGPT_STATS_JSONL": str(stats),
+            "MOBILEGPT_AUTHORING_PAGE_SIMILARITY_THRESHOLD": str(
+                authoring_page_similarity_threshold
+            ),
         }
         for name in (
             "TASK_AGENT_GPT_VERSION",
@@ -3302,6 +3339,7 @@ def _run_official_mobilegpt_authoring(
         "derive_agent_fallback_count": 0,
         "source_example_fallback_count": 0,
         "generalize_action_used": True,
+        "authoring_page_similarity_threshold": authoring_page_similarity_threshold,
         "direct_subtasks_from_runlog": False,
         "source_reader_coverage_validation": False,
         "actions_supplied_to_mobilegpt": False,
