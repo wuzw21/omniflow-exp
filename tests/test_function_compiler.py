@@ -581,6 +581,9 @@ def test_authoring_prompt_forbids_hiding_observation_dependent_repeats(
     assert "never merely hard-code\nthe successful instance values" in system_prompt
     assert "Do not invent a nesting or parent/child schema" in system_prompt
     assert "Do not output input_schema, bindings, steps, actions" in system_prompt
+    assert "generic canvas, background, grid cell" in system_prompt
+    assert "month_view_background" in system_prompt
+    assert "Never preserve the\nsource coordinate" in system_prompt
     assert captured["max_tokens"] == 512
     assert captured["stream"] is False
     assert captured["reasoning_effort"] == "none"

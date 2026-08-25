@@ -196,6 +196,15 @@ encode repetition count when the task requires reading changing UI after each
 repeat. Keep one representative action as a one-step Function and let the Planner
 call it repeatedly.
 
+Do not put a coordinate-only action on a generic canvas, background, grid cell,
+map surface, drawing surface, or other reusable container into a cross-instance
+Function when the coordinate is what identifies the date, item, or value. A
+resource id or label such as `month_view_background` is not enough semantic
+grounding for the selected cell. Treat that action as an observation-dependent
+handoff boundary: stop the Function before it, and let the Planner inspect the
+current page and choose the visible target with native tools. Never preserve the
+source coordinate merely because the source RunLog succeeded.
+
 Do not reinterpret onboarding, installers, permissions, ads, errors, waits, or
 navigation accidents as standalone capabilities. Omit unsafe or unclear actions
 and explain each omission. Preserve the successful source order.
