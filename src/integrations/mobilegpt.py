@@ -81,6 +81,21 @@ _SUPPORTED_ACTION_TYPES = frozenset(
         "swipe",
     }
 )
+
+
+def _is_input_cleanup_delete(
+    action: dict[str, Any],
+    transitions: list["_RunLogTransition"],
+) -> bool:
+    """Recognize source-only newline cleanup after AndroidWorld text input."""
+
+    if _action_type(action) != "press_keyboard" or not transitions:
+        return False
+    key = str(action.get("keycode") or action.get("key") or "").strip().lower()
+    return (
+        key in {"del", "delete", "keycode_del"}
+        and _action_type(transitions[-1].action) == "input_text"
+    )
 _ANDROIDWORLD_SWIPE_TO_MOBILEGPT_SCROLL = {
     "up": "down",
     "down": "up",
@@ -712,6 +727,11 @@ def _load_runlog_trajectory(
         if action_type in _SKIPPED_ACTION_TYPES:
             skipped.append({"step_index": step_index, "action_type": action_type})
             continue
+        if _is_input_cleanup_delete(action, transitions):
+            skipped.append(
+                {"step_index": step_index, "action_type": "input_text_cleanup"}
+            )
+            continue
         if action_type not in _SUPPORTED_ACTION_TYPES:
             raise MobileGPTConversionError(
                 "source_action_unsupported",
@@ -962,6 +982,11 @@ def _load_compact_runlog_trajectory(
                 launch_step_index = ordinal
         if action_type in _SKIPPED_ACTION_TYPES:
             skipped.append({"step_index": ordinal, "action_type": action_type})
+            continue
+        if _is_input_cleanup_delete(action, transitions):
+            skipped.append(
+                {"step_index": ordinal, "action_type": "input_text_cleanup"}
+            )
             continue
         if action_type not in _SUPPORTED_ACTION_TYPES:
             raise MobileGPTConversionError(

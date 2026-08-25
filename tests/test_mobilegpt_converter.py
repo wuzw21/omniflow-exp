@@ -354,6 +354,33 @@ def test_conversion_rejects_unrepresentable_actions(tmp_path: Path) -> None:
     assert report["failure_details"]["action_type"] == "navigate_home"
 
 
+def test_conversion_skips_delete_key_used_only_to_clean_input_text_newline(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "index": 1, "text": "hello"},
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_DEL"},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" editable="true" '
+            'bounds="[0,0][100,100]" /></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" editable="true" '
+            'text="hello\n" bounds="[0,0][100,100]" /></hierarchy>',
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+
+    assert [step.action["action_type"] for step in trajectory["transitions"]] == [
+        "input_text"
+    ]
+    assert trajectory["skipped_actions"] == [
+        {"step_index": 1, "action_type": "input_text_cleanup"}
+    ]
+
+
 def test_scroll_source_is_passed_to_official_authoring_boundary(tmp_path: Path) -> None:
     source = _write_runlog(
         tmp_path / "source.json",
