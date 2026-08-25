@@ -74,10 +74,15 @@ def build_model_turn_request(
         and function.steps[0].action.tool == "open_app"
     )
     compact_global_startup = bool(global_functions) and not lightweight_retry
+    completion_review = has_successful_function_action(state.get("extra"))
     projection = (
         UIProjection("<omitted>", 0, 0, 0)
         if lightweight_retry or compact_global_startup
-        else project_ui(str(state.get("xml") or ""), goal)
+        else project_ui(
+            str(state.get("xml") or ""),
+            goal,
+            include_all_nodes=completion_review,
+        )
     )
     text = _turn_text(
         goal=goal,
@@ -255,6 +260,9 @@ def parse_model_turn_response(
                 projection = project_ui(
                     str((state or {}).get("xml") or ""),
                     goal,
+                    include_all_nodes=has_successful_function_action(
+                        (state or {}).get("extra")
+                    ),
                 )
                 grounded = projected_node_center(
                     projection,
@@ -481,11 +489,13 @@ def _turn_text(
         if isinstance(raw_extra, dict)
         else None
     )
+    completion_review_required = False
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
         if has_successful_function_action(context):
+            completion_review_required = True
             lines.append(
                 "The recalled Function action plan finished successfully and its "
                 "effects are already applied. Manually judge the complete user "
@@ -515,10 +525,36 @@ def _turn_text(
                 )
             )
     if not lightweight_retry:
+        projection_label = (
+            "Complete accessibility nodes"
+            if completion_review_required
+            else "Relevant UI elements"
+        )
         lines.extend(
             (
-                f"Relevant UI elements (1-{projection.selected_count}); {projection.candidate_count} candidates:",
+                f"{projection_label} ({projection.selected_count}/{projection.candidate_count}):",
                 projection.text,
+            )
+        )
+    if completion_review_required:
+        lines.extend(
+            (
+                "Completion review uses the complete accessibility tree above; no "
+                "node was removed by relevance ranking or the normal node limit.",
+                (
+                    "Compact keys: k=class/tag, i=node id, t=text, d=description, "
+                    "h=hint, r=resource id, b=bounds, a=actions, v=action reference."
+                ),
+                (
+                    "Judge the user goal from both the completed Function history "
+                    "and every current node. Lines without v remain valid state "
+                    "evidence even though they are not actionable."
+                ),
+                (
+                    "Choose finished only after judging that the complete goal is "
+                    "satisfied. Otherwise choose one next Action and name the "
+                    "specific missing condition in its summary."
+                ),
             )
         )
     return "\n".join(lines)

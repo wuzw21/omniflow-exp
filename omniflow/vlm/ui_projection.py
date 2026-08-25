@@ -110,7 +110,13 @@ class ProjectedNode:
     inside_webview: bool = False
 
 
-def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection:
+def project_ui(
+    xml_text: str,
+    goal: str,
+    *,
+    max_nodes: int = 30,
+    include_all_nodes: bool = False,
+) -> UIProjection:
     try:
         root = ET.fromstring(str(xml_text or ""))
     except ET.ParseError:
@@ -122,6 +128,8 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
         compact: dict[str, object] = {}
         semantic_values: list[str] = []
         visible_semantic_values: list[str] = []
+        if include_all_nodes:
+            compact["k"] = str(element.attrib.get("class") or element.tag).strip()
         node_id = str(element.attrib.get("id") or "").strip()
         if node_id:
             compact["i"] = node_id
@@ -137,7 +145,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
             for attribute, output_value in _ACTION_ATTRIBUTES
             if str(element.attrib.get(attribute) or "").strip().lower() == "true"
         ]
-        if not semantic_values and not actions:
+        if not include_all_nodes and not semantic_values and not actions:
             continue
         descendant_context = (
             _descendant_context(element) if actions and not visible_semantic_values else ""
@@ -183,9 +191,14 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
                 inside_webview=id(element) in webview_elements,
             )
         )
-    candidates = _prune_redundant_candidates(candidates, goal)
+    if not include_all_nodes:
+        candidates = _prune_redundant_candidates(candidates, goal)
     candidates = _promote_goal_controls(candidates)
-    selected = _select_candidates(candidates, max_nodes=max_nodes)
+    selected = (
+        _order_all_candidates(candidates)
+        if include_all_nodes
+        else _select_candidates(candidates, max_nodes=max_nodes)
+    )
     text, nodes = _render_candidates(selected)
     return UIProjection(
         text=text or "<none>",
@@ -202,6 +215,19 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
     )
 
 
+def _order_all_candidates(candidates: list[_Candidate]) -> list[_Candidate]:
+    """Order the complete tree for the model without dropping any XML node."""
+
+    return sorted(
+        candidates,
+        key=lambda item: (
+            _GROUP_ORDER.index(item.group),
+            _screen_order(item),
+            item.order,
+        ),
+    )
+
+
 def projected_node_center(
     projection: UIProjection,
     target_description: str,
@@ -209,7 +235,7 @@ def projected_node_center(
     target = _normalized_label(target_description)
     if not target:
         return None
-    reference_match = re.search(r"(?<![a-z0-9])a\d{2}(?![a-z0-9])", target)
+    reference_match = re.search(r"(?<![a-z0-9])a\d{2,}(?![a-z0-9])", target)
     if reference_match is None or reference_match.group(0) != target:
         return None
     reference = reference_match.group(0).upper()
