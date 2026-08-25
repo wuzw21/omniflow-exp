@@ -331,6 +331,25 @@ def prepare_mobilegpt_source_memory(
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
+    resolved_target_package = pipeline._resolve_mobilegpt_target_package(
+        target_info["target_package"],
+        adb_path=str(adb_path),
+        serial=str(serial),
+        android_world_root=android_world_root,
+    )
+    if not resolved_target_package or "." not in resolved_target_package:
+        raise ValueError(
+            "mobilegpt_source_target_package_unresolved:"
+            + str(target_info["target_package"])
+        )
+    target_info = {
+        **target_info,
+        "target_package": resolved_target_package,
+    }
+    source_audit = {
+        **source_audit,
+        "target_package": resolved_target_package,
+    }
     bundle_root = Path(output_root).expanduser().resolve()
     if bundle_root.exists():
         raise FileExistsError(

@@ -601,8 +601,12 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    index, _ = _write_source_index(tmp_path / "source")
+    index, _ = _write_source_index(
+        tmp_path / "source",
+        action={"action_type": "open_app", "app_name": "settings"},
+    )
     calls: list[str] = []
+    server_arguments: dict[str, object] = {}
 
     def seal(**kwargs: object) -> dict[str, object]:
         calls.append("seal")
@@ -628,7 +632,19 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
             "action_backend": "oob_control",
         },
     )
-    monkeypatch.setattr(pipeline, "build_mobilegpt_server_command", lambda *a, **k: server)
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_mobilegpt_target_package",
+        lambda candidate, **_kwargs: (
+            "com.android.settings" if candidate == "settings" else candidate
+        ),
+    )
+
+    def build_server(*_args: object, **kwargs: object) -> pipeline.CommandSpec:
+        server_arguments.update(kwargs)
+        return server
+
+    monkeypatch.setattr(pipeline, "build_mobilegpt_server_command", build_server)
     monkeypatch.setattr(pipeline, "_configure_mobilegpt_formal_server", lambda spec, **k: spec)
     monkeypatch.setattr(pipeline, "build_mobilegpt_command", lambda *a, **k: episode)
     monkeypatch.setattr(pipeline, "_start_background_command", lambda *a, **k: (object(), 0))
@@ -658,6 +674,8 @@ def test_source_prepare_runs_native_cold_episode_through_oob(
     assert result["actions_supplied_to_mobilegpt"] is False
     assert result["source_emulator_used"] is True
     assert result["physical_backend"] == "oob_control"
+    assert server_arguments["target_package"] == "com.android.settings"
+    assert server_arguments["target_app"] == "settings"
 
 
 def test_runlog_conversion_official_reader_and_sealer_close_the_loop(
