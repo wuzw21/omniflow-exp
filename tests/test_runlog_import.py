@@ -103,6 +103,37 @@ def test_click_projection_preserves_clickable_node_semantics() -> None:
     ]
 
 
+def test_click_projection_promotes_descendant_label_from_clickable_row() -> None:
+    payload = androidworld_run_log([{"action_type": "click", "x": 360, "y": 640}])
+    payload["steps"][0]["observation"] = {
+        "pixels": None,
+        "forest": (
+            '<hierarchy width="720" height="1280">'
+            '<node class="android.view.ViewGroup" clickable="true" '
+            'bounds="[0,576][720,704]">'
+            '<node class="android.widget.TextView" text="Finance" '
+            'bounds="[30,600][300,680]" />'
+            "</node></hierarchy>"
+        ),
+        "ui_elements": [],
+        "auxiliaries": {
+            "state_id": "finance-row",
+            "display": {"width": 720, "height": 1280},
+        },
+    }
+
+    assert project_androidworld_step_actions(payload["steps"][0]) == [
+        {
+            "tool": "click",
+            "args": {
+                "target_description": "Finance",
+                "x": 500.0,
+                "y": 500.0,
+            },
+        }
+    ]
+
+
 def test_fixed_replay_capture_preserves_native_androidworld_state() -> None:
     native_state = androidworld_state("capture", with_pixels=True)
     observation = SimpleNamespace(

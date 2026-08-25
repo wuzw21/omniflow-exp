@@ -285,6 +285,17 @@ def _androidworld_input_target_description(node: ET.Element) -> str:
         value = str(node.attrib.get(attribute) or "").strip()
         if value:
             return value.rsplit("/", 1)[-1]
+    # AndroidWorld often exposes a clickable row/container without its child
+    # label on the clickable node itself.  Promote the first meaningful
+    # descendant label so the Function records the semantic target (for
+    # example, a notebook name) instead of the generic "editable text field".
+    for descendant in node.iter():
+        if descendant is node:
+            continue
+        for attribute in ("content-desc", "text"):
+            value = str(descendant.attrib.get(attribute) or "").strip()
+            if value:
+                return value
     return "editable text field"
 
 

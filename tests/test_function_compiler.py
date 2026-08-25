@@ -10,6 +10,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import (
     _atomicize_repeated_click_function,
+    _materialize_authoring_plan,
     compile_runlog_to_store,
 )
 from omniflow.runlog import import_run_log_evidence
@@ -123,6 +124,62 @@ def test_compiler_omits_incidental_android_crash_dialog_dismissal(
         "open_app",
         "click",
     ]
+
+
+def test_compiler_exposes_goal_named_click_label_as_function_parameter() -> None:
+    facts = {
+        "run_id": "goal-named-label",
+        "goal": "Count to-dos in the Finance folder.",
+        "steps": [
+            {
+                "before_state_id": "launcher",
+                "action": {
+                    "tool": "open_app",
+                    "args": {"package_name": "net.cozic.joplin"},
+                },
+                "result": {"success": True},
+            },
+            {
+                "before_state_id": "sidebar",
+                "action": {
+                    "tool": "click",
+                    "args": {
+                        "target_description": "Finance",
+                        "x": 500.0,
+                        "y": 500.0,
+                    },
+                },
+                "result": {"success": True},
+            },
+        ],
+    }
+    proposal = {
+        "reason": "Navigate to the requested folder.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_joplin_folder",
+                "name": "Open the requested folder",
+                "description": "Open the requested folder in Joplin.",
+                "source_step_indices": [0, 1],
+                "parameters": [],
+            },
+        },
+    }
+
+    result = _materialize_authoring_plan(proposal, facts)
+    function = result["bundle"]["functions"][0]
+    assert function["input_schema"]["required"] == ["folder"]
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.folder",
+            "target": "$.steps[1].action.args.target_description",
+        }
+    ]
+    assert function["steps"][1]["action"]["args"]["target_description"] == ""
+    assert result["bundle"]["arguments"]["open_joplin_folder"] == {
+        "folder": "Finance"
+    }
 
 
 def test_compiler_promotes_launcher_app_click_to_global_open_app(

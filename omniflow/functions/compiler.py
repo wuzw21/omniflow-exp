@@ -850,6 +850,23 @@ def _materialize_authoring_plan(
                         "Compiler copied a validated semantic parameter onto "
                         "the complete Function API."
                     )
+            for automatic_parameter in _goal_semantic_parameters(
+                facts,
+                indices=indices,
+                candidates=candidates,
+                existing_targets=explicit_targets
+                | set(semantic_parameter_specs),
+                existing_names={
+                    str(parameter.get("name") or "").strip()
+                    for parameter in raw_parameters
+                    if isinstance(parameter, dict)
+                },
+            ):
+                raw_parameters.append(automatic_parameter)
+                materialization_notes.append(
+                    "Compiler exposed a source label explicitly named by the "
+                    "goal as a public Function API parameter."
+                )
         parameter_proposals: list[dict[str, Any]] = []
         source_arguments: dict[str, Any] = {}
         for parameter in raw_parameters:
@@ -948,6 +965,67 @@ def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int
         if value and value not in goal:
             indices.add(index)
     return frozenset(indices)
+
+
+def _goal_semantic_parameters(
+    facts: dict[str, Any],
+    *,
+    indices: list[int],
+    candidates: dict[tuple[int, str], dict[str, Any]],
+    existing_targets: set[tuple[int, str]],
+    existing_names: set[str],
+) -> list[dict[str, Any]]:
+    """Expose goal-named labels that are part of the public task API.
+
+    Authoring should normally choose these bindings.  The deterministic rule
+    covers the important failure mode where a model describes a selected
+    folder/item correctly but leaves the literal source label hard-coded.
+    It only applies when the exact label appears in the goal and the goal has
+    an unambiguous semantic slot (folder, file, contact, etc.); navigation
+    labels such as Sidebar are therefore left fixed.
+    """
+    goal = " ".join(str(facts.get("goal") or "").casefold().split())
+    result: list[dict[str, Any]] = []
+    for source_index in indices:
+        candidate = candidates.get((source_index, "target_description"))
+        if candidate is None or (source_index, "target_description") in existing_targets:
+            continue
+        value = " ".join(str(candidate.get("recorded_value") or "").casefold().split())
+        if not value or len(value) < 2 or value not in goal:
+            continue
+        parameter_name, description = _goal_parameter_slot(goal)
+        if not parameter_name or parameter_name in existing_names:
+            continue
+        result.append(
+            {
+                "name": parameter_name,
+                "description": description,
+                "source_step_index": source_index,
+                "arg_name": "target_description",
+            }
+        )
+        existing_targets.add((source_index, "target_description"))
+        existing_names.add(parameter_name)
+    return result
+
+
+def _goal_parameter_slot(goal: str) -> tuple[str, str]:
+    slots = (
+        ("folder", "Folder or notebook named by the user."),
+        ("directory", "Directory named by the user."),
+        ("file", "File named by the user."),
+        ("contact", "Contact named by the user."),
+        ("person", "Person named by the user."),
+        ("recipe", "Recipe named by the user."),
+        ("event", "Event named by the user."),
+        ("task", "Task named by the user."),
+        ("note", "Note named by the user."),
+        ("app", "App named by the user."),
+    )
+    for marker, description in slots:
+        if re.search(rf"\b{re.escape(marker)}\b", goal):
+            return marker, description
+    return "", ""
 
 
 _GENERIC_COORDINATE_SURFACE_MARKERS = frozenset(
