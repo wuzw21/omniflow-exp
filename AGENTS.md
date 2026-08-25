@@ -34,6 +34,10 @@
 - OOB 只能在本地 canonical OpenOmniBot checkout 编译；4090 和 9207 只接收
   编译好的 APK，禁止向远程上传 OOB 源码、保留 OOB 编译 checkout 或
   执行 Gradle/OOB 构建。
+- 实验唯一 OOB 发布件固定为权威 OmniFlow-exp 中的
+  `data/runtime/oob/OOB-Experiment.apk`。新 OOB 版本只在本地编译一次并覆盖
+  该发布件；同一版本的所有设备、4090 和 9207 只传输、安装这一个
+  release，禁止从 OpenOmniBot build 临时目录重复打包或为每次 task 重建。
 
 本节是当前 AndroidWorld 运行的最高优先级项目规则；下文涉及旧 index、migration、
 seed/path preflight、结果注册或专项测试的历史描述不再适用。
