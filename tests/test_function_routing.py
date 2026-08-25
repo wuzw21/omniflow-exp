@@ -32,7 +32,7 @@ from omniflow.vlm.gui import (
     function_tools,
     parse_model_turn_response,
 )
-from omniflow.vlm.planner import VLMPlanner
+from omniflow.vlm.planner import VLMPlanner, _configured_http_proxy
 from src.integrations.android_world.agent import (
     _TaskHost,
     build_agent,
@@ -58,6 +58,17 @@ def test_planner_disables_hidden_openai_transport_retries(
     planner._build_client()
 
     assert options["max_retries"] == 0
+
+
+def test_planner_uses_http_proxy_instead_of_ambient_socks_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:7891")
+    monkeypatch.setenv("all_proxy", "socks5://127.0.0.1:7891")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+
+    assert _configured_http_proxy() == "http://127.0.0.1:7890"
 
 
 def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) -> None:

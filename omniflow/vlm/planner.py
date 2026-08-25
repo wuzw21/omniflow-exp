@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from omniflow.core.config import DEFAULT_MAX_STEPS
 from omniflow.core.model import Function, Observation, ToolCall
@@ -205,7 +207,39 @@ class VLMPlanner:
         }
         if self._base_url:
             options["base_url"] = self._base_url
+        # The experiment hosts may export both an HTTP proxy and an ALL_PROXY
+        # SOCKS endpoint.  httpx prefers ALL_PROXY in that situation, which
+        # requires the optional socksio package and makes an otherwise healthy
+        # OpenAI-compatible endpoint fail before a request is sent.  Give the
+        # client an explicit HTTP(S) proxy and disable ambient proxy discovery;
+        # this preserves the working proxy without inheriting the broken SOCKS
+        # setting.  If no HTTP(S) proxy is configured, the client uses direct
+        # networking.
+        try:
+            import httpx
+
+            http_proxy = _configured_http_proxy()
+            http_client_options: dict[str, Any] = {"trust_env": False}
+            if http_proxy:
+                http_client_options["proxy"] = http_proxy
+            options["http_client"] = httpx.Client(**http_client_options)
+        except ImportError:
+            # OpenAI already depends on httpx, but retain the normal SDK error
+            # path if a minimal installation omitted the optional dependency.
+            pass
         return OpenAI(**options)
+
+
+def _configured_http_proxy() -> str | None:
+    """Return a usable HTTP(S) proxy without selecting an ambient SOCKS proxy."""
+
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = str(os.environ.get(key) or "").strip()
+        if not value:
+            continue
+        if urlsplit(value).scheme.lower() in {"http", "https"}:
+            return value
+    return None
 
 
 def planner_state(observation: Observation) -> dict[str, Any]:
