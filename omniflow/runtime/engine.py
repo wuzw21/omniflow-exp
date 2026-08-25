@@ -576,6 +576,14 @@ class OmniFlow:
             except ValueError as error:
                 previous_action_error = str(error)
                 continue
+            if _repeats_no_progress_action(
+                planned,
+                previous_action=previous_action,
+                previous_action_error=previous_action_error,
+            ):
+                previous_action = planned
+                previous_action_error = "repeated_no_progress_action_rejected"
+                continue
             if planned.tool == "finished":
                 finished_content = str(planned.args.get("content") or "").strip()
                 if not finished_content:
@@ -1006,6 +1014,29 @@ def _direct_function_fallback_goal(
         f"Requested arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}. "
         f"{function.description}"
     ).strip()
+
+
+def _repeats_no_progress_action(
+    action: Action,
+    *,
+    previous_action: Action | None,
+    previous_action_error: str | None,
+) -> bool:
+    if previous_action is None or action != previous_action:
+        return False
+    if action.tool not in {
+        "click",
+        "input_text",
+        "long_press",
+        "open_app",
+        "press_key",
+        "swipe",
+    }:
+        return False
+    return str(previous_action_error or "") in {
+        "action_completed_without_state_change",
+        "repeated_no_progress_action_rejected",
+    }
 
 
 def _recent_actions(
