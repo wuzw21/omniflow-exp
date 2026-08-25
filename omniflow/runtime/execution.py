@@ -503,12 +503,6 @@ async def execute_robust_action(
             actions_executed=sum(item.actions_executed for item in all_steps),
             executed_steps=all_steps,
         )
-    if (
-        _action_uses_transfer_target(action)
-        and _observation_screenshot_path(source_state)
-        and not _observation_screenshot_path(observation)
-    ):
-        observation = await _observe_ready(host)
     decision = await prepare_action(
         action,
         observation=observation,
@@ -1050,7 +1044,6 @@ def default_transfer(
         "action_type": action.tool,
         "top_k": 3,
     }
-    _attach_visual_evidence(request, source_state, observation)
     try:
         source_point = _relative_source_point(
             source_state,
@@ -1185,7 +1178,6 @@ def _transfer_swipe(
                 "action_type": action.tool,
                 "top_k": 3,
             }
-            _attach_visual_evidence(request, source_state, observation)
             request["source_point"] = source_point
             result = transfer_action(
                 **request,
@@ -1258,43 +1250,6 @@ def _transfer_swipe(
         Action(action.tool, params),
         reason=reason,
         detail=detail,
-    )
-
-
-def _observation_screenshot_path(observation: Observation | None) -> str:
-    if observation is None:
-        return ""
-    extra = observation.extra if isinstance(observation.extra, dict) else {}
-    androidworld_state = (
-        extra.get("androidworld_state")
-        if isinstance(extra.get("androidworld_state"), dict)
-        else {}
-    )
-    pixels = (
-        androidworld_state.get("pixels")
-        if isinstance(androidworld_state.get("pixels"), dict)
-        else {}
-    )
-    return str(extra.get("screenshot_path") or pixels.get("path") or "").strip()
-
-
-def _attach_visual_evidence(
-    request: dict[str, Any],
-    source: Observation,
-    target: Observation,
-) -> None:
-    evidence = {
-        "source_screenshot_path": _observation_screenshot_path(source),
-        "target_screenshot_path": _observation_screenshot_path(target),
-        "source_visual_rgb": source.extra.get("visual_rgb"),
-        "target_visual_rgb": target.extra.get("visual_rgb"),
-    }
-    request.update(
-        {
-            key: value
-            for key, value in evidence.items()
-            if value and (not key.endswith("visual_rgb") or isinstance(value, dict))
-        }
     )
 
 
