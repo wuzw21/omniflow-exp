@@ -2023,6 +2023,58 @@ def test_qwen_numeric_summary_overrides_mismatched_bounds() -> None:
     assert metadata["node_grounding"]["target_description"] == "4"
 
 
+def test_qwen_resource_id_tail_is_grounded_to_xml_node_center() -> None:
+    display = {"width": 720, "height": 1280}
+    state = {
+        "xml": (
+            '<hierarchy><node text="4" '
+            'resource-id="com.google.android.deskclock:id/timer_setup_digit_4" '
+            'clickable="true" bounds="[184,460][296,572]" /></hierarchy>'
+        ),
+        "display": display,
+    }
+    response = {
+        "requested_model": "Qwen3.6-Plus",
+        "resolved_model": "Qwen3.6-Plus",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "输入分钟十位数字4",
+                            "target_description": "timer_setup_digit_4",
+                            "x": 240,
+                            "y": 516,
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="Qwen3.6-Plus",
+        turn_index=3,
+        display=display,
+        state=state,
+        goal="Create a timer with 0 hours, 41 minutes, and 55 seconds.",
+    )
+
+    assert tool_call.arguments["x"] == pytest.approx(333.3333333333)
+    assert tool_call.arguments["y"] == pytest.approx(403.125)
+    assert metadata["node_grounding"]["target_description"] == (
+        "timer_setup_digit_4"
+    )
+    physical = canonical_action_to_screen_pixels(
+        {"tool": tool_call.name, "args": tool_call.arguments},
+        display,
+    )
+    assert physical["args"]["x"] == pytest.approx(240)
+    assert physical["args"]["y"] == pytest.approx(516)
+
+
 def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:
     request = build_model_turn_request(
         goal="Enter 41 minutes and 55 seconds",

@@ -211,7 +211,7 @@ def projected_node_center(
             node
             for node in projection.nodes
             if not node.inside_webview
-            and target in {_normalized_label(label) for label in node.labels}
+            and target in _node_label_aliases(node)
         ]
     if len(matches) != 1:
         return None
@@ -362,6 +362,18 @@ def _webview_elements(root: ET.Element) -> set[int]:
 
 def _normalized_label(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
+
+
+def _node_label_aliases(node: ProjectedNode) -> set[str]:
+    aliases: set[str] = set()
+    for label in node.labels:
+        normalized = _normalized_label(label)
+        if not normalized:
+            continue
+        aliases.add(normalized)
+        if ":id/" in normalized:
+            aliases.add(normalized.rsplit("/", 1)[-1])
+    return aliases
 
 
 def _candidate_rank(item: _Candidate) -> tuple[int, tuple[int, int], int]:
