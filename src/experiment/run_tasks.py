@@ -69,6 +69,7 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
+    OMNIFLOW_PLANNER_MODEL,
     SOURCE_AVD,
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
@@ -343,14 +344,33 @@ def ensure_source_device(
         time.sleep(1)
     else:
         raise RuntimeError(f"source_emulator_not_ready:{source_serial}")
-    # Source emulator readiness is sufficient here. The old checks.py gate
-    # rejected valid registered Functions when the optional source index row
-    # was stale, before the actual Function/Transfer path could run.
+    oob_preflight = ensure_oob_device_ready(
+        str(args.adb_path),
+        source_serial,
+        timeout_seconds=min(30.0, deadline.remaining(30)),
+        repair=True,
+    )
+    if oob_preflight.get("ready") is not True:
+        raise PipelinePhaseError(
+            "source_oob_preflight_failed",
+            {
+                "status": "failed",
+                "serial": source_serial,
+                "avd": args.source_avd,
+                "oob_preflight": oob_preflight,
+                "model_calls": 0,
+                "total_tokens": 0,
+            },
+        )
+    # Do not restore the old checks.py source-index gate here. OOB readiness
+    # is the physical-layer requirement; source evidence is validated by its
+    # own owner before authoring starts.
     result = {
         "returncode": 0,
         "timed_out": False,
         "wall_sec": 0.0,
         "preflight_skipped": True,
+        "oob_preflight": oob_preflight,
     }
     # The source emulator is also the AndroidWorld/AndroidEnv host for the
     # source Function qualification that follows this preflight.  The
@@ -2353,7 +2373,11 @@ def _androidworld_result_command(
         "--task-random-seed",
         str(_e2e_evaluation_seed(args)),
         "--model",
-        str(getattr(args, "formal_model", FORMAL_MODEL)),
+        str(
+            OMNIFLOW_PLANNER_MODEL
+            if method == "omniflow"
+            else getattr(args, "formal_model", FORMAL_MODEL)
+        ),
         "--planner-provider",
         "openai",
         "--method",

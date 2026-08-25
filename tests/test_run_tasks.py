@@ -875,6 +875,35 @@ def test_mobilegpt_result_children_get_isolated_server_ports(
     assert len(set(ports)) == len(ports)
 
 
+def test_omniflow_result_uses_its_text_only_planner_model(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    args.formal_model = "GLM-4.6V"
+
+    omniflow = _androidworld_result_command(
+        args=args,
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        method="omniflow",
+        device=DEVICES[0],
+        store_path=tmp_path / "store.json",
+        mobilegpt_memory=None,
+        appagent_memory=None,
+    )
+    mobilegpt = _androidworld_result_command(
+        args=args,
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        method="mobilegpt",
+        device=DEVICES[0],
+        store_path=None,
+        mobilegpt_memory=tmp_path / "memory",
+        appagent_memory=None,
+    )
+
+    assert omniflow[omniflow.index("--model") + 1] == "GLM-5.1"
+    assert mobilegpt[mobilegpt.index("--model") + 1] == "GLM-4.6V"
+
+
 def test_autodroid_is_explicit_supplemental_only() -> None:
     selected = SimpleNamespace(
         e2e_method="autodroid",
@@ -2107,6 +2136,13 @@ def test_source_device_is_cold_restarted_when_already_ready(
         "src.experiment.run_tasks.time.sleep",
         lambda _seconds: None,
     )
+    oob_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        scheduler,
+        "ensure_oob_device_ready",
+        lambda adb, serial, **_kwargs: oob_calls.append((adb, serial))
+        or {"ready": True, "repaired": True},
+    )
 
     result = ensure_source_device(
         args=args,
@@ -2120,8 +2156,45 @@ def test_source_device_is_cold_restarted_when_already_ready(
     assert adb_calls.count(("-s", "emulator-5560", "emu", "kill")) == 1
     assert result["launched"] is True
     assert result["kept_alive_for_pipeline"] is True
+    assert oob_calls == [(str(args.adb_path), "emulator-5560")]
+    assert result["oob_preflight"] == {"ready": True, "repaired": True}
     assert preflight_commands == []
     assert preflight_environments == []
+
+
+def test_source_device_blocks_authoring_when_oob_remains_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.source_avd = "SmallPhone"
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+    monkeypatch.setattr(scheduler, "_adb_output", lambda *_args: "")
+    monkeypatch.setattr(scheduler, "_source_device_ready", lambda _args: True)
+    monkeypatch.setattr(
+        "src.experiment.run_process.subprocess.Popen",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "ensure_oob_device_ready",
+        lambda *_args, **_kwargs: {
+            "ready": False,
+            "repaired": True,
+            "error": "observe result missing",
+        },
+    )
+
+    with pytest.raises(PipelinePhaseError) as captured:
+        ensure_source_device(
+            args=args,
+            attempt_root=tmp_path / "attempt",
+            deadline=Deadline(120),
+        )
+
+    assert str(captured.value) == "source_oob_preflight_failed"
+    assert captured.value.phase["model_calls"] == 0
 
 
 def test_source_device_reports_emulator_process_exit_immediately(
