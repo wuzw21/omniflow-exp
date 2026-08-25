@@ -308,6 +308,47 @@ def test_official_schema_preflight_reports_ungroundable_action(
     }
 
 
+def test_official_memory_generalization_avoids_nested_parameter_placeholders(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "input_text", "text": "1 serving"},
+            {"action_type": "wait"},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" text="Servings" '
+            'editable="true" clickable="true" bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="1 serving" '
+            'editable="true" clickable="true" bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+        ],
+        packages=["com.example.app", "com.example.app"],
+    )
+    memory = tmp_path / "memory"
+
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=memory,
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=tmp_path / "audit.json",
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    with (
+        memory / "com.example.app" / "pages" / "0" / "actions.csv"
+    ).open(encoding="utf-8") as handle:
+        action = json.loads(next(csv.DictReader(handle))["action"])
+    action_text = json.dumps(action, ensure_ascii=False)
+    assert "<target_text__<" not in action_text
+    assert "<target_text__-<" not in action_text
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+
+
 def test_preflight_accepts_compact_bmoca_runlog_with_state_catalog(
     tmp_path: Path,
 ) -> None:

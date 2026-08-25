@@ -1906,6 +1906,24 @@ def _direct_subtask_from_runlog(
     ):
         parameter_values["input_text"] = input_text
         parameter_descriptions["input_text"] = "Text to enter into the UI target"
+    # Upstream generalizes parameters in insertion order by repeatedly
+    # replacing matching substrings.  A shorter value first (for example
+    # ``Servings`` before ``1 serving``) lets a later replacement rewrite the
+    # index inside an existing placeholder.  Longest-first is the standard
+    # non-overlapping substitution order and keeps the official placeholder
+    # grammar intact without changing upstream Memory.save_task.
+    parameter_names = sorted(
+        parameter_values,
+        key=lambda name: (-len(str(parameter_values[name])), str(name)),
+    )
+    parameter_values = {
+        name: parameter_values[name]
+        for name in parameter_names
+    }
+    parameter_descriptions = {
+        name: parameter_descriptions[name]
+        for name in parameter_names
+    }
     metadata = {
         "name": name,
         "description": (
@@ -3573,6 +3591,14 @@ def convert_runlog_to_mobilegpt_memory(
             raw_parameters = raw_converted.get("parameters")
             if isinstance(raw_parameters, dict):
                 raw_parameters.pop("attrib", None)
+                if action_type == "input_text":
+                    # The anonymous-input branch above parameterizes text for
+                    # OOB execution. Memory.save_task performs the official
+                    # generalization itself, so its input must be the concrete
+                    # RunLog text rather than an already-generalized token.
+                    raw_parameters["input_text"] = str(
+                        transition.action.get("text") or ""
+                    )
             action_example = _native_action_example(
                 instruction=trajectory["instruction"],
                 selected_subtask=selected_subtask,
