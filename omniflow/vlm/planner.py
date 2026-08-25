@@ -250,6 +250,8 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         "activity_name": observation.activity_name,
     }
     state["state_id"] = str(observation.extra.get("state_id") or "").strip()
+    if observation.image_base64:
+        state["image_base64"] = observation.image_base64
     for key in ("display", "screenshot_path"):
         if observation.extra.get(key) is not None:
             state[key] = observation.extra[key]

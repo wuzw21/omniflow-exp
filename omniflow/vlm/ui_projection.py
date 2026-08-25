@@ -28,7 +28,21 @@ _NUMERIC_CONTROL_SUMMARY = re.compile(
     r")['\"]?(\d{1,2})(?!\d)",
     re.IGNORECASE,
 )
-_VISUAL_GOAL_MARKERS = ("广告", "弹窗", "遮挡", "popup", "overlay", "close ad")
+_VISUAL_GOAL_MARKERS = (
+    "广告",
+    "弹窗",
+    "遮挡",
+    "canvas",
+    "close ad",
+    "draw",
+    "image",
+    "maze",
+    "overlay",
+    "photo",
+    "picture",
+    "popup",
+)
+_VISUALLY_OPAQUE_ACTION_THRESHOLD = 8
 _GLOBAL_CONTROL_MARKERS = (
     "back",
     "basket",
@@ -161,7 +175,12 @@ def project_ui(
         checked = str(element.attrib.get("checked") or "").strip().lower()
         if checked in {"true", "false"}:
             compact["checked"] = checked == "true"
-        candidate_terms = _terms(" ".join((*semantic_values, descendant_context)))
+        resource_context = str(compact.get("r") or "").rsplit("/", 1)[-1]
+        candidate_terms = _terms(
+            " ".join(
+                (*visible_semantic_values, descendant_context, resource_context)
+            )
+        )
         overlap = goal_terms.intersection(candidate_terms)
         goal_match = bool(overlap)
         score = len(overlap) * 1000
@@ -194,6 +213,9 @@ def project_ui(
     if not include_all_nodes:
         candidates = _prune_redundant_candidates(candidates, goal)
     candidates = _promote_goal_controls(candidates)
+    visually_opaque_action_count = sum(
+        1 for item in candidates if item.group in {"goal_control", "visual"}
+    )
     selected = (
         _order_all_candidates(candidates)
         if include_all_nodes
@@ -205,8 +227,12 @@ def project_ui(
         candidate_count=len(candidates),
         selected_count=len(selected),
         goal_match_count=sum(1 for item in candidates if item.goal_match),
-        visual_context_required=any(
-            marker in str(goal or "").casefold() for marker in _VISUAL_GOAL_MARKERS
+        visual_context_required=(
+            any(
+                marker in str(goal or "").casefold()
+                for marker in _VISUAL_GOAL_MARKERS
+            )
+            or visually_opaque_action_count >= _VISUALLY_OPAQUE_ACTION_THRESHOLD
         ),
         visual_candidate_count=sum(
             1 for item in selected if item.group in {"goal_control", "visual"}
@@ -508,7 +534,19 @@ def _is_global_control(semantic_values: list[str], actions: list[str]) -> bool:
     if not actions:
         return False
     semantic_text = " ".join(semantic_values).casefold()
-    return any(marker in semantic_text for marker in _GLOBAL_CONTROL_MARKERS)
+    semantic_tokens = _ENGLISH_TOKEN.findall(semantic_text)
+    for marker in _GLOBAL_CONTROL_MARKERS:
+        marker_tokens = _ENGLISH_TOKEN.findall(marker.casefold())
+        if marker_tokens:
+            width = len(marker_tokens)
+            if any(
+                semantic_tokens[index : index + width] == marker_tokens
+                for index in range(len(semantic_tokens) - width + 1)
+            ):
+                return True
+        elif marker in semantic_text:
+            return True
+    return False
 
 
 def _descendant_context(element: ET.Element) -> str:

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
+from io import BytesIO
 import json
+from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, ToolCall
@@ -97,6 +102,23 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    include_image = (
+        not text_only_model
+        and not lightweight_retry
+        and not compact_global_startup
+        and _planner_needs_screenshot(state, projection)
+    )
+    current_image = _state_image_data_uri(state) if include_image else ""
+    if current_image:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": _compact_image_data_uri(current_image),
+                    "detail": "low",
+                },
+            }
+        )
     display = state.get("display") if isinstance(state.get("display"), dict) else None
     if global_functions:
         # A recalled global Function owns startup. Keep this as a normal tool
@@ -145,6 +167,77 @@ def build_model_turn_request(
     if not text_only_model:
         request["reasoning_effort"] = "none"
     return request
+
+
+def _planner_needs_screenshot(
+    state: dict[str, Any],
+    projection: UIProjection,
+) -> bool:
+    xml = str(state.get("xml") or "").strip()
+    if not xml or projection.candidate_count == 0:
+        return True
+    if projection.visual_context_required:
+        return True
+    if any(node.inside_webview for node in projection.nodes):
+        return True
+    extra = state.get("extra")
+    if not isinstance(extra, dict):
+        return False
+    return any(
+        bool(extra.get(key))
+        for key in ("visual_grounding_required", "screenshot_required")
+    )
+
+
+def _state_image_data_uri(state: dict[str, Any]) -> str:
+    image = str(state.get("image_base64") or "").strip()
+    if image:
+        return (
+            image
+            if image.startswith("data:image/")
+            else f"data:image/jpeg;base64,{image}"
+        )
+    return _image_data_uri(str(state.get("screenshot_path") or ""))
+
+
+def _compact_image_data_uri(value: str) -> str:
+    prefix, separator, encoded = str(value or "").partition(",")
+    if not separator or "base64" not in prefix.casefold():
+        return value
+    try:
+        image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
+        image.thumbnail((360, 640), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=60, optimize=True)
+        compact = base64.b64encode(output.getvalue()).decode("ascii")
+    except Exception:
+        return value
+    return f"data:image/jpeg;base64,{compact}"
+
+
+def _image_data_uri(path: str) -> str:
+    candidate = Path(str(path or "").strip())
+    if not candidate.is_file():
+        return ""
+    try:
+        payload = candidate.read_bytes()
+    except OSError:
+        return ""
+    mime_type = _image_mime_type(payload)
+    if not mime_type:
+        return ""
+    encoded = base64.b64encode(payload).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}" if encoded else ""
+
+
+def _image_mime_type(payload: bytes) -> str:
+    if payload.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
 
 
 def parse_model_turn_response(
