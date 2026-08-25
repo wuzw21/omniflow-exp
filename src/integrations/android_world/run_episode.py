@@ -62,8 +62,6 @@ from src.integrations.android_world.methods import (
 )
 from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
-    OobControlClient,
-    oob_state_from_payload,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
@@ -2690,42 +2688,6 @@ def _patch_androidworld_current_activity(adb_utils: Any) -> Any:
         return activity, response
 
     adb_utils.get_current_activity = get_current_activity
-    return original
-
-
-def _patch_androidworld_oob_validator_state(
-    env: Any,
-    *,
-    adb_serial: str,
-    adb_path: str,
-) -> Any:
-    """Feed official validators the OOB-owned accessibility observation.
-
-    Formal runs disable AndroidWorld's native accessibility forwarder because
-    OOB owns the complete observe/act physical layer.  Several official task
-    validators still call ``env.get_state()`` to inspect visible UI elements.
-    Leaving that call on the disabled native backend makes a visibly correct
-    terminal state validate as failure.  Keep the official validator and only
-    bridge its public state input to the same OOB observation used at runtime.
-    """
-
-    original = getattr(env, "get_state", None)
-    if not callable(original):
-        raise RuntimeError("androidworld_get_state_unavailable")
-    client = OobControlClient(
-        env,
-        adb_serial=adb_serial,
-        adb_path=adb_path,
-    )
-
-    def get_state(*_args: Any, **kwargs: Any) -> Any:
-        return oob_state_from_payload(
-            client.observe(
-                wait_to_stabilize=bool(kwargs.get("wait_to_stabilize", False)),
-            )
-        )
-
-    env.get_state = get_state
     return original
 
 
@@ -5377,8 +5339,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     adb_output_patches: tuple[tuple[type[Any], Any], ...] = ()
     original_launch_app: Any | None = None
     original_current_activity: Any | None = None
-    original_oob_validator_get_state: Any | None = None
-    oob_validator_state_owner: Any | None = None
     original_get_clipboard_contents: Any | None = None
     try:
         _add_android_world_path(android_world_root)
@@ -5600,18 +5560,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file_utils,
                 aw_setup.adb_utils,
             )
-            if _is_oob_control_backend():
-                oob_validator_state_owner = instrumented_agent.env
-                original_oob_validator_get_state = (
-                    _patch_androidworld_oob_validator_state(
-                        oob_validator_state_owner,
-                        adb_serial=str(
-                            os.environ.get("ANDROID_SERIAL")
-                            or f"emulator-{int(args.console_port)}"
-                        ).strip(),
-                        adb_path=str(args.adb_path or ""),
-                    )
-                )
             try:
                 results = suite_utils.run(
                     suite,
@@ -6128,11 +6076,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             adb_utils.launch_app = original_launch_app
         if original_current_activity is not None:
             adb_utils.get_current_activity = original_current_activity
-        if (
-            original_oob_validator_get_state is not None
-            and oob_validator_state_owner is not None
-        ):
-            oob_validator_state_owner.get_state = original_oob_validator_get_state
         for controller_type, original_execute_adb_call in adb_output_patches:
             controller_type.execute_adb_call = original_execute_adb_call
         if env is not None:

@@ -320,18 +320,24 @@ class AndroidWorldEpisodeRecorder:
             step["result"]["error"] = str(explicit_error)
         try:
             if metrics is None:
-                next_observation = self._capture_state(
+                next_state = (
                     after_observation()
                     if after_observation is not None
                     else self._get_state()
                 )
+                if after_observation is not None:
+                    self._latest_host_state = next_state
+                next_observation = self._capture_state(next_state)
             else:
                 with metrics.timed("native_act_after_observe"):
-                    next_observation = self._capture_state(
+                    next_state = (
                         after_observation()
                         if after_observation is not None
                         else self._get_state()
                     )
+                    if after_observation is not None:
+                        self._latest_host_state = next_state
+                    next_observation = self._capture_state(next_state)
         except Exception as error:
             step["metadata"] = {
                 "next_observation_error": str(error) or type(error).__name__
