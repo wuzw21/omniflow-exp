@@ -4,6 +4,24 @@ import re
 from typing import Iterable
 
 
+# AndroidWorld's model-facing names and the packages exposed by the pinned
+# emulator are not always byte-for-byte identical.  Keep this normalization
+# in the shared app resolver so GUI validation, OOB dispatch, and replay use
+# the same launchable package identity.
+_PACKAGE_ALIASES = {
+    "com.google.android.googlecamera": "com.android.camera2",
+}
+
+
+def canonicalize_androidworld_package(package_name: str) -> str:
+    """Map a known official AndroidWorld package alias to its runtime package."""
+
+    value = str(package_name or "").strip()
+    if not value:
+        return ""
+    return _PACKAGE_ALIASES.get(value.casefold(), value)
+
+
 def launchable_androidworld_apps(
     installed_packages: Iterable[str],
     controller: object,
@@ -57,20 +75,22 @@ def resolve_androidworld_package(app_name: str) -> str:
     name = str(app_name or "").strip()
     if not name:
         return ""
+    canonical_name = canonicalize_androidworld_package(name)
     from android_world.env import adb_utils
 
-    activity = str(adb_utils.get_adb_activity(name) or "").strip()
+    activity = str(adb_utils.get_adb_activity(canonical_name) or "").strip()
     package_name = activity.split("/", 1)[0].strip()
     if package_name:
-        return package_name
-    if "." in name and " " not in name:
-        return name
+        return canonicalize_androidworld_package(package_name)
+    if "." in canonical_name and " " not in canonical_name:
+        return canonical_name
     return ""
 
 
 __all__ = [
     "launchable_androidworld_apps",
     "launcher_package_label",
+    "canonicalize_androidworld_package",
     "resolve_androidworld_app_name",
     "resolve_androidworld_package",
 ]

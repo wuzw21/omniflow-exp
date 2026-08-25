@@ -387,6 +387,15 @@ def parse_model_turn_response(
             validate_arguments(function_catalog[tool].input_schema, arguments)
         else:
             package_name = arguments.get("package_name")
+            if tool == "open_app" and isinstance(package_name, str):
+                from src.integrations.android_world.apps import (
+                    canonicalize_androidworld_package,
+                )
+
+                canonical_package = canonicalize_androidworld_package(package_name)
+                if canonical_package != package_name.strip():
+                    arguments["package_name"] = canonical_package
+                    package_name = canonical_package
             installed_packages = {
                 str(package).strip()
                 for package in (installed_apps or {}).values()

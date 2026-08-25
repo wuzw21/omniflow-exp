@@ -656,7 +656,18 @@ async def _dispatch_prepared(
     installed_packages: frozenset[str] | None,
 ) -> StepResult:
     if action.tool == "open_app":
-        package_name = str(action.args.get("package_name") or "").strip()
+        from src.integrations.android_world.apps import (
+            canonicalize_androidworld_package,
+        )
+
+        package_name = canonicalize_androidworld_package(
+            str(action.args.get("package_name") or "").strip()
+        )
+        if package_name != str(action.args.get("package_name") or "").strip():
+            action = replace(
+                action,
+                args={**action.args, "package_name": package_name},
+            )
         if installed_packages is None:
             return StepResult(
                 False,
