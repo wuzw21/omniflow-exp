@@ -14,8 +14,16 @@
   manifest/summary、旧数据搬运和重复校验层不属于真实实验运行，禁止重新引入。
 - 临时调研、一次性教研脚本、排障文件、临时测试代码和生成产物不得写入仓库；放在
   系统临时目录或外部配置中。仓库不维护分散的专项测试脚本，只保留通用运行入口。
-- 实际需要持久化的只有用户指定的 Memory 和 AndroidWorld 官方 RunLog/结果；转换
-  中间文件与调度日志必须放系统临时目录并自动删除。
+- 所有可复用的 Memory、方法常识、Function Store 和转换后的方法资产统一保存在
+  `data/androidworld/<task>/<method>/<device_seed>/memory/<attempt>/`，按现有 task、
+  method、device/seed 和 attempt 层级分目录；不得散落到仓库源码、`output/`、`tmp/`
+  或额外 catalog。AndroidWorld 官方 RunLog/结果保存在同一 setting 的 `runlog/`。
+- 转换中间文件、调度日志和一次性测试计划必须放系统临时目录并自动删除；它们不属于
+  Memory。`fixed_replay` 的 Memory 就是 source RunLog/script，本身不做冷启动转换。
+- MobileGPT 直接/冷启动运行不读取 source RunLog：AndroidWorld 官方根据 task 和
+  evaluation seed 生成参数，目标 app 来自官方 task 的 `app_names`，MobileGPT 只接收
+  goal 与 Open App 目标后自主探索。已安装的官方 Accessibility client 必须直接复用；
+  只有未安装或显式要求 rebuild 时才构建 APK，禁止每个 episode 重复 Gradle/install。
 
 本节是当前 AndroidWorld 运行的最高优先级项目规则；下文涉及旧 index、migration、
 seed/path preflight、结果注册或专项测试的历史描述不再适用。

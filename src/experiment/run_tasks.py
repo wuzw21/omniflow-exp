@@ -120,9 +120,15 @@ def _run_command(
         str(args.max_fallback_steps),
         "--timeout-sec",
         str(args.deadline),
+        "--mobilegpt-wait-start-timeout-sec",
+        str(args.deadline),
         "--model",
         args.model,
     ]
+    if args.mobilegpt_root:
+        command.extend(("--mobilegpt-root", args.mobilegpt_root))
+    if args.appagent_root:
+        command.extend(("--appagent-root", args.appagent_root))
     if args.source_run_log:
         command.extend(("--source-run-log", args.source_run_log))
     if args.memory:

@@ -353,7 +353,7 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         "evidence_root": context.evidence_root or None,
         "performance_metrics": context.performance_metrics,
     }
-    if context.selector == "fixed_replay":
+    if context.selector == "fixed_replay" or not str(context.store_path).strip():
         build_kwargs["allow_empty_store"] = True
     if planner is not None:
         build_kwargs["planner"] = planner

@@ -761,7 +761,7 @@ def build_replay_command(
         console_port=console_port,
     )
     resolved_method = _safe_stem(method_name, fallback=DEFAULT_SOURCE_METHOD)
-    resolved_output = _experiment_run_dir(
+    setting_root = _experiment_run_dir(
         output_root,
         task=item.task,
         method=resolved_method,
@@ -771,6 +771,7 @@ def build_replay_command(
         attempt_id=archive_attempt_id,
         repo_root=repo_root,
     )
+    resolved_output = _next_runlog_attempt(setting_root)
     if replay_memory_root:
         replay_run_log, source_materialization, profile = (
             _materialize_replay_run_log_for_memory(
@@ -913,7 +914,7 @@ def build_official_command(
     )
     resolved_method = _safe_stem(method_name, fallback="t3a_hint")
     resolved_agent = str(official_agent_name or "t3a_gpt4").strip() or "t3a_gpt4"
-    resolved_output = _experiment_run_dir(
+    setting_root = _experiment_run_dir(
         output_root,
         task=item.task,
         method=resolved_method,
@@ -922,6 +923,7 @@ def build_official_command(
         console_port=console_port,
         repo_root=repo_root,
     )
+    resolved_output = _next_runlog_attempt(setting_root)
     resolved_task_seed = int(
         item.replay_seed if task_random_seed is None else task_random_seed
     )
@@ -1060,7 +1062,7 @@ def build_task_command(
     )
     resolved_method = _safe_stem(method_name, fallback="e2e")
     resolved_agent = str(agent_name or "omniflow").strip() or "omniflow"
-    resolved_output = _experiment_run_dir(
+    setting_root = _experiment_run_dir(
         output_root,
         task=item.task,
         method=resolved_method,
@@ -1069,6 +1071,7 @@ def build_task_command(
         console_port=console_port,
         repo_root=repo_root,
     )
+    resolved_output = _next_runlog_attempt(setting_root)
     if str(run_dir_suffix or "").strip():
         resolved_output = resolved_output / _safe_relative_path(
             run_dir_suffix,
@@ -1147,8 +1150,9 @@ def build_task_command(
         argv.append("--fixed-task-seed")
     if perform_emulator_setup:
         argv.append("--perform-emulator-setup")
-    if resolved_agent == "omniflow" and resolved_store_path is not None:
-        argv.extend(["--store-path", str(resolved_store_path)])
+    if resolved_agent == "omniflow":
+        if resolved_store_path is not None:
+            argv.extend(["--store-path", str(resolved_store_path)])
         if planner_provider.strip():
             argv.extend(["--planner-provider", planner_provider.strip()])
         if model.strip():
@@ -1854,6 +1858,7 @@ def build_mobilegpt_server_command(
     mobilegpt_memory_root: str | Path | None = None,
     mobilegpt_memory_manifest: str | Path | None = None,
     embedding_model: str = "",
+    chat_model: str = "",
     write_through_memory: bool = False,
     serial: str = "",
     adb_path: str = "",
@@ -1909,7 +1914,8 @@ def build_mobilegpt_server_command(
             )
         runtime_env = _subprocess_env({})
         chat_model = str(
-            runtime_env.get("MOBILEGPT_CHAT_MODEL")
+            chat_model
+            or runtime_env.get("MOBILEGPT_CHAT_MODEL")
             or runtime_env.get("OPENAI_MODEL")
             or ""
         ).strip()
@@ -3266,6 +3272,17 @@ _RESULT_METADATA_ROW_KEYS = (
 
 
 
+def _next_runlog_attempt(setting_root: Path) -> Path:
+    runlog_root = setting_root / "runlog"
+    used = []
+    if runlog_root.is_dir():
+        for path in runlog_root.iterdir():
+            match = re.fullmatch(r"attempt_(\d+)", path.name)
+            if path.is_dir() and match:
+                used.append(int(match.group(1)))
+    return runlog_root / f"attempt_{max(used, default=0) + 1:03d}"
+
+
 def build_mobilegpt_command(
     item: CanonicalRunLog,
     *,
@@ -3294,8 +3311,8 @@ def build_mobilegpt_command(
     run_dir_suffix: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
-    del fixed_task_seed, start_timeout_sec
-    resolved_output = _experiment_run_dir(
+    del fixed_task_seed
+    setting_root = _experiment_run_dir(
         output_root,
         task=item.task,
         method=_safe_stem(method_name, fallback="mobilegpt"),
@@ -3304,13 +3321,14 @@ def build_mobilegpt_command(
         console_port=target.console_port,
         repo_root=repo_root,
     )
+    resolved_output = _next_runlog_attempt(setting_root)
     if str(run_dir_suffix or "").strip():
         resolved_output = resolved_output / _safe_relative_path(
             run_dir_suffix,
             fallback="run",
         )
     client_runtime_env = _subprocess_env({})
-    client_output = resolved_output / "official_accessibility_client"
+    client_output = resolved_output
     effective_params = dict(task_params_override or item.params or {})
     instruction = task_goal_for_params(
         item.task,
@@ -3363,6 +3381,8 @@ def build_mobilegpt_command(
         str(int(target.console_port) + 3000),
         "--max-steps",
         str(int(max_steps)),
+        "--handshake-timeout-sec",
+        str(float(start_timeout_sec)),
         "--server-port",
         str(int(server_port)),
     ]
@@ -3386,6 +3406,7 @@ def build_mobilegpt_command(
             for value in (
                 str(repo_root),
                 str(repo_root / "src"),
+                str(resolve_path(android_world_root, root=repo_root)),
                 str(client_runtime_env.get("PYTHONPATH") or ""),
             )
             if value
@@ -3646,39 +3667,46 @@ def _run_result_mobilegpt(
     if not targets:
         raise ValueError("mobilegpt_device_target_required")
 
+    memory_root = resolve_path(args.output_path) / "mobilegpt_memory"
+    memory_root.mkdir(parents=True, exist_ok=True)
     source_memory_value = str(
         getattr(args, "mobilegpt_source_memory_root", "")
     ).strip()
-    if not source_memory_value:
-        raise ValueError(
-            "mobilegpt requires --mobilegpt-source-memory-root"
+    cold_start = not source_memory_value
+    if cold_start:
+        source_memory_root = memory_root / "cold_initial_memory"
+        source_memory_root.mkdir()
+        source_manifest_path: Path | None = None
+        source_method = "none"
+        source_prep_type = "empty_cold_start"
+        adapted_memory: dict[str, Any] = {}
+    else:
+        source_memory_root = resolve_path(source_memory_value)
+        if not source_memory_root.is_dir():
+            raise FileNotFoundError(
+                f"mobilegpt_source_memory_missing:{source_memory_root}"
+            )
+        strong_memory_validation = validate_memory_manifest(source_memory_root)
+        if str(strong_memory_validation.get("task_name") or "") != item.task:
+            raise ValueError("mobilegpt_source_memory_task_mismatch")
+        source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
+        source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+        source_schema = str(source_manifest.get("schema_version") or "")
+        try:
+            source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[source_schema]
+            source_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[source_schema]
+        except KeyError as error:
+            raise ValueError("mobilegpt_source_memory_schema_invalid") from error
+        adapted_memory = mobilegpt_memory.validate_mobilegpt_adapted_memory(
+            source_memory_root,
+            task_name=item.task,
+            source_seed=int(args.source_seed),
+            source_run_log=source_run_log,
+            compatible_source_sha256s=compatible_source_sha256s,
+            expected_model=str(args.model or ""),
+            expected_source_method=source_method,
         )
-    source_memory_root = resolve_path(source_memory_value)
-    if not source_memory_root.is_dir():
-        raise FileNotFoundError(f"mobilegpt_source_memory_missing:{source_memory_root}")
-    strong_memory_validation = validate_memory_manifest(source_memory_root)
-    if str(strong_memory_validation.get("task_name") or "") != item.task:
-        raise ValueError("mobilegpt_source_memory_task_mismatch")
-    source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
-    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
-    source_schema = str(source_manifest.get("schema_version") or "")
-    try:
-        source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[source_schema]
-        source_prep_type = MOBILEGPT_PREP_TYPE_BY_SCHEMA[source_schema]
-    except KeyError as error:
-        raise ValueError("mobilegpt_source_memory_schema_invalid") from error
-    adapted_memory = mobilegpt_memory.validate_mobilegpt_adapted_memory(
-        source_memory_root,
-        task_name=item.task,
-        source_seed=int(args.source_seed),
-        source_run_log=source_run_log,
-        compatible_source_sha256s=compatible_source_sha256s,
-        expected_model=str(args.model or ""),
-        expected_source_method=source_method,
-    )
 
-    memory_root = resolve_path(args.output_path) / "mobilegpt_memory"
-    memory_root.mkdir(parents=True, exist_ok=True)
     frozen_memory_root = memory_root / "frozen_memory"
     frozen_memory_manifest_path = memory_root / "frozen_memory_manifest.json"
     episodes_root = memory_root / "_episodes"
@@ -3691,6 +3719,28 @@ def _run_result_mobilegpt(
         if task_params_override is not None
         else dict(item.params or {})
     )
+    official_task_app = ""
+    if not source_run_log.is_file():
+        from src.integrations.android_world.run_episode import (
+            instantiate_androidworld_task,
+        )
+
+        official_task = instantiate_androidworld_task(
+            android_world_root=args.android_world_root,
+            task_name=item.task,
+            task_params=effective_task_params or None,
+            task_seed=int(task_seed if task_seed is not None else args.source_seed),
+        )
+        if not effective_task_params:
+            effective_task_params = dict(getattr(official_task, "params", {}) or {})
+        official_task_app = next(
+            (
+                str(app).strip()
+                for app in getattr(official_task, "app_names", ())
+                if str(app).strip()
+            ),
+            "",
+        )
     parameter_target_package = _mobilegpt_target_package_from_task_params(
         effective_task_params
     )
@@ -3700,6 +3750,9 @@ def _run_result_mobilegpt(
         source_package=str(source_target.get("target_package") or ""),
         parameter_package=parameter_target_package,
     )
+    if not target_package and official_task_app:
+        target_package = official_task_app
+        target_source = "androidworld_task_app"
     target_app = (
         explicit_target_package
         if explicit_target_package
@@ -3710,7 +3763,7 @@ def _run_result_mobilegpt(
             or ""
         ).strip()
     )
-    memory_condition = "native_cold_memory"
+    memory_condition = "empty_cold_start" if cold_start else "provided_memory"
     source_memory_digest, source_memory_file_count = mobilegpt_memory.mobilegpt_memory_digest(
         source_memory_root
     )
@@ -3856,6 +3909,8 @@ def _run_result_mobilegpt(
                     expected_digest=str(frozen_memory.get("digest") or ""),
                     expected_file_count=int(frozen_memory.get("file_count") or 0),
                 )
+            else:
+                episode_memory_root.mkdir(parents=True, exist_ok=True)
             device_target_package = _resolve_mobilegpt_target_package(
                 target_package,
                 adb_path=str(args.adb_path or ""),
@@ -3867,6 +3922,8 @@ def _run_result_mobilegpt(
                 mobilegpt_root=args.mobilegpt_root,
                 mobilegpt_memory_root=episode_memory_root,
                 mobilegpt_memory_manifest=source_manifest_path,
+                embedding_model=MOBILEGPT_EMBEDDING_MODEL,
+                chat_model=str(args.model or ""),
                 stats_jsonl=stats_jsonl,
                 server_host=args.mobilegpt_server_host,
                 port=int(args.mobilegpt_port),
@@ -3952,7 +4009,7 @@ def _run_result_mobilegpt(
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
                     fixed_task_params=not bool(args.no_fixed_task_params),
-                    task_params_override=task_params_override,
+                    task_params_override=effective_task_params,
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     adb_path=args.adb_path,
                     start_timeout_sec=float(args.mobilegpt_wait_start_timeout_sec),
@@ -4093,6 +4150,8 @@ def run_task(args: argparse.Namespace) -> int:
             args.mobilegpt_source_memory_root = memory
         elif args.method == "appagent":
             args.appagent_memory_root = memory
+        elif args.method == "fixed_replay":
+            args.source_run_log = memory
     selected = _select_from_args(args)
     if len(selected) != 1:
         raise ValueError("result requires exactly one selected --task entry")

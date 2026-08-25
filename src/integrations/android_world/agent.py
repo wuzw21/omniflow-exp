@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,6 +18,7 @@ from omniflow import (
 )
 from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
 from omniflow.core.trajectory import state_id
+from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
     capture_transfer_state as _transfer_state,
@@ -117,7 +119,8 @@ def build_agent(
             "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob"
         ),
     )
-    if not store_path:
+    empty_store_tempdir: tempfile.TemporaryDirectory[str] | None = None
+    if not store_path and planner is None:
         # Fixed replay owns its action sequence in _apply_fixed_replay.  It
         # still needs the canonical AndroidWorld Host and lifecycle wrapper,
         # but it has no Function Store to load.  Keep the adapter object small
@@ -129,6 +132,13 @@ def build_agent(
             set_max_steps=lambda _step_budget: None,
             reset=lambda go_home=False: raw_host.reset(go_home=go_home),
         )
+    if not store_path:
+        empty_store_tempdir = tempfile.TemporaryDirectory(
+            prefix="omniflow-empty-store-"
+        )
+        empty_store_path = Path(empty_store_tempdir.name) / "store.json"
+        FunctionStore(empty_store_path).save()
+        store_path = str(empty_store_path)
     resolved_store_path = Path(store_path).expanduser().resolve()
     transfer_state_path = (
         resolved_store_path.parent / TRANSFER_STATE_CATALOG_FILENAME
@@ -174,6 +184,8 @@ def build_agent(
     flow.name = MODE_OMNIFLOW
     flow.env = env
     flow.transition_pause = None
+    if empty_store_tempdir is not None:
+        flow._empty_store_tempdir = empty_store_tempdir
 
     def reset(go_home: bool = False) -> None:
         state.update(

@@ -19,6 +19,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Iterator, Sequence
 
@@ -182,7 +183,7 @@ def _androidworld_task_startup(
     startup, task = start_androidworld_task_session(
         android_world_root=android_world_root,
         task_name=task_name,
-        task_params=decoded,
+        task_params=decoded or None,
         task_seed=int(task_seed),
         console_port=int(console_port),
         adb_path=adb_path,
@@ -1521,7 +1522,24 @@ def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
     )
     if original not in source:
         raise RuntimeError("official_mobilegpt_app_catalog_anchor_missing")
-    app_agent_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+    source = source.replace(original, replacement, 1)
+    update_anchor = (
+        "    def update_app_list(self, new_packages):\n"
+        "        known_packages = [row[\"package_name\"] for _, row in self.database.iterrows()]\n"
+    )
+    update_replacement = (
+        "    def update_app_list(self, new_packages):\n"
+        "        configured_package = os.getenv('MOBILEGPT_TARGET_PACKAGE', '').strip()\n"
+        "        if os.getenv('MOBILEGPT_SKIP_APP_DISCOVERY', '').strip() == '1':\n"
+        "            new_packages = [configured_package] if configured_package else []\n"
+        "        known_packages = [row[\"package_name\"] for _, row in self.database.iterrows()]\n"
+    )
+    if update_anchor not in source:
+        raise RuntimeError("official_mobilegpt_app_list_anchor_missing")
+    app_agent_path.write_text(
+        source.replace(update_anchor, update_replacement, 1),
+        encoding="utf-8",
+    )
 
 
 def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:
@@ -2055,13 +2073,27 @@ def _run_mobilegpt_client(
     server_port: int = 12345,
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     server_log_path: str | Path = "",
-) -> int:
+) -> tuple[int, float]:
     """Run one episode through MobileGPT's official Accessibility client."""
 
     root = Path(official_root).expanduser().resolve()
     output = Path(output_root).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    client_root = output / "official_client"
+    installed_client = _run_adb(
+        adb_path,
+        serial,
+        ["shell", "pm", "path", "com.example.MobileGPT"],
+        check=False,
+    )
+    reuse_installed_client = (
+        installed_client.returncode == 0
+        and "package:" in installed_client.stdout
+        and os.environ.get("OMNIFLOW_MOBILEGPT_REBUILD_CLIENT", "").strip() != "1"
+    )
+    client_workspace = tempfile.TemporaryDirectory(
+        prefix="omniflow-mobilegpt-client-"
+    )
+    client_root = Path(client_workspace.name) / "official_client"
     shutil.copytree(root / "App", client_root)
     _configure_mobilegpt_client_launch_lifecycle(client_root)
     global_java = (
@@ -2107,7 +2139,9 @@ def _run_mobilegpt_client(
         encoding="utf-8",
     )
     configured_apk = str(os.environ.get("OMNIFLOW_MOBILEGPT_APK") or "").strip()
-    if configured_apk:
+    if reuse_installed_client:
+        apk = Path()
+    elif configured_apk:
         prebuilt_apk = Path(configured_apk).expanduser()
         if not prebuilt_apk.is_file():
             raise FileNotFoundError(
@@ -2142,15 +2176,18 @@ def _run_mobilegpt_client(
                 check=True,
                 text=True,
             )
-    apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
-    if not apk.is_file():
-        raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")
-    install_result = _run_adb(
-        adb_path,
-        serial,
-        ["install", "-r", str(apk)],
-        check=False,
-    )
+    if reuse_installed_client:
+        install_result = subprocess.CompletedProcess([], 0, "")
+    else:
+        apk = client_root / "app/build/outputs/apk/debug/app-debug.apk"
+        if not apk.is_file():
+            raise FileNotFoundError(f"official_mobilegpt_apk_missing:{apk}")
+        install_result = _run_adb(
+            adb_path,
+            serial,
+            ["install", "-r", str(apk)],
+            check=False,
+        )
     if (
         install_result.returncode != 0
         and "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in install_result.stdout
@@ -2275,6 +2312,7 @@ def _run_mobilegpt_client(
     # The official Accessibility service receives the instruction below and
     # launches the target package itself from the Server's package frame.
     # There is deliberately no target-app adb launch or OOB prelaunch here.
+    episode_started = time.monotonic()
     _run_adb(adb_path, serial, ["logcat", "-c"])
     _run_adb(
         adb_path,
@@ -2296,7 +2334,11 @@ def _run_mobilegpt_client(
             return ""
         return server_log.read_text(encoding="utf-8", errors="replace")[-20000:]
 
-    def finish_with_probe(returncode: int, log: str, reason: str) -> int:
+    def finish_with_probe(
+        returncode: int,
+        log: str,
+        reason: str,
+    ) -> tuple[int, float]:
         probe = _mobilegpt_protocol_probe(stats_path, log, read_server_log())
         probe.update(
             {
@@ -2315,7 +2357,7 @@ def _run_mobilegpt_client(
             log + f"\n[omniflow] {reason}\n",
             encoding="utf-8",
         )
-        return returncode
+        return returncode, episode_started
 
     while time.monotonic() < deadline:
         log = _run_adb(
@@ -2349,7 +2391,7 @@ def _run_mobilegpt_client(
                 encoding="utf-8",
             )
             (output / "client_log.txt").write_text(log, encoding="utf-8")
-            return 0
+            return 0, episode_started
         if probe["client_error"] and not probe["task_started"]:
             _run_adb(
                 adb_path,
@@ -2496,12 +2538,11 @@ def run_mobilegpt_client(
             server_port=server_port,
             handshake_timeout_sec=handshake_timeout_sec,
             server_log_path=server_log_path,
-        )
+        )[0]
 
     task_params = json.loads(str(task_params_json or "{}"))
     if not isinstance(task_params, dict):
         raise ValueError("androidworld_task_params_must_be_object")
-    started = time.monotonic()
     output = Path(output_root).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     with _androidworld_task_startup(
@@ -2515,10 +2556,11 @@ def run_mobilegpt_client(
         perform_emulator_setup=perform_emulator_setup,
         use_uiautomator=False,
     ) as (env, task):
+        task_params = dict(getattr(task, "params", {}) or {})
         official_instruction = str(
             getattr(task, "goal", "") or instruction or task_name
         ).strip()
-        returncode = _run_mobilegpt_client(
+        returncode, episode_started = _run_mobilegpt_client(
             official_root=official_root,
             serial=serial,
             adb_path=adb_path,
@@ -2610,14 +2652,17 @@ def run_mobilegpt_client(
             "physical_backend": "mobilegpt_official_accessibility",
             "observe_backend": "mobilegpt_official_accessibility",
             "action_backend": "mobilegpt_official_accessibility",
-            "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+            "duration_ms": round(
+                (time.monotonic() - episode_started) * 1000.0,
+                3,
+            ),
             "protocol_probe": str(probe_path),
         }
         (output / "task_results.jsonl").write_text(
             json.dumps(result_row, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        return int(returncode)
+        return 0 if reward > 0.5 else int(returncode)
 
 
 def run_appagent_executor(

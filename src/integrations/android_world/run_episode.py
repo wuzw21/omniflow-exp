@@ -1979,6 +1979,32 @@ def prepare_androidworld_environment(
     )
 
 
+def instantiate_androidworld_task(
+    *,
+    android_world_root: str | Path,
+    task_name: str,
+    task_params: dict[str, Any] | None,
+    task_seed: int,
+) -> Any:
+    root = Path(android_world_root).expanduser().resolve()
+    _add_android_world_path(root)
+    from android_world import registry, suite_utils
+
+    task_type = registry.TaskRegistry().get_registry(family="android_world").get(
+        str(task_name)
+    )
+    if task_type is None:
+        raise ValueError(f"unknown AndroidWorld task: {task_name}")
+    if not task_params:
+        return suite_utils._instantiate_task(task_type, seed=int(task_seed))
+    params = _rehydrate_task_params(
+        params=dict(task_params),
+        task_type=task_type,
+    )
+    params.setdefault("seed", int(task_seed))
+    return task_type(params)
+
+
 def start_androidworld_task_session(
     *,
     android_world_root: str | Path,
@@ -2001,20 +2027,15 @@ def start_androidworld_task_session(
 
     root = Path(android_world_root).expanduser().resolve()
     _add_android_world_path(root)
-    from android_world import registry
     from android_world.env import env_launcher
     from android_world.env.setup_device import setup as setup_module
 
-    task_types = registry.TaskRegistry().get_registry(family="android_world")
-    task_type = task_types.get(str(task_name))
-    if task_type is None:
-        raise ValueError(f"unknown AndroidWorld task: {task_name}")
-    params = _rehydrate_task_params(
-        params=dict(task_params or {}),
-        task_type=task_type,
+    task = instantiate_androidworld_task(
+        android_world_root=root,
+        task_name=task_name,
+        task_params=task_params,
+        task_seed=task_seed,
     )
-    params.setdefault("seed", int(task_seed))
-    task = task_type(params)
     app_names = {
         str(name).strip().lower()
         for name in getattr(task, "app_names", ())
@@ -2038,7 +2059,7 @@ def start_androidworld_task_session(
     from android_world.env import adb_utils
 
     _patch_androidworld_media_scanner_broadcast_compat(adb_utils)
-    task_type.set_device_time(startup.env)
+    type(task).set_device_time(startup.env)
     task.initialize_task(startup.env)
     return startup, task
 
