@@ -17,6 +17,7 @@ from src.experiment.run_task import (
     _mobilegpt_target_package_from_task_params,
     _resolve_mobilegpt_target_package,
     _mobilegpt_server_task_app,
+    _select_mobilegpt_bootstrap_package,
     _read_object,
     _t3a_hint_source_node,
     build_mobilegpt_server_command,
@@ -91,6 +92,18 @@ def test_mobilegpt_target_package_uses_evaluated_app_parameter() -> None:
         == "camera"
     )
     assert _mobilegpt_target_package_from_task_params({"contact_name": "Ada"}) == ""
+
+
+def test_mobilegpt_bootstrap_prefers_sealed_source_app_over_final_app_parameter() -> None:
+    package, source = _select_mobilegpt_bootstrap_package(
+        explicit_package="",
+        sealed_package="com.android.settings",
+        source_package="com.android.settings",
+        parameter_package="Camera",
+    )
+
+    assert package == "com.android.settings"
+    assert source == "sealed_native_cold_source_memory"
 
 
 def test_mobilegpt_camera_alias_resolves_to_installed_camera2_package(

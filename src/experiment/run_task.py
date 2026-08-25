@@ -3930,6 +3930,34 @@ def _mobilegpt_target_package_from_task_params(
     return str(task_params.get("app_name") or "").strip()
 
 
+def _select_mobilegpt_bootstrap_package(
+    *,
+    explicit_package: str,
+    sealed_package: str,
+    source_package: str,
+    parameter_package: str,
+) -> tuple[str, str]:
+    """Select the app where a MobileGPT episode must begin.
+
+    An ``app_name`` task parameter can name a destination app in a multi-app
+    task.  The sealed successful source trajectory remains authoritative for
+    the initial app; the evaluated parameter is only a fallback when the
+    source carries no launch context.
+    """
+
+    candidates = (
+        (explicit_package, "mobilegpt_open_target_app"),
+        (sealed_package, "sealed_native_cold_source_memory"),
+        (source_package, "source_runlog_target_inference"),
+        (parameter_package, "task_parameters.app_name"),
+    )
+    for value, source in candidates:
+        package = str(value or "").strip()
+        if package:
+            return package, source
+    return "", "unresolved"
+
+
 def _resolve_mobilegpt_target_package(
     candidate: str,
     *,
@@ -5497,11 +5525,11 @@ def _run_result_mobilegpt(
     parameter_target_package = _mobilegpt_target_package_from_task_params(
         effective_task_params
     )
-    target_package = (
-        explicit_target_package
-        or parameter_target_package
-        or str(adapted_memory.get("target_package") or "").strip()
-        or str(source_target.get("target_package") or "").strip()
+    target_package, target_source = _select_mobilegpt_bootstrap_package(
+        explicit_package=explicit_target_package,
+        sealed_package=str(adapted_memory.get("target_package") or ""),
+        source_package=str(source_target.get("target_package") or ""),
+        parameter_package=parameter_target_package,
     )
     target_app = (
         explicit_target_package
@@ -5512,15 +5540,6 @@ def _run_result_mobilegpt(
             or target_package
             or ""
         ).strip()
-    )
-    target_source = (
-        "mobilegpt_open_target_app"
-        if explicit_target_package
-        else (
-            "task_parameters.app_name"
-            if parameter_target_package
-            else "sealed_native_cold_source_memory"
-        )
     )
     memory_condition = "native_cold_memory"
     source_memory_digest, source_memory_file_count = mobilegpt_memory.mobilegpt_memory_digest(
