@@ -33,6 +33,53 @@ from src.integrations.mobilegpt import (
 )
 
 
+def test_system_ui_only_source_bootstraps_mobilegpt_through_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = pipeline.CanonicalRunLog(
+        task="SystemBrightnessMin",
+        goal="Turn brightness to the min value.",
+        params={"max_or_min": "min"},
+        source_run_log=tmp_path / "source.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda _item: {
+            "target_package": "",
+            "target_app": "",
+            "target_source": "unresolved",
+        },
+    )
+    source = {
+        "steps": [
+            {
+                "observation": {
+                    "xml": (
+                        '<hierarchy><node package="com.google.android.apps.nexuslauncher" '
+                        'bounds="[0,0][720,1280]" /><node package="com.android.systemui" '
+                        'class="android.widget.SeekBar" text="Display brightness" '
+                        'bounds="[32,64][688,160]" /></hierarchy>'
+                    )
+                },
+                "action": {"action_type": "click", "x": 32, "y": 320},
+            }
+        ]
+    }
+
+    target = mobilegpt_source._mobilegpt_source_target(item=item, source=source)
+
+    assert target == {
+        "target_package": "com.android.settings",
+        "target_app": "com.android.settings",
+        "target_source": "system_ui_source_bootstrap",
+    }
+
+
 def _write_source_index(
     root: Path,
     *,

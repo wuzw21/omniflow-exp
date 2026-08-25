@@ -1292,6 +1292,66 @@ def _element_contains_action(element: ET.Element, action: dict[str, Any]) -> boo
     return left <= x <= right and top <= y <= bottom
 
 
+def _nearby_range_control(
+    indexed: Sequence[ET.Element],
+    point: tuple[float, float],
+    *,
+    source_forest: str,
+) -> ET.Element | None:
+    """Ground an edge tap to one nearby range control within touch slop.
+
+    AndroidWorld can record a successful tap a few pixels beyond a SeekBar's
+    accessibility bounds, especially at the minimum/maximum endpoint.  The
+    official MobileGPT XML still preserves that SeekBar.  Snap only to a
+    unique nearby range control and never to arbitrary text or containers.
+    """
+
+    width = 0.0
+    height = 0.0
+    if source_forest:
+        try:
+            source_root = ET.fromstring(source_forest)
+        except ET.ParseError:
+            source_root = None
+        if source_root is not None:
+            try:
+                width = float(source_root.get("width") or 0)
+                height = float(source_root.get("height") or 0)
+            except (TypeError, ValueError):
+                width = height = 0.0
+    bounds_rows = [
+        (element, bounds)
+        for element in indexed
+        if (bounds := _bounds(element.get("bounds"))) is not None
+    ]
+    if width <= 0:
+        width = max((bounds[2] for _, bounds in bounds_rows), default=0.0)
+    if height <= 0:
+        height = max((bounds[3] for _, bounds in bounds_rows), default=0.0)
+    touch_slop = max(1.0, min(width, height) * 0.05)
+    x, y = point
+    nearby: list[tuple[float, ET.Element]] = []
+    for element, (left, top, right, bottom) in bounds_rows:
+        tag = str(element.tag or "").casefold()
+        class_name = str(element.get("class") or "").casefold()
+        if not any(
+            marker in tag or marker in class_name
+            for marker in ("seekbar", "slider", "range")
+        ):
+            continue
+        dx = max(left - x, 0.0, x - right)
+        dy = max(top - y, 0.0, y - bottom)
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance <= touch_slop:
+            nearby.append((distance, element))
+    nearby.sort(key=lambda item: item[0])
+    if not nearby:
+        return None
+    if len(nearby) > 1 and abs(nearby[0][0] - nearby[1][0]) < 1e-6:
+        return None
+    return nearby[0][1]
+
+
 def _swipe_direction(action: dict[str, Any]) -> str:
     explicit = str(action.get("direction") or "").strip().lower()
     if explicit:
@@ -1443,6 +1503,18 @@ def _target_element(
         )
     else:
         candidates = []
+    if (
+        not candidates
+        and point is not None
+        and action_type in {"click", "double_tap", "long_press"}
+    ):
+        nearby_range = _nearby_range_control(
+            indexed,
+            point,
+            source_forest=source_forest,
+        )
+        if nearby_range is not None:
+            candidates = [nearby_range]
     if not candidates:
         raise MobileGPTConversionError(
             "source_action_target_unresolved",

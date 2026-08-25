@@ -1604,3 +1604,27 @@ def test_failure_audit_preserves_partial_validation_rows(tmp_path: Path) -> None
     assert result["validated_transition_count"] == 0
     assert result["validation_rows"][0]["reason"] == "source_action_target_unresolved"
     assert json.loads(audit.read_text(encoding="utf-8")) == result
+
+
+def test_target_element_snaps_edge_click_to_unique_nearby_seekbar() -> None:
+    parsed_xml = (
+        '<div><SeekBar text="Display brightness" id="slider" '
+        'class="android.widget.SeekBar" bounds="[32,64][688,160]" index="1" />'
+        '<div id="status_bar" bounds="[0,0][720,48]" index="3" /></div>'
+    )
+    source_forest = (
+        '<hierarchy width="720" height="1280"><window id="window-30">'
+        '<node class="android.widget.SeekBar" text="Display brightness" '
+        'resource-id="com.android.systemui:id/slider" package="com.android.systemui" '
+        'bounds="[32,64][688,160]" focusable="true" /></window></hierarchy>'
+    )
+
+    target = _target_element(
+        {"action_type": "click", "x": 719, "y": 112},
+        parsed_xml,
+        step_index=11,
+        source_forest=source_forest,
+    )
+
+    assert target.tag == "SeekBar"
+    assert target.get("index") == "1"

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_EMBEDDING_MODEL,
@@ -100,11 +101,45 @@ def _mobilegpt_source_target(
             if value is not None
         }
     source_packages: set[str] = set()
+    raw_source_packages: set[str] = set()
     for step in source.get("steps") or []:
         observation = step.get("observation") if isinstance(step, dict) else None
+        if isinstance(observation, dict):
+            explicit_package = str(
+                observation.get("package_name")
+                or observation.get("packageName")
+                or observation.get("app_package")
+                or ""
+            ).strip()
+            if explicit_package:
+                raw_source_packages.add(explicit_package)
+            raw_xml = str(
+                observation.get("xml") or observation.get("forest") or ""
+            ).strip()
+            if raw_xml:
+                try:
+                    root = ET.fromstring(raw_xml)
+                except ET.ParseError:
+                    root = None
+                if root is not None:
+                    raw_source_packages.update(
+                        str(element.get("package") or "").strip()
+                        for element in root.iter()
+                        if str(element.get("package") or "").strip()
+                    )
         package = pipeline._mobilegpt_observation_package(observation)
         if package and package not in _IGNORED_SOURCE_PACKAGES:
             source_packages.add(package)
+    if (
+        not source_packages
+        and "com.android.systemui" in raw_source_packages
+        and raw_source_packages.issubset(_IGNORED_SOURCE_PACKAGES)
+    ):
+        return {
+            "target_package": "com.android.settings",
+            "target_app": "com.android.settings",
+            "target_source": "system_ui_source_bootstrap",
+        }
     if len(source_packages) != 1:
         label = "unresolved" if not source_packages else "ambiguous"
         raise ValueError(
