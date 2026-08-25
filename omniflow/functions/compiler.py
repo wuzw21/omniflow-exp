@@ -926,7 +926,23 @@ def _materialize_authoring_plan(
             source_indices=indices,
         )
         if function_id in materialized_function_ids:
-            raise ValueError("function_author_plan_duplicate_function_id")
+            if not is_complete:
+                raise ValueError("function_author_plan_duplicate_function_id")
+            # The complete Function is the public API envelope.  Authoring
+            # models may repeat the same id for a semantic prefix and its
+            # complete envelope; keep the envelope rather than discarding a
+            # usable plan and falling back to a goal-literal recorded Function.
+            functions = [
+                item
+                for item in functions
+                if item.get("function_id") != function_id
+            ]
+            arguments.pop(function_id, None)
+            materialized_function_ids.remove(function_id)
+            materialization_notes.append(
+                "Compiler deduplicated a semantic Function repeated by the "
+                "complete Function envelope."
+            )
         materialized_function_ids.add(function_id)
         functions.append(function)
         arguments[function_id] = source_arguments
