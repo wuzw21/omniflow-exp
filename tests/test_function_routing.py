@@ -1904,7 +1904,7 @@ def test_projected_node_center_does_not_override_webview_click() -> None:
     assert "node_grounding" not in metadata
 
 
-def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
+def test_function_completion_review_uses_xml_without_final_screenshot() -> None:
     request = build_model_turn_request(
         goal="Turn bluetooth off",
         model="test-model",
@@ -1934,8 +1934,8 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
     )
 
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert content[1]["image_url"]["detail"] == "low"
+    assert [item["type"] for item in content] == ["text"]
+    assert "Screenshot upload is omitted" in content[0]["text"]
     assert '"checked":false' in content[0]["text"]
     assert "Those actions are already applied" in content[0]["text"]
     assert "Never repeat or toggle" in content[0]["text"]
@@ -1965,7 +1965,7 @@ def test_planner_compacts_large_screenshot_before_upload() -> None:
     assert compact.size == (360, 640)
 
 
-def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
+def test_vlm_planner_function_completion_review_uses_xml_by_default() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -2019,8 +2019,8 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert content[1]["image_url"]["detail"] == "low"
+    assert [item["type"] for item in content] == ["text"]
+    assert "Screenshot upload is omitted" in content[0]["text"]
     turn_text = content[0]["text"]
     assert '"checked":false' in turn_text
     assert "Never repeat or toggle" in turn_text

@@ -229,14 +229,16 @@ def _planner_needs_screenshot(
         for key in ("visual_grounding_required", "screenshot_required")
     ):
         return True
-    if extra.get("function_execution"):
-        return True
     recent_actions = extra.get("recent_actions")
     if isinstance(recent_actions, list):
         for item in recent_actions:
             if not isinstance(item, dict):
                 continue
-            if item.get("function_id") or item.get("success") is False:
+            # A successful Function action is already represented by the live
+            # XML and execution history.  Do not turn every post-Function
+            # Planner turn into a vision request; only failed actions need
+            # visual diagnosis here.  WebView/visual cases were handled above.
+            if item.get("success") is False:
                 return True
     error = str(extra.get("previous_action_error") or "").casefold()
     return any(
