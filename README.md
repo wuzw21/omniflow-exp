@@ -45,9 +45,9 @@ Function。RunLog 是证据而不是逐动作脚本：重复、重试、checker 
 与 bindings，compiler 负责 schema、顺序、原子观察边界和参数提升硬校验；不使用
 嵌套 schema。因此一个成功 RunLog 最终生成至少一个 Function。
 Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
-observation。source seed 固定为 `111`，
-evaluation seed 固定为 `113`，正式 chat 和视觉模型统一为 `GLM-4.6V`；初始
-VLM 与 fallback 都直接传当前 screenshot。
+observation。source seed 固定为 `111`，evaluation seed 固定为 `113`。
+OmniFlow Planner 使用 `GLM-5.1` 的 XML-only、非流式单工具请求；需要原生图片的
+外部视觉方法仍使用 `GLM-4.6V`。
 
 ## 数据目录
 

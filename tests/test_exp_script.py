@@ -440,6 +440,7 @@ def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
     )["protocol"]
 
     assert protocol["model"] == "GLM-4.6V"
+    assert protocol["omniflow_planner_model"] == "GLM-5.1"
     assert protocol["appagent_model"] == "GLM-4.6V"
     assert 'export MOBILEGPT_EMBEDDING_MODEL="GLM-Embedding-2"' in SCRIPT.read_text(
         encoding="utf-8"

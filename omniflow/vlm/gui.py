@@ -123,6 +123,7 @@ def build_model_turn_request(
     rejected_tool_call: dict[str, Any] | None = None,
     lightweight_retry: bool = False,
 ) -> dict[str, Any]:
+    text_only_model = str(model).strip().casefold() == "glm-5.1"
     global_functions = tuple(
         function
         for function in functions
@@ -150,7 +151,8 @@ def build_model_turn_request(
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     include_images = (
-        not lightweight_retry
+        not text_only_model
+        and not lightweight_retry
         and not compact_global_startup
         and _planner_needs_screenshot(state, projection)
     )
@@ -200,7 +202,7 @@ def build_model_turn_request(
             "type": "function",
             "function": {"name": global_functions[0].id},
         }
-    return {
+    request = {
         "model": str(model),
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -208,14 +210,16 @@ def build_model_turn_request(
         ],
         "max_tokens": 512,
         "temperature": 0,
-        "stream": True,
+        "stream": False,
         "tools": tools,
         "tool_choice": tool_choice,
         "parallel_tool_calls": False,
-        "reasoning_effort": "none",
         "enable_thinking": False,
         "thinking": {"type": "disabled"},
     }
+    if not text_only_model:
+        request["reasoning_effort"] = "none"
+    return request
 
 
 def _planner_needs_screenshot(

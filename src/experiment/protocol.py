@@ -77,6 +77,7 @@ FORMAL_MODEL = str(
     os.environ.get("OMNIFLOW_FORMAL_MODEL")
     or ANDROIDWORLD_PROTOCOL["model"]
 )
+OMNIFLOW_PLANNER_MODEL = str(ANDROIDWORLD_PROTOCOL["omniflow_planner_model"])
 APPAGENT_MODEL = str(ANDROIDWORLD_PROTOCOL["appagent_model"])
 FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]

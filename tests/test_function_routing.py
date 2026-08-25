@@ -1534,7 +1534,7 @@ def test_vlm_planner_exposes_packages_only_through_open_app_tool() -> None:
     request = completions.requests[0]
     assert request["max_tokens"] == 512
     assert "max_completion_tokens" not in request
-    assert request["stream"] is True
+    assert request["stream"] is False
     assert "stream_options" not in request
     assert request["reasoning_effort"] == "none"
     assert request["parallel_tool_calls"] is False
@@ -1835,7 +1835,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
 
     assert request["max_tokens"] == 512
     assert "max_completion_tokens" not in request
-    assert request["stream"] is True
+    assert request["stream"] is False
     assert "stream_options" not in request
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
@@ -1857,6 +1857,32 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "When you choose a projected native XML node" in SYSTEM_PROMPT
     assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
+
+
+def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:
+    request = build_model_turn_request(
+        goal="Enter 41 minutes and 55 seconds",
+        model="GLM-5.1",
+        state={
+            "xml": (
+                '<hierarchy><node text="4" clickable="true" '
+                'bounds="[180,460][300,570]" /></hierarchy>'
+            ),
+            "image_base64": "screen-evidence",
+            "display": {"width": 720, "height": 1280},
+            "extra": {"function_execution": {"replay_status": "actions_succeeded"}},
+        },
+        max_steps=8,
+        turn_index=1,
+    )
+
+    assert request["stream"] is False
+    assert "reasoning_effort" not in request
+    assert [item["type"] for item in request["messages"][1]["content"]] == [
+        "text"
+    ]
+    assert request["enable_thinking"] is False
+    assert request["thinking"] == {"type": "disabled"}
 
 
 def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
