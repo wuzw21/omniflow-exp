@@ -56,7 +56,8 @@ def compile_runlog_to_store(
     recovery_examples: list[dict[str, Any]] = []
     omitted_action_types: set[str] = set()
     previous_successful_step: dict[str, Any] | None = None
-    for step in payload["steps"]:
+    source_steps = payload["steps"]
+    for source_step_index, step in enumerate(source_steps):
         if not isinstance(step, dict):
             continue
         metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
@@ -75,6 +76,19 @@ def compile_runlog_to_store(
         observation = step["observation"]
         before_state_id = state_id(observation)
         next_observation = step.get("next_observation")
+        if (
+            isinstance(next_observation, dict)
+            and state_id(next_observation) == before_state_id
+            and source_step_index + 1 < len(source_steps)
+        ):
+            following_observation = source_steps[source_step_index + 1].get(
+                "observation"
+            )
+            if (
+                isinstance(following_observation, dict)
+                and state_id(following_observation) != before_state_id
+            ):
+                next_observation = following_observation
         after_state_id = state_id(
             next_observation
             if isinstance(next_observation, dict)
@@ -88,6 +102,8 @@ def compile_runlog_to_store(
             action_type in {"click", "double_tap", "long_press", "swipe"}
             and isinstance(next_observation, dict)
             and before_state_id == after_state_id
+            and isinstance(metadata.get("action_effect"), dict)
+            and metadata["action_effect"].get("state_changed") is False
         ):
             # A successful gesture that leaves the native observation exactly
             # unchanged is not a reusable semantic capability.  Keeping it in
