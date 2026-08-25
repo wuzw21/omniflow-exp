@@ -1391,6 +1391,47 @@ def test_runtime_does_not_dispatch_blind_repeated_click_on_visible_node(
     )
 
 
+def test_runtime_does_not_dispatch_coordinate_outside_visible_nodes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+
+    class ClickableHost(RecordingHost):
+        def observe(self, **kwargs: object) -> Observation:
+            base = super().observe(**kwargs)
+            return Observation(
+                xml=(
+                    '<hierarchy><node text="Next" clickable="true" '
+                    'bounds="[100,200][300,400]" /></hierarchy>'
+                ),
+                package_name=base.package_name,
+                activity_name=base.activity_name,
+                image_base64=base.image_base64,
+                extra=base.extra,
+            )
+
+    host = ClickableHost()
+    planner = SequencePlanner(
+        [ToolCall("click", {"x": 600, "y": 700}), ToolCall("finished", {})]
+    )
+    result = OmniFlow(
+        tmp_path / "store.json",
+        host=host,
+        planner=planner,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    ).run("Advance to the next page")
+
+    assert result.success is True
+    assert host.actions == []
+    assert planner.previous_action_errors[1] == (
+        "coordinate_not_on_visible_actionable_node:"
+        "provide_target_description_or_choose_visible_node"
+    )
+
+
 class CapturingCompletions:
     def __init__(self, response: object) -> None:
         self.response = response

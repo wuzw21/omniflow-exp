@@ -662,6 +662,13 @@ class OmniFlow:
                 )
                 previous_action = planned
                 continue
+            if _coordinate_click_misses_visible_node(planned, observation):
+                previous_action_error = (
+                    "coordinate_not_on_visible_actionable_node:"
+                    "provide_target_description_or_choose_visible_node"
+                )
+                previous_action = planned
+                continue
             step = await execute_robust_action(
                 planned,
                 observation=observation,
@@ -1264,10 +1271,41 @@ def _repeated_coordinate_without_semantics(
     if x is None or y is None:
         return False
     del goal
-    try:
-        root = ET.fromstring(str(observation.xml or ""))
-    except ET.ParseError:
+    return _point_hits_actionable_xml_node(observation.xml, x, y)
+
+
+def _coordinate_click_misses_visible_node(
+    planned: Action,
+    observation: Observation,
+) -> bool:
+    """Reject a coordinate-only click outside all visible actionable nodes."""
+
+    if planned.tool != "click" or str(planned.args.get("target_description") or "").strip():
         return False
+    x = _finite_number(planned.args.get("x"))
+    y = _finite_number(planned.args.get("y"))
+    if x is None or y is None:
+        return False
+    bounds = _actionable_xml_bounds(observation.xml)
+    return bool(bounds) and not any(
+        left <= x <= right and top <= y <= bottom
+        for left, top, right, bottom in bounds
+    )
+
+
+def _point_hits_actionable_xml_node(xml: str, x: float, y: float) -> bool:
+    return any(
+        left <= x <= right and top <= y <= bottom
+        for left, top, right, bottom in _actionable_xml_bounds(xml)
+    )
+
+
+def _actionable_xml_bounds(xml: str) -> tuple[tuple[int, int, int, int], ...]:
+    try:
+        root = ET.fromstring(str(xml or ""))
+    except ET.ParseError:
+        return ()
+    result: list[tuple[int, int, int, int]] = []
     for element in root.iter():
         if not any(
             str(element.attrib.get(name) or "").strip().lower() == "true"
@@ -1279,12 +1317,9 @@ def _repeated_coordinate_without_semantics(
             r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]",
             str(element.attrib.get("bounds") or "").strip(),
         )
-        if match is None:
-            continue
-        left, top, right, bottom = (int(item) for item in match.groups())
-        if left <= x <= right and top <= y <= bottom:
-            return True
-    return False
+        if match is not None:
+            result.append(tuple(int(item) for item in match.groups()))
+    return tuple(result)
 
 
 def _same_click_coordinates(left: Action, right: Action) -> bool:
