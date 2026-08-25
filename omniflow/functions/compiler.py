@@ -1058,6 +1058,52 @@ def _goal_semantic_parameters(
     return result
 
 
+def _task_parameter_proposals(
+    function: dict[str, Any],
+    facts: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build deterministic bindings for exact RunLog task-parameter values."""
+
+    task_parameters = facts.get("task_parameters")
+    if not isinstance(task_parameters, dict):
+        return []
+    values = {
+        str(name).strip(): " ".join(str(value or "").casefold().split())
+        for name, value in task_parameters.items()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(name).strip())
+    }
+    proposals: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    for candidate in parameter_candidates(function):
+        recorded = " ".join(
+            str(candidate.get("recorded_value") or "").casefold().split()
+        )
+        if not recorded:
+            continue
+        match = next(
+            (
+                (name, value)
+                for name, value in values.items()
+                if name not in used_names and value and value == recorded
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        name, _ = match
+        proposals.append(
+            {
+                "name": name,
+                "description": f"{name.replace('_', ' ').capitalize()} supplied by the task.",
+                "step_index": int(candidate["step_index"]),
+                "arg_name": str(candidate["arg_name"]),
+                "recorded_value": str(candidate["recorded_value"]),
+            }
+        )
+        used_names.add(name)
+    return proposals
+
+
 def _goal_parameter_slot(goal: str) -> tuple[str, str]:
     slots = (
         ("folder", "Folder or notebook named by the user."),
@@ -1490,6 +1536,24 @@ def _default_bundle(
         function["description"] = f"{function['description']} {handoff_description}"
     else:
         function = _complete_function_artifact(facts)
+    task_parameter_proposals = _task_parameter_proposals(function, facts)
+    task_parameter_values = {
+        str(proposal["name"]): str(proposal["recorded_value"])
+        for proposal in task_parameter_proposals
+    }
+    if task_parameter_proposals:
+        apply_parameters(
+            function,
+            [
+                {
+                    key: value
+                    for key, value in proposal.items()
+                    if key != "recorded_value"
+                }
+                for proposal in task_parameter_proposals
+            ],
+            {"steps": facts.get("steps") or []},
+        )
     function["description"] = _append_terminal_handoff_description(
         function["description"],
         facts,
@@ -1498,7 +1562,7 @@ def _default_bundle(
     return {
         "schema_version": "omniflow.function-bundle.v2",
         "run_id": facts["run_id"],
-        "arguments": {function_id: {}},
+        "arguments": {function_id: task_parameter_values},
         "checker_rules": [],
         "functions": [function],
     }

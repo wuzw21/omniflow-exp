@@ -10,6 +10,7 @@ from runlog_fixtures import androidworld_run_log, androidworld_state
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import (
     _atomicize_repeated_click_function,
+    _default_bundle,
     _materialize_authoring_plan,
     compile_runlog_to_store,
 )
@@ -226,6 +227,35 @@ def test_compiler_exposes_exact_androidworld_task_parameter_for_input_text() -> 
     ]
     assert function["steps"][0]["action"]["args"]["text"] == ""
     assert result["bundle"]["arguments"]["search_location"] == {
+        "location": "47.1026191, 9.6083057"
+    }
+
+
+def test_default_bundle_preserves_task_parameter_api_when_authoring_falls_back() -> None:
+    facts = {
+        "run_id": "fallback-location",
+        "goal": "Add a location marker for 47.1026191, 9.6083057 in OsmAnd.",
+        "task_parameters": {"location": "47.1026191, 9.6083057"},
+        "steps": [
+            {
+                "before_state_id": "search",
+                "action": {
+                    "tool": "input_text",
+                    "args": {
+                        "target_description": "Type to search all",
+                        "text": "47.1026191, 9.6083057",
+                    },
+                },
+                "result": {"success": True},
+            }
+        ],
+    }
+
+    bundle = _default_bundle(facts, [])
+    assert bundle is not None
+    function = bundle["functions"][0]
+    assert function["input_schema"]["required"] == ["location"]
+    assert bundle["arguments"][function["function_id"]] == {
         "location": "47.1026191, 9.6083057"
     }
 
