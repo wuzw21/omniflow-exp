@@ -21,6 +21,10 @@ _ACTION_ATTRIBUTES = (
 )
 _ENGLISH_TOKEN = re.compile(r"[a-z0-9]+")
 _CHINESE_TOKEN = re.compile(r"[\u4e00-\u9fff]+")
+_NUMERIC_CONTROL_SUMMARY = re.compile(
+    r"(?:digit|number|key|button|\u6570\u5b57|\u6309\u952e|\u6309\u94ae)\s*['\"]?(\d{1,2})(?!\d)",
+    re.IGNORECASE,
+)
 _VISUAL_GOAL_MARKERS = ("广告", "弹窗", "遮挡", "popup", "overlay", "close ad")
 _GLOBAL_CONTROL_MARKERS = (
     "back",
@@ -211,6 +215,28 @@ def projected_node_center(
     node = matches[0]
     left, top, right, bottom = node.bounds
     return node, ((left + right) / 2, (top + bottom) / 2)
+
+
+def projected_numeric_summary_center(
+    projection: UIProjection,
+    summary: str,
+) -> tuple[ProjectedNode, tuple[float, float], str] | None:
+    """Resolve an explicitly named numeric control from a model action summary."""
+    label_match = _NUMERIC_CONTROL_SUMMARY.search(str(summary or ""))
+    if label_match is None:
+        return None
+    label = label_match.group(1)
+    matches = [
+        node
+        for node in projection.nodes
+        if not node.inside_webview
+        and label in {_normalized_label(value) for value in node.labels}
+    ]
+    if len(matches) != 1:
+        return None
+    node = matches[0]
+    left, top, right, bottom = node.bounds
+    return node, ((left + right) / 2, (top + bottom) / 2), label
 
 
 def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
@@ -427,5 +453,6 @@ __all__ = [
     "ProjectedNode",
     "UIProjection",
     "project_ui",
+    "projected_numeric_summary_center",
     "projected_node_center",
 ]

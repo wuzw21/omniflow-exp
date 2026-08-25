@@ -17,6 +17,7 @@ from omniflow.vlm.tool_arguments import load_tool_arguments
 from omniflow.vlm.ui_projection import (
     UIProjection,
     project_ui,
+    projected_numeric_summary_center,
     projected_node_center,
 )
 from omniflow.vlm_coordinates import (
@@ -393,6 +394,20 @@ def parse_model_turn_response(
                     projection,
                     str(arguments.get("target_description") or ""),
                 )
+                grounding_source = "target_description"
+                if grounded is None and not arguments.get("target_description"):
+                    numeric_grounding = projected_numeric_summary_center(
+                        projection,
+                        summary,
+                    )
+                    if numeric_grounding is not None:
+                        node, center, numeric_label = numeric_grounding
+                        grounded = node, center
+                        arguments = {
+                            **arguments,
+                            "target_description": numeric_label,
+                        }
+                        grounding_source = "numeric_summary"
                 if grounded is not None:
                     node, (x, y) = grounded
                     original = {
@@ -410,6 +425,8 @@ def parse_model_turn_response(
                         "original_relative_0_1000": original,
                         "grounded_raw_pixels": {"x": x, "y": y},
                     }
+                    if grounding_source == "numeric_summary":
+                        node_grounding_metadata["source"] = grounding_source
             if node_grounding_metadata is not None:
                 arguments, coordinate_metadata = screen_pixel_args_to_canonical(
                     tool=tool,

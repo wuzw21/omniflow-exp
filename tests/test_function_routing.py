@@ -1989,6 +1989,52 @@ def test_qwen_plus_raw_bounds_are_centered_and_normalized() -> None:
     ]
 
 
+def test_qwen_numeric_summary_overrides_mismatched_bounds() -> None:
+    display = {"width": 720, "height": 1280}
+    state = {
+        "xml": (
+            '<hierarchy><node text="4" clickable="true" '
+            'bounds="[184,460][296,572]" />'
+            '<node text="5" clickable="true" '
+            'bounds="[304,460][416,572]" /></hierarchy>'
+        ),
+        "display": display,
+    }
+    wrong_bounds = [304, 460, 416, 572]
+    response = {
+        "requested_model": "Qwen3.6-Plus",
+        "resolved_model": "Qwen3.6-Plus",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {
+                            "summary": "Tap digit 4 to enter the minutes",
+                            "x": wrong_bounds,
+                            "y": wrong_bounds,
+                        }
+                    ),
+                }
+            }
+        ],
+    }
+
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="Qwen3.6-Plus",
+        turn_index=1,
+        display=display,
+        state=state,
+        goal="Enter 41 minutes and 55 seconds",
+    )
+
+    assert tool_call.arguments["x"] == pytest.approx(333.3333333333)
+    assert tool_call.arguments["y"] == pytest.approx(403.125)
+    assert metadata["node_grounding"]["source"] == "numeric_summary"
+    assert metadata["node_grounding"]["target_description"] == "4"
+
+
 def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:
     request = build_model_turn_request(
         goal="Enter 41 minutes and 55 seconds",
