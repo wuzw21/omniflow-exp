@@ -53,9 +53,9 @@ are raw pixels in the current original Display coordinate frame, never normalize
 0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
 resized for transport, but its coordinates must still refer to the original
 Display. If you include a summary, use a summary of at most 12 words naming the
-immediate subgoal and expected progress. This summary becomes short step memory on
-the next turn. The summary is optional metadata; never reject a valid tool call
-because it is absent.
+immediate subgoal. It is display metadata only; the runtime records the observed
+post-action effect as step memory. Never reject a valid tool call because summary
+is absent.
 Do not emit analysis, chain-of-thought, reasoning, thinking, rationale, or prose.
 Make the decision directly from current evidence and return only the tool call.
 A recalled Function is a learned reusable Android skill. Prefer an applicable
@@ -602,11 +602,11 @@ def _turn_text(
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(
                 "Use the M3A-style step history and any error before selecting again. "
-                "Each summary records the intended subgoal; the current UI is the "
-                "authoritative observed result. Preserve correct progress, do not "
-                "repeat an already-applied part, and choose the next missing action, "
-                "finish, or abort. Do not repeat the same action when it already "
-                "succeeded or made no progress."
+                "Each effect records the observed UI change after its action; the "
+                "fresh current UI remains authoritative. Preserve correct progress, "
+                "do not repeat an already-applied part, and choose the next missing "
+                "action, finish, or abort. Do not repeat the same action when it "
+                "already succeeded or made no progress."
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))

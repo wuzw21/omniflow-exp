@@ -51,6 +51,8 @@ _OPEN_APP_READY_MAX_ATTEMPTS = 30
 _OBSERVATION_READY_POLL_SECONDS = 0.25
 _OBSERVATION_READY_MAX_ATTEMPTS = 20
 _CHECKER_RECOVERY_MAX_ATTEMPTS = 8
+_ACTION_EFFECT_MAX_ITEMS = 8
+_ACTION_EFFECT_VALUE_MAX_CHARS = 160
 # A Function action is executable only when OmniTransfer reports a high-confidence
 # contextual mapping.  The same floor also governs entry recall and resume
 # alignment so a candidate cannot be visible under a weaker policy than the one
@@ -767,8 +769,10 @@ def _observation_window_outside_display(observation: Observation) -> bool:
 
 def step_fact(step: StepResult) -> dict[str, Any]:
     action = step.action or Action("")
-    before = _state(step.before or Observation())
-    after = _state(step.after or step.before or Observation())
+    before_observation = step.before or Observation()
+    after_observation = step.after or step.before or Observation()
+    before = _state(before_observation)
+    after = _state(after_observation)
     metadata: dict[str, Any] = {"origin": step.origin}
     if step.function_id:
         metadata["function_id"] = step.function_id
@@ -779,6 +783,10 @@ def step_fact(step: StepResult) -> dict[str, Any]:
         metadata["action_result"] = dict(action_result.extra)
     if step.detail:
         metadata["transfer"] = dict(step.detail)
+    metadata["action_effect"] = _action_effect(
+        before_observation,
+        after_observation,
+    )
     result: dict[str, Any] = {"success": step.success}
     if step.error:
         result["error"] = step.error
@@ -789,6 +797,144 @@ def step_fact(step: StepResult) -> dict[str, Any]:
         "after_state_id": after["state_id"],
         "metadata": metadata,
     }
+
+
+def _action_effect(
+    before: Observation,
+    after: Observation,
+) -> dict[str, Any]:
+    """Describe the observed post-action change without another model call."""
+
+    before_state = _state(before)
+    after_state = _state(after)
+    effect: dict[str, Any] = {
+        "state_changed": before_state["state_id"] != after_state["state_id"],
+    }
+    if before.package_name != after.package_name:
+        effect["package"] = {
+            "before": str(before.package_name or ""),
+            "after": str(after.package_name or ""),
+        }
+    if before.activity_name != after.activity_name:
+        effect["activity"] = {
+            "before": str(before.activity_name or ""),
+            "after": str(after.activity_name or ""),
+        }
+
+    target_package = str(after.package_name or before.package_name or "").strip()
+    if not target_package:
+        target_package = _dominant_effect_package(after.xml or before.xml)
+    before_nodes = _effect_nodes(before.xml, target_package=target_package)
+    after_nodes = _effect_nodes(after.xml, target_package=target_package)
+    changed: list[dict[str, str]] = []
+    changed_before_labels: set[str] = set()
+    changed_after_labels: set[str] = set()
+    for identity in sorted(before_nodes.keys() & after_nodes.keys()):
+        before_fields = before_nodes[identity]
+        after_fields = after_nodes[identity]
+        for field in ("text", "content_desc", "checked", "selected", "enabled"):
+            old = before_fields.get(field, "")
+            new = after_fields.get(field, "")
+            if old == new:
+                continue
+            changed.append(
+                {
+                    "target": identity,
+                    "field": field,
+                    "before": _bounded_effect_value(old),
+                    "after": _bounded_effect_value(new),
+                }
+            )
+            if field in {"text", "content_desc"}:
+                if old:
+                    changed_before_labels.add(_bounded_effect_value(old))
+                if new:
+                    changed_after_labels.add(_bounded_effect_value(new))
+            if len(changed) >= _ACTION_EFFECT_MAX_ITEMS:
+                break
+        if len(changed) >= _ACTION_EFFECT_MAX_ITEMS:
+            break
+    if changed:
+        effect["changed"] = changed
+
+    before_labels = _effect_labels(before_nodes)
+    after_labels = _effect_labels(after_nodes)
+    appeared = sorted(
+        (after_labels - before_labels) - changed_after_labels
+    )[:_ACTION_EFFECT_MAX_ITEMS]
+    disappeared = sorted(
+        (before_labels - after_labels) - changed_before_labels
+    )[:_ACTION_EFFECT_MAX_ITEMS]
+    if appeared:
+        effect["appeared"] = appeared
+    if disappeared:
+        effect["disappeared"] = disappeared
+    return effect
+
+
+def _effect_nodes(xml: str, *, target_package: str) -> dict[str, dict[str, str]]:
+    try:
+        root = ET.fromstring(str(xml or ""))
+    except ET.ParseError:
+        return {}
+    nodes: dict[str, dict[str, str]] = {}
+    for element in root.iter():
+        attributes = element.attrib
+        package_name = str(attributes.get("package") or "").strip()
+        if target_package and package_name and package_name != target_package:
+            continue
+        resource_id = str(attributes.get("resource-id") or "").strip()
+        class_name = str(attributes.get("class") or "").strip()
+        bounds = str(attributes.get("bounds") or "").strip()
+        identity = resource_id or "@".join(
+            part for part in (class_name, bounds) if part
+        )
+        if not identity:
+            continue
+        fields = {
+            "text": str(attributes.get("text") or "").strip(),
+            "content_desc": str(attributes.get("content-desc") or "").strip(),
+            "checked": str(attributes.get("checked") or "").strip(),
+            "selected": str(attributes.get("selected") or "").strip(),
+            "enabled": str(attributes.get("enabled") or "").strip(),
+        }
+        if not any(fields.values()):
+            continue
+        # Resource ids are normally unique. Bounds disambiguate repeated rows
+        # while keeping stable controls aligned across adjacent observations.
+        if identity in nodes and bounds:
+            identity = f"{identity}@{bounds}"
+        nodes[identity] = fields
+    return nodes
+
+
+def _dominant_effect_package(xml: str) -> str:
+    try:
+        root = ET.fromstring(str(xml or ""))
+    except ET.ParseError:
+        return ""
+    counts: dict[str, int] = {}
+    for element in root.iter():
+        package_name = str(element.attrib.get("package") or "").strip()
+        if not package_name or package_name == "com.android.systemui":
+            continue
+        counts[package_name] = counts.get(package_name, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
+
+
+def _effect_labels(nodes: dict[str, dict[str, str]]) -> set[str]:
+    labels: set[str] = set()
+    for fields in nodes.values():
+        for field in ("text", "content_desc"):
+            value = _bounded_effect_value(fields.get(field, ""))
+            if value:
+                labels.add(value)
+    return labels
+
+
+def _bounded_effect_value(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:_ACTION_EFFECT_VALUE_MAX_CHARS]
 
 
 def _state(value: Observation) -> dict[str, Any]:

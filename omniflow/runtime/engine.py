@@ -1006,9 +1006,9 @@ def _recent_actions(
             "error": result.get("error"),
             "function_id": metadata.get("function_id") or None,
         }
-        summary = str(metadata.get("summary") or "").strip()
-        if summary:
-            item["summary"] = summary
+        action_effect = metadata.get("action_effect")
+        if isinstance(action_effect, dict):
+            item["effect"] = dict(action_effect)
         history.append(item)
     return history
 
@@ -1054,13 +1054,14 @@ def _execution_history(
                 else "unknown execution error"
             )
             description = f"Action `{action.tool}` failed: {error}."
-        summary = (
-            str(metadata.get("summary") or "").strip()
-            if isinstance(metadata, dict)
-            else ""
+        action_effect = (
+            metadata.get("action_effect") if isinstance(metadata, dict) else None
         )
-        if summary:
-            description = f'{description} Step memory: "{summary}"'
+        if isinstance(action_effect, dict):
+            description = (
+                f"{description} Observed effect: "
+                f"{json.dumps(action_effect, ensure_ascii=False, separators=(',', ':'))}"
+            )
         lines.append(f"{index}. [{source}] {description}")
     lines.extend(
         [
