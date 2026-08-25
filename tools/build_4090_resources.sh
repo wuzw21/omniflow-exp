@@ -27,16 +27,14 @@ Options:
   --skip-data                Do not transfer authoritative data
   --skip-system-bootstrap    Do not use apt/sudo or install uv/Node/SDK
   --user-bootstrap            Skip apt/sudo, but install missing user-local tools
-  --skip-device-setup        Do not create/configure Android devices
   --skip-bmoca               Do not clone/install B-MoCA dependencies
   --upgrade-python-deps      Run uv lock --upgrade before uv sync
-  --run-smoke                Run CameraTakePhoto omniflow after validation
   --reuse-remote             Permit an existing remote bundle root
   --help                     Show this help
 
 Example:
   bash tools/build_4090_resources.sh \
-    --ssh user@4090 --model-env /secure/model.env --run-smoke
+    --ssh user@4090 --model-env /secure/model.env
 EOF
 }
 
@@ -54,10 +52,8 @@ mode="latest"
 skip_data=0
 skip_system_bootstrap=0
 user_bootstrap=0
-skip_device_setup=0
 skip_bmoca=0
 upgrade_python_deps=0
-run_smoke=0
 reuse_remote=0
 
 while [[ $# -gt 0 ]]; do
@@ -72,10 +68,8 @@ while [[ $# -gt 0 ]]; do
     --skip-data) skip_data=1; shift ;;
     --skip-system-bootstrap) skip_system_bootstrap=1; shift ;;
     --user-bootstrap) user_bootstrap=1; shift ;;
-    --skip-device-setup) skip_device_setup=1; shift ;;
     --skip-bmoca) skip_bmoca=1; shift ;;
     --upgrade-python-deps) upgrade_python_deps=1; shift ;;
-    --run-smoke) run_smoke=1; shift ;;
     --reuse-remote) reuse_remote=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -115,7 +109,7 @@ if [[ "$remote" == 0 ]]; then
   [[ "$reuse_remote" == 1 ]] || rsync_repo_args+=(--delete)
   rsync "${rsync_repo_args[@]}" \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
-    --exclude '.pytest_cache/' --exclude 'outputs/' --exclude 'data/' \
+    --exclude 'outputs/' --exclude 'data/' \
     "$repo/" "$ssh_host:$remote_root/"
   if [[ -n "$model_env" ]]; then
     rsync -az "$model_env" "$ssh_host:$remote_root/model.env"
@@ -140,10 +134,8 @@ if [[ "$remote" == 0 ]]; then
   fi
   remote_args=(--remote --remote-root "$remote_root" --mode "$mode")
   [[ "$skip_system_bootstrap" == 1 ]] && remote_args+=(--skip-system-bootstrap)
-  [[ "$skip_device_setup" == 1 ]] && remote_args+=(--skip-device-setup)
   [[ "$skip_bmoca" == 1 ]] && remote_args+=(--skip-bmoca)
   [[ "$upgrade_python_deps" == 1 ]] && remote_args+=(--upgrade-python-deps)
-  [[ "$run_smoke" == 1 ]] && remote_args+=(--run-smoke)
   [[ "$reuse_remote" == 1 ]] && remote_args+=(--reuse-remote)
   [[ "$user_bootstrap" == 1 ]] && remote_args+=(--user-bootstrap)
   printf -v remote_cmd '%q ' "${remote_args[@]}"
@@ -393,16 +385,6 @@ manifest = {
 }
 Path(os.environ["MANIFEST_PATH"]).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
 PY
-
-log "checking AndroidWorld command construction"
-(cd "$repo" && bash scripts/exp/run_androidworld.sh \
-  --task CameraTakePhoto --method all --device all --dry-run)
-
-if [[ "$run_smoke" == 1 ]]; then
-  log "running CameraTakePhoto omniflow smoke test"
-  (cd "$repo" && bash scripts/exp/run_androidworld.sh \
-    --task CameraTakePhoto --method omniflow --device standard45562)
-fi
 
 log "ready"
 log "source env with: source '$env_file'"

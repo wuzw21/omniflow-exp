@@ -5108,7 +5108,11 @@ def build_mobilegpt_command(
         "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
         "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
         "MOBILEGPT_CLIENT_MODE": "official_accessibility",
-        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": "native_accessibility",
+        "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": str(
+            client_runtime_env.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND")
+            or os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND")
+            or "oob"
+        ),
         "PYTHONPATH": os.pathsep.join(
             value
             for value in (

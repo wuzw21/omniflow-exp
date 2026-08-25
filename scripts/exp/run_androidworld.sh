@@ -14,62 +14,10 @@ if [[ -n "$env_file" && -f "$env_file" ]]; then
   source "$env_file"
   set +a
 fi
-
-# The configured provider historically called this credential LLMTHU_API_KEY;
-# MobileGPT's official OpenAI client reads the standard name.
 if [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
   export OPENAI_API_KEY="$LLMTHU_API_KEY"
 fi
 
-# AndroidWorld physical I/O is a hard OOB contract for this checkout.
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="oob"
-
-python_bin="${PYTHON_BIN:-$repo/.venv/bin/python}"
-if [[ "$python_bin" != /* || ! -x "$python_bin" ]]; then
-  echo "Python runtime missing: $python_bin" >&2
-  exit 2
-fi
-
-args=()
-while (($#)); do
-  case "$1" in
-    --config)
-      export OMNIFLOW_ANDROIDWORLD_CONFIG="$2"
-      shift 2
-      ;;
-    --e2e-task)
-      args+=(--task "$2")
-      shift 2
-      ;;
-    --e2e-method)
-      args+=(--method "$2")
-      shift 2
-      ;;
-    --e2e-device)
-      args+=(--device "$2")
-      shift 2
-      ;;
-    --e2e-source-seed)
-      args+=(--source-seed "$2")
-      shift 2
-      ;;
-    --e2e-evaluation-seed)
-      args+=(--evaluation-seed "$2")
-      shift 2
-      ;;
-    --control-backend)
-      if [[ "$2" != "oob" ]]; then
-        echo "AndroidWorld requires the OOB control backend: $2" >&2
-        exit 2
-      fi
-      shift 2
-      ;;
-    *)
-      args+=("$1")
-      shift
-      ;;
-  esac
-done
-
 export PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}"
-exec "$python_bin" -m src.experiment.run_tasks "${args[@]}"
+exec "${PYTHON_BIN:-$repo/.venv/bin/python}" -m src.experiment.run_tasks "$@"
