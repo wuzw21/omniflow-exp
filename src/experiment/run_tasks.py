@@ -28,6 +28,7 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
+    SOURCE_DEVICE,
     SOURCE_SEED,
     TASK_DEADLINE_SEC,
     TASK_SEED,
@@ -48,7 +49,7 @@ def _methods(value: str) -> tuple[str, ...]:
 def _devices(value: str) -> tuple[tuple[str, str, int], ...]:
     if not value or value == "all":
         return DEVICES
-    catalog = {item[0]: item for item in DEVICES}
+    catalog = {item[0]: item for item in (*DEVICES, SOURCE_DEVICE)}
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
     devices: list[tuple[str, str, int]] = []
     for item in selected:
