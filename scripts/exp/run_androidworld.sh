@@ -13,6 +13,10 @@ for runtime_env in "$repo/config/runtime.env" "$repo/config/runtime.secrets.env"
   fi
 done
 
+if [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
+  export OPENAI_API_KEY="$LLMTHU_API_KEY"
+fi
+
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="oob"
 export PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}"
 exec "${PYTHON_BIN:-$repo/.venv/bin/python}" -m src.experiment.run_tasks "$@"
