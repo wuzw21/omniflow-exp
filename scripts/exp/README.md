@@ -57,7 +57,9 @@ bash scripts/exp/run_androidworld.sh --setup-device tablet45554
 `data/androidworld/.archive/setup/<UTC>/setup_report.json`。缺少 OOB
 的当前 `OBSERVE_OMNIFLOW`/`CONTROL_OMNIFLOW` receiver、缺少 APK、协议版本
 不匹配或 accessibility 未 bound 都会失败，不会开始实验。默认会补齐 Python
-依赖；只做已有环境验收时设 `OMNIFLOW_SETUP_INSTALL_PYTHON=0`。
+依赖；AndroidWorld 音频任务需要的 `ffmpeg` 也由 setup 以用户态
+`imageio-ffmpeg` 安装并暴露到 `~/.local/bin`，不需要 sudo。只做已有环境验收时
+设 `OMNIFLOW_SETUP_INSTALL_PYTHON=0`。
 
 ## 选择范围
 

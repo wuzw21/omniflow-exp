@@ -102,7 +102,72 @@ def _python_requirement_installs(
     )
     installs.append(("package", ["colorama"]))
     installs.append(("package", ["dashscope"]))
+    installs.append(("package", ["imageio-ffmpeg>=0.6"]))
     return installs
+
+
+def _packaged_ffmpeg(python_bin: Path) -> Path | None:
+    probe = _run(
+        [
+            str(python_bin),
+            "-c",
+            "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())",
+        ],
+        timeout=600,
+    )
+    if probe.returncode != 0:
+        return None
+    lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
+    if not lines:
+        return None
+    candidate = Path(lines[-1]).expanduser()
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate.resolve()
+    return None
+
+
+def _ensure_user_ffmpeg(
+    *,
+    python_bin: Path,
+    install_python: bool,
+    user_bin_dir: Path | None = None,
+) -> Path | None:
+    """Expose a user-owned ffmpeg required by AndroidWorld audio tasks."""
+
+    existing = shutil.which("ffmpeg")
+    if existing:
+        candidate = Path(existing).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate.resolve()
+
+    packaged = _packaged_ffmpeg(python_bin)
+    if packaged is None and install_python:
+        install = _run(
+            [
+                str(python_bin),
+                "-m",
+                "pip",
+                "install",
+                "imageio-ffmpeg>=0.6",
+            ],
+            timeout=_python_install_timeout_sec(),
+        )
+        if install.returncode == 0:
+            packaged = _packaged_ffmpeg(python_bin)
+    if packaged is None:
+        return None
+
+    target_dir = user_bin_dir or (Path.home() / ".local" / "bin")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    exposed = target_dir / "ffmpeg"
+    if exposed.is_symlink():
+        if exposed.resolve(strict=False) == packaged:
+            return exposed
+        exposed.unlink()
+    elif exposed.exists():
+        return exposed if os.access(exposed, os.X_OK) else None
+    exposed.symlink_to(packaged)
+    return exposed
 
 
 def _is_required_setup_checkout(name: str) -> bool:
@@ -284,6 +349,11 @@ def _check_host(
 
     final_import_probe = import_probe()
     record("python_imports", final_import_probe.returncode == 0, final_import_probe.stdout[-1200:])
+    ffmpeg = _ensure_user_ffmpeg(
+        python_bin=python_bin,
+        install_python=install_python,
+    )
+    record("ffmpeg", ffmpeg is not None, str(ffmpeg or "missing"))
 
     record(
         "androidworld_checkout",
