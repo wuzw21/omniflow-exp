@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import base64
 from copy import deepcopy
-from io import BytesIO
 import json
-from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
+from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.artifact import validate_arguments
@@ -27,71 +23,7 @@ from omniflow.vlm_coordinates import (
     screen_pixel_args_to_canonical,
 )
 
-SYSTEM_PROMPT = """
-You are an Android GUI agent. Complete the user goal from the compact relevant UI
-elements and current screenshot. Treat the screenshot as primary evidence for icon
-identity and spatial relationships, and XML as evidence for text and control state.
-Work step by step like a strong general Android agent: use the complete goal, the
-fresh current UI, and the recorded step history together. Before choosing a tool,
-compare the visible current state with the requested target state, preserve progress
-that is already correct, and choose the easiest next action that advances the whole
-goal. For multi-step entry or construction, continue with the next missing part
-instead of restarting an already-correct partial result. Use the observed current
-state to judge whether the previous action had its intended effect.
-UI elements are grouped by priority; global controls come first, and goal_controls
-are actionable visual elements adaptively associated with nearby goal text. The `v`
-field is a stable visual reference for an actionable element at its XML bounds.
-When you choose a projected native XML node, whether by `v` or its exact label,
-default x and y to the center of that node's `b=[left,top][right,bottom]` bounds.
-For example, a chosen node with bounds
-[0,766][720,878] has raw-pixel center (360,822), which maps to relative
-(500,642.1875) on a 720x1280 display. This node-center rule does not apply
-to WebView or screenshot-only visual targets without a reliable projected node; locate
-those from the screenshot instead.
-Return exactly one native tool_call each turn. Never put
-action JSON or tool syntax in assistant text. Choose one action, wait for its
-result, then inspect the fresh state before choosing another action. Tool coordinates
-are device-independent relative values from 0..1000 on each axis. XML bounds remain
-raw pixels in the current original Display frame; convert a raw point with
-x/DisplayWidth*1000 and y/DisplayHeight*1000. Screenshot transport resizing does not
-change the relative coordinate frame. If you include a summary, use a summary of at most 12 words naming the
-immediate subgoal. It is display metadata only; the runtime records the observed
-post-action effect as step memory. Never reject a valid tool call because summary
-is absent.
-Do not emit analysis, chain-of-thought, reasoning, thinking, rationale, or prose.
-Make the decision directly from current evidence and return only the tool call.
-A recalled Function is a learned reusable Android skill. Prefer an applicable
-Function over manually reproducing the same actions, and fill every Function
-argument from the current user goal. Never call a recalled Function merely because
-its name matches the goal: its description and required starting UI must match the
-fresh current state. A global Function whose first action is `open_app` is an exception:
-call it directly from the launcher or an unrelated starting page because it owns
-the startup and navigation prefix; do not call `open_app` separately first. For
-every other Function, finish onboarding and navigation, and reopen the requested
-content, before calling it. After a Function returns, inspect the fresh state and
-continue the remaining goal; Function success does not by itself prove task success.
-Every coordinate is one scalar relative 0..1000 number, never an array, object, string,
-boolean, or combined coordinate pair.
-Use finished only when current evidence directly proves the goal is complete.
-When calling finished, keep content to one short factual sentence describing only
-the outcome directly supported by the current screen or previous tool result. Do
-not claim that a RunLog or reusable Function was registered; the host reports the
-real registration state after execution.
-For answer or status goals, return the answer through finished(content) as the
-tool call; never return a bare answer or status as assistant prose.
-For switches and checkboxes, checked=false means off and checked=true means on.
-Never toggle a switch when its checked state already matches the requested goal.
-If a click leaves the state unchanged, do not repeat the same coordinates; ground the
-next action in the exact projected bounds or choose a different visible control.
-If the previous action succeeded and the state changed, reassess the fresh page before
-repeating the same semantic target; repeat it only when the current evidence shows it
-is still the required next action, never as timeout or recovery behavior.
-Prefer stable, reusable navigation. When the current app or page provides search,
-use search and type the requested text directly before browsing long menus or
-swiping. Do not select history, recent, suggestion, or cached-value items when the
-requested value can be entered directly. Swipe only when no usable search or input
-path exists, or when search results still require browsing.
-""".strip()
+SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
 class ModelToolCallError(ValueError):
@@ -119,7 +51,6 @@ def build_model_turn_request(
     step_skill_guidance: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
-    previous_screenshot_path: str = "",
     validation_error: str = "",
     retry_tool_name: str = "",
     rejected_tool_call: dict[str, Any] | None = None,
@@ -152,27 +83,6 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = (
-        not text_only_model
-        and not lightweight_retry
-        and not compact_global_startup
-        and _planner_needs_screenshot(state, projection)
-    )
-    current_image = _state_image_data_uri(state) if include_images else ""
-    if not include_images and _state_has_screenshot(state):
-        content[0]["text"] = (
-            f"{content[0]['text']}\n"
-            "Screenshot upload is omitted for this XML-complete native screen. "
-            "Use the XML labels, actions, and bounds as the authoritative grounding context."
-        )
-    if current_image:
-        current_image = _compact_image_data_uri(current_image)
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": current_image, "detail": "low"},
-            }
-        )
     display = state.get("display") if isinstance(state.get("display"), dict) else None
     if global_functions:
         # A recalled global Function owns startup. Keep this as a normal tool
@@ -222,58 +132,6 @@ def build_model_turn_request(
     if not text_only_model:
         request["reasoning_effort"] = "none"
     return request
-
-
-def _planner_needs_screenshot(
-    state: dict[str, Any],
-    projection: UIProjection,
-) -> bool:
-    """Selectively upload vision evidence when XML cannot safely ground the turn."""
-
-    xml = str(state.get("xml") or "").strip()
-    if not xml or projection.candidate_count == 0:
-        return True
-    if projection.visual_context_required or projection.visual_candidate_count:
-        return True
-    if any(node.inside_webview for node in projection.nodes):
-        return True
-
-    extra = state.get("extra")
-    if not isinstance(extra, dict):
-        return False
-    if any(
-        bool(extra.get(key))
-        for key in ("visual_grounding_required", "screenshot_required")
-    ):
-        return True
-    if extra.get("function_execution"):
-        return True
-    recent_actions = extra.get("recent_actions")
-    if isinstance(recent_actions, list):
-        for item in recent_actions:
-            if not isinstance(item, dict):
-                continue
-            if item.get("function_id") or item.get("success") is False:
-                return True
-    error = str(extra.get("previous_action_error") or "").casefold()
-    return any(
-        marker in error
-        for marker in (
-            "transfer",
-            "mapping",
-            "visual",
-            "webview",
-            "screenshot",
-            "grounding",
-        )
-    )
-
-
-def _state_has_screenshot(state: dict[str, Any]) -> bool:
-    return bool(
-        str(state.get("image_base64") or "").strip()
-        or str(state.get("screenshot_path") or "").strip()
-    )
 
 
 def parse_model_turn_response(
@@ -620,7 +478,7 @@ def _turn_text(
             lines.append(
                 "The previous recalled Function tool call finished all of its "
                 "actions successfully. Those actions are already applied. Judge "
-                "the complete user goal from the current screenshot and UI state. "
+                "the complete user goal from the current accessibility state. "
                 "Choose finished only if the whole goal is satisfied; otherwise "
                 "choose exactly one next tool. Never repeat or toggle the last "
                 "successful action merely to verify it, because that can undo the "
@@ -628,12 +486,11 @@ def _turn_text(
             )
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(
-                "Use the M3A-style step history and any error before selecting again. "
-                "Each effect records the observed UI change after its action; the "
-                "fresh current UI remains authoritative. Preserve correct progress, "
-                "do not repeat an already-applied part, and choose the next missing "
-                "action, finish, or abort. Do not repeat the same action when it "
-                "already succeeded or made no progress."
+                "Inspect the action history, observed results, and any previous "
+                "error before selecting again. The latest accessibility state is "
+                "authoritative. Do not repeat the same action or no-progress "
+                "sequence; choose a different visible control or path, finish, "
+                "or abort."
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))
@@ -714,59 +571,6 @@ def _installed_app_candidates(
         if str(label).strip() and str(package).strip()
     }
     return sorted(candidates, key=lambda item: (item[0].casefold(), item[1]))
-
-
-def _state_image_data_uri(state: dict[str, Any]) -> str:
-    image = str(state.get("image_base64") or "").strip()
-    if image:
-        return (
-            image
-            if image.startswith("data:image/")
-            else f"data:image/jpeg;base64,{image}"
-        )
-    return _image_data_uri(str(state.get("screenshot_path") or ""))
-
-
-def _compact_image_data_uri(value: str) -> str:
-    """Bound vision input size without changing persisted screenshot evidence."""
-
-    prefix, separator, encoded = str(value or "").partition(",")
-    if not separator or "base64" not in prefix.casefold():
-        return value
-    try:
-        image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
-        image.thumbnail((360, 640), Image.Resampling.LANCZOS)
-        output = BytesIO()
-        image.save(output, format="JPEG", quality=60, optimize=True)
-        compact = base64.b64encode(output.getvalue()).decode("ascii")
-    except Exception:
-        return value
-    return f"data:image/jpeg;base64,{compact}"
-
-
-def _image_data_uri(path: str) -> str:
-    candidate = Path(str(path or "").strip())
-    if not candidate.is_file():
-        return ""
-    try:
-        payload = candidate.read_bytes()
-    except OSError:
-        return ""
-    mime_type = _image_mime_type(payload)
-    if not mime_type:
-        return ""
-    encoded = base64.b64encode(payload).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}" if encoded else ""
-
-
-def _image_mime_type(payload: bytes) -> str:
-    if payload.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
-        return "image/webp"
-    return ""
 
 
 __all__ = [

@@ -74,12 +74,13 @@ Accessibility service、缺少 APK、协议版本不匹配或 accessibility 未 
 --e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564
 ```
 
-MobileGPT 的可复用 memory 只能由 seed 111 的 source emulator 冷启动学习生成。
-统一 setup 创建 AndroidWorld task；MobileGPT 官方 Server 执行原生 Explore、Select、
-Derive 和 memory 保存；官方 Accessibility client 执行物理 `open_app`、observe、act。成功 RunLog 只
-提供 task/source 身份和不可变 provenance，不向 MobileGPT 注入动作，也不转换成
-正式 memory；cold episode 必须由官方 validator 判定成功，完整原生 memory 图才会
-封存并注册。只准备/校验 memory 而不启动 seed 113 target 时使用：
+MobileGPT 的正式可复用 memory 由 seed 111、official validator 成功的 source RunLog
+机械转换生成：转换边界使用 MobileGPT 官方 XML encoder、`Memory.add_node`、
+`add_hierarchy_xml`、`save_subtask`、`save_task` 和 reader，输出仍是官方 CSV memory
+图，不维护第二套页面/动作格式。seed 113 target 只读取这份 memory；不需要为每次
+转换重新启动 source emulator。统一 setup 创建 AndroidWorld task；正式 target 的
+MobileGPT Server/Executor 和 OOB 物理层仍按现有入口执行。只准备/校验 memory 而不
+启动 seed 113 target 时使用：
 
 MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试的环境/
 适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
@@ -183,8 +184,8 @@ supplemental campaign 强制执行 AndroidWorld setup 和每 task snapshot resto
 `androidworld/<task>/autodroid/<device_model_seed>/`。
 
 固定实验值：source seed `111`、evaluation seed `113`。OmniFlow Planner 使用
-`Qwen3.6-Plus` 的非流式单工具请求；需要图片输入的外部视觉方法继续使用
-`GLM-4.6V`。
+`Qwen3.6-Plus` 的非流式、单工具、XML-only 请求，不上传截图；需要图片输入的
+外部视觉方法继续使用 `GLM-4.6V`。
 `--control-backend oob` 用于 OmniFlow 的 OOB observe/act；MobileGPT 使用
 `--control-backend native_accessibility` 或其唯一官方 launcher profile。
 

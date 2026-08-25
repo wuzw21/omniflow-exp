@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-from io import BytesIO
 import json
 import sys
 from types import SimpleNamespace
 
-from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_state
 
@@ -1800,10 +1797,10 @@ def test_planner_defaults_to_xml_without_uploading_native_screenshot() -> None:
 
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text"]
-    assert "Screenshot upload is omitted" in content[0]["text"]
+    assert "image_url" not in str(content)
 
 
-def test_planner_keeps_screenshot_for_webview_grounding() -> None:
+def test_planner_omits_screenshot_for_webview_grounding() -> None:
     request = build_model_turn_request(
         goal="Click Chrome in the web page",
         model="test-model",
@@ -1814,7 +1811,7 @@ def test_planner_keeps_screenshot_for_webview_grounding() -> None:
                 'text="Chrome" clickable="true" bounds="[0,766][720,878]" />'
                 "</node></hierarchy>"
             ),
-            "image_base64": "must-be-uploaded",
+            "image_base64": "must-not-be-uploaded",
             "display": {"width": 720, "height": 1280},
         },
         max_steps=8,
@@ -1822,7 +1819,7 @@ def test_planner_keeps_screenshot_for_webview_grounding() -> None:
     )
 
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
+    assert [item["type"] for item in content] == ["text"]
 
 
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:
@@ -1841,23 +1838,14 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert request["reasoning_effort"] == "none"
     assert request["enable_thinking"] is False
     assert request["thinking"] == {"type": "disabled"}
-    assert "summary of at most 12 words" in SYSTEM_PROMPT
-    assert "runtime records the observed\npost-action effect as step memory" in SYSTEM_PROMPT
-    assert "Work step by step like a strong general Android agent" in SYSTEM_PROMPT
-    assert "A recalled Function is a learned reusable Android skill" in SYSTEM_PROMPT
-    assert "Prefer an applicable\nFunction" in SYSTEM_PROMPT
-    assert "Function success does not by itself prove task success" in SYSTEM_PROMPT
-    assert "Do not emit analysis, chain-of-thought" in SYSTEM_PROMPT
-    assert "return only the tool call" in SYSTEM_PROMPT
-    assert "Never call a recalled Function merely because" in SYSTEM_PROMPT
-    assert "finish onboarding and navigation" in SYSTEM_PROMPT
-    assert "provides search" in SYSTEM_PROMPT
-    assert "history, recent, suggestion" in SYSTEM_PROMPT
-    assert "not claim that a RunLog or reusable Function was registered" in SYSTEM_PROMPT
-    assert "return the answer through finished(content)" in SYSTEM_PROMPT
-    assert "When you choose a projected native XML node" in SYSTEM_PROMPT
-    assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
-    assert "do not repeat the same coordinates" in SYSTEM_PROMPT
+    assert "Accessibility XML is the authoritative evidence" in SYSTEM_PROMPT
+    assert "Choose exactly one provided tool call" in SYSTEM_PROMPT
+    assert "Functions are verified multi-step action paths" in SYSTEM_PROMPT
+    assert "When a Function matches the task, prefer it" in SYSTEM_PROMPT
+    assert "repeated action or alternating action sequence" in SYSTEM_PROMPT
+    assert "after OmniTransfer failure" in SYSTEM_PROMPT
+    assert "Prefer direct search or text input" in SYSTEM_PROMPT
+    assert "Use finished only when current evidence" in SYSTEM_PROMPT
 
 
 def test_planner_coordinates_are_device_independent_relative_values() -> None:
@@ -2161,7 +2149,7 @@ def test_projected_node_center_does_not_override_webview_click() -> None:
     assert "node_grounding" not in metadata
 
 
-def test_function_completion_review_keeps_final_screenshot_and_checked_state() -> None:
+def test_function_completion_review_uses_xml_checked_state_without_screenshot() -> None:
     request = build_model_turn_request(
         goal="Turn bluetooth off",
         model="test-model",
@@ -2191,38 +2179,30 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
     )
 
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert content[1]["image_url"]["detail"] == "low"
+    assert [item["type"] for item in content] == ["text"]
     assert '"checked":false' in content[0]["text"]
     assert "Those actions are already applied" in content[0]["text"]
     assert "Never repeat or toggle" in content[0]["text"]
 
 
-def test_planner_compacts_large_screenshot_before_upload() -> None:
-    image = Image.new("RGB", (720, 1280), color="white")
-    output = BytesIO()
-    image.save(output, format="PNG")
-    encoded = base64.b64encode(output.getvalue()).decode("ascii")
-
+def test_planner_never_uploads_large_screenshot() -> None:
     request = build_model_turn_request(
         goal="Inspect the current page",
         model="test-model",
         state={
             "xml": "<hierarchy />",
-            "image_base64": encoded,
+            "image_base64": "large-screenshot-must-not-be-uploaded",
             "display": {"width": 720, "height": 1280},
         },
         max_steps=8,
         turn_index=0,
     )
 
-    image_url = request["messages"][1]["content"][1]["image_url"]["url"]
-    assert image_url.startswith("data:image/jpeg;base64,")
-    compact = Image.open(BytesIO(base64.b64decode(image_url.split(",", 1)[1])))
-    assert compact.size == (360, 640)
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text"]
 
 
-def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
+def test_vlm_planner_function_completion_review_uses_xml_only() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
@@ -2276,8 +2256,7 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     assert planned == ToolCall("finished", {})
     request = completions.requests[0]
     content = request["messages"][1]["content"]
-    assert [item["type"] for item in content] == ["text", "image_url"]
-    assert content[1]["image_url"]["detail"] == "low"
+    assert [item["type"] for item in content] == ["text"]
     turn_text = content[0]["text"]
     assert '"checked":false' in turn_text
     assert "Never repeat or toggle" in turn_text

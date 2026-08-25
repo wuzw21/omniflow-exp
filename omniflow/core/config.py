@@ -20,29 +20,22 @@ DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
 DEFAULT_MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
 DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 
+GUI_AGENT_RULES = (
+    "Accessibility XML is the authoritative evidence for visible controls, state, and bounds.",
+    "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
+    "Use normalized 0..1000 coordinates and click centers of XML bounds. For click and input_text, always name the intended visible control in target_description so the Harness can verify and ground it against Accessibility XML.",
+    "Functions are verified multi-step action paths in the same action space as native GUI tools. When a Function matches the task, prefer it because it can complete several actions quickly; if it fails, inspect the result and continue with another Function or native GUI action.",
+    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; if it made no progress on the latest screen, do not repeat the loop—choose a different visible control or path, or stop if none remains.",
+    "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",
+    "For switches and checkboxes, checked=false means off and checked=true means on; never toggle a control that already matches the goal.",
+    "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
+    "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
+)
+
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
-    "Continue the user's complete goal from the current screen by choosing exactly "
-    "one provided GUI tool. Use device-independent relative 0..1000 coordinates on "
-    "each axis. XML bounds remain raw pixels in the current original Display frame, "
-    "so convert their centers to the relative frame. Transport image resizing does "
-    "not change the relative frame. Call finished only "
-    "after the complete goal is visibly satisfied. Every coordinate is one scalar "
-    "number, never an array, object, or combined coordinate pair. "
-    "For open_app, use the exact "
-    "package_name supplied by the runtime and never guess one. If "
-    "screen_context contains previous_action_error, correct that action through "
-    "the same normal tool path. Treat execution_history as the shared history of "
-    "all canonical actions, regardless of whether they came from Function replay "
-    "or the planner. If an error starts with `omnitransfer_` or says low "
-    "confidence, continue from the current screen with a fresh action; do not "
-    "abort only because replay mapping failed, and do not reuse source-device "
-    "coordinates as target coordinates. Use recent_actions to advance the goal "
-    "and never repeat an already successful action on an unchanged screen. Treat "
-    "checked=false as an off switch or checkbox and checked=true as on. When "
-    "calling finished, keep content to one short factual sentence describing only "
-    "the outcome directly supported by the current screen or previous tool result. "
-    "Do not claim that a RunLog or reusable Function was registered; the host reports "
-    "registration state after execution."
+    "You are a GUI agent. You are given a task, your action history, and the current "
+    "accessibility observation. "
+    + " ".join(GUI_AGENT_RULES)
 )
 
 

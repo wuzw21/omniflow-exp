@@ -46,8 +46,8 @@ Function。RunLog 是证据而不是逐动作脚本：重复、重试、checker 
 嵌套 schema。因此一个成功 RunLog 最终生成至少一个 Function。
 Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
 observation。source seed 固定为 `111`，evaluation seed 固定为 `113`。
-OmniFlow Planner 使用 `Qwen3.6-Plus` 的非流式单工具请求；需要原生图片的
-外部视觉方法仍使用 `GLM-4.6V`。
+OmniFlow Planner 使用 `Qwen3.6-Plus` 的非流式、单工具、XML-only 请求；不会向
+Planner 上传截图。需要原生图片的外部视觉方法仍使用 `GLM-4.6V`。
 
 ## 数据目录
 

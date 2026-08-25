@@ -1,19 +1,25 @@
-from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
+from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT, GUI_AGENT_RULES
+from omniflow.vlm.gui import SYSTEM_PROMPT
 
 
 def test_v2_planner_prompt_uses_device_independent_coordinates() -> None:
-    assert "relative 0..1000 coordinates" in DEFAULT_PLANNER_SYSTEM_PROMPT
-    assert "XML bounds remain raw pixels" in DEFAULT_PLANNER_SYSTEM_PROMPT
+    assert "normalized 0..1000 coordinates" in DEFAULT_PLANNER_SYSTEM_PROMPT
+    assert "click centers of XML bounds" in DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
 def test_v2_planner_prompt_preserves_function_fallback() -> None:
-    assert "omnitransfer_" in DEFAULT_PLANNER_SYSTEM_PROMPT
-    assert "continue from the current screen" in DEFAULT_PLANNER_SYSTEM_PROMPT
+    assert "after OmniTransfer failure" in DEFAULT_PLANNER_SYSTEM_PROMPT
+    assert "choose a fresh action" in DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
 def test_v2_planner_prompt_preserves_general_safety_details() -> None:
     prompt = DEFAULT_PLANNER_SYSTEM_PROMPT
 
-    assert "do not reuse source-device coordinates" in prompt
+    assert "never reuse source-device coordinates" in prompt
     assert "checked=false" in prompt
-    assert "Do not claim that a RunLog or reusable Function was registered" in prompt
+    assert "never claim RunLog or Function registration" in prompt
+
+
+def test_v2_planner_uses_one_authoritative_prompt() -> None:
+    assert len(GUI_AGENT_RULES) == 9
+    assert SYSTEM_PROMPT == DEFAULT_PLANNER_SYSTEM_PROMPT
