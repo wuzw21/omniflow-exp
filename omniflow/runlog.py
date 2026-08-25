@@ -299,6 +299,41 @@ def _androidworld_input_target_description(node: ET.Element) -> str:
     return "editable text field"
 
 
+def _androidworld_overlapping_label(
+    observation: dict[str, Any],
+    target: ET.Element,
+) -> str:
+    """Find a semantic label in a flattened sibling-based Android tree."""
+    target_bounds = _parse_xml_bounds(target.attrib.get("bounds"))
+    if target_bounds is None:
+        return ""
+    try:
+        root = ET.fromstring(observation_xml(observation))
+    except ET.ParseError:
+        return ""
+    candidates: list[tuple[float, str]] = []
+    for node in root.iter("node"):
+        if node is target:
+            continue
+        label = ""
+        for attribute in ("content-desc", "text"):
+            label = str(node.attrib.get(attribute) or "").strip()
+            if label:
+                break
+        bounds = _parse_xml_bounds(node.attrib.get("bounds"))
+        if not label or bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        t_left, t_top, t_right, t_bottom = target_bounds
+        overlap = max(0.0, min(right, t_right) - max(left, t_left)) * max(
+            0.0,
+            min(bottom, t_bottom) - max(top, t_top),
+        )
+        if overlap > 0:
+            candidates.append((overlap, label))
+    return max(candidates, default=(0.0, ""))[1]
+
+
 def _androidworld_action_to_omniflow(
     value: Any,
     *,
@@ -311,6 +346,11 @@ def _androidworld_action_to_omniflow(
         target = _androidworld_click_target(action, observation)
         if target is not None:
             target_description = _androidworld_input_target_description(target)
+            if target_description == "editable text field":
+                target_description = _androidworld_overlapping_label(
+                    observation,
+                    target,
+                )
             if target_description:
                 args["target_description"] = target_description
         projected = {
