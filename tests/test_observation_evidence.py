@@ -924,6 +924,35 @@ def test_metrics_preserve_runtime_environment_failure_markers(tmp_path) -> None:
     assert row["environment_failure"] is True
 
 
+def test_metrics_preserve_mobilegpt_oob_action_index_protocol(tmp_path) -> None:
+    result_path = (
+        tmp_path
+        / "CameraTakePhoto"
+        / "mobilegpt"
+        / "small5554"
+        / "task_results.jsonl"
+    )
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "task_name": "CameraTakePhoto",
+                "method": "mobilegpt",
+                "device": "small5554",
+                "official_validator_used": True,
+                "official_validator_success": False,
+                "oob_action_index_protocol": "mobilegpt_source_node_id_v1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = aggregate_task_results([result_path])["per_task"][0]
+
+    assert row["oob_action_index_protocol"] == "mobilegpt_source_node_id_v1"
+
+
 def test_metrics_report_only_aggregate_model_calls_and_total_tokens(tmp_path: Path) -> None:
     result_path = tmp_path / "Task" / "omniflow" / "small5554" / "task_results.jsonl"
     result_path.parent.mkdir(parents=True)

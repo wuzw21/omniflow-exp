@@ -412,6 +412,36 @@ def test_result_summary_resolves_native_row_to_unique_command_device() -> None:
     assert rows[0]["official_validator_success"] is True
 
 
+def test_result_summary_preserves_mobilegpt_oob_action_index_protocol() -> None:
+    rows = _result_summary_rows(
+        task="CameraTakePhoto",
+        command_records=[
+            {
+                "method": "mobilegpt",
+                "device": "small5554",
+                "status": "completed",
+                "returncode": 0,
+                "command": "python -m src.integrations.mobilegpt_oob_client",
+                "metadata": {"action_backend": "oob_control"},
+            }
+        ],
+        aggregate_summary={
+            "per_task": [
+                {
+                    "task_name": "CameraTakePhoto",
+                    "method": "mobilegpt",
+                    "device": "small5554",
+                    "official_validator_used": True,
+                    "official_validator_success": False,
+                    "oob_action_index_protocol": "mobilegpt_source_node_id_v1",
+                }
+            ]
+        },
+    )
+
+    assert rows[0]["oob_action_index_protocol"] == "mobilegpt_source_node_id_v1"
+
+
 def test_setup_command_failure_is_retryable_environment_failure(
     tmp_path: Path,
 ) -> None:

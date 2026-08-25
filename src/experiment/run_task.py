@@ -2781,6 +2781,9 @@ def aggregate_task_results(paths: Sequence[str | Path]) -> dict[str, Any]:
                 "error": row.get("error"),
                 "runtime_integrity_error": row.get("runtime_integrity_error"),
                 "environment_failure": row.get("environment_failure"),
+                "oob_action_index_protocol": row.get(
+                    "oob_action_index_protocol"
+                ),
                 **function_metrics,
                 **performance_metrics,
             }
