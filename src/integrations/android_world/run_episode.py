@@ -827,12 +827,14 @@ class _ExperimentAgentAdapter:
         self._max_steps = max(1, int(max_steps)) if max_steps is not None else None
         self._prepare_after_reset = prepare_after_reset
         self._completed_steps = 0
+        self.execution_duration_ms = 0.0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)
 
     def reset(self, go_home: bool = False) -> None:
         self._completed_steps = 0
+        self.execution_duration_ms = 0.0
         reset = self._agent.reset
         reset_parameters = inspect.signature(reset).parameters.values()
         supports_go_home = any(
@@ -869,7 +871,14 @@ class _ExperimentAgentAdapter:
         effective_goal = str(goal or "")
         if self._goal_hint:
             effective_goal = f"{effective_goal}\n\n{self._goal_hint}"
-        result = self._agent.step(effective_goal)
+        execution_started = perf_counter()
+        try:
+            result = self._agent.step(effective_goal)
+        finally:
+            self.execution_duration_ms += max(
+                0.0,
+                (perf_counter() - execution_started) * 1000.0,
+            )
         self._completed_steps += 1
         if self._max_steps is not None and self._completed_steps >= self._max_steps:
             result.done = True
@@ -5572,6 +5581,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file_utils.clear_directory = original_clear_directory
             result = results[0] if results else None
         finally:
+            lifecycle_finished_perf = perf_counter()
+            lifecycle_duration_ms = max(
+                0.0,
+                (lifecycle_finished_perf - started_perf) * 1000.0,
+            )
+            execution_duration_ms = max(
+                0.0,
+                float(instrumented_agent.execution_duration_ms),
+            )
             try:
                 canonical_run = None
                 canonical_run_id = None
@@ -5640,9 +5658,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if runtime_function_id:
                         diagnostics["function_id"] = runtime_function_id
                     if isinstance(execution_summary, dict):
-                        diagnostics["execution_summary"] = dict(
-                            execution_summary
-                        )
+                        diagnostics["execution_summary"] = {
+                            **dict(execution_summary),
+                            "execution_duration_ms": execution_duration_ms,
+                        }
                     execution_trace = _runtime_execution_trace(runtime_result)
                     if execution_trace:
                         diagnostics["execution_trace"] = execution_trace
@@ -5664,6 +5683,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if isinstance(function_execution, dict):
                         diagnostics["function_execution"] = dict(
                             function_execution
+                        )
+                    if isinstance(runtime_detail, dict):
+                        for detail_name in (
+                            "function_resolution",
+                            "llm_usage",
+                            "planner_diagnostics",
+                        ):
+                            detail_value = runtime_detail.get(detail_name)
+                            if isinstance(detail_value, dict):
+                                diagnostics[detail_name] = dict(detail_value)
+                        diagnostics["completion_review_calls"] = max(
+                            0,
+                            _coerce_int(
+                                runtime_detail.get("completion_review_calls")
+                            ),
                         )
                     canonical_run = recording_session.seal_run_log(
                         task_name=task_name,
@@ -5689,7 +5723,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 performance_payload: dict[str, Any] = {}
                 if performance_metrics is not None:
                     performance_metrics.finish(
-                        method_wall_sec=perf_counter() - started_perf,
+                        method_wall_sec=execution_duration_ms / 1000.0,
                     )
                     performance_payload = performance_metrics.to_dict()
                     performance_sidecar_path = write_performance_metrics(
@@ -5896,9 +5930,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         error_message=error_text,
                     ),
                     "started_at": started_at,
-                    "duration_ms": max(
+                    "duration_ms": lifecycle_duration_ms,
+                    "duration_scope": "androidworld_lifecycle_wall",
+                    "execution_duration_ms": execution_duration_ms,
+                    "execution_duration_scope": (
+                        "agent_step_excludes_setup_and_official_validator"
+                    ),
+                    "non_execution_duration_ms": max(
                         0.0,
-                        (perf_counter() - started_perf) * 1000.0,
+                        lifecycle_duration_ms - execution_duration_ms,
                     ),
                     "step_count": step_count,
                     "actions_executed": actions_executed,
@@ -5915,10 +5955,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         6,
                     ),
                     "latency_sec": round(
-                        float(
-                            performance_payload.get("method_wall_sec")
-                            or max(0.0, (perf_counter() - started_perf))
-                        ),
+                        execution_duration_ms / 1000.0,
                         6,
                     ),
                     "performance_metrics": to_serializable(performance_payload),

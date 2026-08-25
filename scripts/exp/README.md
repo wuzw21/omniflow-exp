@@ -31,6 +31,12 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
 结果是需要保留的实验产物；转换临时目录在任务结束后自动删除。
 
+结果中的 `duration_ms` 是包含 task lifecycle、setup 和官方 validator 的完整 wall
+time；论文中的方法执行时间使用 `execution_duration_ms`，它只累计 `agent.step`，明确
+排除 setup 和官方 validator。`non_execution_duration_ms` 保留二者差值，便于审计，
+不能当作方法推理时间。RunLog `diagnostics` 同时保存 Function recall、Planner rejection
+和 LLM usage 汇总，模型调用与 token 统计不依赖终端输出。
+
 9207 部署不再逐项复制代码、APK、权重和配置。使用
 `scripts/package_9207_runtime.sh build` 生成单个 release archive；包内固定
 OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置、manifest
