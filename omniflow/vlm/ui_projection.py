@@ -216,24 +216,28 @@ def project_ui(
     visually_opaque_action_count = sum(
         1 for item in candidates if item.group in {"goal_control", "visual"}
     )
+    visual_context_required = (
+        any(
+            marker in str(goal or "").casefold()
+            for marker in _VISUAL_GOAL_MARKERS
+        )
+        or visually_opaque_action_count >= _VISUALLY_OPAQUE_ACTION_THRESHOLD
+    )
     selected = (
         _order_all_candidates(candidates)
         if include_all_nodes
         else _select_candidates(candidates, max_nodes=max_nodes)
     )
-    text, nodes = _render_candidates(selected)
+    text, nodes = _render_candidates(
+        selected,
+        suppress_unlabeled_action_references=visual_context_required,
+    )
     return UIProjection(
         text=text or "<none>",
         candidate_count=len(candidates),
         selected_count=len(selected),
         goal_match_count=sum(1 for item in candidates if item.goal_match),
-        visual_context_required=(
-            any(
-                marker in str(goal or "").casefold()
-                for marker in _VISUAL_GOAL_MARKERS
-            )
-            or visually_opaque_action_count >= _VISUALLY_OPAQUE_ACTION_THRESHOLD
-        ),
+        visual_context_required=visual_context_required,
         visual_candidate_count=sum(
             1 for item in selected if item.group in {"goal_control", "visual"}
         ),
@@ -462,6 +466,8 @@ def _select_candidates(
 
 def _render_candidates(
     candidates: list[_Candidate],
+    *,
+    suppress_unlabeled_action_references: bool = False,
 ) -> tuple[str, tuple[ProjectedNode, ...]]:
     lines: list[str] = []
     nodes: list[ProjectedNode] = []
@@ -474,7 +480,15 @@ def _render_candidates(
         for item in group_candidates:
             compact = dict(item.compact)
             reference = ""
-            if compact.get("a"):
+            visible_label = any(
+                str(compact.get(key) or "").strip()
+                for key in ("t", "d", "h", "c")
+            )
+            if compact.get("a") and not (
+                suppress_unlabeled_action_references
+                and item.group in {"goal_control", "visual"}
+                and not visible_label
+            ):
                 visual_reference += 1
                 reference = f"A{visual_reference:02d}"
                 compact = {"v": reference, **compact}

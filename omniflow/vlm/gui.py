@@ -423,11 +423,13 @@ def parse_model_turn_response(
                 )
                 grounding_source = "target_description"
                 if (
-                    grounded is not None
-                    and projection.visual_context_required
+                    projection.visual_context_required
                     and "x" in arguments
                     and "y" in arguments
-                    and not _projected_node_has_visible_label(grounded[0])
+                    and (
+                        grounded is None
+                        or not _projected_node_has_visible_label(grounded[0])
+                    )
                 ):
                     arguments = {
                         **arguments,
