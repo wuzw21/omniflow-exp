@@ -2150,7 +2150,10 @@ def _parse_source_device(value: str) -> tuple[str, str, int]:
 def build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[2]
     data = repo / "data"
-    android_world = repo.parent / "releases" / f"android-world-{ANDROIDWORLD_REVISION}"
+    android_world = Path(
+        os.environ.get("OMNIFLOW_ANDROID_WORLD_ROOT")
+        or repo.parent / "releases" / f"android-world-{ANDROIDWORLD_REVISION}"
+    )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", help="Experiment JSON; use the shell entry.")
     parser.add_argument(
@@ -2197,14 +2200,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(
         repo=repo,
         script=repo / "scripts" / "exp" / "run_androidworld.sh",
-        memory_index=data / "current.json",
-        asset_root=data,
-        results_root=data,
-        output_root=data,
+        memory_index=Path(
+            os.environ.get("OMNIFLOW_EXP_MEMORY_INDEX") or data / "current.json"
+        ),
+        asset_root=Path(os.environ.get("OMNIFLOW_EXP_ASSET_ROOT") or data),
+        results_root=Path(os.environ.get("OMNIFLOW_EXP_RESULTS_ROOT") or data),
+        output_root=Path(os.environ.get("OMNIFLOW_EXP_RESULTS_ROOT") or data),
         android_world_root=android_world,
-        omnitransfer_root=Path.home() / "Projects" / "Omni" / "OmniTransfer",
-        mobilegpt_root=data / "runtime" / "external" / "mobilegpt",
-        appagent_root=data / "runtime" / "external" / "appagent",
+        omnitransfer_root=Path(
+            os.environ.get("OMNITRANSFER_ROOT")
+            or Path.home() / "Projects" / "Omni" / "OmniTransfer"
+        ),
+        mobilegpt_root=Path(
+            os.environ.get("OMNIFLOW_MOBILEGPT_ROOT")
+            or data / "runtime" / "external" / "mobilegpt"
+        ),
+        appagent_root=Path(
+            os.environ.get("OMNIFLOW_APPAGENT_ROOT")
+            or data / "runtime" / "external" / "appagent"
+        ),
         appagent_memory_root=None,
         autodroid_root=data / "runtime" / "external" / "autodroid",
         autodroid_memory_root=data / "runtime" / "autodroid" / "androidworld_apps",
