@@ -112,9 +112,17 @@ def build_model_turn_request(
     rejected_tool_call: dict[str, Any] | None = None,
     lightweight_retry: bool = False,
 ) -> dict[str, Any]:
+    global_functions = tuple(
+        function
+        for function in functions
+        if function.agent_visible
+        and function.steps
+        and function.steps[0].action.tool == "open_app"
+    )
+    compact_global_startup = bool(global_functions) and not lightweight_retry
     projection = (
         UIProjection("<omitted>", 0, 0, 0)
-        if lightweight_retry
+        if lightweight_retry or compact_global_startup
         else project_ui(str(state.get("xml") or ""), goal)
     )
     text = _turn_text(
@@ -126,11 +134,11 @@ def build_model_turn_request(
         step_skill_guidance=step_skill_guidance,
         validation_error=validation_error,
         rejected_tool_call=rejected_tool_call,
-        lightweight_retry=lightweight_retry,
+        lightweight_retry=lightweight_retry or compact_global_startup,
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not lightweight_retry
+    include_images = not lightweight_retry and not compact_global_startup
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
         current_image = _compact_image_data_uri(current_image)
@@ -141,13 +149,6 @@ def build_model_turn_request(
             }
         )
     display = state.get("display") if isinstance(state.get("display"), dict) else None
-    global_functions = tuple(
-        function
-        for function in functions
-        if function.agent_visible
-        and function.steps
-        and function.steps[0].action.tool == "open_app"
-    )
     if global_functions:
         # A recalled global Function owns startup. Keep this as a normal tool
         # call, but remove every competing native action and lower-priority
@@ -186,7 +187,7 @@ def build_model_turn_request(
         ],
         "max_tokens": 512,
         "temperature": 0,
-        "stream": False,
+        "stream": True,
         "tools": tools,
         "tool_choice": tool_choice,
         "parallel_tool_calls": False,
