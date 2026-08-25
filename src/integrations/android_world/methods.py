@@ -198,7 +198,15 @@ def _canonical_execution_trace(
     run = canonical_run if isinstance(canonical_run, dict) else {}
     diagnostics = run.get("diagnostics")
     trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
-    return [step for step in trace or [] if isinstance(step, dict)]
+    traced_steps = [step for step in trace or [] if isinstance(step, dict)]
+    if traced_steps:
+        return traced_steps
+    # Planner-backed methods retain their detailed attempts in
+    # diagnostics.execution_trace.  Exact replay instead records the physical
+    # actions directly as canonical RunLog steps, so an empty diagnostics trace
+    # must fall back to those steps rather than reporting zero physical work.
+    steps = run.get("steps")
+    return [step for step in steps or [] if isinstance(step, dict)]
 
 
 def _physical_execution_trace(
@@ -208,7 +216,11 @@ def _physical_execution_trace(
     for step in _canonical_execution_trace(canonical_run):
         action = step.get("action")
         result = step.get("result")
-        tool = str(action.get("tool") or "") if isinstance(action, dict) else ""
+        tool = (
+            str(action.get("tool") or action.get("action_type") or "")
+            if isinstance(action, dict)
+            else ""
+        )
         if (
             tool in _PHYSICAL_ACTION_TOOLS
             and isinstance(result, dict)
@@ -221,7 +233,15 @@ def _physical_execution_trace(
 def _execution_step_changed_state(step: dict[str, Any]) -> bool:
     metadata = step.get("metadata")
     effect = metadata.get("action_effect") if isinstance(metadata, dict) else None
-    return isinstance(effect, dict) and effect.get("state_changed") is True
+    if isinstance(effect, dict) and "state_changed" in effect:
+        return effect.get("state_changed") is True
+    observation = step.get("observation")
+    next_observation = step.get("next_observation")
+    if not isinstance(observation, dict) or not isinstance(next_observation, dict):
+        return False
+    before_xml = str(observation.get("xml") or "").strip()
+    after_xml = str(next_observation.get("xml") or "").strip()
+    return bool(before_xml and after_xml and before_xml != after_xml)
 
 
 def _appagent_log_usage(path: Path) -> dict[str, int]:
