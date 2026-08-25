@@ -1275,17 +1275,19 @@ def _same_observation(
 ) -> bool:
     if before is None or after is None:
         return False
-    return (
+    if (
         before.package_name,
         before.activity_name,
-        before.xml,
-        before.image_base64,
-    ) == (
+    ) != (
         after.package_name,
         after.activity_name,
-        after.xml,
-        after.image_base64,
-    )
+    ):
+        return False
+    before_xml = str(before.xml or "")
+    after_xml = str(after.xml or "")
+    if before_xml or after_xml:
+        return before_xml == after_xml
+    return before.image_base64 == after.image_base64
 
 
 def _same_entry_observation(
