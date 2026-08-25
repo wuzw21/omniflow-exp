@@ -7,6 +7,7 @@ import concurrent.futures
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     DEFAULT_TASK,
+    DEVICE_AVDS,
     DEVICES,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
@@ -63,6 +65,110 @@ def _devices(value: str) -> tuple[tuple[str, str, int], ...]:
             raise ValueError(f"unknown_device:{item}") from exc
         devices.append((parts[0], parts[1], port))
     return tuple(devices)
+
+
+def _sdk_tool(name: str) -> str:
+    discovered = shutil.which(name)
+    if discovered:
+        return discovered
+    adb = shutil.which("adb")
+    if adb:
+        candidate = Path(adb).resolve().parent.parent / "emulator" / name
+        if candidate.is_file():
+            return str(candidate)
+    for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+        root = str(os.environ.get(variable) or "").strip()
+        if root:
+            tool_directory = "platform-tools" if name == "adb" else "emulator"
+            candidate = Path(root).expanduser() / tool_directory / name
+            if candidate.is_file():
+                return str(candidate)
+    tool_directory = "platform-tools" if name == "adb" else "emulator"
+    for root in (Path.home() / "Library/Android/sdk", Path.home() / "Android/Sdk"):
+        candidate = root / tool_directory / name
+        if candidate.is_file():
+            return str(candidate)
+    raise RuntimeError(f"android_sdk_tool_missing:{name}")
+
+
+def _device_booted(adb: str, serial: str) -> bool:
+    try:
+        state = subprocess.run(
+            (adb, "-s", serial, "get-state"),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if state.returncode != 0 or state.stdout.strip() != "device":
+            return False
+        booted = subprocess.run(
+            (adb, "-s", serial, "shell", "getprop", "sys.boot_completed"),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return booted.returncode == 0 and booted.stdout.strip() == "1"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _wait_for_device(adb: str, serial: str, timeout: int) -> None:
+    deadline = time.monotonic() + max(1, timeout)
+    while time.monotonic() < deadline:
+        if _device_booted(adb, serial):
+            return
+        time.sleep(1)
+    raise RuntimeError(f"android_emulator_boot_timeout:{serial}")
+
+
+def _ensure_devices_started(
+    devices: tuple[tuple[str, str, int], ...],
+    *,
+    timeout: int,
+) -> None:
+    """Reuse online configured AVDs and start only the missing ones."""
+
+    adb = _sdk_tool("adb")
+    avds = dict(DEVICE_AVDS)
+    missing = tuple(device for device in devices if not _device_booted(adb, device[1]))
+    if missing:
+        emulator = _sdk_tool("emulator")
+        for _label, serial, port in missing:
+            avd = avds.get(serial)
+            if not avd:
+                continue
+            subprocess.Popen(
+                (
+                    emulator,
+                    "-avd",
+                    avd,
+                    "-port",
+                    str(port),
+                    "-grpc",
+                    str(port + 3000),
+                    "-no-window",
+                    "-no-audio",
+                    "-no-boot-anim",
+                    "-no-snapshot-save",
+                    "-gpu",
+                    "swiftshader_indirect",
+                ),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, len(devices))
+    ) as executor:
+        tuple(
+            executor.map(
+                lambda device: _wait_for_device(adb, device[1], timeout),
+                devices,
+            )
+        )
 
 
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
@@ -172,21 +278,25 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "source_run_log": args.source_run_log or None,
         }
 
+    _ensure_devices_started(devices, timeout=min(int(args.deadline), 180))
     started = time.monotonic()
     with tempfile.TemporaryDirectory(
         prefix="omniflow-androidworld-"
     ) as temporary:
         root = Path(temporary)
-        jobs = tuple((method, device) for device in devices for method in methods)
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=max(1, len(devices))
         ) as executor:
-            rows = list(
+            rows_by_device = list(
                 executor.map(
-                    lambda job: _run_command(args, job[0], job[1], root),
-                    jobs,
+                    lambda device: tuple(
+                        _run_command(args, method, device, root)
+                        for method in methods
+                    ),
+                    devices,
                 )
             )
+        rows = [row for device_rows in rows_by_device for row in device_rows]
     return {
         "action": "run",
         "task": args.task,

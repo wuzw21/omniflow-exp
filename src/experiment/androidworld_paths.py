@@ -10,6 +10,32 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from omniflow.core.config import ANDROIDWORLD_PROTOCOL
+
+
+_CONFIGURED_DEVICES = tuple(ANDROIDWORLD_PROTOCOL["devices"]) + (
+    ANDROIDWORLD_PROTOCOL["source_device"],
+)
+
+
+def _configured_device(
+    *,
+    label: str = "",
+    serial: str = "",
+    console_port: int | None = None,
+) -> dict[str, object] | None:
+    label_key = str(label or "").strip().lower()
+    serial_key = str(serial or "").strip().lower()
+    port = int(console_port or 0)
+    for device in _CONFIGURED_DEVICES:
+        if (
+            (label_key and label_key == str(device["label"]).lower())
+            or (serial_key and serial_key == str(device["serial"]).lower())
+            or (port and port == int(device["console_port"]))
+        ):
+            return dict(device)
+    return None
+
 
 METHOD_ALIASES = {
     "fixed": "fixed_replay",
@@ -42,6 +68,14 @@ def canonical_device_model(
     console_port: int | None = None,
 ) -> str:
     """Resolve an accepted CLI alias to the configured physical AVD model."""
+
+    configured = _configured_device(
+        label=label,
+        serial=serial,
+        console_port=console_port,
+    )
+    if configured is not None:
+        return str(configured["avd"])
 
     label_key = str(label or "").strip().lower()
     serial_key = str(serial or "").strip().lower()
@@ -116,7 +150,14 @@ def canonical_device_metadata(
         serial=serial,
         console_port=console_port,
     )
-    if model == "WXGA_Tablet_test_00":
+    configured = _configured_device(
+        label=label,
+        serial=serial,
+        console_port=console_port,
+    )
+    if configured is not None:
+        profile = str(configured["profile"])
+    elif model == "WXGA_Tablet_test_00":
         profile = "tablet"
     elif model == "OmniFlowTargetFold":
         profile = "pixel_fold"

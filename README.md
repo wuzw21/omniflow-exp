@@ -20,6 +20,18 @@ bash scripts/exp/run_androidworld.sh run \
   --memory /path/to/store.json
 ```
 
+论文 target 为 Pixel 6 Pro、7.6 英寸 Fold 和 10.1 英寸 WXGA Tablet。一次选择
+全部三台设备时，入口会复用已在线的 AVD、启动缺失的 AVD，并保持每台设备一个并发
+worker：
+
+```bash
+bash scripts/exp/run_androidworld.sh run \
+  --task CameraTakePhoto \
+  --method omniflow \
+  --device all \
+  --memory /path/to/store.json
+```
+
 可选方法为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`；
 设备和默认值来自 `config/paper_androidworld.json`。传入的 seed、步数、fallback、
 deadline 和 model 会原样进入本次运行，不要求等于配置中的默认值。

@@ -10,7 +10,8 @@ scripts/exp/run_androidworld.sh
 ```
 
 - shell 只转发参数。
-- `run_tasks.py` 只实现 `convert-memory` 和 `run`，Memory 路径由调用者直接传入。
+- `run_tasks.py` 只实现 `convert-memory` 和 `run`，Memory 路径由调用者直接传入；
+  `run` 复用在线 AVD、启动缺失的所选 AVD，并按设备并发调度。
 - `run_task.py` 启动一个 method + device 的原子任务。
 - `run_episode.py` 使用 AndroidWorld setup、OmniFlow OOB observe/act 和 AndroidWorld 官方 validator。
 
