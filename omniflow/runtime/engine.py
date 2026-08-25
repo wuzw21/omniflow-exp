@@ -181,6 +181,23 @@ class OmniFlow:
                     ),
                 }
                 kwargs["terminal_detail"] = terminal_detail
+            evidence_function = function_session.completed or (
+                function_session.bound if function_session.failed else None
+            )
+            final_observation = kwargs.get("final_state")
+            if evidence_function is not None and isinstance(
+                final_observation, Observation
+            ):
+                terminal_detail = dict(kwargs.get("terminal_detail") or {})
+                terminal_detail["function_execution"] = (
+                    _function_execution_evidence(
+                        trace,
+                        function=evidence_function,
+                        final_observation=final_observation,
+                        succeeded=function_session.completed is not None,
+                    )
+                )
+                kwargs["terminal_detail"] = terminal_detail
             return self._result(
                 success,
                 function_resolution=function_resolution,
@@ -1014,7 +1031,10 @@ def _execution_history(
                     f"Function `{completed_function.id}` "
                     f"({completed_function.name}) completed successfully."
                 ),
-                f"Function purpose: {completed_function.description}",
+                (
+                    "Function core result: "
+                    f"{_function_core_description(completed_function)}"
+                ),
             ]
         )
     recent_trace = trace[-max(1, int(limit)) :]
@@ -1055,8 +1075,8 @@ def _execution_history(
         )
         if isinstance(action_effect, dict):
             description = (
-                f"{description} Observed effect: "
-                f"{json.dumps(_compact_history_effect(action_effect), ensure_ascii=False, separators=(',', ':'))}"
+                f"{description} Page changed: "
+                f"{action_effect.get('state_changed') is True}."
             )
         index = int(step.get("step_index") or fallback_index - 1) + 1
         lines.append(f"{index}. [{source}] {description}")
@@ -1077,18 +1097,6 @@ def _execution_history(
         ]
     )
     return "\n".join(lines)
-
-
-def _compact_history_effect(value: dict[str, Any]) -> dict[str, Any]:
-    compact: dict[str, Any] = {}
-    for key in ("state_changed", "package", "activity"):
-        if key in value:
-            compact[key] = value[key]
-    for key, limit in (("changed", 3), ("appeared", 6), ("disappeared", 4)):
-        items = value.get(key)
-        if isinstance(items, list) and items:
-            compact[key] = items[:limit]
-    return compact
 
 
 def _function_execution_evidence(
@@ -1118,8 +1126,12 @@ def _function_execution_evidence(
             "before_state_id": str(raw_step.get("before_state_id") or ""),
             "after_state_id": str(raw_step.get("after_state_id") or ""),
             "tool": action.tool,
+            "action_summary": _describe_completed_action(action),
             "success": success,
         }
+        action_effect = metadata.get("action_effect")
+        if isinstance(action_effect, dict):
+            step["state_changed"] = action_effect.get("state_changed") is True
         if not success and isinstance(result, dict) and str(
             result.get("error") or ""
         ).strip():
@@ -1132,8 +1144,13 @@ def _function_execution_evidence(
         "schema_version": "omniflow.function-execution-evidence.v1",
         "function_id": function.id,
         "function_name": function.name,
-        "function_description": function.description,
+        "core_description": _function_core_description(function),
         "replay_status": "actions_succeeded" if succeeded else "actions_failed",
+        "completion_summary": (
+            "All Function actions completed; task validation is pending."
+            if succeeded
+            else "Function actions did not complete; Planner fallback is required."
+        ),
         "official_validator_status": "pending",
         "steps": steps,
         "final_observation": {
@@ -1142,6 +1159,15 @@ def _function_execution_evidence(
             "activity_name": str(final_observation.activity_name or ""),
         },
     }
+
+
+def _function_core_description(function: Function) -> str:
+    description = " ".join(str(function.description or "").split()).strip()
+    if description:
+        first_sentence = description.split(". ", 1)[0].rstrip(".")
+        if first_sentence:
+            return first_sentence[:240] + "."
+    return f"Complete {function.name}."
 
 
 def _describe_completed_action(action: Action) -> str:

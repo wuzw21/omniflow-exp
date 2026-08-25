@@ -5651,6 +5651,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         diagnostics["function_resume"] = dict(
                             function_resume
                         )
+                    function_execution = (
+                        runtime_detail.get("function_execution")
+                        if isinstance(runtime_detail, dict)
+                        else None
+                    )
+                    if isinstance(function_execution, dict):
+                        diagnostics["function_execution"] = dict(
+                            function_execution
+                        )
                     canonical_run = recording_session.seal_run_log(
                         task_name=task_name,
                         goal=goal_text,

@@ -29,6 +29,7 @@ _PLANNER_CONTEXT_KEYS = (
     "previous_action_error",
     "previous_action",
     "recent_actions",
+    "execution_history",
     "function_execution",
     "user_input",
 )
