@@ -2637,11 +2637,7 @@ def _patch_androidworld_adb_output_sanitizer(
     return tuple(patches)
 
 
-def _patch_androidworld_current_activity(
-    adb_utils: Any,
-    *,
-    state_activity_owner: Any | None = None,
-) -> Any:
+def _patch_androidworld_current_activity(adb_utils: Any) -> Any:
     """Recover a canonical activity when Android's stack output is malformed.
 
     Some API-29 emulator images intermittently return a package-only value from
@@ -2661,23 +2657,18 @@ def _patch_androidworld_current_activity(
         timeout_sec: float | None = None,
     ) -> tuple[Any, Any]:
         activity, response = original(controller, timeout_sec=timeout_sec)
-        oob_activity = str(
-            getattr(
-                state_activity_owner,
-                "_omniflow_oob_current_activity",
-                "",
-            )
-            or ""
-        ).strip()
-        if oob_activity:
-            return oob_activity, response
-        if isinstance(activity, str) and activity.count("/") == 1:
+        if (
+            not _is_oob_control_backend()
+            and isinstance(activity, str)
+            and activity.count("/") == 1
+        ):
             return activity, response
-        logger.warning(
-            "AndroidWorld returned malformed current activity %r; "
-            "recovering from dumpsys activity activities.",
-            activity,
-        )
+        if not (isinstance(activity, str) and activity.count("/") == 1):
+            logger.warning(
+                "AndroidWorld returned malformed current activity %r; "
+                "recovering from dumpsys activity activities.",
+                activity,
+            )
         fallback = adb_utils.issue_generic_request(
             ["shell", "dumpsys", "activity", "activities"],
             controller,
@@ -2728,20 +2719,11 @@ def _patch_androidworld_oob_validator_state(
     )
 
     def get_state(*_args: Any, **kwargs: Any) -> Any:
-        state = oob_state_from_payload(
+        return oob_state_from_payload(
             client.observe(
                 wait_to_stabilize=bool(kwargs.get("wait_to_stabilize", False)),
             )
         )
-        auxiliaries = getattr(state, "auxiliaries", None)
-        if isinstance(auxiliaries, dict):
-            activity = str(auxiliaries.get("activity_name") or "").strip()
-            package = str(auxiliaries.get("package_name") or "").strip()
-            if activity:
-                env._omniflow_oob_current_activity = activity
-            elif package:
-                env._omniflow_oob_current_activity = package
-        return state
 
     env.get_state = get_state
     return original
@@ -5454,10 +5436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "OOB control backend owns the complete observe/act lifecycle; "
                 "native AndroidWorld A11y forwarding is disabled."
             )
-        original_current_activity = _patch_androidworld_current_activity(
-            adb_utils,
-            state_activity_owner=env,
-        )
+        original_current_activity = _patch_androidworld_current_activity(adb_utils)
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
         original_get_clipboard_contents = _patch_androidworld_clipboard_read_compat(
             adb_utils
