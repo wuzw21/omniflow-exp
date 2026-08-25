@@ -457,6 +457,9 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
         target_app="Settings",
         source_model="",
     )
+    validated = validate_memory_manifest(memory)
+    assert validated["manifest"]["schema_version"] == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
+    assert validated["manifest"]["source_method"] == MOBILEGPT_RUNLOG_SOURCE_METHOD
     manifest_path = bundle / MOBILEGPT_MEMORY_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["target_package"] = "android"

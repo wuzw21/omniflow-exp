@@ -26,6 +26,8 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_SOURCE_METHOD,
 )
 from src.experiment.protocol import SOURCE_SEED
 from src.integrations.android_world.host import (
@@ -151,7 +153,28 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get(
         "schema_version"
     ) != MOBILEGPT_MEMORY_SCHEMA:
-        raise ValueError("mobilegpt_memory_manifest_schema_invalid")
+        if payload.get("schema_version") != MOBILEGPT_RUNLOG_MEMORY_SCHEMA:
+            raise ValueError("mobilegpt_memory_manifest_schema_invalid")
+        # RunLog-direct bundles use the same official MobileGPT reader and
+        # memory files, but their provenance is intentionally different from a
+        # native cold episode.  Delegate to the shared adapted-memory validator
+        # instead of applying the native-cold provenance contract here.
+        from src.integrations import mobilegpt_memory
+
+        source_record = payload.get("source_run_log")
+        if not isinstance(source_record, dict):
+            raise ValueError("mobilegpt_memory_source_run_log_missing")
+        source_path = (
+            root.parent / str(source_record.get("relative_path") or "")
+        ).resolve()
+        return mobilegpt_memory.validate_mobilegpt_adapted_memory(
+            root,
+            task_name=str(payload.get("task_name") or ""),
+            source_seed=int(payload.get("source_seed") or -1),
+            source_run_log=source_path,
+            expected_model=str(payload.get("source_model") or ""),
+            expected_source_method=MOBILEGPT_RUNLOG_SOURCE_METHOD,
+        )
     if payload.get("source_seed") != SOURCE_SEED:
         raise ValueError("mobilegpt_memory_source_seed_invalid")
     provenance = payload.get("provenance")
