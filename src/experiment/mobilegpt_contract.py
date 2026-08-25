@@ -1,50 +1,32 @@
-"""Canonical MobileGPT memory contract."""
+"""The single MobileGPT contract used by AndroidWorld.
+
+The only writable path is successful RunLog -> MobileGPT's own
+Explore/Select/Derive authoring prompts -> official Memory.  Native-cold and
+mechanical-direct bundles remain historical evidence outside the runtime
+index; they cannot be selected or produced by the current pipeline.
+"""
 
 MOBILEGPT_MEMORY_MANIFEST = "mobilegpt_memory_manifest.json"
-
-MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt-native-cold-memory.v1"
-MOBILEGPT_SOURCE_METHOD = "mobilegpt_native_source_cold"
-MOBILEGPT_PREP_TYPE = "mobilegpt_native_source_cold_memory"
-MOBILEGPT_LEARNING_MODE = "mobilegpt_native_cold"
-MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
-MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL = "mobilegpt_source_node_id_v1"
-MOBILEGPT_NATIVE_PHYSICAL_BACKEND = "mobilegpt_official_accessibility"
-MOBILEGPT_NATIVE_TRANSPORT = "official_accessibility"
-MOBILEGPT_NATIVE_ACTION_INDEX_PROTOCOL = (
-    "mobilegpt_official_accessibility_node_id_v1"
-)
-
-# RunLog-direct bundles are the formal memory source: a successful RunLog is
-# mechanically persisted through MobileGPT's official Memory APIs and then
-# loaded by the official warm executor.  The native cold-episode contract is
-# retained for historical evidence only.
-MOBILEGPT_RUNLOG_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
-MOBILEGPT_RUNLOG_SOURCE_METHOD = "mobilegpt_runlog_direct_memory"
-MOBILEGPT_RUNLOG_PREP_TYPE = "mobilegpt_runlog_direct_memory"
-MOBILEGPT_RUNLOG_LEARNING_MODE = "mobilegpt_runlog_direct_conversion"
+MOBILEGPT_MEMORY_SCHEMA = "omniflow.mobilegpt.semantic-memory.v1"
+MOBILEGPT_SOURCE_METHOD = "mobilegpt_runlog_official_semantic_memory"
+MOBILEGPT_PREP_TYPE = "mobilegpt_runlog_official_semantic_memory"
+MOBILEGPT_LEARNING_MODE = "mobilegpt_runlog_official_semantic_conversion"
 MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
+MOBILEGPT_EMBEDDING_MODEL = "GLM-Embedding-2"
+MOBILEGPT_PHYSICAL_BACKEND = "mobilegpt_official_accessibility"
 
-MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset(
-    {MOBILEGPT_MEMORY_SCHEMA, MOBILEGPT_RUNLOG_MEMORY_SCHEMA}
-)
+MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset({MOBILEGPT_MEMORY_SCHEMA})
 MOBILEGPT_SOURCE_METHOD_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_SOURCE_METHOD,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_SOURCE_METHOD,
 }
 MOBILEGPT_PREP_TYPE_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_PREP_TYPE,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_PREP_TYPE,
 }
 MOBILEGPT_LEARNING_MODE_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_LEARNING_MODE,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_LEARNING_MODE,
 }
 MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA = {
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_AUDIT_SCHEMA,
+    MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_AUDIT_SCHEMA,
 }
-MOBILEGPT_SUPPORTED_SOURCE_METHODS = frozenset(
-    {MOBILEGPT_SOURCE_METHOD, MOBILEGPT_RUNLOG_SOURCE_METHOD}
-)
-MOBILEGPT_SUPPORTED_PREP_TYPES = frozenset(
-    {MOBILEGPT_PREP_TYPE, MOBILEGPT_RUNLOG_PREP_TYPE}
-)
+MOBILEGPT_SUPPORTED_SOURCE_METHODS = frozenset({MOBILEGPT_SOURCE_METHOD})
+MOBILEGPT_SUPPORTED_PREP_TYPES = frozenset({MOBILEGPT_PREP_TYPE})

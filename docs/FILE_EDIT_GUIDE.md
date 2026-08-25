@@ -35,11 +35,11 @@
 | `src/experiment/offline_transfer_regression.py` | B | Page Embedding + canonical OmniTransfer 的离线 pair 数据集、标注和错误闭环；不得创建 Host/Planner/episode、第二 encoder/mapper 或 official result |
 | `src/experiment/protocol.py`, `result_schema.py`, `result_registry.py`, `batch_outcomes.py` | B | 正式 protocol、public row、ledger、汇总；字段/版本/统计口径必须独立 commit |
 | `src/experiment/development_emulator.py`, `emulator_processes.py`, `performance_metrics.py` | A/B | 开发 preflight、进程诊断、opt-in 性能侧通道；不能写 formal result 或改变 public row |
-| `src/experiment/mobilegpt_contract.py`, `mobilegpt_source.py`, `appagent_source.py` | B | 外部 baseline 的 source/contract owner；适配可以改，不能把 baseline 变成 Function 或共用结果表 |
+| `src/experiment/mobilegpt_contract.py`, `src/integrations/mobilegpt.py`, `appagent_source.py` | B | 外部 baseline 的单一 MobileGPT authoring owner；不能把 baseline 变成 Function 或共用结果表 |
 | `src/integrations/android_world/agent.py`, `methods.py`, `host.py`, `environment.py`, `apps.py`, `state.py` | A/B | AndroidWorld native adapter；可重构实现，但必须复用 Host、官方 validator 和唯一 method registry |
 | `src/integrations/android_world/run_episode.py` | B | 唯一 native lifecycle；可修 setup/episode/evidence，但不能在这里增加 scheduler 或临时 executor |
 | `src/integrations/android_world/oob_control.py` | C/B | 明确的开发/采集传输边界；不能复制成新适配层 |
-| `src/integrations/bmoca.py`, `mobilegpt.py`, `mobilegpt_format.py`, `appagent.py` | B/C | 外部文件格式转换；不修改 pinned upstream 语义，不引入运行时适配 |
+| `src/integrations/bmoca.py`, `mobilegpt.py`, `appagent.py` | B/C | 外部文件格式转换；不修改 pinned upstream 语义，不引入运行时适配 |
 | `src/integrations/runlog.py`, `script_replay.py`, `skilldroid_replay.py` | C/B | 历史/官方 replay 薄适配；不能加私有 mapper、坐标 passthrough 或第二 executor |
 | `tests/**/*.py` | D | 所有测试都可增补或随 surviving owner 迁移；不得削弱断言来掩盖功能变化 |
 | `tools/manual_androidworld_harness.py` | C | 人工诊断工具；不能生成 formal result、刷新 canonical index 或替代公共 shell |
@@ -130,7 +130,6 @@ rg --files -g '*.py' | sort
 | `src/experiment/batch_outcomes.py` | 一次 attempt 的 outcome/summary；不成为运行时选择器 |
 | `src/experiment/performance_metrics.py` | 明确 opt-in 的 performance side channel；不改 public result row |
 | `src/experiment/mobilegpt_contract.py` | MobileGPT 证据常量和协议标签 |
-| `src/experiment/mobilegpt_source.py` | AndroidWorld 的 MobileGPT source preparation |
 | `src/experiment/appagent_source.py` | AndroidWorld 的 AppAgent source preparation |
 
 ## `src/integrations/`：外部契约适配器
@@ -141,10 +140,8 @@ rg --files -g '*.py' | sort
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
 | `src/integrations/mobilegpt.py` | MobileGPT Server、官方 XML/Memory reader 与 RunLog→official-schema converter；不拥有正式 source episode |
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
-| `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
 | `src/integrations/official_forward.py` | 外部 baseline workspace/Server 准备；MobileGPT 旧 Accessibility client 入口必须硬失败，不能执行物理层 |
-| `src/integrations/mobilegpt_oob_client.py` | MobileGPT 唯一 target client；只实现官方 Server wire adapter，应用启动、observe、act 全部调用 canonical `OobControlClient` |
 | `vendor/autodroid/androidworld_apps` + `official_forward.py` | AutoDroid 官方 DroidBot memory 与 replay forward；不转换为 OmniFlow schema，不复制 action loop |
 | `src/integrations/bmoca.py` | B-MoCA DeviceDriver、episode 和 official reward adapter |
 | `src/integrations/script_replay.py` | 仅 B-MoCA 外部 replay 合同的共享 runtime 薄适配器；禁止接入 AndroidWorld 方法或私有 mapper/executor |
@@ -156,7 +153,6 @@ rg --files -g '*.py' | sort
 | `src/integrations/android_world/host.py` | native observe/act/reset Host |
 | `src/integrations/android_world/run_episode.py` | 唯一 native lifecycle/launcher；不得暴露 direct Function、调用序列或测试专用执行模式 |
 | `src/integrations/android_world/methods.py` | 正式方法 adapter registry；OmniFlow adapter 只传 Store、Planner 和 Host 配置，不传 Function intent |
-| `src/integrations/mobilegpt_format.py` | MobileGPT 官方 XML Encoder 的最小转换入口 |
 | `src/integrations/android_world/oob_control.py` | AndroidWorld 正式实验唯一物理 transport adapter；ADB 仅用于安装、系统 bootstrap 和 OOB IPC，不得启动目标应用或执行动作 |
 | `src/integrations/android_world/state.py` | native state normalization |
 
@@ -187,7 +183,7 @@ rg --files -g '*.py' | sort
 ### Provider 修改的最短路径
 
 每个 provider 只维护一个公开 source owner：MobileGPT 改
-`src/experiment/mobilegpt_source.py`，AppAgent 改
+`src/integrations/mobilegpt.py`，AppAgent 改
 `src/experiment/appagent_source.py`。需要改变上游格式时，再进入对应的
 `src/integrations/*.py`；不要把同一个变化复制到 scheduler、AndroidWorld
 result runner 和 shell。

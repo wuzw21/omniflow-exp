@@ -147,11 +147,10 @@ baseline 记录时经过的五个位置：
 | --- | --- | --- |
 | `source_evidence.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
-| `mobilegpt_source.py` | 如何在 seed 111 source emulator 上运行 MobileGPT 官方 cold learning，并封存其原生 Prepared Memory？ | MobileGPT Planner/Executor 内部、target 调度 |
+| `integrations/mobilegpt.py` | 如何把成功 RunLog 交给 MobileGPT 官方 Explore/Select/Derive，并封存其 Memory？ | MobileGPT Planner/Executor 内部、target 调度 |
 | `mobilegpt.py` | 如何启动/校验 MobileGPT Server 与官方原生 memory reader？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
 | `official_forward.py` | 如何准备 MobileGPT Server workspace，并启动官方 Accessibility client？ | MobileGPT memory 转换、Server Planner、AndroidWorld validator 实现 |
-| `mobilegpt_oob_client.py` | 历史 OOB MobileGPT client 的只读兼容实现 | 正式 MobileGPT 调度和新结果登记 |
 | `checks.py` | 这次运行的依赖、root 设备、已安装 Accessibility 服务和 Prepared Memory 是否 ready？ | 具体 provider 的转换实现 |
 | `data_index.py` | 如何物化和读取唯一 Local Index？ | AndroidWorld runner 和 provider 内部校验细节 |
 | `source_records.py` | Source RunLog 的共享数据模型是什么？ | 读取、执行或转换 RunLog |
@@ -166,7 +165,7 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam。AppAgent 仍拥有自己的
-converter；正式 MobileGPT memory 由 `mobilegpt_source.py` 从 seed 111 的成功
+converter；正式 MobileGPT memory 由 `integrations/mobilegpt.py` 从 seed 111 的成功
 RunLog 进入唯一的机械转换入口，并调用官方 XML encoder、Memory/PageManager API
 和 reader 验证。转换产物虽然由 OmniFlow 封存和登记，但页面、subtask、action 和
 task path 均使用 MobileGPT 官方 schema；source emulator 不是转换的必要步骤。
@@ -199,7 +198,7 @@ provider 时应新增自己的 adapter，而不是把分派字符串重新塞回
 | `data_index.py` 与 result ledger | 读写对象不同，不能粗暴合并 | 保留职责，拆出只在有测试证明时进行 |
 | `batch_outcomes.py` 与 `result_registry.py` | 汇总和注册是两个不可互换的写入语义 | 先记录公共 path helper 重复，再局部收敛 |
 | `omniflow/runlog.py` 与 `src/integrations/runlog.py` | canonical loader 与历史外部导入 adapter | 旧适配层按要求暂不清理 |
-| `mobilegpt_source.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |
+| `integrations/mobilegpt.py` / `appagent_source.py` | 两个外部协议不同 | 不合并；只共享纯证据 helper |
 | AutoDroid DroidBot memory | 官方事件/UTG replay，不是 OmniFlow Function | 不转换为 OmniFlow schema；只校验 manifest、事件和 APK |
 | 2430 行 shell、3093 行 scheduler、4619 行 launcher | 复杂文件，但都是现有唯一 owner | 先补 seam 和测试，再按模块内聚拆分；不复制入口 |
 | 已删除的 packaged catalog、old source pool、direct launcher 文件 | 最近提交已清掉的死路径 | 不恢复 alias 或兼容副本 |

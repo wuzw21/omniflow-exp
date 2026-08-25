@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import csv
 from collections import Counter
+import csv
 import hashlib
 import json
 from pathlib import Path
-import re
 from typing import Any, Iterable, Sequence
 
 from omniflow.core.trajectory import canonicalize_run_log
@@ -16,11 +15,9 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.paths import resolve_path
-from src.experiment.protocol import SOURCE_SEED
 from src.integrations import mobilegpt
 
 
@@ -882,8 +879,6 @@ def _validate_mobilegpt_converted_memory(
         raise ValueError("mobilegpt_virtual_memory_task_name_mismatch")
     if int(manifest.get("source_seed") or -1) != int(source_seed):
         raise ValueError("mobilegpt_virtual_memory_source_seed_mismatch")
-    if int(source_seed) != SOURCE_SEED:
-        raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
     source_method = str(manifest.get("source_method") or "").strip()
     if source_method != schema_source_method:
         raise ValueError("mobilegpt_virtual_memory_source_method_invalid")
@@ -901,18 +896,21 @@ def _validate_mobilegpt_converted_memory(
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_virtual_memory_provenance_missing")
     native_learning = bool(provenance.get("native_mobilegpt_learning"))
+    semantic_learning = schema_version == MOBILEGPT_MEMORY_SCHEMA
     required_provenance = {
         "native_mobilegpt_learning": native_learning,
         "task_local_memory": True,
         "learning_mode": schema_learning_mode,
-        "teacher_forcing": False,
-        "synthetic_subtasks": not native_learning,
-        "semantic_subtasks": native_learning,
-        "original_mobilegpt_prompts": native_learning,
-        "actions_supplied_to_mobilegpt": not native_learning,
+        "teacher_forcing": semantic_learning,
+        "synthetic_subtasks": not native_learning and not semantic_learning,
+        "semantic_subtasks": native_learning or semantic_learning,
+        "original_mobilegpt_prompts": native_learning or semantic_learning,
+        "actions_supplied_to_mobilegpt": not native_learning and not semantic_learning,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": not native_learning,
+        "runlog_transition_compilation": (
+            False if semantic_learning else not native_learning
+        ),
         "complete_transition_mapping": not native_learning,
         "official_reader_validation": True,
         "function_store_used": False,
@@ -923,6 +921,13 @@ def _validate_mobilegpt_converted_memory(
         "coordinate_replay": False,
         "source_emulator_used": False,
     }
+    if semantic_learning:
+        required_provenance.update(
+            {
+                "official_authoring_session": True,
+                "teacher_action_alignment_complete": True,
+            }
+        )
     for provenance_field, expected in required_provenance.items():
         if (
             provenance.get(provenance_field) is not expected
@@ -1020,6 +1025,17 @@ def _validate_mobilegpt_converted_memory(
         or audit.get("complete") is not True
     )
     direct_audit_valid = direct_audit_valid or launch_only
+    semantic_audit_valid = (
+        str(audit.get("task_name") or "") == str(task_name)
+        and audit.get("conversion_mode") == "official_mobilegpt_learning"
+        and audit.get("official_prompt_extension") is True
+        and audit.get("teacher_prompt_used") is True
+        and audit.get("teacher_action_alignment_complete") is True
+        and audit.get("actions_supplied_to_mobilegpt") is False
+        and audit.get("source_transitions_supplied") is True
+        and audit.get("source_success_boundary_supplied") is True
+        and audit.get("complete") is True
+    )
     official_audit_valid = (
         str(audit.get("task_name") or "") == str(task_name)
         and audit.get("conversion_mode") == "official_mobilegpt_learning"
@@ -1030,7 +1046,9 @@ def _validate_mobilegpt_converted_memory(
         and audit.get("complete") is True
     )
     if (native_learning and not official_audit_valid) or (
-        not native_learning and not direct_audit_valid
+        semantic_learning and not semantic_audit_valid
+    ) or (
+        not native_learning and not semantic_learning and not direct_audit_valid
     ):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
     if (
@@ -1067,7 +1085,9 @@ def _validate_mobilegpt_converted_memory(
         or int(stats_summary.get("task_finished_count") or 0) != 1
     ):
         raise ValueError("mobilegpt_virtual_memory_task_lifecycle_incomplete")
-    if not native_learning and int(stats_summary.get("chat_model_calls") or 0) != 0:
+    if not native_learning and not semantic_learning and int(
+        stats_summary.get("chat_model_calls") or 0
+    ) != 0:
         raise ValueError("mobilegpt_memory_chat_calls_forbidden")
     return {
         "manifest": manifest,
@@ -1106,8 +1126,6 @@ def _validate_mobilegpt_native_cold_memory(
         raise ValueError("mobilegpt_cold_memory_task_name_mismatch")
     if int(manifest.get("source_seed") or -1) != int(source_seed):
         raise ValueError("mobilegpt_cold_memory_source_seed_mismatch")
-    if int(source_seed) != SOURCE_SEED:
-        raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
     source_method = str(manifest.get("source_method") or "").strip()
     if source_method != MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA]:
         raise ValueError("mobilegpt_cold_memory_source_method_invalid")
@@ -1220,11 +1238,12 @@ def validate_mobilegpt_adapted_memory(
     if not isinstance(manifest, dict):
         raise ValueError("mobilegpt_cold_memory_manifest_invalid")
     schema_version = str(manifest.get("schema_version") or "")
+    # The active contract is always the RunLog-backed official authoring
+    # bundle.  Native-cold and mechanical-direct validators are retained only
+    # as historical code paths and are deliberately not selectable here.
     validator = (
-        _validate_mobilegpt_native_cold_memory
+        _validate_mobilegpt_converted_memory
         if schema_version == MOBILEGPT_MEMORY_SCHEMA
-        else _validate_mobilegpt_converted_memory
-        if schema_version == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
         else None
     )
     if validator is None:
@@ -1240,7 +1259,6 @@ def validate_mobilegpt_adapted_memory(
         expected_model=expected_model,
         expected_source_method=expected_source_method,
     )
-    from src.integrations.mobilegpt import validate_mobilegpt_memory
 
     validated["memory_validation"] = mobilegpt.validate_mobilegpt_memory(root)
     return validated

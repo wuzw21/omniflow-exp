@@ -20,7 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.experiment.mobilegpt_contract import MOBILEGPT_EMBEDDING_MODEL
-from src.experiment.mobilegpt_source import convert_runlog_to_mobilegpt_bundle
+from src.integrations.mobilegpt import convert_runlog_to_mobilegpt_bundle
 from src.integrations.mobilegpt import preflight_runlog_conversion
 
 

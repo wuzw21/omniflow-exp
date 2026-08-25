@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from contextlib import contextmanager
 from copy import deepcopy
-import ast
 import csv
 from dataclasses import dataclass
 import hashlib
@@ -17,34 +17,30 @@ import sys
 import tempfile
 import time
 from typing import Any, Callable, Iterator, Sequence
-import xml.etree.ElementTree as ET
 import xml.dom.minidom
+import xml.etree.ElementTree as ET
 
+from omniflow.core.model import Action
+from omniflow.transfer.runtime import load_transfer_state_catalog
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_AUDIT_SCHEMA,
     MOBILEGPT_EMBEDDING_MODEL,
-    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
-    MOBILEGPT_RUNLOG_SOURCE_METHOD,
+    MOBILEGPT_PHYSICAL_BACKEND,
+    MOBILEGPT_SOURCE_METHOD,
 )
-from src.experiment.protocol import SOURCE_SEED
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
 )
-from src.integrations.mobilegpt_format import encode_xml
 from src.integrations.runlog import (
     adapt_source_run_log,
     import_run_log,
     infer_input_text_target,
 )
-from omniflow.core.model import Action
-from omniflow.transfer.runtime import load_transfer_state_catalog
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt.source.v2"
-CONVERSION_MODE_DIRECT = "runlog_direct"
 CONVERSION_MODE_OFFICIAL = "official_mobilegpt_learning"
 CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 # The upstream Server normally terminates by sending ``$$$$$``.  A malformed
@@ -83,6 +79,79 @@ _SUPPORTED_ACTION_TYPES = frozenset(
         "swipe",
     }
 )
+
+
+def _official_mobilegpt_server_root(root: str | Path | None = None) -> Path:
+    configured = str(root or os.environ.get("MOBILEGPT_ROOT") or "").strip()
+    candidates = [
+        Path(configured).expanduser() if configured else None,
+        Path("/Users/wuzewen/Projects/MobileGPT"),
+        Path("/Users/wuzewen/Projects/Omni/OmniFlow/runtime/external/mobilegpt-official"),
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "Server").is_dir():
+            return (candidate / "Server").resolve()
+    raise FileNotFoundError(
+        "MobileGPT official checkout is required; set MOBILEGPT_ROOT to its root"
+    )
+
+
+@contextmanager
+def _official_mobilegpt_import_path(server_root: Path) -> Iterator[None]:
+    text = str(server_root)
+    inserted = text not in sys.path
+    if inserted:
+        sys.path.insert(0, text)
+    try:
+        yield
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(text)
+            except ValueError:
+                pass
+
+
+def encode_xml(raw_xml: str, *, mobilegpt_root: str | Path | None = None) -> tuple[str, str, str]:
+    """Use MobileGPT's pinned XML encoder without maintaining a second format."""
+
+    server_root = _official_mobilegpt_server_root(mobilegpt_root)
+    source_xml = _as_mobilegpt_input_xml(raw_xml)
+    with _official_mobilegpt_import_path(server_root):
+        from screenParser.Encoder import xmlEncoder
+
+        with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-") as work:
+            encoder = xmlEncoder()
+            encoder.init(work)
+            return tuple(encoder.encode(source_xml, 0))  # type: ignore[return-value]
+
+
+def _as_mobilegpt_input_xml(raw_xml: str) -> str:
+    root = ET.fromstring(str(raw_xml or "").strip())
+    next_index = 0
+    for element in root.iter():
+        if element is root:
+            continue
+        attributes = element.attrib
+        attributes.setdefault("index", str(next_index))
+        next_index += 1
+        attributes.setdefault("id", attributes.get("resource-id") or attributes.get("resource_id") or "")
+        attributes.setdefault(
+            "description",
+            attributes.get("content-desc") or attributes.get("content_description") or "",
+        )
+        if not attributes.get("class"):
+            if str(attributes.get("editable") or "").lower() == "true":
+                attributes["class"] = "android.widget.EditText"
+            elif str(attributes.get("checkable") or "").lower() == "true":
+                attributes["class"] = "android.widget.CheckBox"
+            elif str(attributes.get("clickable") or "").lower() == "true":
+                attributes["class"] = "android.widget.Button"
+            elif len(element):
+                attributes["class"] = "android.view.ViewGroup"
+            else:
+                attributes["class"] = "android.widget.TextView"
+    return ET.tostring(root, encoding="unicode")
 
 
 def _is_input_cleanup_delete(
@@ -145,113 +214,36 @@ def _hash_memory_files(files: list[Path], *, root: Path) -> str:
 
 
 def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
-    """Validate the MobileGPT manifest and its sealed evidence files."""
+    """Validate the one writable official-authoring memory contract."""
 
     root = Path(memory_root).expanduser().resolve()
     manifest_path = root.parent / MOBILEGPT_MEMORY_MANIFEST
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get(
-        "schema_version"
-    ) != MOBILEGPT_MEMORY_SCHEMA:
-        if payload.get("schema_version") != MOBILEGPT_RUNLOG_MEMORY_SCHEMA:
-            raise ValueError("mobilegpt_memory_manifest_schema_invalid")
-        # RunLog-direct bundles use the same official MobileGPT reader and
-        # memory files, but their provenance is intentionally different from a
-        # native cold episode.  Delegate to the shared adapted-memory validator
-        # instead of applying the native-cold provenance contract here.
-        from src.integrations import mobilegpt_memory
+    if not isinstance(payload, dict):
+        raise ValueError("mobilegpt_memory_manifest_invalid")
+    if payload.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA:
+        raise ValueError("mobilegpt_memory_manifest_schema_invalid")
+    source_record = payload.get("source_run_log")
+    if not isinstance(source_record, dict):
+        raise ValueError("mobilegpt_memory_source_run_log_missing")
+    source_path = (root.parent / str(source_record.get("relative_path") or "")).resolve()
+    from src.integrations import mobilegpt_memory
 
-        source_record = payload.get("source_run_log")
-        if not isinstance(source_record, dict):
-            raise ValueError("mobilegpt_memory_source_run_log_missing")
-        source_path = (
-            root.parent / str(source_record.get("relative_path") or "")
-        ).resolve()
-        validated = mobilegpt_memory.validate_mobilegpt_adapted_memory(
-            root,
-            task_name=str(payload.get("task_name") or ""),
-            source_seed=int(payload.get("source_seed") or -1),
-            source_run_log=source_path,
-            expected_model=str(payload.get("source_model") or ""),
-            expected_source_method=MOBILEGPT_RUNLOG_SOURCE_METHOD,
-        )
-        # Keep the public preflight result shape stable across the native-cold
-        # and RunLog-direct schemas.  The scheduler uses these fields before
-        # it starts the target episode.
-        return {
-            **validated,
-            "task_name": str(payload.get("task_name") or ""),
-            "source_seed": int(payload.get("source_seed") or -1),
-            "source_method": MOBILEGPT_RUNLOG_SOURCE_METHOD,
-            "native_mobilegpt_learning": False,
-            "physical_backend": "mobilegpt_official_accessibility",
-        }
-    if payload.get("source_seed") != SOURCE_SEED:
-        raise ValueError("mobilegpt_memory_source_seed_invalid")
-    provenance = payload.get("provenance")
-    required_native_provenance = {
-        "native_mobilegpt_learning": True,
-        "task_local_memory": True,
-        "learning_mode": MOBILEGPT_LEARNING_MODE,
-        "teacher_forcing": False,
-        "synthetic_subtasks": False,
-        "semantic_subtasks": True,
-        "original_mobilegpt_prompts": True,
-        "actions_supplied_to_mobilegpt": False,
-        "official_authoring_session": True,
-        "official_reader_validation": True,
-        "function_store_used": False,
-        "function_conversion_enabled": False,
-        "coordinate_replay": False,
-        "source_emulator_used": True,
-        "physical_backend": "mobilegpt_official_accessibility",
-    }
-    if not isinstance(provenance, dict) or any(
-        provenance.get(key) != value
-        for key, value in required_native_provenance.items()
-    ):
-        raise ValueError("mobilegpt_memory_provenance_incomplete")
-    memory = payload.get("memory")
-    if not isinstance(memory, dict):
-        raise ValueError("mobilegpt_memory_record_missing")
-    recorded_root = (root.parent / str(memory.get("relative_path") or "")).resolve()
-    if recorded_root != root:
-        raise ValueError("mobilegpt_memory_path_mismatch")
-    files, task_files = _memory_files(root)
-    digest = _hash_memory_files(files, root=root)
-    if len(files) != int(memory.get("file_count") or -1):
-        raise ValueError("mobilegpt_memory_file_count_mismatch")
-    if str(memory.get("sha256") or "") != digest:
-        raise ValueError("mobilegpt_memory_sha256_mismatch")
-    for label in ("source_run_log", "source_stats", "official_source_result"):
-        record = payload.get(label)
-        if not isinstance(record, dict):
-            raise ValueError(f"mobilegpt_memory_{label}_missing")
-        path = (root.parent / str(record.get("relative_path") or "")).resolve()
-        try:
-            path.relative_to(root.parent)
-        except ValueError as error:
-            raise ValueError(f"mobilegpt_memory_{label}_outside_bundle") from error
-        if not path.is_file():
-            raise ValueError(f"mobilegpt_memory_{label}_file_missing")
-        if str(record.get("sha256") or "") != hashlib.sha256(
-            path.read_bytes()
-        ).hexdigest():
-            raise ValueError(f"mobilegpt_memory_{label}_sha256_mismatch")
-    official_result = payload.get("official_source_result") or {}
-    if official_result.get("official_validator_success") is not True:
-        raise ValueError("mobilegpt_memory_official_source_failed")
+    validated = mobilegpt_memory.validate_mobilegpt_adapted_memory(
+        root,
+        task_name=str(payload.get("task_name") or ""),
+        source_seed=int(payload.get("source_seed") or -1),
+        source_run_log=source_path,
+        expected_model=str(payload.get("source_model") or ""),
+        expected_source_method=MOBILEGPT_SOURCE_METHOD,
+    )
     return {
-        "manifest": str(manifest_path),
-        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        **validated,
         "task_name": str(payload.get("task_name") or ""),
-        "source_seed": int(payload["source_seed"]),
-        "source_method": str(payload.get("source_method") or ""),
-        "memory_sha256": digest,
-        "memory_file_count": len(files),
-        "task_file_count": len(task_files),
-        "native_mobilegpt_learning": True,
-        "physical_backend": "mobilegpt_official_accessibility",
+        "source_seed": int(payload.get("source_seed") or -1),
+        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "native_mobilegpt_learning": False,
+        "physical_backend": MOBILEGPT_PHYSICAL_BACKEND,
     }
 
 def validate_prepared_memory(
@@ -3357,7 +3349,6 @@ def write_conversion_failure_audit(
     wall_sec: float,
     target_package: str = "",
     target_app: str = "",
-    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
     """Persist partial evidence after an interrupted offline conversion."""
 
@@ -3403,7 +3394,7 @@ def write_conversion_failure_audit(
     )
     payload = {
         "schema_version": MOBILEGPT_AUDIT_SCHEMA,
-        "conversion_mode": conversion_mode,
+        "conversion_mode": CONVERSION_MODE_OFFICIAL,
         "task_name": trajectory["task_name"],
         "source_run_log": trajectory["source_run_log"],
         "target_package": trajectory["target_package"],
@@ -3416,7 +3407,7 @@ def write_conversion_failure_audit(
         "validation_rows": validation_rows,
         "teacher_prompt_used": teacher_prompt_used,
         "teacher_action_alignment_complete": False,
-        "actions_supplied_to_mobilegpt": conversion_mode == CONVERSION_MODE_DIRECT,
+        "actions_supplied_to_mobilegpt": False,
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
         "source_success_boundary": trajectory["source_success_boundary"],
@@ -3448,639 +3439,186 @@ def convert_runlog_to_mobilegpt_memory(
     target_app: str = "",
     embedding_provider: Callable[[str], Sequence[float]] | None = None,
     semantic_query_provider: Callable[..., Any] | None = None,
-    conversion_mode: str = CONVERSION_MODE_DIRECT,
 ) -> dict[str, Any]:
     """Compile one verified RunLog through MobileGPT's official memory APIs."""
-
-    if conversion_mode == CONVERSION_MODE_OFFICIAL:
-        trajectory = _load_runlog_trajectory(
-            source_run_log,
-            target_package=target_package,
-            target_app=target_app,
-        )
-        return _run_official_mobilegpt_authoring(
-            trajectory=trajectory,
-            mobilegpt_root=Path(mobilegpt_root).expanduser().resolve(),
-            memory_root=Path(memory_root).expanduser().resolve(),
-            stats=Path(stats_path).expanduser().resolve(),
-            audit=Path(audit_path).expanduser().resolve(),
-            model=model,
-            embedding_model=str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
-            embedding_provider=embedding_provider,
-            semantic_query_provider=semantic_query_provider,
-        )
-
-    if conversion_mode != CONVERSION_MODE_DIRECT:
-        raise ValueError(f"mobilegpt_conversion_mode_invalid:{conversion_mode}")
-    normalized_embedding_model = (
-        str(embedding_model or "").strip() or MOBILEGPT_EMBEDDING_MODEL
-    )
 
     trajectory = _load_runlog_trajectory(
         source_run_log,
         target_package=target_package,
         target_app=target_app,
     )
-    transitions: list[_RunLogTransition] = trajectory["transitions"]
-    launch_only = trajectory["launch_only"] is True
-    encoded_transitions = transitions
-    if launch_only:
-        encoded_transitions = [
-            _RunLogTransition(
-                step_index=int(trajectory["launch_step_index"]),
-                action=dict(trajectory["launch_action"]),
-                observation=dict(trajectory["terminal_observation"]),
-                forest=str(trajectory["terminal_forest"]),
-            )
-        ]
-    server_root = Path(mobilegpt_root).expanduser().resolve() / "Server"
-    if not server_root.is_dir():
-        raise FileNotFoundError(f"mobilegpt_server_root_missing:{server_root}")
-    memory = Path(memory_root).expanduser().resolve()
-    stats = Path(stats_path).expanduser().resolve()
-    audit = Path(audit_path).expanduser().resolve()
-    memory.mkdir(parents=True, exist_ok=False)
-    stats.parent.mkdir(parents=True, exist_ok=True)
-    audit.parent.mkdir(parents=True, exist_ok=True)
-    log_root = memory.parent / "conversion_log"
+    return _run_official_mobilegpt_authoring(
+        trajectory=trajectory,
+        mobilegpt_root=Path(mobilegpt_root).expanduser().resolve(),
+        memory_root=Path(memory_root).expanduser().resolve(),
+        stats=Path(stats_path).expanduser().resolve(),
+        audit=Path(audit_path).expanduser().resolve(),
+        model=model,
+        embedding_model=str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
+        embedding_provider=embedding_provider,
+        semantic_query_provider=semantic_query_provider,
+    )
+def load_canonical_source_item(index_path: str | Path, *, task_name: str) -> Any:
+    """Resolve the one successful AndroidWorld RunLog used for authoring."""
 
-    if str(server_root) not in sys.path:
-        sys.path.insert(0, str(server_root))
-    environment = {
-        "MOBILEGPT_MEMORY_ROOT": str(memory),
-        "MOBILEGPT_STATS_JSONL": str(stats),
-        "MOBILEGPT_CHAT_MODEL": str(model),
-        "MOBILEGPT_EMBEDDING_MODEL": normalized_embedding_model,
-        "MOBILEGPT_CHAT_MAX_ATTEMPTS": "1",
-        "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
-        "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
-        "MOBILEGPT_TEACHER_RUNLOG": None,
-        "MOBILEGPT_TEACHER_FALLBACK_TO_VLM_ON_MISS": None,
-        "MOBILEGPT_CURRENT_LOG_DIRECTORY": str(log_root),
-    }
+    from src.experiment import run_task as pipeline
 
+    matches = [
+        item
+        for item in pipeline.load_canonical_source_index(index_path)
+        if item.task == str(task_name)
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"mobilegpt_source_task_resolution_failed:task={task_name}:matches={len(matches)}"
+        )
+    item = matches[0]
+    if item.meta.get("latest_official_success_source") is not True:
+        raise ValueError(f"mobilegpt_source_official_success_required:task={task_name}")
+    source = import_run_log(json.loads(item.source_run_log.read_text(encoding="utf-8")))
+    if (
+        source.get("status") != "succeeded"
+        or source.get("success") is not True
+        or not source.get("steps")
+    ):
+        raise ValueError(f"mobilegpt_source_runlog_not_successful:task={task_name}")
+    return item
+
+
+def convert_runlog_to_mobilegpt_bundle(
+    *,
+    source_run_log: str | Path,
+    mobilegpt_root: str | Path,
+    output_root: str | Path,
+    model: str,
+    embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
+    target_package: str = "",
+    target_app: str = "",
+    preflight_audit: dict[str, Any] | None = None,
+    embedding_provider: Callable[[str], Sequence[float]] | None = None,
+    semantic_query_provider: Callable[..., Any] | None = None,
+    source_seed: int | None = None,
+) -> dict[str, Any]:
+    """Create and seal one official MobileGPT memory bundle.
+
+    This is the only RunLog-to-memory entry point.  It always calls the
+    upstream authoring prompts and official Memory APIs; there is no direct
+    action writer or native-cold preparation mode.
+    """
+
+    from src.experiment import run_task as pipeline
+    from src.experiment.paths import sha256_file
+    from src.integrations import mobilegpt_memory
+
+    normalized_model = str(model or "").strip()
+    if not normalized_model:
+        raise ValueError("mobilegpt_model_required")
+    source_path = Path(source_run_log).expanduser().resolve()
+    source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
+    effective_source_seed = int(
+        source_seed if source_seed is not None else source.get("seed") or 0
+    )
+    validator = source.get("validator") or {}
+    if (
+        source.get("status") != "succeeded"
+        or source.get("success") is not True
+        or validator.get("official") is not True
+        or validator.get("success") is not True
+    ):
+        raise ValueError("mobilegpt_source_runlog_not_successful")
+    report = preflight_runlog_conversion(
+        source_path,
+        target_package=target_package,
+        target_app=target_app,
+    )
+    if report.get("ready") is not True:
+        raise MobileGPTConversionError(
+            str(report.get("failure_code") or "mobilegpt_conversion_preflight_failed"),
+            **dict(report.get("failure_details") or {}),
+        )
+    bundle_root = Path(output_root).expanduser().resolve()
+    if bundle_root.exists():
+        raise FileExistsError(f"immutable_mobilegpt_memory_exists:{bundle_root}")
+    bundle_root.mkdir(parents=True)
+    (bundle_root / "conversion_preflight.json").write_text(
+        json.dumps(
+            preflight_audit
+            or {
+                "schema_version": "omniflow.mobilegpt.source-check.v2",
+                "grounding_source": "canonical_androidworld_run_log",
+                "source_run_log": str(source_path),
+                "source_run_log_sha256": sha256_file(source_path),
+                "report": report,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    memory_root = bundle_root / "memory"
+    stats_path = bundle_root / "source_stats.jsonl"
+    stats_summary_path = bundle_root / "source_stats_summary.json"
+    audit_path = bundle_root / "trajectory_audit.json"
     started = time.monotonic()
-    audit_rows: list[dict[str, Any]] = []
-    source_actions_by_step: dict[int, dict[str, Any]] = {
-        int(transition.step_index): transition.action
-        for transition in transitions
-    }
-    raw_converted_by_step: dict[int, dict[str, Any]] = {}
-    # Upstream Memory deliberately stores data below ``./memory``. Keep its
-    # implementation unchanged, but run it from the prepared bundle's parent
-    # so ``./memory`` resolves to the requested output instead of mutating the
-    # canonical MobileGPT checkout.
-    with _temporary_environment(environment), _working_directory(memory.parent):
-        from memory.memory_manager import Memory
-
-        official_generalize_action = None
-        if not launch_only:
-            try:
-                from utils.action_utils import generalize_action as official_generalize_action
-            except ImportError as error:
-                raise MobileGPTConversionError(
-                    "mobilegpt_generalize_action_unavailable"
-                ) from error
-        task_name = str(trajectory["task_name"] or "").strip()
-        app_name = str(trajectory["target_app"] or trajectory["target_package"]).strip()
-        if not task_name:
-            raise MobileGPTConversionError("source_task_name_missing")
-        if not app_name or app_name in {".", ".."} or Path(app_name).name != app_name:
-            raise MobileGPTConversionError("mobilegpt_app_path_invalid", app=app_name)
-        task = {
-            "name": task_name,
-            "description": str(trajectory["instruction"] or task_name),
-            "parameters": _parameter_schema(
-                _parameter_values(trajectory["task_parameters"])
-            ),
-            "app": app_name,
-        }
-        _write_event(
-            stats,
-            {
-                "event": "task_started",
-                "instruction": trajectory["instruction"],
-                "app": app_name,
-                "task_name": task_name,
-                "mode": "offline_conversion",
-            },
+    try:
+        generated = convert_runlog_to_mobilegpt_memory(
+            source_run_log=source_path,
+            mobilegpt_root=mobilegpt_root,
+            memory_root=memory_root,
+            stats_path=stats_path,
+            audit_path=audit_path,
+            model=normalized_model,
+            embedding_model=str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
+            target_package=target_package,
+            target_app=target_app,
+            embedding_provider=embedding_provider,
+            semantic_query_provider=semantic_query_provider,
         )
-        xml_root = log_root / "xmls"
-        xml_root.mkdir(parents=True, exist_ok=True)
-        pages_by_identity: dict[str, dict[str, Any]] = {}
-        source_screen_artifacts: dict[int, dict[str, Path]] = {}
-        task_path: dict[str, list[str]] = {}
-        official_task_path_records: list[dict[str, Any]] = []
-        for screen_index, transition in enumerate(encoded_transitions):
-            raw_xml = str(transition.forest)
-            raw_path = xml_root / f"{screen_index}.xml"
-            raw_path.write_text(raw_xml, encoding="utf-8")
-            parsed_xml, hierarchy_xml, encoded_xml = encode_xml(
-                _official_xml_input(raw_xml),
-                mobilegpt_root=mobilegpt_root,
-            )
-            (xml_root / f"{screen_index}_parsed.xml").write_text(
-                parsed_xml,
-                encoding="utf-8",
-            )
-            (xml_root / f"{screen_index}_hierarchy_parsed.xml").write_text(
-                hierarchy_xml,
-                encoding="utf-8",
-            )
-            (xml_root / f"{screen_index}_encoded.xml").write_text(
-                encoded_xml,
-                encoding="utf-8",
-            )
-            (xml_root / f"{screen_index}_pretty.xml").write_text(
-                xml.dom.minidom.parseString(encoded_xml).toprettyxml(),
-                encoding="utf-8",
-            )
-            identity = _screen_identity(hierarchy_xml)
-            page = pages_by_identity.get(identity)
-            if page is None:
-                page_index = len(pages_by_identity)
-                artifacts = {
-                    "raw.xml": raw_path,
-                    "html.xml": xml_root / f"{screen_index}_encoded.xml",
-                    "hierarchy.xml": xml_root
-                    / f"{screen_index}_hierarchy_parsed.xml",
-                    "parsed.xml": xml_root / f"{screen_index}_parsed.xml",
-                    "pretty.xml": xml_root / f"{screen_index}_pretty.xml",
-                }
-                for name, source in artifacts.items():
-                    if not source.is_file():
-                        raise MobileGPTConversionError(
-                            "source_screen_artifact_missing",
-                            step_index=transition.step_index,
-                            artifact=name,
-                        )
-                source_screen_artifacts[screen_index] = artifacts
-                pixels = transition.observation.get("pixels")
-                if isinstance(pixels, dict):
-                    screenshot = Path(str(pixels.get("path") or "")).expanduser()
-                    if screenshot.is_file():
-                        source_screen_artifacts[screen_index]["screenshot.jpg"] = screenshot
-                page = {
-                    "index": page_index,
-                    "parsed_xml": parsed_xml,
-                    "hierarchy_xml": hierarchy_xml,
-                    "encoded_xml": encoded_xml,
-                    "available_subtasks": [],
-                    "trigger_uis": {},
-                    "trigger_indexes": set(),
-                    "extra_uis": [],
-                    "subtasks": {},
-                    "screen_num": screen_index,
-                }
-                pages_by_identity[identity] = page
-            page_index = int(page["index"])
-            if launch_only:
-                finish_subtask = {
-                    "name": "finish",
-                    "description": "Signal that the task is complete.",
-                    "parameters": {},
-                }
-                page["available_subtasks"].append(finish_subtask)
-                page["subtasks"]["finish"] = {
-                    "metadata": finish_subtask,
-                    "example": {},
-                }
-                task_path[str(page_index)] = ["finish"]
-                official_task_path_records.append(
-                    {
-                        "page_index": page_index,
-                        "subtask_name": "finish",
-                        "subtask": {"name": "finish", "parameters": {}},
-                        "actions": [],
-                    }
-                )
-                continue
-            subtask, selected_subtask, example = _direct_subtask_from_runlog(
-                transition,
-                parsed_xml,
-                encoded_xml,
-                trajectory["instruction"],
-                trajectory["task_parameters"],
-            )
-            page["available_subtasks"].append(subtask)
-            action_type = _action_type(transition.action)
-            if action_type in {"click", "double_tap", "input_text", "long_press"}:
-                target = _target_element(
-                    transition.action,
-                    parsed_xml,
-                    step_index=transition.step_index,
-                    source_forest=transition.forest,
-                    next_forest=transition.next_forest,
-                )
-                trigger_index = target.get("index")
-                if trigger_index is not None:
-                    from utils.parsing_utils import get_trigger_ui_attributes
-
-                    trigger_index = int(trigger_index)
-                    page["trigger_indexes"].add(trigger_index)
-                    page["trigger_uis"].update(
-                        get_trigger_ui_attributes(
-                            {subtask["name"]: [trigger_index]},
-                            _mobilegpt_ui_match_xml(parsed_xml),
-                        )
-                    )
-            converted, bindings, label = _mobilegpt_action_from_runlog(
-                transition,
-                parsed_xml,
-                task_parameters=trajectory["task_parameters"],
-                selected_subtask=selected_subtask,
-                generalize_action=official_generalize_action,
-            )
-            del label
-            raw_converted, _, _ = _mobilegpt_action_from_runlog(
-                transition,
-                parsed_xml,
-                task_parameters=trajectory["task_parameters"],
-                selected_subtask=selected_subtask,
-                generalize_action=None,
-            )
-            # Memory.save_task owns the official action generalization pass.
-            # The OOB execution representation may carry a structured
-            # ``attrib`` selector for an anonymous input, but upstream
-            # generalize_action_to_arguments expects every non-index value in
-            # its raw input to be a string.  Supply the original index/text
-            # action here and let MobileGPT derive its own selector once.
-            raw_parameters = raw_converted.get("parameters")
-            if isinstance(raw_parameters, dict):
-                raw_parameters.pop("attrib", None)
-                if action_type == "input_text":
-                    # The anonymous-input branch above parameterizes text for
-                    # OOB execution. Memory.save_task performs the official
-                    # generalization itself, so its input must be the concrete
-                    # RunLog text rather than an already-generalized token.
-                    raw_parameters["input_text"] = str(
-                        transition.action.get("text") or ""
-                    )
-            raw_converted_by_step[int(transition.step_index)] = raw_converted
-            save_subtask = deepcopy(selected_subtask)
-            if action_type == "input_text":
-                # MobileGPT's official generalize_action can replace the
-                # input payload with ``<name__-1>``, but its official
-                # adapt_action_to_arguments does not expand placeholders in
-                # the ``input_text`` field.  Keep the official subtask and
-                # Memory.save_task path, while removing only the value that
-                # would make the persisted action non-executable.
-                save_parameters = save_subtask.get("parameters")
-                if isinstance(save_parameters, dict):
-                    source_text = str(transition.action.get("text") or "")
-                    save_subtask["parameters"] = {
-                        name: value
-                        for name, value in save_parameters.items()
-                        if str(value) != source_text
-                    }
-            action_example = _native_action_example(
-                instruction=trajectory["instruction"],
-                selected_subtask=selected_subtask,
-                encoded_xml=encoded_xml,
-                action=converted,
-            )
-            existing_subtask = page["subtasks"].get(subtask["name"])
-            if existing_subtask is None:
-                page["subtasks"][subtask["name"]] = {
-                    "metadata": subtask,
-                    "example": example,
-                }
-            elif not existing_subtask["example"] and example:
-                existing_subtask["example"] = example
-            task_path.setdefault(str(page_index), []).append(subtask["name"])
-            official_task_path_records.append(
-                {
-                    "page_index": page_index,
-                    "subtask_name": subtask["name"],
-                    "subtask": save_subtask,
-                    "actions": [
-                        {
-                            "page_index": page_index,
-                            "action": raw_converted,
-                            "screen": f"<hierarchy>{encoded_xml}</hierarchy>",
-                            "example": action_example,
-                        },
-                        {
-                            "page_index": page_index,
-                            "action": {"name": "finish", "parameters": {}},
-                            "screen": f"<hierarchy>{encoded_xml}</hierarchy>",
-                            "example": {},
-                        },
-                    ],
-                }
-            )
-            row = {
-                "source_step_index": transition.step_index,
-                "source_action_type": _action_type(transition.action),
-                "memory_page_index": page_index,
-                "memory_subtask_name": subtask["name"],
-                "selected_subtask": selected_subtask,
-                "subtask_parameter_bindings": bindings,
-                "memory_action": converted,
-                "matched": True,
-                "reason": "runlog_direct_compiled",
-                "derive_fallback_used": False,
-                "consumed_transitions": 1,
-            }
-            audit_rows.append(row)
-            _write_event(stats, {"event": "mobilegpt_conversion_action_mapped", **row})
-
-        if not launch_only:
-            final_page_index = str(audit_rows[-1]["memory_page_index"])
-            task_path[final_page_index].append("finish")
-            official_task_path_records.append(
-                {
-                    "page_index": int(final_page_index),
-                    "subtask_name": "finish",
-                    "subtask": {"name": "finish", "parameters": {}},
-                    "actions": [],
-                }
-            )
-        # The root task index is OmniFlow's bundle metadata.  Everything under
-        # the MobileGPT app directory is written by MobileGPT's own Memory and
-        # PageManager APIs below.
-        _write_csv(
-            memory / "tasks.csv",
-            ("name", "description", "parameters", "app"),
-            [{**task, "parameters": _json_text(task["parameters"])}],
+    except BaseException as error:
+        write_conversion_failure_audit(
+            source_run_log=source_path,
+            stats_path=stats_path,
+            audit_path=audit_path,
+            error=error,
+            wall_sec=time.monotonic() - started,
+            target_package=target_package,
+            target_app=target_app,
         )
-        from memory import memory_manager as official_memory_module
-        from utils import parsing_utils as official_parsing_utils
-        from utils.parsing_utils import get_extra_ui_attributes
-
-        def official_save_screen_info(
-            _app_name: str,
-            _task_name: str,
-            destination: str,
-            screen_num: int | None = None,
-        ) -> None:
-            """Adapt RunLog artifacts to MobileGPT's screen-copy hook."""
-
-            if screen_num is None or int(screen_num) not in source_screen_artifacts:
-                raise MobileGPTConversionError(
-                    "mobilegpt_source_screen_artifact_missing",
-                    screen_num=screen_num,
-                )
-            destination_root = Path(destination)
-            destination_root.mkdir(parents=True, exist_ok=True)
-            artifacts = source_screen_artifacts[int(screen_num)]
-            for name in ("raw.xml", "html.xml", "hierarchy.xml", "parsed.xml", "pretty.xml"):
-                source = artifacts.get(name)
-                if source is None or not source.is_file():
-                    raise MobileGPTConversionError(
-                        "mobilegpt_source_screen_artifact_missing",
-                        screen_num=screen_num,
-                        artifact=name,
-                    )
-                shutil.copy2(source, destination_root / name)
-            screenshot = artifacts.get("screenshot.jpg")
-            if screenshot is not None and screenshot.is_file():
-                shutil.copy2(screenshot, destination_root / "screenshot.jpg")
-
-        original_save_screen_info = official_parsing_utils.save_screen_info
-        original_official_embedding = official_memory_module.get_openai_embedding
-
-        def official_embedding(screen: str) -> list[float]:
-            embedding_started = time.monotonic()
-            if embedding_provider is not None:
-                result = [float(value) for value in embedding_provider(screen)]
-            else:
-                result = [
-                    float(value)
-                    for value in original_official_embedding(
-                        screen,
-                        model=normalized_embedding_model,
-                    )
-                ]
-            _write_event(
-                stats,
-                {
-                    "event": "embedding_call",
-                    "model": normalized_embedding_model,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "latency_sec": round(
-                        time.monotonic() - embedding_started,
-                        6,
-                    ),
-                },
-            )
-            if not result:
-                raise MobileGPTConversionError("mobilegpt_page_embedding_empty")
-            return result
-
-        official_parsing_utils.save_screen_info = official_save_screen_info
-        official_memory_module.get_openai_embedding = official_embedding
-
-        official_memory = Memory(app_name, trajectory["instruction"], task_name)
-        try:
-            for page in pages_by_identity.values():
-                page_index = int(page["index"])
-                available_subtasks = list(page["available_subtasks"])
-                page["extra_uis"] = get_extra_ui_attributes(
-                    sorted(page["trigger_indexes"]),
-                    _mobilegpt_ui_match_xml(page["parsed_xml"]),
-                )
-                page_action_names = {
-                    str(row["memory_subtask_name"])
-                    for row in audit_rows
-                    if int(row["memory_page_index"]) == page_index
-                    and row["source_action_type"]
-                    in {"click", "double_tap", "input_text", "long_press"}
-                }
-                missing_trigger_uis = sorted(
-                    name
-                    for name in page_action_names
-                    if not page["trigger_uis"].get(name)
-                )
-                if missing_trigger_uis:
-                    raise MobileGPTConversionError(
-                        "mobilegpt_trigger_ui_attributes_missing",
-                        page_index=page_index,
-                        subtask_names=missing_trigger_uis,
-                    )
-                created_page_index = official_memory.add_node(
-                    available_subtasks,
-                    page["trigger_uis"],
-                    page["extra_uis"],
-                    page["parsed_xml"],
-                    int(page["screen_num"]),
-                )
-                if int(created_page_index) != page_index:
-                    raise MobileGPTConversionError(
-                        "mobilegpt_official_page_index_mismatch",
-                        expected=page_index,
-                        actual=created_page_index,
-                    )
-                official_memory.add_hierarchy_xml(page["hierarchy_xml"], page_index)
-                official_memory.init_page_manager(page_index)
-                for selected in page["subtasks"].values():
-                    official_memory.save_subtask(
-                        selected["metadata"],
-                        selected["example"],
-                    )
-            official_memory.save_task(official_task_path_records)
-        finally:
-            official_parsing_utils.save_screen_info = original_save_screen_info
-            official_memory_module.get_openai_embedding = original_official_embedding
-        official_memory = Memory(app_name, trajectory["instruction"], task_name)
-        if len(official_memory.task_path) != len(task_path):
-            raise MobileGPTConversionError("official_memory_task_path_load_failed")
-        official_action_count = 0
-        pages_by_index = {
-            int(page["index"]): page for page in pages_by_identity.values()
-        }
-        for page in pages_by_identity.values():
-            page_index = int(page["index"])
-            official_memory.init_page_manager(page_index)
-            official_action_count += len(official_memory.page_manager.action_data)
-        source_direct_hit_count = 0
-        source_example_fallback_count = 0
-        for row in audit_rows:
-            page_index = int(row["memory_page_index"])
-            page = pages_by_index[page_index]
-            official_memory.init_page_manager(page_index)
-            recalled = official_memory.page_manager.get_next_action(
-                row["selected_subtask"],
-                page["encoded_xml"],
-                0,
-            )
-            finished = official_memory.page_manager.get_next_action(
-                row["selected_subtask"],
-                page["encoded_xml"],
-                1,
-            )
-            if not isinstance(recalled, dict):
-                raise MobileGPTConversionError(
-                    "mobilegpt_source_reader_coverage_failed",
-                    step_index=row["source_step_index"],
-                    page_index=page_index,
-                    subtask_name=row["memory_subtask_name"],
-                )
-            if "examples" in recalled:
-                if not _valid_native_action_examples(recalled.get("examples")):
-                    raise MobileGPTConversionError(
-                        "mobilegpt_source_example_invalid",
-                        step_index=row["source_step_index"],
-                        page_index=page_index,
-                        subtask_name=row["memory_subtask_name"],
-                    )
-                source_example_fallback_count += 1
-                row["reader_resolution"] = "native_example_fallback"
-            else:
-                mismatch = _reader_action_semantic_mismatch(
-                    str(row["source_action_type"]),
-                    source_actions_by_step[int(row["source_step_index"])],
-                    raw_converted_by_step[int(row["source_step_index"])],
-                    recalled,
-                )
-                if mismatch is not None:
-                    raise MobileGPTConversionError(
-                        "mobilegpt_source_reader_action_semantics_mismatch",
-                        step_index=row["source_step_index"],
-                        page_index=page_index,
-                        subtask_name=row["memory_subtask_name"],
-                        mismatch=mismatch,
-                    )
-                source_direct_hit_count += 1
-                row["reader_resolution"] = "direct_hit"
-                row["reader_action"] = recalled
-                row["semantic_alignment"] = True
-            if not isinstance(finished, dict) or finished.get("name") != "finish":
-                raise MobileGPTConversionError(
-                    "mobilegpt_source_finish_recall_failed",
-                    step_index=row["source_step_index"],
-                    page_index=page_index,
-                    subtask_name=row["memory_subtask_name"],
-                )
-        launch_finish_validated = False
-        if launch_only:
-            page = next(iter(pages_by_identity.values()))
-            page_index = int(page["index"])
-            official_memory.init_page_manager(page_index)
-            finish_subtask = official_memory.get_next_subtask(
-                page_index,
-                [],
-                page["encoded_xml"],
-            )
-            if (
-                not isinstance(finish_subtask, dict)
-                or finish_subtask.get("name") != "finish"
-            ):
-                raise MobileGPTConversionError(
-                    "mobilegpt_launch_finish_recall_failed",
-                    page_index=page_index,
-                )
-            launch_finish_validated = True
-        _write_event(
-            stats,
-            {
-                "event": "task_finished",
-                "instruction": trajectory["instruction"],
-                "elapsed_sec": round(time.monotonic() - started, 6),
-                "task_status": "offline_conversion",
-                "subtask_count": len(audit_rows),
-            },
-        )
-
-    audit_payload = {
-        "schema_version": MOBILEGPT_AUDIT_SCHEMA,
-        "conversion_mode": conversion_mode,
-        "task_name": trajectory["task_name"],
-        "source_run_log": trajectory["source_run_log"],
-        "target_package": trajectory["target_package"],
-        "embedding_model": normalized_embedding_model,
-        "original_mobilegpt_prompts": False,
-        "explore_agent_used": False,
-        "select_agent_used": False,
-        "derive_agent_fallback_allowed": True,
-        "derive_agent_fallback_count": 0,
-        "source_example_fallback_count": source_example_fallback_count,
-        "generalize_action_used": True,
-        "direct_subtasks_from_runlog": True,
-        "source_direct_hit_validation": source_example_fallback_count == 0,
-        "source_reader_coverage_validation": True,
-        "schema_semantics_validation": all(
-            row.get("semantic_alignment") is True for row in audit_rows
-        ),
-        "launch_only": launch_only,
-        "transition_count": len(transitions),
-        "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),
-        "validation_rows": audit_rows,
-        "actions_supplied_to_mobilegpt": True,
-        "source_transitions_supplied": True,
-        "source_success_boundary_supplied": True,
-        "source_success_boundary": trajectory["source_success_boundary"],
-        "official_reader_validation": {
-            "task_path_pages": len(task_path),
-            "page_count": len(pages_by_identity),
-            "action_row_count": official_action_count,
-            "source_direct_hit_count": source_direct_hit_count,
-            "source_example_fallback_count": source_example_fallback_count,
-            "source_reader_coverage_count": (
-                source_direct_hit_count + source_example_fallback_count
-            ),
-            "launch_finish_validated": launch_finish_validated,
-            "loadable": True,
-        },
-        "complete": True,
-        "wall_sec": round(time.monotonic() - started, 6),
-    }
-    audit.write_text(json.dumps(audit_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    memory_validation = validate_mobilegpt_memory(memory)
+        raise
+    wall_sec = round(time.monotonic() - started, 6)
+    stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
+    stats_summary_path.write_text(
+        json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    sealed = pipeline.seal_mobilegpt_converted_memory(
+        memory_root=memory_root,
+        source_run_log=source_path,
+        source_stats=stats_path,
+        trajectory_audit=audit_path,
+        task_name=str(source["task_name"]),
+        source_seed=effective_source_seed,
+        target_package=str(target_package or generated.get("target_package") or ""),
+        target_app=str(target_app or generated.get("target_app") or ""),
+        source_wall_sec=wall_sec,
+        source_model=normalized_model,
+        memory_schema=MOBILEGPT_MEMORY_SCHEMA,
+    )
     return {
-        "task": task,
-        "memory_root": str(memory),
-        "stats_path": str(stats),
-        "audit_path": str(audit),
-        "transition_count": len(transitions),
-        "validated_transition_count": audit_payload["validated_transition_count"],
-        "target_package": trajectory["target_package"],
-        "target_app": trajectory["target_app"],
-        "embedding_model": normalized_embedding_model,
-        "source_success_boundary": trajectory["source_success_boundary"],
-        "official_reader_validation": audit_payload["official_reader_validation"],
-        "wall_sec": audit_payload["wall_sec"],
-        "memory_validation": memory_validation,
+        "schema_version": "omniflow.mobilegpt.memory-prepare.v3",
+        "method": "mobilegpt",
+        "task_name": str(source["task_name"]),
+        "source_seed": effective_source_seed,
+        "source_run_log": str(source_path),
+        "model": normalized_model,
+        "embedding_model": str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
+        "memory_root": str(memory_root),
+        "source_stats": str(stats_path),
+        "source_stats_summary": str(stats_summary_path),
+        "trajectory_audit": str(audit_path),
+        "source_wall_sec": wall_sec,
+        "generated": generated,
+        "sealed": sealed,
+        "manifest": sealed,
     }

@@ -20,7 +20,7 @@ from PIL import Image
 
 from omniflow.core.androidworld_accessibility import androidworld_forest_xml
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.experiment.mobilegpt_source import (
+from src.integrations.mobilegpt import (
     load_canonical_source_item,
 )
 from src.experiment.paths import sha256_file

@@ -15,9 +15,6 @@ import shutil
 import tempfile
 from typing import Any, Mapping
 
-from src.experiment.mobilegpt_contract import (
-    MOBILEGPT_NATIVE_ACTION_INDEX_PROTOCOL,
-)
 from src.experiment.paths import safe_component, sha256_file
 from src.experiment.protocol import DEVICES, RESULT_COMMANDS_FILE
 from src.experiment.result_schema import compact_result_row
@@ -506,7 +503,7 @@ def registered_result_keys_matching_task_params(
                         method == "mobilegpt"
                         and detail_row.get("official_validator_success") is False
                         and detail_row.get("mobilegpt_native_action_index_protocol")
-                        != MOBILEGPT_NATIVE_ACTION_INDEX_PROTOCOL
+                        != "mobilegpt_official_accessibility_node_id_v1"
                     )
                     or recorded_params != expected_params
                 ):

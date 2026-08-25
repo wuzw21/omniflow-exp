@@ -24,10 +24,6 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
-    MOBILEGPT_RUNLOG_LEARNING_MODE,
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
-    MOBILEGPT_RUNLOG_PREP_TYPE,
-    MOBILEGPT_RUNLOG_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
@@ -78,11 +74,11 @@ _ARCHIVED_MOBILEGPT_RESULT_CONTRACTS = {
         "prep_type": MOBILEGPT_PREP_TYPE,
         "learning_mode": MOBILEGPT_LEARNING_MODE,
     },
-    MOBILEGPT_RUNLOG_MEMORY_SCHEMA: {
+    "omniflow.mobilegpt.memory.v2": {
         "mode": "direct",
-        "source_method": MOBILEGPT_RUNLOG_SOURCE_METHOD,
-        "prep_type": MOBILEGPT_RUNLOG_PREP_TYPE,
-        "learning_mode": MOBILEGPT_RUNLOG_LEARNING_MODE,
+        "source_method": "mobilegpt_runlog_direct_memory",
+        "prep_type": "mobilegpt_runlog_direct_memory",
+        "learning_mode": "mobilegpt_runlog_direct_conversion",
     },
     "omniflow.mobilegpt-runlog-native-derive-memory.v2": {
         "mode": "native_derive",
