@@ -1323,7 +1323,7 @@ def _same_entry_observation(
 
 
 _ENTRY_TIME_VALUE = re.compile(
-    r"(?<!\d)\d{1,3}(?::\d{2}){1,2}(?:[.,]\d{1,3})?(?!\d)"
+    r"(?<!\d)[+\-]?\d{1,3}(?::[+\-]?\d{1,3}){1,2}(?:[.,]\d{1,3})?(?!\d)"
 )
 _ENTRY_NUMERIC_VALUE = re.compile(r"^[+\-]?\d+(?:[.,]\d+)?%?$")
 _ENTRY_NODE_ATTRIBUTES = (
@@ -1356,6 +1356,8 @@ def _entry_observation_signature(
     nodes: list[tuple[Any, ...]] = []
     for element in root.iter():
         attributes = element.attrib
+        if str(attributes.get("package") or "").strip() == "com.android.systemui":
+            continue
         actionable = any(
             str(attributes.get(name) or "").strip().lower() == "true"
             for name in (
@@ -1365,18 +1367,28 @@ def _entry_observation_signature(
                 "long-clickable",
             )
         )
+        text_label = _stable_entry_label(
+            attributes.get("text"),
+            actionable=actionable,
+        )
+        content_label = _stable_entry_label(
+            attributes.get("content-desc"),
+            actionable=actionable,
+        )
+        volatile_time_label = "<time>" in {text_label, content_label}
         nodes.append(
             (
                 element.tag,
                 *(
-                    str(attributes.get(name) or "").strip()
+                    (
+                        "<time-bounds>"
+                        if name == "bounds" and volatile_time_label
+                        else str(attributes.get(name) or "").strip()
+                    )
                     for name in _ENTRY_NODE_ATTRIBUTES
                 ),
-                _stable_entry_label(attributes.get("text"), actionable=actionable),
-                _stable_entry_label(
-                    attributes.get("content-desc"),
-                    actionable=actionable,
-                ),
+                text_label,
+                content_label,
             )
         )
     return (
