@@ -521,14 +521,8 @@ PY
 validate_experiment_model() {
   local model="$1"
   local profile="$2"
-  local normalized_model
-  normalized_model="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$normalized_model" == "qwen3-vl-plus" ]]; then
-    echo "qwen3-vl-plus is prohibited for AndroidWorld experiments." >&2
-    exit 2
-  fi
-  if [[ "$normalized_model" != "glm-4.6v" && "$normalized_model" != "glm-5.1" ]]; then
-    echo "AndroidWorld experiments require GLM-4.6V or GLM-5.1, got: $model" >&2
+  if [[ -z "${model//[[:space:]]/}" ]]; then
+    echo "AndroidWorld experiment model is not configured." >&2
     exit 2
   fi
   if [[ "$profile" != "$formal_model_endpoint_profile" ]]; then
@@ -1298,11 +1292,6 @@ if [[ -n "$e2e_task" ]]; then
     configure_model_stack "$formal_model"
     export AUTODROID_MODEL="$formal_model"
     export AUTODROID_TEMPERATURE="${AUTODROID_TEMPERATURE:-0.25}"
-  fi
-  normalized_e2e_model="$(printf '%s' "$formal_model" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$supplemental_autodroid" -eq 0 && "$normalized_e2e_model" != "glm-4.6v" && "$normalized_e2e_model" != "glm-5.1" ]]; then
-    echo "AndroidWorld E2E requires GLM-4.6V or GLM-5.1 for the formal model, got: $formal_model" >&2
-    exit 2
   fi
   if [[ "$supplemental_autodroid" -eq 1 ]]; then
     e2e_output_root="${OMNIFLOW_AUTODROID_OUTPUT_ROOT:-$results_root/androidworld/.archive/scheduler/autodroid}"

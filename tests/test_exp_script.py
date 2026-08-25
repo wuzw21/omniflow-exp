@@ -705,7 +705,7 @@ def test_development_run_routes_through_the_only_script_without_repeated_setup(
     assert not output.exists()
 
 
-def test_development_run_rejects_qwen3_vl_plus_before_device_start(
+def test_development_run_accepts_configured_model_without_shell_allowlist(
     tmp_path: Path,
 ) -> None:
     android_world = tmp_path / "android-world"
@@ -746,8 +746,8 @@ def test_development_run_rejects_qwen3_vl_plus_before_device_start(
         text=True,
     )
 
-    assert completed.returncode == 2
-    assert "qwen3-vl-plus is prohibited" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    assert "--model qwen3-vl-plus" in completed.stdout
 
 
 def test_development_run_rejects_incomplete_code_release_before_device_start(
