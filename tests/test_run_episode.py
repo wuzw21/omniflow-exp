@@ -1889,6 +1889,27 @@ def test_input_text_coordinates_reach_androidworld_json_action(monkeypatch) -> N
     assert action.clear_text is True
 
 
+def test_press_key_delete_reaches_androidworld_keyboard_action(monkeypatch) -> None:
+    class JSONAction:
+        def __init__(self, action_type=None, keycode=None):
+            self.action_type = action_type
+            self.keycode = keycode
+
+    module = SimpleNamespace(JSONAction=JSONAction)
+    monkeypatch.setattr(
+        "src.integrations.android_world.host.importlib.import_module",
+        lambda name: module if name == "android_world.env.json_action" else None,
+    )
+    env = SimpleNamespace(device_screen_size=(720, 1280))
+
+    action = AndroidWorldHost(env)._json_action(
+        Action("press_key", {"key": "delete"})
+    )
+
+    assert action.action_type == "press_keyboard"
+    assert action.keycode == "KEYCODE_DEL"
+
+
 def test_fold_uses_logical_display_for_coordinate_conversion(monkeypatch) -> None:
     class JSONAction:
         def __init__(self, action_type=None, x=None, y=None):

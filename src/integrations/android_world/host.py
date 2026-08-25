@@ -671,6 +671,14 @@ class AndroidWorldHost:
                 "KEYCODE_ENTER",
             }:
                 action_type = "keyboard_enter"
+            elif key in {
+                "DEL",
+                "DELETE",
+                "KEYCODE_DEL",
+                "KEYCODE_DELETE",
+            }:
+                action_type = "press_keyboard"
+                payload["keycode"] = "KEYCODE_DEL"
             else:
                 raise ValueError(f"unsupported AndroidWorld key: {key or 'missing'}")
         if action_type is None:

@@ -526,6 +526,16 @@ def test_production_import_accepts_official_press_keyboard_action() -> None:
     assert import_run_log(run_log) == run_log
 
 
+def test_projector_maps_official_delete_key_to_existing_press_key_schema() -> None:
+    run_log = androidworld_run_log(
+        [{"action_type": "press_keyboard", "keycode": "KEYCODE_DEL"}]
+    )
+
+    assert project_androidworld_step_actions(run_log["steps"][0]) == [
+        {"tool": "press_key", "args": {"key": "delete"}}
+    ]
+
+
 def test_explicit_converter_emits_only_omniflow_schema(tmp_path: Path) -> None:
     source = tmp_path / "legacy.run_log.json"
     payload = {

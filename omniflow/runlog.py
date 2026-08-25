@@ -340,6 +340,19 @@ def _androidworld_action_to_omniflow(
         projected = {"tool": "press_key", "args": {"key": "home"}}
     elif action_type == "keyboard_enter":
         projected = {"tool": "press_key", "args": {"key": "enter"}}
+    elif action_type == "press_keyboard":
+        keycode = str(action.get("keycode") or "").strip().upper()
+        keycode = keycode.removeprefix("KEYCODE_")
+        key = {
+            "DEL": "delete",
+            "DELETE": "delete",
+            "BACK": "back",
+            "HOME": "home",
+            "ENTER": "enter",
+        }.get(keycode, keycode if keycode in set("0123456789") else "")
+        if not key:
+            raise ValueError(f"androidworld_press_keyboard_unsupported:{keycode}")
+        projected = {"tool": "press_key", "args": {"key": key}}
     elif action_type == "wait":
         projected = {"tool": "wait", "args": {"duration_ms": 1000}}
     else:
