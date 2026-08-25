@@ -577,6 +577,11 @@ class OmniFlow:
                 previous_action_error = str(error)
                 continue
             if planned.tool == "finished":
+                finished_content = str(planned.args.get("content") or "").strip()
+                if not finished_content:
+                    previous_action = planned
+                    previous_action_error = "finished_content_required"
+                    continue
                 return finish(
                     True,
                     profile=profile,
@@ -590,7 +595,7 @@ class OmniFlow:
                     planner_diagnostics=planner_diagnostics,
                     terminal_detail={
                         "done_reason": "finished",
-                        "finished_content": str(planned.args.get("content") or ""),
+                        "finished_content": finished_content,
                     },
                 )
             if planned.tool == "abort":
