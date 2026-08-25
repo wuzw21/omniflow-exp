@@ -2672,10 +2672,9 @@ def _run_official_mobilegpt_authoring(
         workspace = Path(temp)
         server_root = workspace / "Server"
         shutil.copytree(server_source, server_root)
-        # GLM-4.6V exposes reasoning separately.  The upstream OpenAI helper
-        # otherwise sometimes returns an empty ``content`` field for the long
-        # Explore prompt.  This temporary provider-only patch disables that
-        # channel; it does not change any MobileGPT prompt or agent logic.
+        # Keep the upstream OpenAI helper on direct JSON content by disabling
+        # the optional reasoning channel. This does not change any MobileGPT
+        # prompt or agent logic.
         utils_path = server_root / "utils" / "utils.py"
         utils_source = utils_path.read_text(encoding="utf-8")
         utils_source_updated = utils_source.replace(
@@ -2809,11 +2808,12 @@ def _run_official_mobilegpt_authoring(
             def _official_json_parser(value: str, *, is_list: bool = False) -> str | None:
                 """Keep the official parser, repairing transport-only JSON damage.
 
-                GLM sometimes emits one object in an otherwise valid JSON list
-                without the opening ``{``.  The official query function parses
-                before returning, so the repair must happen at that transport
-                boundary.  It can also leave quotes inside a stringified option
-                list unescaped (for example ``["Just once", "Always"]``).
+                Some compatible endpoints emit one object in an otherwise
+                valid JSON list without the opening ``{``. The official query
+                function parses before returning, so the repair must happen at
+                that transport boundary. It can also leave quotes inside a
+                stringified option list unescaped (for example
+                ``["Just once", "Always"]``).
                 Repair only those JSON delimiters; no action, parameter, or
                 ordering is inferred here.
                 """
@@ -2860,7 +2860,7 @@ def _run_official_mobilegpt_authoring(
                 """Adapt only JSON scalar containers expected by upstream code.
 
                 The upstream prompts and agents remain authoritative.  Some
-                GLM responses serialize an empty ``parameters`` object as the
+                responses serialize an empty ``parameters`` object as the
                 string ``\"{}\"`` even though the official Memory code indexes
                 it as a mapping.  Decode that transport-level representation;
                 do not infer, rewrite, or select any action.
@@ -2875,7 +2875,7 @@ def _run_official_mobilegpt_authoring(
                         ):
                             adapted[key] = _official_schema_adapter(json.loads(item))
                         elif key == "completion_rate" and isinstance(item, str):
-                            # GLM-4.6V occasionally verbalizes this official
+                            # Some endpoints verbalize this official
                             # telemetry field. The official DeriveAgent only
                             # uses it as a numeric progress hint; preserving
                             # the action and setting a neutral numeric value

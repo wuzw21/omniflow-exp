@@ -18,7 +18,7 @@ bash scripts/exp/run_androidworld.sh \
 --max-steps 20
 --max-fallback-steps 5
 --deadline 600
---model GLM-4.6V
+--model Qwen3.6-Plus
 ```
 
 批量方法或设备使用逗号或 `all`。入口不执行部署检查、seed/path 校验、结果扫描或

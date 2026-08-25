@@ -921,7 +921,7 @@ class _OpenAICompatibleMultimodalWrapper:
             str(model_name or "").strip()
             or str(os.environ.get("OPENAI_MODEL") or "").strip()
             or str(os.environ.get("OMNIFLOW_PLANNER_MODEL") or "").strip()
-            or "GLM-4.6V"
+            or "Qwen3.6-Plus"
         )
         resolved_base_url = (
             str(base_url or "").strip()

@@ -26,3 +26,6 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 五个 AndroidWorld 方法只在 Memory 准备方式上不同。Memory 就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
 结果是需要保留的实验产物；转换临时目录在任务结束后自动删除。
+
+冷启动、Memory 转换、热执行、`fixed_replay` 和 `t3a_hint` 的固定对照计划见
+`scripts/exp/ANDROIDWORLD_TEST_PLAN.md`。其中的配方只调用本入口，不增加第二套 runner。

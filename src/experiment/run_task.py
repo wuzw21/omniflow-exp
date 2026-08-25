@@ -199,10 +199,9 @@ def _subprocess_env(
     dotenv_env = _local_dotenv_env(repo_root=repo_root)
     env = {**dotenv_env, **dict(os.environ), **dict(spec_env or {})}
     # The pinned MobileGPT Server uses the OpenAI-compatible client API for
-    # both chat and embedding calls.  The shared 9207 environment exposes the
-    # same GLM endpoint under LLMTHU_API_KEY; publish the canonical aliases
-    # once at the common subprocess boundary so the official executor does
-    # not receive a different credential contract from memory authoring.
+    # both chat and embedding calls. Publish the canonical aliases once at the
+    # common subprocess boundary so execution and memory authoring use the
+    # same endpoint contract.
     if not str(env.get("OPENAI_API_KEY") or "").strip() and str(
         env.get("LLMTHU_API_KEY") or ""
     ).strip():
@@ -901,6 +900,7 @@ def build_official_command(
     fixed_task_params: bool = True,
     task_params_override: dict[str, Any] | None = None,
     perform_emulator_setup: bool = True,
+    model: str = "",
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
 ) -> CommandSpec:
@@ -972,6 +972,8 @@ def build_official_command(
         )
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
+    if model.strip():
+        argv.extend(["--model", model.strip()])
     hint_path_text = (
         str(resolve_path(source_action_hint_path, root=repo_root))
         if source_action_hint_path
@@ -990,6 +992,7 @@ def build_official_command(
             "agent": f"official:{resolved_agent}",
             "method": resolved_method,
             "official_agent_name": resolved_agent,
+            "model": str(model or "").strip(),
             "device": resolved_device,
             "serial": serial.strip(),
             "console_port": int(console_port),
@@ -1929,8 +1932,8 @@ def build_mobilegpt_server_command(
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
-        # GLM-4.6V must emit the action/list JSON directly. Disable its
-        # reasoning channel. Keep list discovery bounded, but leave enough
+        # Require direct action/list JSON without a separate reasoning channel.
+        # Keep list discovery bounded, but leave enough
         # completion room for the official selector/derive JSON not to be
         # truncated on screens with many available actions.
         env["MOBILEGPT_THINKING"] = "disabled"
@@ -4351,6 +4354,7 @@ def run_task(args: argparse.Namespace) -> int:
                     fixed_task_params=not bool(args.no_fixed_task_params),
                     task_params_override=task_params_override,
                     perform_emulator_setup=bool(args.perform_emulator_setup),
+                    model=str(args.model or ""),
                 )
             else:
                 spec = build_task_command(
