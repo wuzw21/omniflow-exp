@@ -80,6 +80,52 @@ def test_system_ui_only_source_bootstraps_mobilegpt_through_settings(
     }
 
 
+def test_launcher_only_source_keeps_launcher_as_mobilegpt_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = pipeline.CanonicalRunLog(
+        task="SystemCopyToClipboard",
+        goal="Copy text to the clipboard.",
+        params={},
+        source_run_log=tmp_path / "source.json",
+        replay_seed=111,
+        step_count=1,
+        meta={},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_infer_mobilegpt_target_from_source_run_log",
+        lambda _item: {
+            "target_package": "",
+            "target_app": "",
+            "target_source": "unresolved",
+        },
+    )
+    source = {
+        "steps": [
+            {
+                "observation": {
+                    "xml": (
+                        '<hierarchy><node package="com.google.android.apps.nexuslauncher" '
+                        'class="android.widget.EditText" text="" clickable="true" '
+                        'bounds="[24,48][696,160]" /></hierarchy>'
+                    )
+                },
+                "action": {"action_type": "input_text", "text": "example"},
+            }
+        ]
+    }
+
+    target = mobilegpt_source._mobilegpt_source_target(item=item, source=source)
+
+    assert target == {
+        "target_package": "com.google.android.apps.nexuslauncher",
+        "target_app": "com.google.android.apps.nexuslauncher",
+        "target_source": "launcher_source_bootstrap",
+    }
+
+
 def _write_source_index(
     root: Path,
     *,

@@ -140,6 +140,24 @@ def _mobilegpt_source_target(
             "target_app": "com.android.settings",
             "target_source": "system_ui_source_bootstrap",
         }
+    launcher_packages = sorted(
+        package
+        for package in raw_source_packages
+        if package in {
+            "com.google.android.apps.nexuslauncher",
+        }
+    )
+    if (
+        not source_packages
+        and len(launcher_packages) == 1
+        and raw_source_packages.issubset(_IGNORED_SOURCE_PACKAGES)
+    ):
+        package_name = launcher_packages[0]
+        return {
+            "target_package": package_name,
+            "target_app": package_name,
+            "target_source": "launcher_source_bootstrap",
+        }
     if len(source_packages) != 1:
         label = "unresolved" if not source_packages else "ambiguous"
         raise ValueError(
