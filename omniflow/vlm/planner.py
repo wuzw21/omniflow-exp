@@ -184,7 +184,8 @@ class VLMPlanner:
         request = dict(envelope["request"])
         extra_body = dict(request.get("extra_body") or {})
         for field in ("enable_thinking", "thinking"):
-            extra_body[field] = request.pop(field)
+            if field in request:
+                extra_body[field] = request.pop(field)
         request["extra_body"] = extra_body
         client = self._client or self._build_client()
         response = client.chat.completions.create(
@@ -243,7 +244,11 @@ def _configured_http_proxy() -> str | None:
 
 
 def planner_state(observation: Observation) -> dict[str, Any]:
-    state = observation.to_dict()
+    state = {
+        "xml": observation.xml,
+        "package_name": observation.package_name,
+        "activity_name": observation.activity_name,
+    }
     state["state_id"] = str(observation.extra.get("state_id") or "").strip()
     for key in ("display", "screenshot_path"):
         if observation.extra.get(key) is not None:
@@ -251,7 +256,15 @@ def planner_state(observation: Observation) -> dict[str, Any]:
     state["extra"] = {
         key: value
         for key, value in observation.extra.items()
-        if key not in {"state_id", "display", "screenshot_path"}
+        if key
+        in {
+            "previous_action_error",
+            "previous_action",
+            "recent_actions",
+            "execution_history",
+            "function_execution",
+            "user_input",
+        }
     }
     return {key: value for key, value in state.items() if value is not None}
 

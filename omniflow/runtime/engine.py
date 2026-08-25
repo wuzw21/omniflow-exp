@@ -381,8 +381,6 @@ class OmniFlow:
                     final_state=observation,
                     planner_diagnostics=planner_diagnostics,
                 )
-            if not observation.image_base64:
-                observation = await self._observe(screenshot=True)
             recent_actions = _recent_actions(trace)
             execution_history = (
                 _execution_history(trace, completed_function=function_session.completed)
@@ -1006,6 +1004,7 @@ def _execution_history(
     trace: list[dict[str, Any]],
     *,
     completed_function: Function | None = None,
+    limit: int = 3,
 ) -> str:
     lines = ["Action execution history on the target device:"]
     if completed_function is not None:
@@ -1018,7 +1017,8 @@ def _execution_history(
                 f"Function purpose: {completed_function.description}",
             ]
         )
-    for index, step in enumerate(trace, start=1):
+    recent_trace = trace[-max(1, int(limit)) :]
+    for fallback_index, step in enumerate(recent_trace, start=1):
         if not isinstance(step, dict):
             continue
         try:
@@ -1043,14 +1043,22 @@ def _execution_history(
                 else "unknown execution error"
             )
             description = f"Action `{action.tool}` failed: {error}."
+        summary = (
+            str(metadata.get("summary") or "").strip()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if summary:
+            description = f'{description} Planner intent: "{summary}".'
         action_effect = (
             metadata.get("action_effect") if isinstance(metadata, dict) else None
         )
         if isinstance(action_effect, dict):
             description = (
                 f"{description} Observed effect: "
-                f"{json.dumps(action_effect, ensure_ascii=False, separators=(',', ':'))}"
+                f"{json.dumps(_compact_history_effect(action_effect), ensure_ascii=False, separators=(',', ':'))}"
             )
+        index = int(step.get("step_index") or fallback_index - 1) + 1
         lines.append(f"{index}. [{source}] {description}")
     lines.extend(
         [
@@ -1069,6 +1077,18 @@ def _execution_history(
         ]
     )
     return "\n".join(lines)
+
+
+def _compact_history_effect(value: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ("state_changed", "package", "activity"):
+        if key in value:
+            compact[key] = value[key]
+    for key, limit in (("changed", 3), ("appeared", 6), ("disappeared", 4)):
+        items = value.get(key)
+        if isinstance(items, list) and items:
+            compact[key] = items[:limit]
+    return compact
 
 
 def _function_execution_evidence(

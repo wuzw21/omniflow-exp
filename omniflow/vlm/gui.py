@@ -25,6 +25,14 @@ from omniflow.vlm_coordinates import (
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
+_PLANNER_CONTEXT_KEYS = (
+    "previous_action_error",
+    "previous_action",
+    "recent_actions",
+    "function_execution",
+    "user_input",
+)
+
 
 class ModelToolCallError(ValueError):
     def __init__(
@@ -97,7 +105,6 @@ def build_model_turn_request(
             vlm_action_tools(include_summary=True),
             display,
         )
-        tools = constrain_open_app_tool(tools, installed_apps or {})
         visible_functions = functions
     tools.extend(function_tools(visible_functions, include_summary=True))
     if retry_tool_name:
@@ -114,7 +121,7 @@ def build_model_turn_request(
             "type": "function",
             "function": {"name": global_functions[0].id},
         }
-    request = {
+    request: dict[str, Any] = {
         "model": str(model),
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -126,9 +133,9 @@ def build_model_turn_request(
         "tools": tools,
         "tool_choice": tool_choice,
         "parallel_tool_calls": False,
-        "enable_thinking": False,
-        "thinking": {"type": "disabled"},
     }
+    request["enable_thinking"] = False
+    request["thinking"] = {"type": "disabled"}
     if not text_only_model:
         request["reasoning_effort"] = "none"
     return request
@@ -403,7 +410,6 @@ def _turn_text(
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     width, height = display_size(display)
     center_x = 500
-    center_y = 500
     upper_y = 700
     lower_y = 300
     lines = [
@@ -413,14 +419,10 @@ def _turn_text(
         f"Current activity: {state.get('activity_name') or ''}",
         f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
         (
-            "Coordinate contract: every tool coordinate is one device-independent "
-            "relative value from 0..1000 on each axis. XML b bounds are raw pixels "
-            f"in the {int(width)}x{int(height)} Display; convert them before calling a tool."
-        ),
-        (
-            'Relative-coordinate examples: click {"summary":"Tap center","x":'
-            f'{center_x},"y":{center_y}'
-            '}; swipe {"summary":"Scroll up","direction":"up","x1":'
+            "Click/input contract: select one exact A-reference from a v=Axx line. "
+            "Lines without v are evidence only. The runtime clicks the node center. Swipe coordinates "
+            "alone use device-independent 0..1000 values. Example: swipe "
+            '{"summary":"Scroll up","direction":"up","x1":'
             f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
             "}."
         ),
@@ -469,7 +471,15 @@ def _turn_text(
                 )
             )
     raw_extra = state.get("extra")
-    extra = deepcopy(raw_extra) if isinstance(raw_extra, dict) else raw_extra
+    extra = (
+        {
+            key: deepcopy(raw_extra[key])
+            for key in _PLANNER_CONTEXT_KEYS
+            if key in raw_extra and raw_extra[key] is not None
+        }
+        if isinstance(raw_extra, dict)
+        else None
+    )
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
@@ -494,6 +504,8 @@ def _turn_text(
             )
         if execution_history:
             lines.extend(("Completed tool-call history:", execution_history))
+        context.pop("recent_actions", None)
+        context.pop("previous_action", None)
         if context:
             lines.extend(
                 (
@@ -521,56 +533,6 @@ def has_successful_function_action(value: Any) -> bool:
         and bool(str(item.get("function_id") or "").strip())
         for item in recent_actions
     )
-
-
-def constrain_open_app_tool(
-    tools: list[dict[str, Any]],
-    installed_apps: dict[str, str],
-) -> list[dict[str, Any]]:
-    candidates = _installed_app_candidates(installed_apps)
-    packages = list(
-        dict.fromkeys(
-            package for _label, package in candidates
-        )
-    )
-    constrained: list[dict[str, Any]] = []
-    for tool in tools:
-        function = tool.get("function") if isinstance(tool, dict) else None
-        if not isinstance(function, dict) or function.get("name") != "open_app":
-            constrained.append(tool)
-            continue
-        if not packages:
-            continue
-        parameters = function.get("parameters")
-        properties = (
-            parameters.get("properties") if isinstance(parameters, dict) else None
-        )
-        package_schema = (
-            properties.get("package_name") if isinstance(properties, dict) else None
-        )
-        if not isinstance(package_schema, dict):
-            raise ValueError("open_app_package_schema_missing")
-        package_schema["enum"] = packages
-        label_mapping = ", ".join(
-            f"{label}={package}" for label, package in candidates
-        )
-        package_schema["description"] = (
-            "Exact installed launchable package. Runtime app mapping: "
-            f"{label_mapping}"
-        )
-        constrained.append(tool)
-    return constrained
-
-
-def _installed_app_candidates(
-    installed_apps: dict[str, str],
-) -> list[tuple[str, str]]:
-    candidates = {
-        (str(label).strip(), str(package).strip())
-        for label, package in installed_apps.items()
-        if str(label).strip() and str(package).strip()
-    }
-    return sorted(candidates, key=lambda item: (item[0].casefold(), item[1]))
 
 
 __all__ = [

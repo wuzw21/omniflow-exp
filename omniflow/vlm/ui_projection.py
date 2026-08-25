@@ -49,6 +49,16 @@ _GLOBAL_CONTROL_MARKERS = (
     "菜单",
     "购物车",
 )
+_BROWSE_CONTROL_MARKERS = (
+    "see all",
+    "history",
+    "recent",
+    "saved",
+    "view all",
+    "历史",
+    "已保存",
+    "查看全部",
+)
 _GROUP_ORDER = ("global", "goal", "goal_control", "visual", "other")
 _GROUP_HEADERS = {
     "global": "[global_controls]",
@@ -62,7 +72,7 @@ _GROUP_LIMITS = {
     "goal": 10,
     "goal_control": 8,
     "visual": 4,
-    "other": 2,
+    "other": 6,
 }
 
 
@@ -173,6 +183,7 @@ def project_ui(xml_text: str, goal: str, *, max_nodes: int = 30) -> UIProjection
                 inside_webview=id(element) in webview_elements,
             )
         )
+    candidates = _prune_redundant_candidates(candidates, goal)
     candidates = _promote_goal_controls(candidates)
     selected = _select_candidates(candidates, max_nodes=max_nodes)
     text, nodes = _render_candidates(selected)
@@ -199,20 +210,14 @@ def projected_node_center(
     if not target:
         return None
     reference_match = re.search(r"(?<![a-z0-9])a\d{2}(?![a-z0-9])", target)
-    if reference_match is not None:
-        reference = reference_match.group(0).upper()
-        matches = [
-            node
-            for node in projection.nodes
-            if node.reference == reference and not node.inside_webview
-        ]
-    else:
-        matches = [
-            node
-            for node in projection.nodes
-            if not node.inside_webview
-            and target in _node_label_aliases(node)
-        ]
+    if reference_match is None or reference_match.group(0) != target:
+        return None
+    reference = reference_match.group(0).upper()
+    matches = [
+        node
+        for node in projection.nodes
+        if node.reference == reference and not node.inside_webview
+    ]
     if len(matches) != 1:
         return None
     node = matches[0]
@@ -269,6 +274,111 @@ def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
     return promoted
 
 
+def _prune_redundant_candidates(
+    candidates: list[_Candidate],
+    goal: str,
+) -> list[_Candidate]:
+    """Keep the encoded view action-centric without inventing a second encoder."""
+
+    goal_text = _normalized_label(goal)
+    browse_requested = any(marker in goal_text for marker in _BROWSE_CONTROL_MARKERS)
+    actionable_goal = [
+        item
+        for item in candidates
+        if item.group == "goal" and item.compact.get("a")
+    ]
+    direct_goal = [
+        item
+        for item in actionable_goal
+        if not _is_browse_candidate(item)
+        and set(item.compact.get("a") or ()) != {"scroll"}
+    ]
+    kept: list[_Candidate] = []
+    for item in candidates:
+        if _is_system_chrome_context(item):
+            continue
+        if (
+            direct_goal
+            and not browse_requested
+            and item.group == "goal"
+            and _is_browse_candidate(item)
+        ):
+            continue
+        if _covered_scroll_container(item, direct_goal):
+            continue
+        if _covered_by_actionable_candidate(item, actionable_goal):
+            continue
+        kept.append(item)
+    return kept
+
+
+def _is_system_chrome_context(item: _Candidate) -> bool:
+    return (
+        not item.compact.get("a")
+        and str(item.compact.get("r") or "").startswith("com.android.systemui:")
+    )
+
+
+def _covered_scroll_container(
+    item: _Candidate,
+    direct_goal: list[_Candidate],
+) -> bool:
+    if set(item.compact.get("a") or ()) != {"scroll"} or item.bounds is None:
+        return False
+    item_text = _normalized_label(str(item.compact.get("c") or ""))
+    return any(
+        action.bounds is not None
+        and _bounds_contain(item.bounds, action.bounds)
+        and item_text
+        and _normalized_label(str(action.compact.get("c") or "")) in item_text
+        for action in direct_goal
+    )
+
+
+def _is_browse_candidate(item: _Candidate) -> bool:
+    text = _normalized_label(
+        " ".join(
+            str(item.compact.get(key) or "")
+            for key in ("t", "d", "h", "c")
+        )
+    )
+    return any(marker in text for marker in _BROWSE_CONTROL_MARKERS)
+
+
+def _covered_by_actionable_candidate(
+    item: _Candidate,
+    actionable_goal: list[_Candidate],
+) -> bool:
+    if item.compact.get("a") or item.bounds is None:
+        return False
+    item_text = _normalized_label(
+        " ".join(
+            str(item.compact.get(key) or "") for key in ("t", "d", "h")
+        )
+    )
+    if not item_text:
+        return False
+    for action in actionable_goal:
+        if action.bounds is None or not _bounds_contain(action.bounds, item.bounds):
+            continue
+        action_text = _normalized_label(str(action.compact.get("c") or ""))
+        if item_text in action_text:
+            return True
+    return False
+
+
+def _bounds_contain(
+    outer: tuple[int, int, int, int],
+    inner: tuple[int, int, int, int],
+) -> bool:
+    return (
+        outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and outer[2] >= inner[2]
+        and outer[3] >= inner[3]
+    )
+
+
 def _select_candidates(
     candidates: list[_Candidate],
     *,
@@ -277,7 +387,6 @@ def _select_candidates(
     if max_nodes <= 0:
         return []
     selected: list[_Candidate] = []
-    selected_orders: set[int] = set()
     for group in _GROUP_ORDER:
         remaining = max_nodes - len(selected)
         if remaining <= 0:
@@ -289,14 +398,6 @@ def _select_candidates(
         )
         for item in group_candidates[:limit]:
             selected.append(item)
-            selected_orders.add(item.order)
-    remaining = max_nodes - len(selected)
-    if remaining > 0:
-        overflow = sorted(
-            (item for item in candidates if item.order not in selected_orders),
-            key=lambda item: (_GROUP_ORDER.index(item.group), *_candidate_rank(item)),
-        )
-        selected.extend(overflow[:remaining])
     return sorted(
         selected,
         key=lambda item: (
@@ -362,18 +463,6 @@ def _webview_elements(root: ET.Element) -> set[int]:
 
 def _normalized_label(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
-
-
-def _node_label_aliases(node: ProjectedNode) -> set[str]:
-    aliases: set[str] = set()
-    for label in node.labels:
-        normalized = _normalized_label(label)
-        if not normalized:
-            continue
-        aliases.add(normalized)
-        if ":id/" in normalized:
-            aliases.add(normalized.rsplit("/", 1)[-1])
-    return aliases
 
 
 def _candidate_rank(item: _Candidate) -> tuple[int, tuple[int, int], int]:
