@@ -107,6 +107,40 @@ def test_malformed_planner_tool_payload_continues_with_live_context(tmp_path) ->
     )
 
 
+def test_empty_model_tool_name_continues_with_live_context(tmp_path) -> None:
+    class EmptyToolThenFinishPlanner(FinishingPlanner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def one_step_tool_call(
+            self,
+            _goal: str,
+            observation: Observation,
+            _functions: tuple[Function, ...],
+            _installed_apps: dict[str, str],
+        ) -> ToolCall:
+            self.calls += 1
+            self.observations.append(observation)
+            if self.calls == 1:
+                raise ModelToolCallError("model_turn_tool_not_visible:")
+            return ToolCall("finished", {"content": "done"})
+
+    planner = EmptyToolThenFinishPlanner()
+    result = OmniFlow(
+        tmp_path / "store.json",
+        host=RecordingHost(),
+        planner=planner,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    ).run("Finish the task")
+
+    assert result.success is True
+    assert planner.calls == 2
+    assert planner.observations[1].extra["previous_action_error"] == (
+        "vlm_planner_failed:model_turn_tool_not_visible:"
+    )
+
+
 class RecordingHost:
     def __init__(self) -> None:
         self.package_name = "com.android.launcher"

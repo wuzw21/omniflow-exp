@@ -967,6 +967,37 @@ def _observation_dependent_input_indices(facts: dict[str, Any]) -> frozenset[int
         value = " ".join(str(action.get("args", {}).get("text") or "").casefold().split())
         if value and value not in goal:
             indices.add(index)
+    # Numeric keypad workflows are recorded as clicks rather than input_text.
+    # When the source task exposes numeric parameters, a repeated click on a
+    # state-changing screen is value-dependent too: replaying the source digit
+    # would silently write the source task's number into a new target task.
+    # Treat the first such repeat as the Planner handoff boundary.  Do not apply
+    # this to ordinary "click N times" workflows without numeric task inputs.
+    task_parameters = facts.get("task_parameters")
+    has_numeric_task_parameter = isinstance(task_parameters, dict) and any(
+        name != "seed"
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        for name, value in task_parameters.items()
+    )
+    if has_numeric_task_parameter:
+        source_steps = list(facts.get("steps") or ())
+        for index in range(len(source_steps) - 1):
+            current = source_steps[index]
+            following = source_steps[index + 1]
+            current_action = current.get("action") if isinstance(current, dict) else None
+            following_action = (
+                following.get("action") if isinstance(following, dict) else None
+            )
+            if (
+                isinstance(current_action, dict)
+                and current_action.get("tool") == "click"
+                and current_action == following_action
+                and str(current.get("before_state_id") or "")
+                != str(following.get("before_state_id") or "")
+            ):
+                indices.add(index)
+                break
     return frozenset(indices)
 
 

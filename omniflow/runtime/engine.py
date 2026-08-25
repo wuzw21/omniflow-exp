@@ -1212,14 +1212,23 @@ def _recoverable_planner_turn_error(error: Exception) -> bool:
     """Classify model-output validation errors as normal loop failures.
 
     Transport, authentication, timeout, and provider errors remain fatal and
-    are never retried.  Only the canonical tool/action contract errors can be
-    corrected by a subsequent Planner turn with the same live observation.
+    are never retried.  Tool/action contract errors, including malformed
+    provider tool payloads, can be corrected by a subsequent Planner turn with
+    the same live observation.
     """
 
     if not isinstance(error, (TypeError, ValueError)):
         return False
     message = str(error).strip()
-    return message.startswith(("canonical_action_", "tool_call_", "action_"))
+    return message.startswith(
+        (
+            "canonical_action_",
+            "tool_call_",
+            "action_",
+            "model_turn_",
+            "provider_tool_call_contract_violation:",
+        )
+    )
 
 
 async def _await(value: Any) -> Any:
