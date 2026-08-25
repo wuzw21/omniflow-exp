@@ -8,6 +8,7 @@ from typing import Any
 
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
+from omniflow.vlm.model_config import resolve_openai_compatible_config
 
 
 def compile_function_v2(
@@ -16,6 +17,8 @@ def compile_function_v2(
     *,
     enhance: bool,
     model: str = "",
+    model_endpoint_profile: str = "auto",
+    model_base_url: str = "",
     timeout: float = 120.0,
     authoring_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -49,8 +52,26 @@ def compile_function_v2(
         if not selected_model:
             raise ValueError("function_author_model_required")
         options["model"] = selected_model
+        from openai import OpenAI
+        import httpx
 
-    report = compile_runlog_to_store(run_log, root, **options)
+        api_key, base_url = resolve_openai_compatible_config(
+            profile=model_endpoint_profile,
+            base_url=model_base_url,
+        )
+        options["client"] = OpenAI(
+            api_key=api_key or "not-required",
+            base_url=base_url,
+            max_retries=0,
+            http_client=httpx.Client(trust_env=False),
+        )
+
+    client = options.get("client")
+    try:
+        report = compile_runlog_to_store(run_log, root, **options)
+    finally:
+        if client is not None:
+            client.close()
     report["enhanced"] = bool(enhance)
     if authoring_trace is not None:
         authoring_trace.append(

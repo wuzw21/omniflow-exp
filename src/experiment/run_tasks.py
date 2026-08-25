@@ -21,6 +21,8 @@ from src.experiment.protocol import (
     DEFAULT_TASK,
     DEVICES,
     FORMAL_MODEL,
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -61,6 +63,8 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
             output,
             enhance=bool(args.model),
             model=args.model,
+            model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
+            model_base_url=FORMAL_MODEL_BASE_URL,
         )
         memory = Path(str(report["store_path"]))
     elif args.method == "mobilegpt":
