@@ -1348,6 +1348,49 @@ def test_planner_can_repeat_action_on_same_logical_ui_state(
     assert len(planner.previous_action_errors) <= 3
 
 
+def test_runtime_does_not_dispatch_blind_repeated_click_on_visible_node(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import omniflow.runtime.core as core
+
+    monkeypatch.setattr(core, "_ACTION_SETTLE_SECONDS", 0.0)
+
+    class ClickableHost(RecordingHost):
+        def observe(self, **kwargs: object) -> Observation:
+            base = super().observe(**kwargs)
+            return Observation(
+                xml=(
+                    '<hierarchy><node text="Next" clickable="true" '
+                    'bounds="[100,200][300,400]" /></hierarchy>'
+                ),
+                package_name=base.package_name,
+                activity_name=base.activity_name,
+                image_base64=base.image_base64,
+                extra=base.extra,
+            )
+
+    host = ClickableHost()
+    repeated_click = ToolCall("click", {"x": 200, "y": 300})
+    planner = SequencePlanner(
+        [repeated_click, repeated_click, ToolCall("finished", {})]
+    )
+
+    result = OmniFlow(
+        tmp_path / "store.json",
+        host=host,
+        planner=planner,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=4)),
+    ).run("Advance to the next page")
+
+    assert result.success is True
+    assert host.actions == [Action("click", {"x": 200, "y": 300})]
+    assert planner.previous_action_errors[2] == (
+        "repeated_coordinate_without_semantic_target:"
+        "provide_target_description_or_choose_next_node"
+    )
+
+
 class CapturingCompletions:
     def __init__(self, response: object) -> None:
         self.response = response

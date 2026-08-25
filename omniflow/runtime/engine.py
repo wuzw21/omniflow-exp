@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 import inspect
 import json
 from pathlib import Path
+import re
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from omniflow.catalog import CatalogSnapshot
 from omniflow.core.config import Experiment, OmniFlowConfig
@@ -643,6 +645,23 @@ class OmniFlow:
                 previous_action_error = None
                 previous_action = None
                 continue
+            if _repeated_coordinate_without_semantics(
+                planned,
+                trace=trace,
+                observation=observation,
+                goal=goal,
+            ):
+                # A repeated raw coordinate on the same visible XML node is
+                # ambiguous: it may be a valid repeated operation, but the
+                # model has not supplied the semantic target that would make
+                # that intent explicit.  Do not dispatch another blind tap;
+                # return to Planner with visual recovery evidence instead.
+                previous_action_error = (
+                    "repeated_coordinate_without_semantic_target:"
+                    "provide_target_description_or_choose_next_node"
+                )
+                previous_action = planned
+                continue
             step = await execute_robust_action(
                 planned,
                 observation=observation,
@@ -1206,6 +1225,89 @@ def _optional_step_index(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return step_index if step_index >= 0 else None
+
+
+def _repeated_coordinate_without_semantics(
+    planned: Action,
+    *,
+    trace: list[dict[str, Any]],
+    observation: Observation,
+    goal: str,
+) -> bool:
+    """Reject a blind repeated tap when the live XML exposes its target."""
+
+    if planned.tool != "click" or str(planned.args.get("target_description") or "").strip():
+        return False
+    if not trace:
+        return False
+    previous = trace[-1]
+    if not isinstance(previous, dict):
+        return False
+    result = previous.get("result")
+    metadata = previous.get("metadata")
+    if not isinstance(result, dict) or result.get("success") is not True:
+        return False
+    if isinstance(metadata, dict) and str(metadata.get("function_id") or "").strip():
+        return False
+    try:
+        previous_action = Action.from_value(previous.get("action"))
+    except (TypeError, ValueError):
+        return False
+    if (
+        previous_action.tool != "click"
+        or str(previous_action.args.get("target_description") or "").strip()
+        or not _same_click_coordinates(planned, previous_action)
+    ):
+        return False
+    x = _finite_number(planned.args.get("x"))
+    y = _finite_number(planned.args.get("y"))
+    if x is None or y is None:
+        return False
+    del goal
+    try:
+        root = ET.fromstring(str(observation.xml or ""))
+    except ET.ParseError:
+        return False
+    for element in root.iter():
+        if not any(
+            str(element.attrib.get(name) or "").strip().lower() == "true"
+            for name in ("clickable", "long-clickable")
+        ):
+            continue
+        match = re.fullmatch(
+            r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]\s*"
+            r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]",
+            str(element.attrib.get("bounds") or "").strip(),
+        )
+        if match is None:
+            continue
+        left, top, right, bottom = (int(item) for item in match.groups())
+        if left <= x <= right and top <= y <= bottom:
+            return True
+    return False
+
+
+def _same_click_coordinates(left: Action, right: Action) -> bool:
+    left_x = _finite_number(left.args.get("x"))
+    left_y = _finite_number(left.args.get("y"))
+    right_x = _finite_number(right.args.get("x"))
+    right_y = _finite_number(right.args.get("y"))
+    return (
+        left_x is not None
+        and left_y is not None
+        and right_x is not None
+        and right_y is not None
+        and abs(left_x - right_x) < 1e-6
+        and abs(left_y - right_y) < 1e-6
+    )
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and abs(number) != float("inf") else None
 
 
 def _recoverable_planner_turn_error(error: Exception) -> bool:
