@@ -2067,7 +2067,7 @@ def start_androidworld_task_session(
     )
     from android_world.env import adb_utils
 
-    _patch_androidworld_media_scanner_broadcast_compat(adb_utils)
+    _patch_androidworld_broadcast_compat(adb_utils)
     type(task).set_device_time(startup.env)
     task.initialize_task(startup.env)
     return startup, task
@@ -2542,14 +2542,31 @@ def _patch_androidworld_apk_install_compat(setup_module: Any) -> Any | None:
     return original
 
 
-def _patch_androidworld_media_scanner_broadcast_compat(adb_utils: Any) -> Any | None:
-    """Bound the legacy media-scan broadcast used by Retro Music tasks.
+def _escape_androidworld_shell_double_quoted_value(value: str) -> str:
+    """Preserve arbitrary text inside AndroidWorld's adb-shell quotes."""
+
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("`", "\\`")
+        .replace("$", "\\$")
+    )
+
+
+def _patch_androidworld_broadcast_compat(adb_utils: Any) -> Any | None:
+    """Keep AndroidWorld broadcasts safe and bounded on current emulators.
 
     On the current API-35 image the ``MEDIA_SCANNER_SCAN_FILE`` broadcast can
     wait indefinitely even though the scan has already been submitted.  The
     scan must still be sent: skipping it leaves Retro Music with an empty
     library after task initialization.  Force a short request timeout and
     preserve every other AndroidWorld intent unchanged.
+
+    AndroidWorld also wraps overlay string extras in adb-shell double quotes
+    without escaping their contents.  Planner answers can legitimately contain
+    quotes, backticks, dollar signs, or backslashes; escape only those shell
+    metacharacters so the exact answer reaches the overlay and validator.
     """
 
     original = getattr(adb_utils, "send_android_intent", None)
@@ -2557,26 +2574,49 @@ def _patch_androidworld_media_scanner_broadcast_compat(adb_utils: Any) -> Any | 
         return None
 
     def send_android_intent(*args: Any, **kwargs: Any) -> Any:
+        positional = list(args)
         command = kwargs.get("command")
         action = kwargs.get("action")
-        if command is None and args:
-            command = args[0]
-        if action is None and len(args) > 1:
-            action = args[1]
+        if command is None and positional:
+            command = positional[0]
+        if action is None and len(positional) > 1:
+            action = positional[1]
+        normalized_command = str(command or "").strip().lower()
+        normalized_action = str(action or "").strip()
         if (
-            str(command or "").strip().lower() == "broadcast"
-            and str(action or "").strip()
-            == "android.intent.action.MEDIA_SCANNER_SCAN_FILE"
+            normalized_command == "broadcast"
+            and normalized_action == "com.example.ACTION_UPDATE_OVERLAY"
+        ):
+            extras = kwargs.get("extras")
+            extras_is_positional = extras is None and len(positional) > 5
+            if extras_is_positional:
+                extras = positional[5]
+            if isinstance(extras, dict):
+                escaped_extras = {
+                    key: (
+                        _escape_androidworld_shell_double_quoted_value(value)
+                        if isinstance(value, str)
+                        else value
+                    )
+                    for key, value in extras.items()
+                }
+                if extras_is_positional:
+                    positional[5] = escaped_extras
+                else:
+                    kwargs["extras"] = escaped_extras
+        if (
+            normalized_command == "broadcast"
+            and normalized_action == "android.intent.action.MEDIA_SCANNER_SCAN_FILE"
         ):
             kwargs["timeout_sec"] = min(int(kwargs.get("timeout_sec", 10)), 2)
             try:
-                return original(*args, **kwargs)
+                return original(*positional, **kwargs)
             except Exception:
                 # The scan request may have been accepted before the shell
                 # command timed out.  Retro Music can consume the resulting
                 # MediaStore rows once its UI opens.
                 return None
-        return original(*args, **kwargs)
+        return original(*positional, **kwargs)
 
     adb_utils.send_android_intent = send_android_intent
     return original
@@ -5349,6 +5389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_launch_app: Any | None = None
     original_current_activity: Any | None = None
     original_get_clipboard_contents: Any | None = None
+    original_send_android_intent: Any | None = None
     try:
         _add_android_world_path(android_world_root)
 
@@ -5409,6 +5450,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         original_current_activity = _patch_androidworld_current_activity(adb_utils)
         original_launch_app = _patch_androidworld_app_launch(adb_utils)
         original_get_clipboard_contents = _patch_androidworld_clipboard_read_compat(
+            adb_utils
+        )
+        original_send_android_intent = _patch_androidworld_broadcast_compat(
             adb_utils
         )
         if task_params:
@@ -6107,6 +6151,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
     finally:
+        if original_send_android_intent is not None:
+            adb_utils.send_android_intent = original_send_android_intent
         if original_get_clipboard_contents is not None:
             adb_utils.get_clipboard_contents = original_get_clipboard_contents
         if original_launch_app is not None:
