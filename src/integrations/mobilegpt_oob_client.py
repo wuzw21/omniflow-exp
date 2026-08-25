@@ -368,11 +368,30 @@ def _oob_action(
         return
     if name == "scroll":
         direction = str(args.get("direction") or "down").strip().lower()
-        y1, y2 = (750, 250) if direction in {"up", "forward"} else (250, 750)
+        width = max(1, int(display.get("width") or 1000))
+        height = max(1, int(display.get("height") or 1000))
+        x = width // 2
+        upper_y = max(1, int(height * 0.25))
+        lower_y = min(height - 1, int(height * 0.75))
+        # MobileGPT names the direction after the content/navigation intent:
+        # ``down``/``forward`` means reveal content below, which requires the
+        # physical finger gesture to travel upward. OOB consumes physical
+        # gesture coordinates, so translate the semantics at this boundary.
+        y1, y2 = (
+            (lower_y, upper_y)
+            if direction in {"down", "forward"}
+            else (upper_y, lower_y)
+        )
         oob.act(
             {
                 "tool": "swipe",
-                "args": {"x1": 500, "y1": y1, "x2": 500, "y2": y2, "duration_ms": 400},
+                "args": {
+                    "x1": x,
+                    "y1": y1,
+                    "x2": x,
+                    "y2": y2,
+                    "duration_ms": 400,
+                },
             }
         )
         return

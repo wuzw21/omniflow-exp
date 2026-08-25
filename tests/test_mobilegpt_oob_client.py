@@ -141,6 +141,47 @@ def test_oob_action_executes_official_click_and_input_schema() -> None:
     ]
 
 
+def test_oob_action_translates_mobilegpt_scroll_intent_to_physical_gesture() -> None:
+    oob = _FakeOob()
+    display = {"width": 1280, "height": 800}
+
+    _oob_action(
+        oob,
+        {"name": "scroll", "parameters": {"direction": "down"}},
+        display,
+        "<hierarchy />",
+    )
+    _oob_action(
+        oob,
+        {"name": "scroll", "parameters": {"direction": "up"}},
+        display,
+        "<hierarchy />",
+    )
+
+    assert oob.actions == [
+        {
+            "tool": "swipe",
+            "args": {
+                "x1": 640,
+                "y1": 600,
+                "x2": 640,
+                "y2": 200,
+                "duration_ms": 400,
+            },
+        },
+        {
+            "tool": "swipe",
+            "args": {
+                "x1": 640,
+                "y1": 200,
+                "x2": 640,
+                "y2": 600,
+                "duration_ms": 400,
+            },
+        },
+    ]
+
+
 def test_permission_controller_is_dismissed_through_oob() -> None:
     oob = _PermissionOob()
     snapshot = {
