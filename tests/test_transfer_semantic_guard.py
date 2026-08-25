@@ -821,6 +821,51 @@ def test_transfer_reads_nested_androidworld_screenshot_evidence(monkeypatch) -> 
     assert result.action is not None
 
 
+def test_transfer_binds_parameterized_label_before_omnitransfer(monkeypatch) -> None:
+    request = {}
+
+    def transfer_action(**kwargs):
+        request.update(kwargs)
+        return {
+            "mapped": True,
+            "mapping_mode": "omnitransfer_unified_association_v1",
+            "new_x": 1100.0,
+            "new_y": 765.0,
+            "target_bbox": [900.0, 730.0, 1400.0, 800.0],
+            "score": 1.0,
+            "margin": 1.0,
+        }
+
+    monkeypatch.setattr(execution, "transfer_action", transfer_action)
+    result = execution.default_transfer(
+        Action(
+            "click",
+            {
+                "target_description": "Cast",
+                "x": 361.1111111111111,
+                "y": 417.96875,
+            },
+        ),
+        Observation(
+            xml=TARGET_XML,
+            extra={"display": {"width": 2208, "height": 1840}},
+        ),
+        Observation(
+            xml=SOURCE_XML,
+            extra={"display": {"width": 720, "height": 1280}},
+        ),
+    )
+
+    bound_source = ET.fromstring(request["source_xml"])
+    assert next(
+        node
+        for node in bound_source.iter("node")
+        if node.attrib.get("resource-id") == "android:id/title"
+    ).attrib["text"] == "Cast"
+    assert request["parameterized_source_semantics"] is True
+    assert result.action is not None
+
+
 def test_transfer_treats_private_use_toolbar_glyph_as_structural_not_semantic(
     monkeypatch,
 ) -> None:

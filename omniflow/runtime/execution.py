@@ -923,6 +923,14 @@ def default_transfer(
         )
         if source_offset is not None:
             request["source_offset"] = source_offset
+    bound_source_xml = _bind_parameterized_source_label(
+        source_xml,
+        source_element_id=source_element_id,
+        target_description=str(action.args.get("target_description") or ""),
+    )
+    if bound_source_xml != source_xml:
+        request["source_xml"] = bound_source_xml
+        request["parameterized_source_semantics"] = True
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -1143,6 +1151,53 @@ def _action_uses_transfer_target(action: Action) -> bool:
             for key in ("x1", "y1", "x2", "y2")
         )
     return False
+
+
+def _bind_parameterized_source_label(
+    source_xml: str,
+    *,
+    source_element_id: str,
+    target_description: str,
+) -> str:
+    """Bind a public semantic argument before calling the real Transfer.
+
+    OmniTransfer maps a source anchor to a target anchor.  When a Function
+    exposes a label as an API argument, the source anchor must carry that
+    bound label for the same learned mapping to select the requested target;
+    otherwise the immutable recorded label would still select the source
+    instance (for example, Finance instead of Personal).  This changes only
+    the transient XML request and never the stored evidence or target lookup.
+    """
+    description = " ".join(str(target_description or "").split())
+    element_id = str(source_element_id or "").strip()
+    if not description or not element_id or not source_xml:
+        return source_xml
+    try:
+        root = ET.fromstring(source_xml)
+    except ET.ParseError:
+        return source_xml
+    element = next(
+        (
+            node
+            for node in root.iter("node")
+            if str(node.attrib.get("id") or "") == element_id
+            or str(node.attrib.get("resource-id") or "") == element_id
+        ),
+        None,
+    )
+    if element is None:
+        return source_xml
+    current_label = ""
+    for attribute in ("text", "content-desc"):
+        current_label = " ".join(
+            str(element.attrib.get(attribute) or "").split()
+        )
+        if current_label:
+            if current_label.casefold() == description.casefold():
+                return source_xml
+            element.attrib[attribute] = description
+            return ET.tostring(root, encoding="unicode")
+    return source_xml
 
 
 def _recoverable_transfer_failure(
