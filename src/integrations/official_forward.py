@@ -847,6 +847,7 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_response_compat(target)
     _configure_mobilegpt_optional_completion_rate(target)
     _configure_mobilegpt_selection_compat(target)
+    _configure_mobilegpt_system_app_catalog(target)
     _configure_mobilegpt_target_package_fallback(target)
     _configure_mobilegpt_client_error_transport(target)
     staged_memory = target / "memory"
@@ -1604,6 +1605,57 @@ def _configure_mobilegpt_selection_compat(server_root: Path) -> None:
     replacement = "response.pop('completion_rate', None)"
     if original in source:
         select_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
+def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
+    """Keep the official AppAgent catalog valid for Android system packages.
+
+    Upstream obtains app names and descriptions from Google Play before it
+    computes the official app embedding. Android system packages such as
+    ``com.android.settings`` do not have a Play listing, so upstream writes an
+    empty embedding and later crashes while reading that same CSV row. The
+    AndroidWorld adapter already resolves the target package and app name
+    during setup; use those values only as the missing catalog metadata, then
+    let the official embedding and AppAgent selection run unchanged.
+    """
+
+    app_agent_path = server_root / "agents" / "app_agent.py"
+    if not app_agent_path.is_file():
+        return
+    source = app_agent_path.read_text(encoding="utf-8")
+    marker = "mobilegpt_system_app_catalog_fallback"
+    if marker in source:
+        return
+    original = (
+        "                app_name, description = get_package_info(package_name)\n"
+        "                if description:\n"
+        "                    embedding = get_openai_embedding(description)\n"
+        "                else:\n"
+        "                    embedding = \"\"\n"
+    )
+    replacement = (
+        "                app_name, description = get_package_info(package_name)\n"
+        "                # mobilegpt_system_app_catalog_fallback: Android system\n"
+        "                # packages have no Google Play metadata. Use only the\n"
+        "                # setup-resolved identity, then retain MobileGPT's official\n"
+        "                # embedding and AppAgent selection path.\n"
+        "                configured_package = os.getenv(\n"
+        "                    'MOBILEGPT_TARGET_PACKAGE', ''\n"
+        "                ).strip()\n"
+        "                if not description and package_name == configured_package:\n"
+        "                    app_name = (\n"
+        "                        os.getenv('MOBILEGPT_TARGET_APP', '').strip()\n"
+        "                        or package_name\n"
+        "                    )\n"
+        "                    description = app_name\n"
+        "                if description:\n"
+        "                    embedding = get_openai_embedding(description)\n"
+        "                else:\n"
+        "                    embedding = \"\"\n"
+    )
+    if original not in source:
+        raise RuntimeError("official_mobilegpt_app_catalog_anchor_missing")
+    app_agent_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
 def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:

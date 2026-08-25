@@ -1004,6 +1004,49 @@ def test_mobilegpt_source_cold_build_writes_through_staged_memory(
     assert (memory / "tasks.csv").read_text(encoding="utf-8") == "name\n"
 
 
+def test_mobilegpt_forwarder_keeps_system_app_catalog_embeddings_valid(
+    tmp_path: Path,
+) -> None:
+    official = tmp_path / "MobileGPT"
+    server = official / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "agents").mkdir()
+    (server / "main.py").write_text("# official\n", encoding="utf-8")
+    original_app_agent = (
+        "import os\n\n"
+        "def update(package_name):\n"
+        "                app_name, description = get_package_info(package_name)\n"
+        "                if description:\n"
+        "                    embedding = get_openai_embedding(description)\n"
+        "                else:\n"
+        "                    embedding = \"\"\n"
+    )
+    (server / "agents" / "app_agent.py").write_text(
+        original_app_agent,
+        encoding="utf-8",
+    )
+    memory = tmp_path / "cold-memory"
+    memory.mkdir()
+
+    result = prepare_mobilegpt_server(
+        official_root=official,
+        memory_root=memory,
+        workspace=tmp_path / "workspace",
+        write_through_memory=True,
+    )
+
+    staged = (
+        Path(result["server_root"]) / "agents" / "app_agent.py"
+    ).read_text(encoding="utf-8")
+    assert "mobilegpt_system_app_catalog_fallback" in staged
+    assert "MOBILEGPT_TARGET_PACKAGE" in staged
+    assert "MOBILEGPT_TARGET_APP" in staged
+    assert "embedding = get_openai_embedding(description)" in staged
+    assert (server / "agents" / "app_agent.py").read_text(
+        encoding="utf-8"
+    ) == original_app_agent
+
+
 def test_mobilegpt_forwarder_keeps_official_server_source_unchanged(
     tmp_path: Path,
 ) -> None:
