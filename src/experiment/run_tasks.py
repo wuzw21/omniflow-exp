@@ -69,7 +69,6 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
-    OMNIFLOW_PLANNER_MODEL,
     SOURCE_AVD,
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
@@ -2373,11 +2372,7 @@ def _androidworld_result_command(
         "--task-random-seed",
         str(_e2e_evaluation_seed(args)),
         "--model",
-        str(
-            OMNIFLOW_PLANNER_MODEL
-            if method == "omniflow"
-            else getattr(args, "formal_model", FORMAL_MODEL)
-        ),
+        str(getattr(args, "formal_model", FORMAL_MODEL)),
         "--planner-provider",
         "openai",
         "--method",
