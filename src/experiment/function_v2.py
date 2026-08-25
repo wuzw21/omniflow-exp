@@ -79,6 +79,10 @@ def compile_function_v2(
         source_screenshots = source_path.parent / "screenshots"
         if source_screenshots.is_dir():
             shutil.copytree(source_screenshots, root / "screenshots")
+        else:
+            source_observations = source_path.parent / "observations" / "objects"
+            if source_observations.is_dir():
+                shutil.copytree(source_observations, root / "screenshots")
     report["enhanced"] = bool(enhance)
     if authoring_trace is not None:
         authoring_trace.append(
