@@ -13,6 +13,7 @@ bash scripts/exp/run_androidworld.sh run \
 ```
 
 全部参数都可省略，默认值来自 `config/paper_androidworld.json`。
+除配置中的设备 label 外，临时设备可显式写成 `LABEL:SERIAL:PORT`。
 
 Memory 可省略；入口不会查 index 或自动寻找历史 Memory。转换 Memory：
 

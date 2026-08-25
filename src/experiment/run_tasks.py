@@ -48,10 +48,21 @@ def _devices(value: str) -> tuple[tuple[str, str, int], ...]:
         return DEVICES
     catalog = {item[0]: item for item in DEVICES}
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
-    unknown = tuple(item for item in selected if item not in catalog)
-    if unknown:
-        raise ValueError("unknown_device:" + ",".join(unknown))
-    return tuple(catalog[item] for item in selected)
+    devices: list[tuple[str, str, int]] = []
+    for item in selected:
+        configured = catalog.get(item)
+        if configured is not None:
+            devices.append(configured)
+            continue
+        parts = item.rsplit(":", 2)
+        if len(parts) != 3 or not parts[0] or not parts[1]:
+            raise ValueError(f"unknown_device:{item}")
+        try:
+            port = int(parts[2])
+        except ValueError as exc:
+            raise ValueError(f"unknown_device:{item}") from exc
+        devices.append((parts[0], parts[1], port))
+    return tuple(devices)
 
 
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:

@@ -70,6 +70,8 @@ bash scripts/exp/plans/run_condition.sh t3a-hint
 
 完整设备矩阵分别设置 `DEVICE=standard45562`、`DEVICE=fold45564` 和
 `DEVICE=tablet45554` 后重复同一阶段。不要一次并发跑同一个设备上的多个方法。
+临时设备版本可直接传显式 `LABEL:SERIAL:PORT`，例如
+`DEVICE=OmniFlowTargetPixel6Pro:emulator-45566:45566`；这不会修改默认正式设备表。
 
 ## 统计口径
 
