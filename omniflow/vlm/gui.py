@@ -138,8 +138,18 @@ def build_model_turn_request(
         projection=projection,
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_images = not lightweight_retry and not compact_global_startup
+    include_images = (
+        not lightweight_retry
+        and not compact_global_startup
+        and _planner_needs_screenshot(state, projection)
+    )
     current_image = _state_image_data_uri(state) if include_images else ""
+    if not include_images and _state_has_screenshot(state):
+        content[0]["text"] = (
+            f"{content[0]['text']}\n"
+            "Screenshot upload is omitted for this XML-complete native screen. "
+            "Use the XML labels, actions, and bounds as the authoritative grounding context."
+        )
     if current_image:
         current_image = _compact_image_data_uri(current_image)
         content.append(
@@ -195,6 +205,58 @@ def build_model_turn_request(
         "enable_thinking": False,
         "thinking": {"type": "disabled"},
     }
+
+
+def _planner_needs_screenshot(
+    state: dict[str, Any],
+    projection: UIProjection,
+) -> bool:
+    """Selectively upload vision evidence when XML cannot safely ground the turn."""
+
+    xml = str(state.get("xml") or "").strip()
+    if not xml or projection.candidate_count == 0:
+        return True
+    if projection.visual_context_required or projection.visual_candidate_count:
+        return True
+    if any(node.inside_webview for node in projection.nodes):
+        return True
+
+    extra = state.get("extra")
+    if not isinstance(extra, dict):
+        return False
+    if any(
+        bool(extra.get(key))
+        for key in ("visual_grounding_required", "screenshot_required")
+    ):
+        return True
+    if extra.get("function_execution"):
+        return True
+    recent_actions = extra.get("recent_actions")
+    if isinstance(recent_actions, list):
+        for item in recent_actions:
+            if not isinstance(item, dict):
+                continue
+            if item.get("function_id") or item.get("success") is False:
+                return True
+    error = str(extra.get("previous_action_error") or "").casefold()
+    return any(
+        marker in error
+        for marker in (
+            "transfer",
+            "mapping",
+            "visual",
+            "webview",
+            "screenshot",
+            "grounding",
+        )
+    )
+
+
+def _state_has_screenshot(state: dict[str, Any]) -> bool:
+    return bool(
+        str(state.get("image_base64") or "").strip()
+        or str(state.get("screenshot_path") or "").strip()
+    )
 
 
 def parse_model_turn_response(

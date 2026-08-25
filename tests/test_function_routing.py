@@ -1701,6 +1701,49 @@ def test_global_startup_function_owns_open_app_tool_slot() -> None:
     }
 
 
+def test_planner_defaults_to_xml_without_uploading_native_screenshot() -> None:
+    request = build_model_turn_request(
+        goal="Open the Timer tab",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node text="Timer" clickable="true" '
+                'bounds="[288,1072][432,1232]" /></hierarchy>'
+            ),
+            "image_base64": "should-not-be-uploaded",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=0,
+    )
+
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text"]
+    assert "Screenshot upload is omitted" in content[0]["text"]
+
+
+def test_planner_keeps_screenshot_for_webview_grounding() -> None:
+    request = build_model_turn_request(
+        goal="Click Chrome in the web page",
+        model="test-model",
+        state={
+            "xml": (
+                '<hierarchy><node class="android.webkit.WebView" '
+                'bounds="[0,0][720,1280]"><node class="android.view.View" '
+                'text="Chrome" clickable="true" bounds="[0,766][720,878]" />'
+                "</node></hierarchy>"
+            ),
+            "image_base64": "must-be-uploaded",
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=0,
+    )
+
+    content = request["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text", "image_url"]
+
+
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     request = build_model_turn_request(
         goal="Search for a contact",
