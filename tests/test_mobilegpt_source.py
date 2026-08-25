@@ -21,6 +21,9 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_LEARNING_MODE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
     MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS,
@@ -329,7 +332,7 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
     )
 
 
-def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
+def test_converted_memory_remains_read_only_evidence(tmp_path: Path) -> None:
     index, source_run_log = _write_source_index(tmp_path / "source")
     registry_root = tmp_path / "registry"
     refresh_data_index(
@@ -346,7 +349,7 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     _write_stats(stats)
     _write_audit(audit)
 
-    sealed = pipeline.seal_mobilegpt_source_memory(
+    sealed = pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory,
         source_run_log=source_run_log,
         source_stats=stats,
@@ -356,27 +359,19 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
         target_app="Settings",
         source_model="qwen3-vl-plus",
     )
-    registered = mobilegpt_source._register_mobilegpt_memory(
-        memory_index=registry_root / "current.json",
-        bundle_root=bundle,
+    source_validation = mobilegpt_memory.validate_mobilegpt_adapted_memory(
+        memory,
         task_name="SystemBluetoothTurnOn",
-    )
-    resolved = canonical_prepared_memory_from_index(
-        memory_index=registry_root / "current.json",
-        task_name="SystemBluetoothTurnOn",
-    )
-    source_validation = mobilegpt_source.validate_mobilegpt_source_memory(
-        index_path=index,
-        task_name="SystemBluetoothTurnOn",
-        memory_root=memory,
-        model="",
+        source_seed=111,
+        source_run_log=source_run_log,
+        expected_source_method=MOBILEGPT_RUNLOG_SOURCE_METHOD,
     )
 
-    assert sealed["manifest"]["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
+    assert sealed["manifest"]["schema_version"] == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
     assert sealed["manifest"]["schema_version"] == (
         "omniflow.mobilegpt.memory.v2"
     )
-    assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
+    assert sealed["manifest"]["source_method"] == MOBILEGPT_RUNLOG_SOURCE_METHOD
     assert sealed["manifest"]["source_model"] == ""
     assert sealed["manifest"]["source_stats"]["model_calls"] == 1
     assert sealed["manifest"]["source_stats"]["chat_model_calls"] == 0
@@ -385,19 +380,60 @@ def test_converted_memory_seals_and_registers(tmp_path: Path) -> None:
     assert sealed["manifest"]["source_stats"]["completion_tokens"] == 0
     assert sealed["manifest"]["source_stats"]["total_tokens"] == 10
     assert sealed["manifest"]["source_stats"]["chat_attempts"] == []
-    assert sealed["manifest"]["provenance"]["learning_mode"] == MOBILEGPT_LEARNING_MODE
+    assert sealed["manifest"]["provenance"]["learning_mode"] == MOBILEGPT_RUNLOG_LEARNING_MODE
     assert sealed["manifest"]["provenance"]["native_mobilegpt_learning"] is False
     assert sealed["manifest"]["provenance"]["teacher_forcing"] is False
     assert sealed["manifest"]["provenance"]["original_mobilegpt_prompts"] is False
     assert sealed["manifest"]["provenance"]["semantic_subtasks"] is False
     assert sealed["manifest"]["provenance"]["actions_supplied_to_mobilegpt"] is True
     assert sealed["memory_validation"]["native_memory_complete"] is True
-    assert validate_memory_manifest(memory)["task_name"] == (
-        "SystemBluetoothTurnOn"
+    assert source_validation["manifest"]["task_name"] == "SystemBluetoothTurnOn"
+    assert canonical_prepared_memory_from_index(
+        memory_index=registry_root / "current.json",
+        task_name="SystemBluetoothTurnOn",
+    ) is None
+
+
+def test_native_cold_memory_seals_as_formal_oob_source(tmp_path: Path) -> None:
+    _, source_run_log = _write_source_index(tmp_path / "source")
+    bundle = tmp_path / "bundle"
+    memory = bundle / "memory"
+    _write_mobilegpt_memory(memory, include_screenshot=True)
+    stats = bundle / "source_stats.jsonl"
+    _write_stats(stats)
+    result = bundle / "task_results.jsonl"
+    result.write_text(
+        json.dumps(
+            {
+                "task_name": "SystemBluetoothTurnOn",
+                "method": "mobilegpt",
+                "official_validator_used": True,
+                "official_validator_success": True,
+                "action_backend": "oob_control",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
     )
-    assert resolved is not None
-    assert registered["memory_sha256"] == resolved["memory_sha256"]
-    assert source_validation["source_method"] == MOBILEGPT_SOURCE_METHOD
+
+    sealed = pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory,
+        source_run_log=source_run_log,
+        source_stats=stats,
+        official_source_result=result,
+        task_name="SystemBluetoothTurnOn",
+        target_package="com.android.settings",
+        target_app="Settings",
+        source_model="qwen3-vl-plus",
+    )
+    validated = validate_memory_manifest(memory)
+
+    assert sealed["manifest"]["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
+    assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
+    assert sealed["manifest"]["provenance"]["native_mobilegpt_learning"] is True
+    assert sealed["manifest"]["provenance"]["physical_backend"] == "oob_control"
+    assert validated["native_mobilegpt_learning"] is True
+    assert validated["physical_backend"] == "oob_control"
 
 
 def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
@@ -409,7 +445,7 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
     audit = bundle / "trajectory_audit.json"
     _write_stats(stats)
     _write_audit(audit)
-    pipeline.seal_mobilegpt_source_memory(
+    pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory,
         source_run_log=source_run_log,
         source_stats=stats,
@@ -426,7 +462,7 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
 
     with pytest.raises(
         ValueError,
-        match="mobilegpt_source_memory_target_package_mismatch",
+        match="mobilegpt_source_memory_schema_invalid",
     ):
         mobilegpt_source.validate_mobilegpt_source_memory(
             index_path=index,
@@ -485,7 +521,7 @@ def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
     _write_audit(audit, matched=False)
 
     with pytest.raises(ValueError, match="mobilegpt_virtual_memory_trajectory_incomplete"):
-        pipeline.seal_mobilegpt_source_memory(
+        pipeline.seal_mobilegpt_converted_memory(
             memory_root=memory,
             source_run_log=source_run_log,
             source_stats=stats,
@@ -501,9 +537,9 @@ def test_only_one_mobilegpt_contract_is_active() -> None:
     assert MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS == frozenset(
         {MOBILEGPT_MEMORY_SCHEMA}
     )
-    assert MOBILEGPT_SOURCE_METHOD_BY_SCHEMA == {
-        MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_SOURCE_METHOD
-    }
+    assert MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA] == (
+        MOBILEGPT_SOURCE_METHOD
+    )
 
 
 def test_converted_memory_ignores_source_model(tmp_path: Path) -> None:
@@ -516,24 +552,24 @@ def test_converted_memory_ignores_source_model(tmp_path: Path) -> None:
     _write_stats(stats)
     _write_audit(audit)
 
-    sealed = pipeline.seal_mobilegpt_source_memory(
+    sealed = pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory,
         source_run_log=source_run_log,
         source_stats=stats,
         trajectory_audit=audit,
         task_name="SystemBluetoothTurnOn",
         source_model="qwen3-vl-plus",
-        memory_schema=MOBILEGPT_MEMORY_SCHEMA,
+        memory_schema=MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     )
 
     manifest = sealed["manifest"]
-    assert manifest["schema_version"] == MOBILEGPT_MEMORY_SCHEMA
-    assert manifest["source_method"] == MOBILEGPT_SOURCE_METHOD
+    assert manifest["schema_version"] == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
+    assert manifest["source_method"] == MOBILEGPT_RUNLOG_SOURCE_METHOD
     assert manifest["source_model"] == ""
     assert manifest["source_stats"]["chat_model_calls"] == 0
     assert manifest["source_stats"]["embedding_model_calls"] == 1
     assert manifest["provenance"]["learning_mode"] == (
-        MOBILEGPT_LEARNING_MODE
+        MOBILEGPT_RUNLOG_LEARNING_MODE
     )
     assert manifest["provenance"]["synthetic_subtasks"] is True
     assert manifest["provenance"]["semantic_subtasks"] is False
@@ -555,49 +591,73 @@ def test_source_preflight_is_read_only_and_uses_no_function_store(
     assert Path(result["source_run_log"]) == source_run_log
     assert result["source_method"] == MOBILEGPT_SOURCE_METHOD
     assert result["teacher_forcing"] is False
-    assert result["actions_supplied_to_mobilegpt"] is True
+    assert result["actions_supplied_to_mobilegpt"] is False
     assert result["function_store_used"] is False
-    assert result["transition_count"] == 1
+    assert result["runlog_conversion_used"] is False
+    assert result["source_emulator_required"] is True
 
 
-def test_source_conversion_calls_only_converter_and_sealer(
+def test_source_prepare_runs_native_cold_episode_through_oob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index, _ = _write_source_index(tmp_path / "source")
     calls: list[str] = []
 
-    def convert(**kwargs: object) -> dict[str, object]:
-        calls.append("convert")
-        memory = Path(str(kwargs["memory_root"]))
-        _write_mobilegpt_memory(memory)
-        _write_stats(Path(str(kwargs["stats_path"])))
-        _write_audit(Path(str(kwargs["audit_path"])))
-        return {"memory_root": str(memory)}
-
     def seal(**kwargs: object) -> dict[str, object]:
         calls.append("seal")
         return {"memory_root": str(kwargs["memory_root"])}
 
-    monkeypatch.setattr(
-        mobilegpt_source,
-        "convert_runlog_to_mobilegpt_memory",
-        convert,
+    server = pipeline.CommandSpec(
+        label="mobilegpt:official-server",
+        argv=["server"],
+        env={},
+        cwd=tmp_path,
+        output_path=None,
+        metadata={"log_path": str(tmp_path / "server.log")},
     )
+    episode_output = tmp_path / "bundle" / "_source_episode" / "episode"
+    episode = pipeline.CommandSpec(
+        label="mobilegpt:oob:source5560",
+        argv=["oob-client"],
+        env={},
+        cwd=tmp_path,
+        output_path=episode_output,
+        metadata={
+            "observe_backend": "oob_control",
+            "action_backend": "oob_control",
+        },
+    )
+    monkeypatch.setattr(pipeline, "build_mobilegpt_server_command", lambda *a, **k: server)
+    monkeypatch.setattr(pipeline, "_configure_mobilegpt_formal_server", lambda spec, **k: spec)
+    monkeypatch.setattr(pipeline, "build_mobilegpt_command", lambda *a, **k: episode)
+    monkeypatch.setattr(pipeline, "_start_background_command", lambda *a, **k: (object(), 0))
+    monkeypatch.setattr(pipeline, "_stop_background_command", lambda *a, **k: None)
+
+    def run_episode(spec: object) -> int:
+        calls.append("native_oob_episode")
+        episode_output.mkdir(parents=True)
+        (episode_output / "task_results.jsonl").write_text("{}\n", encoding="utf-8")
+        _write_stats(tmp_path / "bundle" / "source_stats.jsonl")
+        return 0
+
+    monkeypatch.setattr(pipeline, "run_command", run_episode)
     monkeypatch.setattr(pipeline, "seal_mobilegpt_source_memory", seal)
 
     result = mobilegpt_source.prepare_mobilegpt_source_memory(
         index_path=index,
         task_name="SystemBluetoothTurnOn",
         mobilegpt_root=tmp_path / "mobilegpt",
+        android_world_root=tmp_path / "android_world",
         output_root=tmp_path / "bundle",
         model="qwen3-vl-plus",
     )
 
-    assert calls == ["convert", "seal"]
+    assert calls == ["native_oob_episode", "seal"]
     assert result["teacher_forcing"] is False
-    assert result["actions_supplied_to_mobilegpt"] is True
-    assert result["source_emulator_used"] is False
+    assert result["actions_supplied_to_mobilegpt"] is False
+    assert result["source_emulator_used"] is True
+    assert result["physical_backend"] == "oob_control"
 
 
 def test_runlog_conversion_official_reader_and_sealer_close_the_loop(
@@ -625,7 +685,7 @@ def test_runlog_conversion_official_reader_and_sealer_close_the_loop(
         embedding_provider=lambda _screen: [0.25, 0.75],
         conversion_mode=CONVERSION_MODE_DIRECT,
     )
-    sealed = pipeline.seal_mobilegpt_source_memory(
+    sealed = pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory,
         source_run_log=source_run_log,
         source_stats=stats,
@@ -637,13 +697,19 @@ def test_runlog_conversion_official_reader_and_sealer_close_the_loop(
 
     assert generated["validated_transition_count"] == 1
     assert generated["official_reader_validation"]["loadable"] is True
-    assert sealed["manifest"]["source_method"] == MOBILEGPT_SOURCE_METHOD
-    assert validate_memory_manifest(memory)["validated_transition_count"] == 1
+    assert sealed["manifest"]["source_method"] == MOBILEGPT_RUNLOG_SOURCE_METHOD
+    validated = mobilegpt_memory.validate_mobilegpt_adapted_memory(
+        memory,
+        task_name="SystemBluetoothTurnOn",
+        source_seed=111,
+        source_run_log=source_run_log,
+        expected_source_method=MOBILEGPT_RUNLOG_SOURCE_METHOD,
+    )
+    assert validated["source_memory_write_status"]["trajectory_validated_transition_count"] == 1
 
 
-def test_scheduler_accepts_only_runlog_aligned_direct_memory(
+def test_scheduler_rejects_runlog_direct_memory_from_formal_schema(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = tmp_path / "bundle" / "memory"
     memory.mkdir(parents=True)
@@ -668,37 +734,15 @@ def test_scheduler_accepts_only_runlog_aligned_direct_memory(
         ),
         encoding="utf-8",
     )
-    inventory = {
-        "virtual_source_memory_complete": True,
-        "has_useful_actions": True,
-    }
-    monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "mobilegpt_memory_digest",
-        lambda _root: ("digest", 3),
-    )
-    monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "inspect_mobilegpt_memory",
-        lambda _root: inventory,
-    )
-    monkeypatch.setattr(
-        "src.integrations.mobilegpt.validate_mobilegpt_memory",
-        lambda _root: {"virtual_source_memory_complete": True},
-    )
-
-    result = scheduler._validate_prepared_mobilegpt_memory(
-        memory,
-        task_name="SystemBluetoothTurnOn",
-    )
-
-    assert result["memory_sha256"] == "digest"
-    assert result["memory_inventory"] == inventory
+    with pytest.raises(ValueError, match="mobilegpt_source_memory_source_evidence_missing"):
+        scheduler._validate_prepared_mobilegpt_memory(
+            memory,
+            task_name="SystemBluetoothTurnOn",
+        )
 
 
-def test_scheduler_accepts_validated_launch_only_memory(
+def test_scheduler_rejects_runlog_direct_launch_only_memory(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = tmp_path / "bundle" / "memory"
     memory.mkdir(parents=True)
@@ -727,31 +771,11 @@ def test_scheduler_accepts_validated_launch_only_memory(
         ),
         encoding="utf-8",
     )
-    inventory = {
-        "virtual_source_memory_complete": True,
-        "has_useful_actions": False,
-    }
-    monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "mobilegpt_memory_digest",
-        lambda _root: ("digest", 3),
-    )
-    monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "inspect_mobilegpt_memory",
-        lambda _root: inventory,
-    )
-    monkeypatch.setattr(
-        "src.integrations.mobilegpt.validate_mobilegpt_memory",
-        lambda _root: {"launch_only": True},
-    )
-
-    result = scheduler._validate_prepared_mobilegpt_memory(
-        memory,
-        task_name="OpenAppTaskEval",
-    )
-
-    assert result["memory_sha256"] == "digest"
+    with pytest.raises(ValueError, match="mobilegpt_source_memory_source_evidence_missing"):
+        scheduler._validate_prepared_mobilegpt_memory(
+            memory,
+            task_name="OpenAppTaskEval",
+        )
 
 
 def test_mobilegpt_source_uses_native_converter(
@@ -806,13 +830,13 @@ def test_mobilegpt_source_uses_native_converter(
     assert result["manifest"]["native_format"] == "mobilegpt.memory"
 
 
-def test_source_cli_has_no_teacher_or_cold_learning_commands() -> None:
+def test_source_cli_has_one_native_prepare_command() -> None:
     parser = mobilegpt_source.build_parser()
     help_text = parser.format_help()
 
     assert "seal-existing" not in help_text
     assert "teacher" not in help_text.casefold()
-    assert "cold" not in help_text.casefold()
+    assert "{prepare,validate,preflight}" in help_text
 
 
 def test_strict_reader_validates_canonical_memory(
@@ -827,7 +851,7 @@ def test_strict_reader_validates_canonical_memory(
     )
     monkeypatch.setattr(
         mobilegpt_memory,
-        "_validate_mobilegpt_converted_memory",
+        "_validate_mobilegpt_native_cold_memory",
         lambda *args, **kwargs: {"schema_version": MOBILEGPT_MEMORY_SCHEMA},
     )
     strict_reader_calls: list[Path] = []

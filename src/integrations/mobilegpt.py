@@ -155,40 +155,28 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
     if payload.get("source_seed") != SOURCE_SEED:
         raise ValueError("mobilegpt_memory_source_seed_invalid")
     provenance = payload.get("provenance")
-    if not isinstance(provenance, dict):
-        raise ValueError("mobilegpt_memory_provenance_missing")
-    required_provenance = {
-        "native_mobilegpt_learning": False,
+    required_native_provenance = {
+        "native_mobilegpt_learning": True,
         "task_local_memory": True,
         "learning_mode": MOBILEGPT_LEARNING_MODE,
         "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
-        "source_transitions_supplied": True,
-        "source_success_boundary_supplied": True,
-        "runlog_transition_compilation": True,
-        "complete_transition_mapping": True,
+        "synthetic_subtasks": False,
+        "semantic_subtasks": True,
+        "original_mobilegpt_prompts": True,
+        "actions_supplied_to_mobilegpt": False,
+        "official_authoring_session": True,
         "official_reader_validation": True,
-        "source_emulator_used": False,
         "function_store_used": False,
+        "function_conversion_enabled": False,
+        "coordinate_replay": False,
+        "source_emulator_used": True,
+        "physical_backend": "oob_control",
     }
-    if any(provenance.get(key) != value for key, value in required_provenance.items()):
+    if not isinstance(provenance, dict) or any(
+        provenance.get(key) != value
+        for key, value in required_native_provenance.items()
+    ):
         raise ValueError("mobilegpt_memory_provenance_incomplete")
-    forbidden = [
-        key
-        for key in (
-            "function_conversion_enabled",
-            "target_inputs_read",
-            "target_observations_read",
-            "validator_state_read",
-            "coordinate_replay",
-        )
-        if bool(provenance.get(key))
-    ]
-    if forbidden:
-        raise ValueError("mobilegpt_memory_forbidden:" + ",".join(forbidden))
     memory = payload.get("memory")
     if not isinstance(memory, dict):
         raise ValueError("mobilegpt_memory_record_missing")
@@ -201,8 +189,7 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
         raise ValueError("mobilegpt_memory_file_count_mismatch")
     if str(memory.get("sha256") or "") != digest:
         raise ValueError("mobilegpt_memory_sha256_mismatch")
-    evidence_paths: dict[str, Path] = {}
-    for label in ("source_run_log", "source_stats", "trajectory_audit"):
+    for label in ("source_run_log", "source_stats", "official_source_result"):
         record = payload.get(label)
         if not isinstance(record, dict):
             raise ValueError(f"mobilegpt_memory_{label}_missing")
@@ -217,73 +204,21 @@ def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
             path.read_bytes()
         ).hexdigest():
             raise ValueError(f"mobilegpt_memory_{label}_sha256_mismatch")
-        evidence_paths[label] = path
-    audit = json.loads(
-        evidence_paths["trajectory_audit"].read_text(encoding="utf-8")
-    )
-    transition_count = int(audit.get("transition_count") or 0)
-    validation_rows = audit.get("validation_rows")
-    source_payload = import_run_log(
-        json.loads(evidence_paths["source_run_log"].read_text(encoding="utf-8"))
-    )
-    official_reader = audit.get("official_reader_validation")
-    launch_only = False
-    if isinstance(official_reader, dict):
-        from src.integrations.mobilegpt_memory import (
-            is_valid_mobilegpt_launch_only_memory,
-        )
-
-        launch_only = is_valid_mobilegpt_launch_only_memory(
-            source_payload,
-            audit,
-            official_reader,
-        )
-    common_alignment_invalid = (
-        not isinstance(audit, dict)
-        or audit.get("schema_version") != MOBILEGPT_AUDIT_SCHEMA
-        or str(audit.get("task_name") or "")
-        != str(payload.get("task_name") or "")
-        or audit.get("complete") is not True
-        or audit.get("conversion_mode") != CONVERSION_MODE_DIRECT
-        or audit.get("actions_supplied_to_mobilegpt") is not True
-        or audit.get("source_reader_coverage_validation") is not True
-    )
-    transition_alignment_invalid = (
-        transition_count <= 0
-        or int(audit.get("validated_transition_count") or 0)
-        != transition_count
-        or not isinstance(validation_rows, list)
-        or not validation_rows
-        or any(
-            not isinstance(row, dict)
-            or row.get("matched") is not True
-            for row in validation_rows
-        )
-        or sum(
-            int(row.get("consumed_transitions") or 0)
-            for row in validation_rows
-        )
-        != transition_count
-    )
-    if common_alignment_invalid or (
-        not launch_only and transition_alignment_invalid
-    ):
-        raise ValueError("mobilegpt_memory_runlog_alignment_invalid")
-    if "official_source_result" in payload:
-        raise ValueError("mobilegpt_memory_official_source_forbidden")
+    official_result = payload.get("official_source_result") or {}
+    if official_result.get("official_validator_success") is not True:
+        raise ValueError("mobilegpt_memory_official_source_failed")
     return {
         "manifest": str(manifest_path),
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "task_name": str(payload.get("task_name") or ""),
         "source_seed": int(payload["source_seed"]),
+        "source_method": str(payload.get("source_method") or ""),
         "memory_sha256": digest,
         "memory_file_count": len(files),
         "task_file_count": len(task_files),
-        "runlog_direct_alignment": True,
-        "launch_only": launch_only,
-        "validated_transition_count": transition_count,
+        "native_mobilegpt_learning": True,
+        "physical_backend": "oob_control",
     }
-
 
 def validate_prepared_memory(
     memory_root: str | Path,

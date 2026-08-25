@@ -16,6 +16,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_LEARNING_MODE_BY_SCHEMA,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.paths import resolve_path
@@ -1089,6 +1090,111 @@ def _validate_mobilegpt_converted_memory(
     }
 
 
+def _validate_mobilegpt_native_cold_memory(
+    root: Path,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    *,
+    task_name: str,
+    source_seed: int,
+    source_run_log: str | Path,
+    compatible_source_sha256s: Sequence[str],
+    expected_model: str,
+    expected_source_method: str,
+) -> dict[str, Any]:
+    if str(manifest.get("task_name") or "") != str(task_name):
+        raise ValueError("mobilegpt_cold_memory_task_name_mismatch")
+    if int(manifest.get("source_seed") or -1) != int(source_seed):
+        raise ValueError("mobilegpt_cold_memory_source_seed_mismatch")
+    if int(source_seed) != SOURCE_SEED:
+        raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
+    source_method = str(manifest.get("source_method") or "").strip()
+    if source_method != MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA]:
+        raise ValueError("mobilegpt_cold_memory_source_method_invalid")
+    expected_source = str(expected_source_method or "").strip()
+    if expected_source and source_method != expected_source:
+        raise ValueError("mobilegpt_cold_memory_source_method_mismatch")
+    source_model = str(manifest.get("source_model") or "").strip()
+    if str(expected_model or "").strip() and source_model != str(expected_model).strip():
+        raise ValueError("mobilegpt_cold_memory_model_mismatch")
+
+    provenance = manifest.get("provenance")
+    required_provenance = {
+        "native_mobilegpt_learning": True,
+        "task_local_memory": True,
+        "learning_mode": MOBILEGPT_LEARNING_MODE_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA],
+        "teacher_forcing": False,
+        "synthetic_subtasks": False,
+        "semantic_subtasks": True,
+        "original_mobilegpt_prompts": True,
+        "actions_supplied_to_mobilegpt": False,
+        "official_authoring_session": True,
+        "official_reader_validation": True,
+        "function_store_used": False,
+        "function_conversion_enabled": False,
+        "coordinate_replay": False,
+        "source_emulator_used": True,
+        "physical_backend": "oob_control",
+    }
+    if not isinstance(provenance, dict):
+        raise ValueError("mobilegpt_cold_memory_provenance_missing")
+    for field, expected in required_provenance.items():
+        if provenance.get(field) != expected:
+            raise ValueError(f"mobilegpt_cold_memory_provenance_invalid:{field}")
+
+    memory_record = manifest.get("memory")
+    if not isinstance(memory_record, dict):
+        raise ValueError("mobilegpt_cold_memory_record_missing")
+    if (root.parent / str(memory_record.get("relative_path") or "")).resolve() != root:
+        raise ValueError("mobilegpt_cold_memory_path_mismatch")
+    digest, file_count = mobilegpt_memory_digest(root)
+    if digest != str(memory_record.get("sha256") or ""):
+        raise ValueError("mobilegpt_cold_memory_hash_mismatch")
+    if file_count != int(memory_record.get("file_count") or -1):
+        raise ValueError("mobilegpt_cold_memory_file_count_mismatch")
+    inventory = inspect_mobilegpt_memory(root)
+    if inventory.get("native_memory_complete") is not True:
+        raise ValueError("mobilegpt_cold_memory_native_graph_incomplete")
+    if not inventory.get("has_recallable_subtasks") or not inventory.get("has_useful_actions"):
+        raise ValueError("mobilegpt_cold_memory_not_recallable")
+
+    bundle_root = root.parent.resolve()
+    source_evidence = _mobilegpt_manifest_evidence_path(
+        bundle_root, manifest.get("source_run_log"), label="source_run_log"
+    )
+    accepted_source_hashes = {
+        _file_sha256(_repo_path(source_run_log)),
+        *(str(value) for value in compatible_source_sha256s if str(value)),
+    }
+    if _file_sha256(source_evidence) not in accepted_source_hashes:
+        raise ValueError("mobilegpt_cold_memory_source_run_log_mismatch")
+    stats_path = _mobilegpt_manifest_evidence_path(
+        bundle_root, manifest.get("source_stats"), label="source_stats"
+    )
+    result_path = _mobilegpt_manifest_evidence_path(
+        bundle_root,
+        manifest.get("official_source_result"),
+        label="official_source_result",
+    )
+    official_result = _official_source_result_summary(result_path, task_name=task_name)
+    if official_result.get("official_validator_success") is not True:
+        raise ValueError("mobilegpt_cold_memory_official_source_failed")
+    stats_summary = summarize_mobilegpt_stats(stats_path)
+    return {
+        "manifest": manifest,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": _file_sha256(manifest_path),
+        "memory_root": str(root),
+        "memory_sha256": digest,
+        "memory_file_count": file_count,
+        "memory_inventory": inventory,
+        "source_stats_summary": stats_summary,
+        "official_source_result": official_result,
+        "target_package": str(manifest.get("target_package") or ""),
+        "target_app": str(manifest.get("target_app") or ""),
+    }
+
+
 def validate_mobilegpt_adapted_memory(
     memory_root: str | Path,
     *,
@@ -1099,7 +1205,7 @@ def validate_mobilegpt_adapted_memory(
     expected_model: str = "",
     expected_source_method: str = "",
 ) -> dict[str, Any]:
-    """Validate one sealed RunLog-taught native MobileGPT memory tree."""
+    """Validate formal native cold memory or historical converted evidence."""
 
     root = _repo_path(memory_root)
     if not root.is_dir():
@@ -1113,9 +1219,17 @@ def validate_mobilegpt_adapted_memory(
         raise ValueError("mobilegpt_cold_memory_manifest_invalid_json") from error
     if not isinstance(manifest, dict):
         raise ValueError("mobilegpt_cold_memory_manifest_invalid")
-    if manifest.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA:
+    schema_version = str(manifest.get("schema_version") or "")
+    validator = (
+        _validate_mobilegpt_native_cold_memory
+        if schema_version == MOBILEGPT_MEMORY_SCHEMA
+        else _validate_mobilegpt_converted_memory
+        if schema_version == MOBILEGPT_RUNLOG_MEMORY_SCHEMA
+        else None
+    )
+    if validator is None:
         raise ValueError("mobilegpt_cold_memory_manifest_schema_invalid")
-    validated = _validate_mobilegpt_converted_memory(
+    validated = validator(
         root,
         manifest,
         manifest_path,

@@ -1,35 +1,37 @@
-"""Prepare immutable MobileGPT memory from canonical RunLogs."""
+"""Build MobileGPT native memory with a seed-111 cold episode."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
 import datetime
 import json
-from pathlib import Path
+import os
 import time
-from typing import Any
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
+from src.experiment import run_task as pipeline
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_EMBEDDING_MODEL,
     MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_MANIFEST,
     MOBILEGPT_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
-from src.experiment import run_task as pipeline
 from src.experiment.paths import sha256_file
-from src.experiment.source_records import CanonicalRunLog
 from src.experiment.protocol import SOURCE_SEED
+from src.experiment.source_records import CanonicalRunLog
+from src.integrations import mobilegpt_memory
 from src.integrations.mobilegpt import (
     MobileGPTConversionError,
     convert_runlog_to_mobilegpt_memory,
     preflight_runlog_conversion,
-    validate_prepared_memory,
     write_conversion_failure_audit,
 )
-from src.integrations import mobilegpt_memory
 from src.integrations.runlog import import_run_log
 
 _IGNORED_SOURCE_PACKAGES = {
@@ -181,24 +183,18 @@ def _source_preflight(
         json.loads(source_run_log.read_text(encoding="utf-8"))
     )
     target_info = _mobilegpt_source_target(item=item, source=source)
-    report = preflight_runlog_conversion(
-        source_run_log,
-        target_package=str(target_info.get("target_package") or ""),
-        target_app=str(target_info.get("target_app") or ""),
-    )
-    if report.get("ready") is not True:
-        raise MobileGPTConversionError(
-            str(report.get("failure_code") or "mobilegpt_conversion_preflight_failed"),
-            **dict(report.get("failure_details") or {}),
-        )
     audit = {
-        "schema_version": "omniflow.mobilegpt.source-check.v2",
-        "grounding_source": "canonical_androidworld_run_log",
+        "schema_version": "omniflow.mobilegpt-native-source-check.v1",
+        "task_name": item.task,
         "source_run_log": str(source_run_log),
         "source_run_log_sha256": source_sha256,
-        "actions_supplied_to_mobilegpt": True,
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "teacher_forcing": False,
+        "actions_supplied_to_mobilegpt": False,
+        "runlog_conversion_used": False,
+        "source_emulator_required": True,
+        "target_package": target_info["target_package"],
         "function_store_used": False,
-        "report": report,
     }
     return source_run_log, (source_sha256,), audit, target_info
 
@@ -209,29 +205,23 @@ def preflight_mobilegpt_source(
     task_name: str,
 ) -> dict[str, Any]:
     item = load_canonical_source_item(index_path, task_name=task_name)
-    _, _, source_audit, target_info = _source_preflight(item)
-    report = dict(source_audit["report"])
+    source_run_log, _, source_audit, target_info = _source_preflight(item)
     return {
-        "schema_version": "omniflow.mobilegpt.source-check.v2",
+        "schema_version": "omniflow.mobilegpt-native-source-preflight.v1",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
         "source_method": MOBILEGPT_SOURCE_METHOD,
-        "source_run_log": source_audit["source_run_log"],
+        "source_run_log": str(source_run_log),
         "source_run_log_sha256": source_audit["source_run_log_sha256"],
         "learning_mode": MOBILEGPT_LEARNING_MODE,
         "teacher_forcing": False,
-        "synthetic_subtasks": True,
-        "semantic_subtasks": False,
-        "original_mobilegpt_prompts": False,
-        "actions_supplied_to_mobilegpt": True,
-        "runlog_conversion_used": True,
-        "source_emulator_required": False,
-        "source_transitions_supplied": True,
-        "source_success_boundary_supplied": True,
+        "synthetic_subtasks": False,
+        "semantic_subtasks": True,
+        "original_mobilegpt_prompts": True,
+        "actions_supplied_to_mobilegpt": False,
+        "runlog_conversion_used": False,
+        "source_emulator_required": True,
         "function_store_used": False,
-        "transition_count": int(report["transition_count"]),
-        "action_type_counts": dict(report["action_type_counts"]),
-        "skipped_actions": list(report["skipped_actions"]),
         "target_package": target_info["target_package"],
         "target_source": target_info["target_source"],
         "source_audit": source_audit,
@@ -261,7 +251,7 @@ def validate_mobilegpt_source_memory(
             "mobilegpt_source_memory_target_package_mismatch:"
             f"expected={expected_target_package}:actual={actual_target_package}"
         )
-    validated = validate_prepared_memory(
+    validated = mobilegpt_memory.validate_mobilegpt_adapted_memory(
         memory_root,
         task_name=item.task,
         source_seed=SOURCE_SEED,
@@ -314,11 +304,25 @@ def prepare_mobilegpt_source_memory(
     index_path: str | Path,
     task_name: str,
     mobilegpt_root: str | Path,
+    android_world_root: str | Path,
     output_root: str | Path,
     model: str,
     embedding_model: str = MOBILEGPT_EMBEDDING_MODEL,
     memory_index: str | Path | None = None,
+    serial: str = "emulator-5560",
+    console_port: int = 5560,
+    adb_path: str = "",
+    max_steps: int = 20,
+    server_host: str = "0.0.0.0",
+    port: int = 12345,
+    server_warmup_sec: float = 5.0,
+    wait_start_timeout_sec: float = 60.0,
+    wait_finish_timeout_sec: float = 600.0,
+    timeout_sec: float = 600.0,
+    perform_emulator_setup: bool = True,
 ) -> dict[str, Any]:
+    """Run MobileGPT's native cold learning through the canonical OOB client."""
+
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_source_model_required")
@@ -327,33 +331,153 @@ def prepare_mobilegpt_source_memory(
     )
     item = load_canonical_source_item(index_path, task_name=task_name)
     source_run_log, _, source_audit, target_info = _source_preflight(item)
-    result = convert_runlog_to_mobilegpt_bundle(
-        source_run_log=source_run_log,
-        mobilegpt_root=mobilegpt_root,
-        output_root=output_root,
-        model=normalized_model,
-        embedding_model=normalized_embedding_model,
-        target_package=str(target_info.get("target_package") or ""),
-        target_app=str(target_info.get("target_app") or ""),
-        preflight_audit=source_audit,
+    bundle_root = Path(output_root).expanduser().resolve()
+    if bundle_root.exists():
+        raise FileExistsError(
+            f"immutable_mobilegpt_source_attempt_exists:{bundle_root}"
+        )
+    bundle_root.mkdir(parents=True)
+    memory_root = bundle_root / "memory"
+    memory_root.mkdir()
+    stats_path = bundle_root / "source_stats.jsonl"
+    stats_summary_path = bundle_root / "source_stats_summary.json"
+    target_device = pipeline.DeviceTarget(
+        label=f"source{int(console_port)}",
+        serial=str(serial),
+        console_port=int(console_port),
     )
-    result.update(
-        {
-            "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
+
+    server_spec = pipeline.build_mobilegpt_server_command(
+        "server",
+        mobilegpt_root=mobilegpt_root,
+        mobilegpt_memory_root=memory_root,
+        embedding_model=normalized_embedding_model,
+        write_through_memory=True,
+        serial=serial,
+        adb_path=adb_path,
+        server_host=server_host,
+        port=int(port),
+        stats_jsonl=stats_path,
+        target_package=target_info["target_package"],
+        target_app=target_info["target_app"],
+        target_task_name=item.task,
+    )
+    server_spec = pipeline._configure_mobilegpt_formal_server(
+        server_spec,
+        model=normalized_model,
+    )
+    server_spec = replace(
+        server_spec,
+        metadata={
+            **server_spec.metadata,
             "source_method": MOBILEGPT_SOURCE_METHOD,
             "learning_mode": MOBILEGPT_LEARNING_MODE,
             "teacher_forcing": False,
-            "synthetic_subtasks": True,
-            "semantic_subtasks": False,
-            "original_mobilegpt_prompts": False,
-            "actions_supplied_to_mobilegpt": True,
-            "source_transitions_supplied": True,
-            "source_success_boundary_supplied": True,
-            "function_store_used": False,
-            "source_emulator_used": False,
-        }
+            "runlog_conversion_used": False,
+            "physical_backend": "oob_control",
+        },
     )
-    bundle_root = Path(output_root).expanduser().resolve()
+
+    episode_spec = pipeline.build_mobilegpt_command(
+        item,
+        method_name=MOBILEGPT_SOURCE_METHOD,
+        target=target_device,
+        android_world_root=android_world_root,
+        output_root=bundle_root / "_source_episode",
+        stats_jsonl=stats_path,
+        mobilegpt_root=mobilegpt_root,
+        server_host=server_host,
+        server_port=int(port),
+        target_package=target_info["target_package"],
+        max_steps=int(max_steps),
+        task_random_seed=SOURCE_SEED,
+        fixed_task_seed=True,
+        fixed_task_params=True,
+        task_params_override=dict(item.params),
+        perform_emulator_setup=bool(perform_emulator_setup),
+        adb_path=str(adb_path),
+        start_timeout_sec=float(wait_start_timeout_sec),
+        finish_timeout_sec=float(wait_finish_timeout_sec),
+        timeout_sec=float(timeout_sec),
+        server_log_path=str(server_spec.metadata.get("log_path") or ""),
+    )
+    if episode_spec.metadata.get("action_backend") != "oob_control":
+        raise RuntimeError("mobilegpt_source_requires_oob_action_backend")
+    if episode_spec.metadata.get("observe_backend") != "oob_control":
+        raise RuntimeError("mobilegpt_source_requires_oob_observe_backend")
+    (bundle_root / "source_episode_command.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "omniflow.mobilegpt-native-source-command.v1",
+                "task_name": item.task,
+                "source_seed": SOURCE_SEED,
+                "server_command": pipeline._command_line(server_spec),
+                "episode_command": pipeline._command_line(episode_spec),
+                "source_audit": source_audit,
+                "physical_backend": "oob_control",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    server = None
+    started = time.monotonic()
+    try:
+        server, server_returncode = pipeline._start_background_command(
+            server_spec,
+            warmup_sec=float(server_warmup_sec),
+        )
+        if server_returncode != 0:
+            raise RuntimeError(f"mobilegpt_native_server_failed:{server_returncode}")
+        episode_returncode = pipeline.run_command(episode_spec)
+        if episode_returncode != 0:
+            raise RuntimeError(f"mobilegpt_source_episode_failed:{episode_returncode}")
+    finally:
+        pipeline._stop_background_command(server)
+    wall_sec = round(time.monotonic() - started, 6)
+    if episode_spec.output_path is None:
+        raise RuntimeError("mobilegpt_source_episode_output_missing")
+    result_path = episode_spec.output_path / "task_results.jsonl"
+    stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
+    stats_summary_path.write_text(
+        json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    sealed = pipeline.seal_mobilegpt_source_memory(
+        memory_root=memory_root,
+        source_run_log=source_run_log,
+        source_stats=stats_path,
+        official_source_result=result_path,
+        task_name=item.task,
+        source_seed=SOURCE_SEED,
+        target_package=target_info["target_package"],
+        target_app=target_info["target_app"],
+        source_wall_sec=wall_sec,
+        source_model=normalized_model,
+    )
+    result = {
+        "schema_version": "omniflow.mobilegpt-native-source-prepare.v1",
+        "task_name": item.task,
+        "source_seed": SOURCE_SEED,
+        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "model": normalized_model,
+        "embedding_model": normalized_embedding_model,
+        "memory_root": str(memory_root),
+        "learning_mode": MOBILEGPT_LEARNING_MODE,
+        "teacher_forcing": False,
+        "actions_supplied_to_mobilegpt": False,
+        "runlog_conversion_used": False,
+        "source_emulator_used": True,
+        "physical_backend": "oob_control",
+        "source_stats": str(stats_path),
+        "source_stats_summary": str(stats_summary_path),
+        "official_source_result": str(result_path),
+        "source_wall_sec": wall_sec,
+        "sealed": sealed,
+    }
     if memory_index is not None:
         result["memory_registration"] = _register_mobilegpt_memory(
             memory_index=memory_index,
@@ -455,7 +579,7 @@ def convert_runlog_to_mobilegpt_bundle(
         json.dumps(stats_summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    sealed = pipeline.seal_mobilegpt_source_memory(
+    sealed = pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory_root,
         source_run_log=source_path,
         source_stats=stats_path,
@@ -466,7 +590,7 @@ def convert_runlog_to_mobilegpt_bundle(
         target_app=str(target_app or generated.get("target_app") or ""),
         source_wall_sec=wall_sec,
         source_model=normalized_model,
-        memory_schema=MOBILEGPT_MEMORY_SCHEMA,
+        memory_schema=MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     )
     return {
         "schema_version": "omniflow.mobilegpt.memory-prepare.v2",
@@ -546,9 +670,26 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--index", required=True)
     prepare.add_argument("--task", required=True)
     prepare.add_argument("--mobilegpt-root", required=True)
+    prepare.add_argument("--android-world-root", required=True)
     prepare.add_argument("--output-root", required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument(
+        "--embedding-model",
+        default=os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
+        or MOBILEGPT_EMBEDDING_MODEL,
+    )
     prepare.add_argument("--memory-index", required=True)
+    prepare.add_argument("--serial", default="emulator-5560")
+    prepare.add_argument("--console-port", type=int, default=5560)
+    prepare.add_argument("--adb-path", default="")
+    prepare.add_argument("--max-steps", type=int, default=20)
+    prepare.add_argument("--server-host", default="0.0.0.0")
+    prepare.add_argument("--port", type=int, default=12345)
+    prepare.add_argument("--server-warmup-sec", type=float, default=5.0)
+    prepare.add_argument("--wait-start-timeout-sec", type=float, default=60.0)
+    prepare.add_argument("--wait-finish-timeout-sec", type=float, default=600.0)
+    prepare.add_argument("--timeout-sec", type=float, default=600.0)
+    prepare.add_argument("--no-emulator-setup", action="store_true")
     validate = subparsers.add_parser("validate")
     validate.add_argument("--index", required=True)
     validate.add_argument("--task", required=True)
@@ -569,9 +710,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 index_path=args.index,
                 task_name=args.task,
                 mobilegpt_root=args.mobilegpt_root,
+                android_world_root=args.android_world_root,
                 output_root=args.output_root,
                 model=args.model,
+                embedding_model=args.embedding_model,
                 memory_index=args.memory_index,
+                serial=args.serial,
+                console_port=args.console_port,
+                adb_path=args.adb_path,
+                max_steps=args.max_steps,
+                server_host=args.server_host,
+                port=args.port,
+                server_warmup_sec=args.server_warmup_sec,
+                wait_start_timeout_sec=args.wait_start_timeout_sec,
+                wait_finish_timeout_sec=args.wait_finish_timeout_sec,
+                timeout_sec=args.timeout_sec,
+                perform_emulator_setup=not args.no_emulator_setup,
             )
         elif args.command == "validate":
             result = validate_mobilegpt_source_memory(

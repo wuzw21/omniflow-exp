@@ -139,7 +139,7 @@ rg --files -g '*.py' | sort
 | --- | --- |
 | `src/integrations/__init__.py` | 适配器包标记 |
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
-| `src/integrations/mobilegpt.py` | 唯一 MobileGPT native memory converter |
+| `src/integrations/mobilegpt.py` | MobileGPT Server、官方 native memory reader 与历史只读 converter；不拥有正式 source episode |
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |
@@ -170,7 +170,7 @@ rg --files -g '*.py' | sort
 | `schemas/oob/*.json` | 外部 wire contract；任何字段/版本修改单独 schema commit |
 | `schemas/oob/README.md` | schema 语义和禁止事项 |
 | `tools/manual_androidworld_harness.py` | 人工诊断；不能创建 formal result、刷新 index 或代替 launcher |
-| `tools/convert_runlog_to_mobilegpt_memory.py` | 离线检查 RunLog→官方 MobileGPT action schema，并调用唯一 native memory converter；不执行 episode 或设备动作 |
+| `tools/convert_runlog_to_mobilegpt_memory.py` | 历史/诊断用 RunLog→MobileGPT action schema 检查器；产物只读且不得注册为正式 memory |
 | `tests/runlog_fixtures.py` | 共用 RunLog fixture |
 | `tests/test_function_*.py` | Function compiler、writer、recall 和 management 合同 |
 | `tests/test_function_store_migration.py` | 旧 Store/bundle 到新版 Store 的迁移合同；迁移行为改变时同步修改，不要把旧格式重新接回 runtime |

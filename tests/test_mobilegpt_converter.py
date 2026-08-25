@@ -486,7 +486,7 @@ def test_open_app_only_conversion_uses_final_observation_as_finish_page(
     assert result["official_reader_validation"]["launch_finish_validated"] is True
 
     task_name = str(json.loads(source.read_text(encoding="utf-8"))["task_name"])
-    sealed = pipeline.seal_mobilegpt_source_memory(
+    sealed = pipeline.seal_mobilegpt_converted_memory(
         memory_root=memory,
         source_run_log=source,
         source_stats=tmp_path / "stats.jsonl",
@@ -506,7 +506,7 @@ def test_open_app_only_conversion_uses_final_observation_as_finish_page(
 
     assert sealed["memory_validation"]["launch_only"] is True
     assert validated["memory_inventory"]["has_useful_actions"] is False
-    assert validate_memory_manifest(memory)["launch_only"] is True
+    assert validated["memory_validation"]["launch_only"] is True
 
 
 def test_conversion_scopes_official_embedding_model_to_offline_memory(

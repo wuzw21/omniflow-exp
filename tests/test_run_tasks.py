@@ -1217,10 +1217,10 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         run,
     )
     monkeypatch.setattr(
-        "src.experiment.run_tasks._validate_prepared_mobilegpt_memory",
+        "src.experiment.run_tasks._validate_mobilegpt_memory_for_current_source",
         lambda *_args, **_kwargs: {
             "task_name": args.task,
-            "runlog_teacher_alignment": True,
+            "memory_sha256": "digest",
         },
     )
 
@@ -1239,6 +1239,9 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
     assert "bash" not in captured
     assert "--prepare-mobilegpt-memory" not in captured
     assert str(args.memory_index) in captured
+    assert "--android-world-root" in captured
+    assert "--serial" in captured
+    assert "--adb-path" in captured
     assert memory_root == tmp_path / "registered-mobilegpt"
     assert phase["status"] == "created"
 
@@ -1351,28 +1354,23 @@ def test_scheduler_reuses_sealed_native_mobilegpt_memory(
                     "target_observations_read": False,
                     "validator_state_read": False,
                     "coordinate_replay": False,
-                    "source_emulator_used": False,
+                    "source_emulator_used": True,
+                    "physical_backend": "oob_control",
                 },
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "mobilegpt_memory_digest",
-        lambda _root: ("digest", 3),
-    )
-    monkeypatch.setattr(
-        scheduler.mobilegpt_memory_runtime,
-        "inspect_mobilegpt_memory",
-        lambda _root: {
-            "virtual_source_memory_complete": True,
-            "has_useful_actions": True,
-        },
-    )
-    monkeypatch.setattr(
         "src.integrations.mobilegpt_memory.validate_mobilegpt_adapted_memory",
-        lambda *_args, **_kwargs: {"native": True},
+        lambda *_args, **_kwargs: {
+            "memory_sha256": "digest",
+            "memory_file_count": 3,
+            "memory_inventory": {
+                "native_memory_complete": True,
+                "has_useful_actions": True,
+            },
+        },
     )
 
     result = scheduler._validate_prepared_mobilegpt_memory(
@@ -1381,7 +1379,7 @@ def test_scheduler_reuses_sealed_native_mobilegpt_memory(
     )
 
     assert result["memory_sha256"] == "digest"
-    assert result["memory_inventory"]["virtual_source_memory_complete"] is True
+    assert result["memory_inventory"]["native_memory_complete"] is True
 
 
 def test_source_device_uses_protocol_avd() -> None:

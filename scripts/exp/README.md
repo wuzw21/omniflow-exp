@@ -75,12 +75,12 @@ bash scripts/exp/run_androidworld.sh --setup-device tablet45554
 --e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564
 ```
 
-MobileGPT 的可复用 memory 由 seed 111 的成功 source RunLog 离线生成。转换器
-直接保留 RunLog 的成功动作，并通过 MobileGPT 官方 `Memory` / `PageManager` API
-写入页面、层级、subtask、action 和 task path；随后必须由官方 reader 逐动作回读、
-完成 RunLog 对齐审计，才会封存并注册。这个阶段不启动 source emulator、MobileGPT
-Server 或新的 AndroidWorld episode，也不使用 Function Store。只转换/校验 memory
-而不启动 target 时使用：
+MobileGPT 的可复用 memory 只能由 seed 111 的 source emulator 冷启动学习生成。
+统一 setup 创建 AndroidWorld task；MobileGPT 官方 Server 执行原生 Explore、Select、
+Derive 和 memory 保存，物理 `open_app`、observe、act 仍只经过 OOB。成功 RunLog 只
+提供 task/source 身份和不可变 provenance，不向 MobileGPT 注入动作，也不转换成
+正式 memory；cold episode 必须由官方 validator 判定成功，完整原生 memory 图才会
+封存并注册。只准备/校验 memory 而不启动 seed 113 target 时使用：
 
 MobileGPT 的 client/server handshake 和 Server handler 错误属于可重试的环境/
 适配失败；step timeout、step budget exhausted 和官方 validator=false 才属于方法结论。
@@ -101,7 +101,7 @@ bash scripts/exp/run_androidworld.sh \
   --prepare-mobilegpt-memory-only
 ```
 
-只审核一份 RunLog 的动作归一化和官方 MobileGPT action schema、不生成 memory：
+只诊断一份历史 RunLog 的动作归一化和 MobileGPT action schema、不生成正式 memory：
 
 ```bash
 .venv/bin/python tools/convert_runlog_to_mobilegpt_memory.py \
@@ -111,9 +111,9 @@ bash scripts/exp/run_androidworld.sh \
   --check-only
 ```
 
-去掉 `--check-only` 并提供 `--output-root` 与 `--model` 后，工具调用同一个
-native converter 生成完整 memory bundle。它不是实验执行入口，不启动设备、Server
-或 AndroidWorld episode。
+去掉 `--check-only` 后产生的 RunLog-direct bundle 也只是历史只读证据，不能被
+`data/current.json` 选择为正式 MobileGPT memory。正式 memory 仍只能通过上述
+seed 111 cold episode 生成。
 
 当前 AndroidWorld target 设备：
 

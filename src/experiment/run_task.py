@@ -42,6 +42,9 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_PREP_TYPE,
     MOBILEGPT_PREP_TYPE_BY_SCHEMA,
+    MOBILEGPT_RUNLOG_LEARNING_MODE,
+    MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
+    MOBILEGPT_RUNLOG_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
@@ -1714,6 +1717,152 @@ def seal_mobilegpt_source_memory(
     memory_root: str | Path,
     source_run_log: str | Path,
     source_stats: str | Path,
+    official_source_result: str | Path,
+    task_name: str,
+    source_seed: int = SOURCE_SEED,
+    target_package: str = "",
+    target_app: str = "",
+    source_wall_sec: float = 0.0,
+    source_model: str = "",
+) -> dict[str, Any]:
+    """Seal native memory written by a successful OOB-backed cold episode."""
+
+    if int(source_seed) != SOURCE_SEED:
+        raise ValueError("mobilegpt_cold_memory_requires_source_seed_111")
+    memory = resolve_path(memory_root)
+    bundle_root = memory.parent.resolve()
+    if memory.name != "memory":
+        raise ValueError("mobilegpt_cold_memory_directory_must_be_named_memory")
+    manifest_path = bundle_root / MOBILEGPT_MEMORY_MANIFEST
+    if manifest_path.exists():
+        raise FileExistsError(
+            f"immutable_mobilegpt_memory_manifest_exists:{manifest_path}"
+        )
+    source_path = resolve_path(source_run_log)
+    stats_path = resolve_path(source_stats)
+    result_path = resolve_path(official_source_result)
+    rows = [
+        row
+        for row in _iter_jsonl_rows(result_path)
+        if str(row.get("task_name") or row.get("task") or "") == str(task_name)
+    ]
+    official_rows = [row for row in rows if _official_validator_used(row)]
+    if not official_rows:
+        raise ValueError("mobilegpt_source_official_validator_required")
+    if not any(_validator_success(row) for row in official_rows):
+        raise ValueError("mobilegpt_cold_memory_official_source_failed")
+    if any(
+        str(row.get("action_backend") or "oob_control") != "oob_control"
+        for row in official_rows
+    ):
+        raise ValueError("mobilegpt_cold_memory_non_oob_source_forbidden")
+
+    from src.integrations.mobilegpt import validate_mobilegpt_memory
+
+    memory_validation = validate_mobilegpt_memory(memory)
+    inventory = mobilegpt_memory.inspect_mobilegpt_memory(memory)
+    if inventory.get("task_local_memory") is not True:
+        raise ValueError("mobilegpt_cold_memory_not_task_local")
+    if inventory.get("native_memory_complete") is not True:
+        raise ValueError("mobilegpt_cold_memory_native_graph_incomplete")
+    if not inventory.get("has_recallable_subtasks"):
+        raise ValueError("mobilegpt_cold_memory_missing_recallable_subtasks")
+    if not inventory.get("has_useful_actions"):
+        raise ValueError("mobilegpt_cold_memory_missing_useful_actions")
+    stats_summary = mobilegpt_memory.summarize_mobilegpt_stats(stats_path)
+
+    provenance_root = bundle_root / "provenance"
+    provenance_root.mkdir(exist_ok=False)
+
+    def copy_evidence(source: Path, name: str) -> Path:
+        destination = provenance_root / name
+        shutil.copy2(source, destination)
+        return destination
+
+    copied_source = copy_evidence(source_path, "source.run_log.json")
+    copied_stats = copy_evidence(stats_path, "mobilegpt_stats.jsonl")
+    copied_result = copy_evidence(result_path, "task_results.jsonl")
+    memory_sha256, memory_file_count = mobilegpt_memory.mobilegpt_memory_digest(memory)
+    manifest = {
+        "schema_version": MOBILEGPT_MEMORY_SCHEMA,
+        "task_name": str(task_name),
+        "source_seed": int(source_seed),
+        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "source_model": str(source_model or "").strip(),
+        "target_package": str(target_package),
+        "target_app": str(target_app or target_package),
+        "memory": {
+            "relative_path": memory.relative_to(bundle_root).as_posix(),
+            "sha256": memory_sha256,
+            "file_count": memory_file_count,
+            "inventory": inventory,
+            "validation": memory_validation,
+        },
+        "source_run_log": {
+            "relative_path": copied_source.relative_to(bundle_root).as_posix(),
+            "sha256": sha256_file(copied_source),
+        },
+        "source_stats": {
+            "relative_path": copied_stats.relative_to(bundle_root).as_posix(),
+            "sha256": sha256_file(copied_stats),
+            "model_calls": _coerce_int(stats_summary.get("model_calls")),
+            "chat_model_calls": _coerce_int(stats_summary.get("chat_model_calls")),
+            "embedding_model_calls": _coerce_int(
+                stats_summary.get("embedding_model_calls")
+            ),
+            "chat_models": list(stats_summary.get("chat_models") or []),
+            "embedding_models": list(stats_summary.get("embedding_models") or []),
+            "prompt_tokens": _coerce_int(stats_summary.get("prompt_tokens")),
+            "completion_tokens": _coerce_int(stats_summary.get("completion_tokens")),
+            "total_tokens": _coerce_int(stats_summary.get("total_tokens")),
+            "wall_sec": float(source_wall_sec or 0.0),
+        },
+        "official_source_result": {
+            "relative_path": copied_result.relative_to(bundle_root).as_posix(),
+            "sha256": sha256_file(copied_result),
+            "row_count": len(rows),
+            "official_validator_used": True,
+            "official_validator_success": True,
+        },
+        "provenance": {
+            "native_mobilegpt_learning": True,
+            "task_local_memory": True,
+            "learning_mode": MOBILEGPT_LEARNING_MODE,
+            "teacher_forcing": False,
+            "synthetic_subtasks": False,
+            "semantic_subtasks": True,
+            "original_mobilegpt_prompts": True,
+            "actions_supplied_to_mobilegpt": False,
+            "official_authoring_session": True,
+            "official_reader_validation": True,
+            "function_store_used": False,
+            "function_conversion_enabled": False,
+            "coordinate_replay": False,
+            "source_emulator_used": True,
+            "physical_backend": "oob_control",
+        },
+    }
+    with manifest_path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(manifest, indent=2, ensure_ascii=False))
+        handle.write("\n")
+    for path in memory.rglob("*"):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    memory.chmod(0o555)
+    return mobilegpt_memory.validate_mobilegpt_adapted_memory(
+        memory,
+        task_name=task_name,
+        source_seed=source_seed,
+        source_run_log=source_path,
+        expected_model=str(source_model or "").strip(),
+        expected_source_method=MOBILEGPT_SOURCE_METHOD,
+    )
+
+
+def seal_mobilegpt_converted_memory(
+    *,
+    memory_root: str | Path,
+    source_run_log: str | Path,
+    source_stats: str | Path,
     trajectory_audit: str | Path,
     task_name: str,
     source_seed: int = SOURCE_SEED,
@@ -1721,15 +1870,15 @@ def seal_mobilegpt_source_memory(
     target_app: str = "",
     source_wall_sec: float = 0.0,
     source_model: str = "",
-    memory_schema: str = MOBILEGPT_MEMORY_SCHEMA,
+    memory_schema: str = MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
 ) -> dict[str, Any]:
     """Seal one offline RunLog-to-MobileGPT memory database."""
 
-    if memory_schema != MOBILEGPT_MEMORY_SCHEMA:
+    if memory_schema != MOBILEGPT_RUNLOG_MEMORY_SCHEMA:
         raise ValueError(f"mobilegpt_source_memory_schema_invalid:{memory_schema}")
     audit_schema = MOBILEGPT_AUDIT_SCHEMA
-    source_method = MOBILEGPT_SOURCE_METHOD
-    learning_mode = MOBILEGPT_LEARNING_MODE
+    source_method = MOBILEGPT_RUNLOG_SOURCE_METHOD
+    learning_mode = MOBILEGPT_RUNLOG_LEARNING_MODE
 
     if int(source_seed) != SOURCE_SEED:
         raise ValueError("mobilegpt_virtual_memory_requires_source_seed_111")
@@ -2420,6 +2569,8 @@ def discover_task_result_files(paths: Sequence[str | Path]) -> list[Path]:
 
 
 def _validator_success(row: dict[str, Any]) -> bool:
+    if isinstance(row.get("official_validator_success"), bool):
+        return bool(row["official_validator_success"])
     validator = row.get("androidworld_validator_result")
     if isinstance(validator, dict) and "success" in validator:
         return bool(validator.get("success"))

@@ -147,7 +147,8 @@ baseline 记录时经过的五个位置：
 | --- | --- | --- |
 | `source_evidence.py` | 这份 Source RunLog 的截图、XML、动作和 revision 是否可信？ | AppAgent/MobileGPT 的转换规则 |
 | `appagent.py` | 如何把可信 source 转成 AppAgent 的 Prepared Memory？ | task 调度、Local Index、AndroidWorld episode 生命周期；执行由官方 AppAgent 进程完成 |
-| `mobilegpt.py` | 如何把可信 source 转成 MobileGPT 的 Prepared Memory？ | AppAgent 规则、Local Index 选择策略 |
+| `mobilegpt_source.py` | 如何在 seed 111 source emulator 上运行 MobileGPT 官方 cold learning，并封存其原生 Prepared Memory？ | MobileGPT Planner/Executor 内部、target 调度 |
+| `mobilegpt.py` | 如何启动/校验 MobileGPT Server 与官方原生 memory reader？ | AppAgent 规则、Local Index 选择策略 |
 | `mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查和完整校验 | task 调度、AndroidWorld episode 生命周期 |
 | `official_forward.py` | 如何准备 MobileGPT Server workspace，以及转发 AppAgent/AutoDroid？ | MobileGPT target client、provider memory 转换、官方 agent/action loop |
 | `mobilegpt_oob_client.py` | 如何把 MobileGPT Server 决策严格适配到唯一 OOB 物理层？ | memory 转换、Server Planner、AndroidWorld validator 实现 |
@@ -164,10 +165,11 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 这里的 schema `$defs.state` 是这份 compact observation 的复用定义，不是要求 RunLog 额外嵌套一个 JSON `state` 字段。AndroidWorld SDK 的 `get_state()` 仍返回原生 `state.pixels` 和 accessibility tree；只有进入 OmniFlow 持久化边界时，才投影为 `screenshot + xml`。
 
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
-模块根据字符串选择 provider。这是已经删除的浅 seam：AppAgent 直接调用
-`convert_runlog_to_appagent_memory`，MobileGPT 直接调用
-`convert_runlog_to_mobilegpt_bundle`。新增 provider 时应新增自己的 adapter，
-而不是把分派字符串重新塞回 source 层。
+模块根据字符串选择 provider。这是已经删除的浅 seam。AppAgent 仍拥有自己的
+converter；正式 MobileGPT memory 则只能由 `mobilegpt_source.py` 在 seed 111
+source emulator 上运行官方 cold episode 后生成。历史 RunLog-direct bundle 只读，
+不进入正式调度。新增 provider 时应新增自己的 adapter，而不是把分派字符串重新
+塞回 source 层。
 
 ### AndroidWorld public result row
 

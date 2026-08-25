@@ -20,8 +20,8 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
-from src.experiment.checks import ensure_oob_device_ready
 from src.experiment.function_v2 import compile_function_v2
+from src.experiment.checks import ensure_oob_device_ready
 from src.experiment.run_task import (
     build_task_command,
     build_replay_command,
@@ -83,7 +83,6 @@ from src.experiment.protocol import (
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_EMBEDDING_MODEL,
-    MOBILEGPT_LEARNING_MODE,
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
 )
@@ -91,7 +90,6 @@ from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
     convert_runlog_to_mobilegpt_memory,
 )
-from src.integrations import mobilegpt_memory as mobilegpt_memory_runtime
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
 from src.integrations.official_forward import validate_autodroid_memory_root
@@ -1448,101 +1446,36 @@ def _validate_prepared_mobilegpt_memory(
         raise ValueError(
             f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
         ) from error
-    provenance = manifest.get("provenance")
-    native_learning = isinstance(provenance, dict) and bool(
-        provenance.get("native_mobilegpt_learning")
-    )
-    common_provenance_valid = (
-        manifest.get("schema_version") == MOBILEGPT_MEMORY_SCHEMA
-        and manifest.get("source_method") == MOBILEGPT_SOURCE_METHOD
-        and str(manifest.get("task_name") or "") == str(task_name)
-        and isinstance(provenance, dict)
-        and provenance.get("learning_mode") == MOBILEGPT_LEARNING_MODE
-        and provenance.get("teacher_forcing") is False
-        and provenance.get("official_reader_validation") is True
-        and provenance.get("source_emulator_used") is False
-    )
-    direct_provenance_valid = common_provenance_valid and (
-        not native_learning
-        and provenance.get("actions_supplied_to_mobilegpt") is True
-        and provenance.get("runlog_transition_compilation") is True
-        and provenance.get("complete_transition_mapping") is True
-    )
-    native_provenance_valid = common_provenance_valid and (
-        native_learning
-        and provenance.get("task_local_memory") is True
-        and provenance.get("function_store_used") is False
-        and provenance.get("function_conversion_enabled") is False
-        and provenance.get("target_inputs_read") is False
-        and provenance.get("target_observations_read") is False
-        and provenance.get("validator_state_read") is False
-        and provenance.get("coordinate_replay") is False
-        and provenance.get("semantic_subtasks") is True
-        and provenance.get("original_mobilegpt_prompts") is True
-        and provenance.get("actions_supplied_to_mobilegpt") is False
-        and provenance.get("runlog_transition_compilation") is False
-        and provenance.get("complete_transition_mapping") is False
-        and provenance.get("synthetic_subtasks") is False
-    )
-    if not (direct_provenance_valid or native_provenance_valid):
+    if (
+        manifest.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA
+        or manifest.get("source_method") != MOBILEGPT_SOURCE_METHOD
+        or str(manifest.get("task_name") or "") != str(task_name)
+    ):
         raise ValueError(
             f"mobilegpt_source_memory_not_authoritative:{manifest_path}"
         )
-    memory_record = manifest.get("memory")
-    if not isinstance(memory_record, dict):
-        raise ValueError(f"mobilegpt_source_memory_record_missing:{manifest_path}")
-    memory_validation = memory_record.get("validation")
-    launch_only = (
-        isinstance(memory_validation, dict)
-        and memory_validation.get("launch_only") is True
+    source_record = manifest.get("source_run_log")
+    if not isinstance(source_record, dict):
+        raise ValueError(
+            f"mobilegpt_source_memory_source_evidence_missing:{manifest_path}"
+        )
+    source_path = (
+        root.parent / str(source_record.get("relative_path") or "")
+    ).resolve()
+    from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
+
+    validation = validate_mobilegpt_adapted_memory(
+        root,
+        task_name=str(task_name),
+        source_seed=SOURCE_SEED,
+        source_run_log=source_path,
+        expected_source_method=MOBILEGPT_SOURCE_METHOD,
     )
-    digest, file_count = mobilegpt_memory_runtime.mobilegpt_memory_digest(root)
-    inventory = mobilegpt_memory_runtime.inspect_mobilegpt_memory(root)
-    if (
-        digest != str(memory_record.get("sha256") or "")
-        or file_count != int(memory_record.get("file_count") or -1)
-        # RunLog-authored MobileGPT memories are task-local official memory
-        # trees, but they intentionally contain the official XML screen
-        # artifacts only.  Screenshots are not part of MobileGPT's memory
-        # protocol and are therefore not required for a source memory to be
-        # executable.  The source owner seals this as
-        # ``virtual_source_memory_complete``; requiring the stricter
-        # screenshot-bearing ``native_memory_complete`` here rejected valid
-        # official memories before target execution.
-        or (
-            not launch_only
-            and inventory.get("virtual_source_memory_complete") is not True
-        )
-        or (not launch_only and not inventory.get("has_useful_actions"))
-    ):
-        raise ValueError(f"mobilegpt_source_memory_content_invalid:{manifest_path}")
-    if native_learning:
-        from src.integrations.mobilegpt_memory import validate_mobilegpt_adapted_memory
-
-        source_record = manifest.get("source_run_log")
-        if not isinstance(source_record, dict):
-            raise ValueError(
-                f"mobilegpt_source_memory_source_evidence_missing:{manifest_path}"
-            )
-        source_path = (
-            root.parent / str(source_record.get("relative_path") or "")
-        ).resolve()
-        validate_mobilegpt_adapted_memory(
-            root,
-            task_name=str(task_name),
-            source_seed=SOURCE_SEED,
-            source_run_log=source_path,
-            expected_source_method=MOBILEGPT_SOURCE_METHOD,
-        )
-    else:
-        from src.integrations.mobilegpt import validate_mobilegpt_memory
-
-        validate_mobilegpt_memory(root)
     return {
         "task_name": str(task_name),
-        "memory_sha256": digest,
-        "memory_file_count": file_count,
-        "memory_inventory": inventory,
+        "memory_sha256": str(validation["memory_sha256"]),
+        "memory_file_count": int(validation["memory_file_count"]),
+        "memory_inventory": dict(validation["memory_inventory"]),
     }
 
 
@@ -1644,6 +1577,14 @@ def prepare_mobilegpt_memory(
         }
     output_root = attempt_root / "assets" / "mobilegpt"
     source_index = args.memory_index
+    _, source_serial, source_console_port = args.source_device
+    prepare_timeout_sec = max(
+        1,
+        min(
+            TASK_DEADLINE_SEC,
+            int(deadline.remaining(TASK_DEADLINE_SEC)),
+        ),
+    )
     result = run_logged_command(
         [
             str(args.python_bin),
@@ -1656,17 +1597,31 @@ def prepare_mobilegpt_memory(
             args.task,
             "--mobilegpt-root",
             str(args.mobilegpt_root),
+            "--android-world-root",
+            str(args.android_world_root),
             "--output-root",
             str(output_root),
             "--model",
             args.formal_model,
             "--memory-index",
             str(args.memory_index),
+            "--serial",
+            str(source_serial),
+            "--console-port",
+            str(source_console_port),
+            "--adb-path",
+            str(args.adb_path),
+            "--max-steps",
+            str(args.max_steps),
+            "--timeout-sec",
+            str(prepare_timeout_sec),
+            "--wait-finish-timeout-sec",
+            str(prepare_timeout_sec),
         ],
         cwd=args.repo,
         environment=dict(os.environ),
         log_path=attempt_root / "prep" / "mobilegpt.log",
-        timeout_sec=deadline.remaining(TASK_DEADLINE_SEC),
+        timeout_sec=deadline.remaining(prepare_timeout_sec),
     )
     stats = []
     for path in output_root.rglob("*stats.jsonl"):
