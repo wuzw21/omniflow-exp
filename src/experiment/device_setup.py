@@ -24,6 +24,7 @@ from typing import Any, Iterable
 from src.experiment.checks import (
     OOB_ACCESSIBILITY_SERVICE,
     configure_default_device_services,
+    ensure_oob_device_ready,
 )
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
@@ -647,31 +648,18 @@ def _configure_device(
 
 
 def _health_probe(adb: Path, device: Device) -> dict[str, Any]:
-    from src.integrations.android_world.oob_control import OobControlClient
-
-    try:
-        state = OobControlClient(
-            object(),
-            adb_serial=device.serial,
-            adb_path=str(adb),
-            timeout_seconds=30,
-        ).observe(wait_to_stabilize=True)
-        xml = str(state.get("xml") or "") if isinstance(state, dict) else ""
-        if not xml.strip():
-            raise RuntimeError("OOB observe returned no XML")
-        return {
-            "name": "oob_observe_smoke",
-            "status": "ok",
-            "required": True,
-            "detail": f"xml_chars={len(xml)}",
-        }
-    except Exception as error:
-        return {
-            "name": "oob_observe_smoke",
-            "status": "failed",
-            "required": True,
-            "detail": str(error),
-        }
+    result = ensure_oob_device_ready(
+        str(adb),
+        device.serial,
+        timeout_seconds=30,
+        repair=True,
+    )
+    return {
+        "name": "oob_reset_observe_smoke",
+        "status": "ok" if result.get("ready") is True else "failed",
+        "required": True,
+        "detail": json.dumps(result, ensure_ascii=False, sort_keys=True),
+    }
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

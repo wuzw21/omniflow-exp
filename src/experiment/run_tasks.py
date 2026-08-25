@@ -20,6 +20,7 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 from omniflow.core.trajectory import require_complete_source_run_log
+from src.experiment.checks import ensure_oob_device_ready
 from src.experiment.function_v2 import compile_function_v2
 from src.experiment.run_task import (
     build_task_command,
@@ -433,6 +434,24 @@ def ensure_target_devices(
         if result["returncode"] != 0:
             raise PipelinePhaseError(
                 "target_device_start_failed",
+                {
+                    "status": "failed",
+                    "devices": devices,
+                    "failed_device": device_phase,
+                    "model_calls": 0,
+                    "total_tokens": 0,
+                },
+            )
+        oob_preflight = ensure_oob_device_ready(
+            str(args.adb_path),
+            serial,
+            timeout_seconds=min(30.0, deadline.remaining(30)),
+            repair=True,
+        )
+        device_phase["oob_preflight"] = oob_preflight
+        if oob_preflight.get("ready") is not True:
+            raise PipelinePhaseError(
+                "target_oob_preflight_failed",
                 {
                     "status": "failed",
                     "devices": devices,

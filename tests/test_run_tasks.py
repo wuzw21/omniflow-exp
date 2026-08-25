@@ -2185,6 +2185,12 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
         return {"returncode": 0, "timed_out": False, "wall_sec": 0.01}
 
     monkeypatch.setattr("src.experiment.run_tasks.run_logged_command", runner)
+    monkeypatch.setattr(
+        scheduler,
+        "ensure_oob_device_ready",
+        lambda *_args, **_kwargs: lifecycle.append("oob")
+        or {"ready": True, "repaired": False},
+    )
 
     result = ensure_target_devices(
         args=args,
@@ -2194,8 +2200,9 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
 
     assert result["status"] == "ready"
     assert result["cleaned_mobilegpt_server_pids"] == [4312]
-    assert lifecycle == ["cleanup", "command", "command"]
+    assert lifecycle == ["cleanup", "command", "oob", "command"]
     assert len(calls) == 2
+    assert result["devices"][0]["oob_preflight"]["ready"] is True
     preflight, preflight_kwargs = calls[1]
     assert preflight[:2] == [str(args.python_bin), str(args.runtime_preflight)]
     assert preflight[preflight.index("--profile") + 1] == "mobilegpt"
@@ -2207,6 +2214,86 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     assert str(args.android_world_root) in str(
         preflight_kwargs["environment"]["PYTHONPATH"]
     )
+
+
+def test_omniflow_target_requires_oob_reset_observe_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "omniflow"
+    args.e2e_device = DEVICES[0]
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+    probes: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        scheduler,
+        "run_logged_command",
+        lambda *_args, **_kwargs: {
+            "returncode": 0,
+            "timed_out": False,
+            "wall_sec": 0.01,
+        },
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "ensure_oob_device_ready",
+        lambda adb, serial, **_kwargs: probes.append((adb, serial))
+        or {"ready": True, "repaired": False},
+    )
+
+    result = ensure_target_devices(
+        args=args,
+        attempt_root=tmp_path / "attempt",
+        deadline=Deadline(120),
+    )
+
+    assert result["status"] == "ready"
+    assert probes == [(str(args.adb_path), DEVICES[0][1])]
+    assert result["devices"][0]["oob_preflight"] == {
+        "ready": True,
+        "repaired": False,
+    }
+
+
+def test_omniflow_target_blocks_episode_when_oob_remains_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _args(tmp_path)
+    args.e2e_method = "omniflow"
+    args.e2e_device = DEVICES[0]
+    args.emulator_bin = tmp_path / "emulator"
+    args.emulator_gpu = "swiftshader_indirect"
+    monkeypatch.setattr(
+        scheduler,
+        "run_logged_command",
+        lambda *_args, **_kwargs: {
+            "returncode": 0,
+            "timed_out": False,
+            "wall_sec": 0.01,
+        },
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "ensure_oob_device_ready",
+        lambda *_args, **_kwargs: {
+            "ready": False,
+            "repaired": True,
+            "error": "reset still unavailable",
+        },
+    )
+
+    with pytest.raises(PipelinePhaseError) as captured:
+        ensure_target_devices(
+            args=args,
+            attempt_root=tmp_path / "attempt",
+            deadline=Deadline(120),
+        )
+
+    assert str(captured.value) == "target_oob_preflight_failed"
+    assert captured.value.phase["model_calls"] == 0
 
 
 def test_target_workers_parallelize_devices_and_serialize_methods(

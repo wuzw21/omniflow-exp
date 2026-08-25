@@ -1,14 +1,48 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.experiment.device_setup import (
+    Device,
     _ensure_user_ffmpeg,
+    _health_probe,
     _is_required_setup_checkout,
     _python_import_probe_code,
     _python_install_timeout_sec,
     _python_requirement_installs,
 )
+
+
+def test_health_probe_uses_shared_reset_observe_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_ready(adb, serial, **kwargs):
+        captured.update(adb=adb, serial=serial, **kwargs)
+        return {"ready": True, "repaired": False, "xml_chars": 42}
+
+    monkeypatch.setattr(
+        "src.experiment.device_setup.ensure_oob_device_ready", fake_ready
+    )
+    result = _health_probe(
+        tmp_path / "adb",
+        Device("standard45562", "emulator-45562", 45562, "avd", "small_phone"),
+    )
+
+    assert result["name"] == "oob_reset_observe_smoke"
+    assert result["status"] == "ok"
+    assert json.loads(result["detail"])["xml_chars"] == 42
+    assert captured == {
+        "adb": str(tmp_path / "adb"),
+        "serial": "emulator-45562",
+        "timeout_seconds": 30,
+        "repair": True,
+    }
 
 
 def test_python_install_timeout_covers_official_mobilegpt_dependencies(

@@ -20,6 +20,7 @@ from src.experiment.checks import (
     APPAGENT_REQUIRED_MODULES,
     REQUIRED_DISTRIBUTION_VERSIONS,
     configure_default_device_services,
+    ensure_oob_device_ready,
 )
 from src.integrations.appagent import is_memory_manifest_valid
 from src.experiment.protocol import DROIDRUN_VERSION
@@ -134,6 +135,121 @@ def test_device_configuration_keeps_only_oob_experiment_service(monkeypatch) -> 
     assert result["settings_write_ok"] is True
     assert result["installed"] == [oob_service]
     assert result["enabled"] == [oob_service]
+
+
+def test_device_configuration_accepts_label_only_bound_service_dump(
+    monkeypatch,
+) -> None:
+    oob_service = (
+        "cn.com.omnimind.bot.debug/"
+        "cn.com.omnimind.accessibility.service.AssistsService"
+    )
+
+    def fake_run(command, timeout=10):
+        if command[-5:] == [
+            "shell",
+            "settings",
+            "get",
+            "secure",
+            "enabled_accessibility_services",
+        ]:
+            output = oob_service
+        elif "dumpsys" in command and "package" in command:
+            output = "AssistsService"
+        elif "dumpsys" in command:
+            output = (
+                "Bound services:{Service[label=Omnibot]}\n"
+                f"Enabled services:{{{{{oob_service}}}}}\n"
+                "Binding services:{}\n"
+                "Crashed services:{}\n"
+                "Client list info:{}\n"
+            )
+        else:
+            output = ""
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr("src.experiment.checks._run", fake_run)
+
+    result = configure_default_device_services("adb", "emulator-45562")
+
+    assert result["settings_write_ok"] is True
+    assert result["service_health"] == {oob_service: True}
+
+
+def test_oob_readiness_requires_reset_and_observe(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FakeOobControlClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def reset(self) -> None:
+            events.append("reset")
+
+        def observe(self, *, wait_to_stabilize: bool):
+            assert wait_to_stabilize is True
+            events.append("observe")
+            return {"xml": "<hierarchy />", "package_name": "launcher"}
+
+    monkeypatch.setattr(
+        "src.experiment.checks.OobControlClient", FakeOobControlClient
+    )
+
+    result = ensure_oob_device_ready("adb", "emulator-45562")
+
+    assert result == {
+        "ready": True,
+        "repaired": False,
+        "xml_chars": len("<hierarchy />"),
+        "package_name": "launcher",
+    }
+    assert events == ["reset", "observe"]
+
+
+def test_oob_readiness_repairs_host_and_accessibility_once(monkeypatch) -> None:
+    probes = 0
+    commands: list[list[str]] = []
+
+    class FakeOobControlClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def reset(self) -> None:
+            nonlocal probes
+            probes += 1
+            if probes == 1:
+                raise TimeoutError("broadcast timed out")
+
+        def observe(self, *, wait_to_stabilize: bool):
+            assert wait_to_stabilize is True
+            return {"xml": "<hierarchy />", "package_name": "launcher"}
+
+    def fake_run(command, timeout=10):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(
+        "src.experiment.checks.OobControlClient", FakeOobControlClient
+    )
+    monkeypatch.setattr("src.experiment.checks._run", fake_run)
+    monkeypatch.setattr(
+        "src.experiment.checks.configure_default_device_services",
+        lambda _adb, _serial: {"healthy": True},
+    )
+    monkeypatch.setattr("src.experiment.checks.time.sleep", lambda _seconds: None)
+
+    result = ensure_oob_device_ready("adb", "emulator-45562")
+
+    assert result["ready"] is True
+    assert result["repaired"] is True
+    assert result["initial_error"] == "broadcast timed out"
+    assert result["device_services"] == {"healthy": True}
+    assert probes == 2
+    assert [command[5:7] for command in commands] == [
+        ["force-stop", "cn.com.omnimind.bot.debug"],
+        ["start", "-n"],
+        ["keyevent", "HOME"],
+    ]
 
 
 def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:

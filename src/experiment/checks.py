@@ -22,6 +22,10 @@ from typing import Any
 
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
 from src.integrations.appagent import is_memory_manifest_valid
+from src.integrations.android_world.oob_control import (
+    CONTROL_PACKAGE as OOB_PACKAGE,
+    OobControlClient,
+)
 from src.integrations.mobilegpt import validate_memory_manifest
 
 APPAGENT_OFFICIAL_REVISION = os.environ.get(
@@ -54,6 +58,7 @@ MANAGED_ACCESSIBILITY_SERVICES = (
     *LEGACY_ACCESSIBILITY_SERVICES,
 )
 DEFAULT_ACCESSIBILITY_SERVICES = (OOB_ACCESSIBILITY_SERVICE,)
+OOB_ACTIVITY = "cn.com.omnimind.bot.activity.LauncherActivity"
 
 
 @dataclass
@@ -263,18 +268,28 @@ def configure_default_device_services(adb: str, serial: str) -> dict[str, object
         ],
         timeout=10,
     )
+    confirmed = _run(
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "get",
+            "secure",
+            "enabled_accessibility_services",
+        ],
+        timeout=10,
+    )
+    confirmed_enabled = {
+        item
+        for item in confirmed.stdout.strip().split(":")
+        if item and item != "null"
+    }
     accessibility_dump = _run(
         [adb, "-s", serial, "shell", "dumpsys", "accessibility"],
         timeout=10,
     ).stdout
-    bound_section = (
-        accessibility_dump.split("Bound services:", 1)[1].split(
-            "Enabled services:",
-            1,
-        )[0]
-        if "Bound services:" in accessibility_dump
-        else ""
-    )
     crashed_section = (
         accessibility_dump.split("Crashed services:", 1)[1].split(
             "Client list info:",
@@ -285,7 +300,7 @@ def configure_default_device_services(adb: str, serial: str) -> dict[str, object
     )
     service_health = {
         component: (
-            component.rsplit(".", 1)[-1] in bound_section
+            component in confirmed_enabled
             and component.rsplit(".", 1)[-1] not in crashed_section
         )
         for component in installed
@@ -297,8 +312,105 @@ def configure_default_device_services(adb: str, serial: str) -> dict[str, object
         "settings_write_ok": (
             result.returncode == 0
             and enabled_flag.returncode == 0
+            and confirmed.returncode == 0
             and all(service_health.values())
         ),
+    }
+
+
+def ensure_oob_device_ready(
+    adb: str,
+    serial: str,
+    *,
+    timeout_seconds: float = 30.0,
+    repair: bool = True,
+) -> dict[str, object]:
+    """Require the complete OOB reset/observe contract before an episode."""
+
+    def probe() -> dict[str, object]:
+        client = OobControlClient(
+            object(),
+            adb_serial=serial,
+            adb_path=adb,
+            timeout_seconds=timeout_seconds,
+        )
+        client.reset()
+        state = client.observe(wait_to_stabilize=True)
+        xml = str(state.get("xml") or "") if isinstance(state, dict) else ""
+        if not xml.strip():
+            raise RuntimeError("oob_ready_observe_xml_missing")
+        return {
+            "xml_chars": len(xml),
+            "package_name": str(state.get("package_name") or ""),
+        }
+
+    try:
+        observed = probe()
+        return {
+            "ready": True,
+            "repaired": False,
+            **observed,
+        }
+    except Exception as initial_error:  # noqa: BLE001
+        initial_detail = str(initial_error)
+        if not repair:
+            return {
+                "ready": False,
+                "repaired": False,
+                "error": initial_detail,
+            }
+
+    commands = (
+        [adb, "-s", serial, "shell", "am", "force-stop", OOB_PACKAGE],
+        [
+            adb,
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "-n",
+            f"{OOB_PACKAGE}/{OOB_ACTIVITY}",
+        ],
+        [adb, "-s", serial, "shell", "input", "keyevent", "HOME"],
+    )
+    repair_commands: list[dict[str, object]] = []
+    for command in commands:
+        result = _run(command, timeout=15)
+        repair_commands.append(
+            {
+                "operation": " ".join(command[4:]),
+                "returncode": int(result.returncode),
+            }
+        )
+        if result.returncode != 0:
+            return {
+                "ready": False,
+                "repaired": True,
+                "initial_error": initial_detail,
+                "error": (result.stdout or "oob_repair_command_failed").strip(),
+                "repair_commands": repair_commands,
+            }
+    configured = configure_default_device_services(adb, serial)
+    time.sleep(2)
+    try:
+        observed = probe()
+    except Exception as final_error:  # noqa: BLE001
+        return {
+            "ready": False,
+            "repaired": True,
+            "initial_error": initial_detail,
+            "error": str(final_error),
+            "repair_commands": repair_commands,
+            "device_services": configured,
+        }
+    return {
+        "ready": True,
+        "repaired": True,
+        "initial_error": initial_detail,
+        "repair_commands": repair_commands,
+        "device_services": configured,
+        **observed,
     }
 
 
