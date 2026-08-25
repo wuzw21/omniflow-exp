@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
+from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from omniflow.core.model import Function, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
@@ -130,6 +133,7 @@ def build_model_turn_request(
     include_images = not lightweight_retry
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
+        current_image = _compact_image_data_uri(current_image)
         content.append(
             {
                 "type": "image_url",
@@ -616,6 +620,23 @@ def _state_image_data_uri(state: dict[str, Any]) -> str:
             else f"data:image/jpeg;base64,{image}"
         )
     return _image_data_uri(str(state.get("screenshot_path") or ""))
+
+
+def _compact_image_data_uri(value: str) -> str:
+    """Bound vision input size without changing persisted screenshot evidence."""
+
+    prefix, separator, encoded = str(value or "").partition(",")
+    if not separator or "base64" not in prefix.casefold():
+        return value
+    try:
+        image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
+        image.thumbnail((360, 640), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=60, optimize=True)
+        compact = base64.b64encode(output.getvalue()).decode("ascii")
+    except Exception:
+        return value
+    return f"data:image/jpeg;base64,{compact}"
 
 
 def _image_data_uri(path: str) -> str:

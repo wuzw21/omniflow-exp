@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from io import BytesIO
 import json
 import sys
 from types import SimpleNamespace
 
+from PIL import Image
 import pytest
 from runlog_fixtures import androidworld_state
 
@@ -1812,6 +1815,30 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
     assert '"checked":false' in content[0]["text"]
     assert "Those actions are already applied" in content[0]["text"]
     assert "Never repeat or toggle" in content[0]["text"]
+
+
+def test_planner_compacts_large_screenshot_before_upload() -> None:
+    image = Image.new("RGB", (720, 1280), color="white")
+    output = BytesIO()
+    image.save(output, format="PNG")
+    encoded = base64.b64encode(output.getvalue()).decode("ascii")
+
+    request = build_model_turn_request(
+        goal="Inspect the current page",
+        model="test-model",
+        state={
+            "xml": "<hierarchy />",
+            "image_base64": encoded,
+            "display": {"width": 720, "height": 1280},
+        },
+        max_steps=8,
+        turn_index=0,
+    )
+
+    image_url = request["messages"][1]["content"][1]["image_url"]["url"]
+    assert image_url.startswith("data:image/jpeg;base64,")
+    compact = Image.open(BytesIO(base64.b64decode(image_url.split(",", 1)[1])))
+    assert compact.size == (360, 640)
 
 
 def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
