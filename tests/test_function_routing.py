@@ -38,6 +38,7 @@ from omniflow.vlm.gui import (
     parse_model_turn_response,
 )
 from omniflow.vlm.planner import VLMPlanner, _configured_http_proxy
+from omniflow.vlm_coordinates import canonical_action_to_screen_pixels
 from src.integrations.android_world.agent import (
     _TaskHost,
     build_agent,
@@ -1859,6 +1860,58 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
 
 
+def test_planner_coordinates_are_device_independent_relative_values() -> None:
+    display = {"width": 720, "height": 1280}
+    request = build_model_turn_request(
+        goal="Clear the current timer value",
+        model="Qwen3.6-Plus",
+        state={"xml": "<hierarchy />", "display": display},
+        max_steps=8,
+        turn_index=1,
+    )
+    click_tool = next(
+        tool for tool in request["tools"] if tool["function"]["name"] == "click"
+    )
+    properties = click_tool["function"]["parameters"]["properties"]
+    assert properties["x"]["maximum"] == 1000
+    assert properties["y"]["maximum"] == 1000
+
+    response = {
+        "requested_model": "Qwen3.6-Plus",
+        "resolved_model": "Qwen3.6-Plus",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "click",
+                    "arguments": json.dumps(
+                        {"summary": "Clear timer", "x": 672, "y": 584}
+                    ),
+                }
+            }
+        ],
+    }
+    tool_call, metadata = parse_model_turn_response(
+        response,
+        requested_model="Qwen3.6-Plus",
+        turn_index=1,
+        display=display,
+        state={"xml": "<hierarchy />", "display": display},
+        goal="Clear the current timer value",
+    )
+
+    assert tool_call.arguments["x"] == 672
+    assert tool_call.arguments["y"] == 584
+    assert metadata["coordinate_conversion"]["name"] == (
+        "relative_0_1000_passthrough.v1"
+    )
+    physical = canonical_action_to_screen_pixels(
+        {"tool": tool_call.name, "args": tool_call.arguments},
+        display,
+    )
+    assert physical["args"]["x"] == pytest.approx(483.84)
+    assert physical["args"]["y"] == pytest.approx(747.52)
+
+
 def test_glm_5_1_planner_uses_xml_only_supported_request_contract() -> None:
     request = build_model_turn_request(
         goal="Enter 41 minutes and 55 seconds",
@@ -1932,8 +1985,12 @@ def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
         "reference": "",
         "target_description": "Chrome",
         "bounds": [96, 800, 209, 843],
-        "original_raw_pixels": {"x": 154, "y": 640},
+        "original_relative_0_1000": {"x": 154, "y": 640},
         "grounded_raw_pixels": {"x": 152.5, "y": 821.5},
+        "grounded_relative_0_1000": {
+            "x": pytest.approx(211.8055555556),
+            "y": pytest.approx(641.796875),
+        },
     }
 
 
@@ -1976,8 +2033,8 @@ def test_projected_node_center_does_not_override_webview_click() -> None:
         goal="Click Chrome in the web page",
     )
 
-    assert tool_call.arguments["x"] == pytest.approx(213.8888888889)
-    assert tool_call.arguments["y"] == 500
+    assert tool_call.arguments["x"] == 154
+    assert tool_call.arguments["y"] == 640
     assert "node_grounding" not in metadata
 
 

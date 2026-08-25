@@ -12,11 +12,13 @@ _TOOL_COORDINATE_AXES: dict[str, dict[str, str]] = {
 }
 
 
-def screen_pixel_tools(
+def relative_coordinate_tools(
     tools: list[dict[str, Any]],
     display: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    width, height = display_size(display)
+    # A valid physical display is still required at the planner boundary because
+    # the host must eventually project canonical coordinates onto that display.
+    display_size(display)
     converted = copy.deepcopy(tools)
     for tool in converted:
         function = tool.get("function")
@@ -25,19 +27,20 @@ def screen_pixel_tools(
         name = str(function.get("name") or "")
         axes = _TOOL_COORDINATE_AXES.get(name, {})
         parameters = function.get("parameters")
-        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        properties = (
+            parameters.get("properties") if isinstance(parameters, dict) else None
+        )
         if not isinstance(properties, dict):
             continue
         for field, axis in axes.items():
             schema = properties.get(field)
             if not isinstance(schema, dict):
                 continue
-            dimension = width if axis == "x" else height
             schema["minimum"] = 0
-            schema["maximum"] = dimension
+            schema["maximum"] = 1000
             schema["description"] = (
-                f"Raw {axis.upper()} pixel coordinate in the current original "
-                f"screen frame; valid range is 0..{dimension}."
+                f"Device-independent relative {axis.upper()} coordinate in the "
+                "current screen; valid range is 0..1000."
             )
     return converted
 
@@ -75,26 +78,38 @@ def screen_pixel_args_to_canonical(
     )
 
 
-def screen_context_to_pixels(
-    extra: dict[str, Any],
-    display: dict[str, Any] | None,
-) -> dict[str, Any]:
-    converted = copy.deepcopy(extra)
-    previous = converted.get("previous_action")
-    if isinstance(previous, dict):
-        converted["previous_action"] = canonical_action_to_screen_pixels(
-            previous,
-            display,
+def relative_args_to_canonical(
+    *,
+    tool: str,
+    args: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    axes = _TOOL_COORDINATE_AXES.get(str(tool), {})
+    converted = copy.deepcopy(args)
+    present = [field for field in axes if field in converted]
+    if not present:
+        return converted, None
+    changes: list[dict[str, Any]] = []
+    for field in present:
+        value = converted[field]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"canonical_action_arg_type_invalid:{field}")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"canonical_action_arg_type_invalid:{field}")
+        if not 0 <= number <= 1000:
+            raise ValueError(f"canonical_action_arg_range_invalid:{field}")
+        converted[field] = _compact_number(number)
+        changes.append(
+            {
+                "field": field,
+                "from": _compact_number(number),
+                "to": converted[field],
+            }
         )
-    recent = converted.get("recent_actions")
-    if isinstance(recent, list):
-        converted["recent_actions"] = [
-            canonical_action_to_screen_pixels(item, display)
-            if isinstance(item, dict)
-            else copy.deepcopy(item)
-            for item in recent
-        ]
-    return converted
+    return converted, {
+        "name": "relative_0_1000_passthrough.v1",
+        "changes": changes,
+    }
 
 
 def display_size(display: dict[str, Any] | None) -> tuple[float, float]:
@@ -172,7 +187,7 @@ def _compact_number(value: float) -> int | float:
 __all__ = [
     "canonical_action_to_screen_pixels",
     "display_size",
-    "screen_context_to_pixels",
+    "relative_args_to_canonical",
+    "relative_coordinate_tools",
     "screen_pixel_args_to_canonical",
-    "screen_pixel_tools",
 ]

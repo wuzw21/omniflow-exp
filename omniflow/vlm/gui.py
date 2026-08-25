@@ -21,9 +21,9 @@ from omniflow.vlm.ui_projection import (
 )
 from omniflow.vlm_coordinates import (
     display_size,
-    screen_context_to_pixels,
+    relative_args_to_canonical,
+    relative_coordinate_tools,
     screen_pixel_args_to_canonical,
-    screen_pixel_tools,
 )
 
 SYSTEM_PROMPT = """
@@ -43,16 +43,17 @@ field is a stable visual reference for an actionable element at its XML bounds.
 When you choose a projected native XML node, whether by `v` or its exact label,
 default x and y to the center of that node's `b=[left,top][right,bottom]` bounds.
 For example, a chosen node with bounds
-[0,766][720,878] uses (360,822), not (360,640). This node-center rule does not apply
+[0,766][720,878] has raw-pixel center (360,822), which maps to relative
+(500,642.1875) on a 720x1280 display. This node-center rule does not apply
 to WebView or screenshot-only visual targets without a reliable projected node; locate
 those from the screenshot instead.
 Return exactly one native tool_call each turn. Never put
 action JSON or tool syntax in assistant text. Choose one action, wait for its
-result, then inspect the fresh state before choosing another action. Coordinates
-are raw pixels in the current original Display coordinate frame, never normalized
-0..1000 values. XML bounds use that same raw-pixel frame. A screenshot may be
-resized for transport, but its coordinates must still refer to the original
-Display. If you include a summary, use a summary of at most 12 words naming the
+result, then inspect the fresh state before choosing another action. Tool coordinates
+are device-independent relative values from 0..1000 on each axis. XML bounds remain
+raw pixels in the current original Display frame; convert a raw point with
+x/DisplayWidth*1000 and y/DisplayHeight*1000. Screenshot transport resizing does not
+change the relative coordinate frame. If you include a summary, use a summary of at most 12 words naming the
 immediate subgoal. It is display metadata only; the runtime records the observed
 post-action effect as step memory. Never reject a valid tool call because summary
 is absent.
@@ -68,8 +69,8 @@ the startup and navigation prefix; do not call `open_app` separately first. For
 every other Function, finish onboarding and navigation, and reopen the requested
 content, before calling it. After a Function returns, inspect the fresh state and
 continue the remaining goal; Function success does not by itself prove task success.
-Every coordinate is one scalar raw-pixel number, never an array, object, string,
-boolean, normalized value, or combined coordinate pair.
+Every coordinate is one scalar relative 0..1000 number, never an array, object, string,
+boolean, or combined coordinate pair.
 Use finished only when current evidence directly proves the goal is complete.
 When calling finished, keep content to one short factual sentence describing only
 the outcome directly supported by the current screen or previous tool result. Do
@@ -181,7 +182,7 @@ def build_model_turn_request(
         tools = []
         visible_functions = global_functions
     else:
-        tools = screen_pixel_tools(
+        tools = relative_coordinate_tools(
             vlm_action_tools(include_summary=True),
             display,
         )
@@ -406,14 +407,24 @@ def parse_model_turn_response(
                             arguments.get("target_description") or ""
                         ),
                         "bounds": list(node.bounds),
-                        "original_raw_pixels": original,
+                        "original_relative_0_1000": original,
                         "grounded_raw_pixels": {"x": x, "y": y},
                     }
-            arguments, coordinate_metadata = screen_pixel_args_to_canonical(
-                tool=tool,
-                args=arguments,
-                display=display,
-            )
+            if node_grounding_metadata is not None:
+                arguments, coordinate_metadata = screen_pixel_args_to_canonical(
+                    tool=tool,
+                    args=arguments,
+                    display=display,
+                )
+                node_grounding_metadata["grounded_relative_0_1000"] = {
+                    "x": arguments.get("x"),
+                    "y": arguments.get("y"),
+                }
+            else:
+                arguments, coordinate_metadata = relative_args_to_canonical(
+                    tool=tool,
+                    args=arguments,
+                )
             canonical = canonicalize_action(
                 {"tool": tool, "args": arguments},
                 persisted_only=False,
@@ -516,10 +527,10 @@ def _turn_text(
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     width, height = display_size(display)
-    center_x = int(width / 2)
-    center_y = int(height / 2)
-    upper_y = int(height * 0.7)
-    lower_y = int(height * 0.3)
+    center_x = 500
+    center_y = 500
+    upper_y = 700
+    lower_y = 300
     lines = [
         f"Goal: {goal}",
         f"Progress: {turn_index}/{max_steps} model turns used",
@@ -527,12 +538,12 @@ def _turn_text(
         f"Current activity: {state.get('activity_name') or ''}",
         f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
         (
-            "Coordinate contract: every tool coordinate is one raw pixel in the "
-            f"current original Display frame (X 0..{int(width)}, Y 0..{int(height)}). "
-            "Do not output normalized 0..1000 coordinates."
+            "Coordinate contract: every tool coordinate is one device-independent "
+            "relative value from 0..1000 on each axis. XML b bounds are raw pixels "
+            f"in the {int(width)}x{int(height)} Display; convert them before calling a tool."
         ),
         (
-            'Raw-pixel examples: click {"summary":"Tap center","x":'
+            'Relative-coordinate examples: click {"summary":"Tap center","x":'
             f'{center_x},"y":{center_y}'
             '}; swipe {"summary":"Scroll up","direction":"up","x1":'
             f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
@@ -550,9 +561,8 @@ def _turn_text(
                 validation_error.strip(),
                 "Return one corrected native tool_call using the schema exactly. Do not rename, wrap, combine, or infer fields.",
                 (
-                    "Coordinate fields such as x and y must each be one raw-pixel "
-                    f"JSON number in the current Display (X 0..{int(width)}, "
-                    f"Y 0..{int(height)}). Never use normalized 0..1000 values, "
+                    "Coordinate fields such as x and y must each be one relative "
+                    "JSON number from 0..1000 on its axis. Never use "
                     "[x, y], an object, string, or boolean."
                 ),
             )
@@ -575,7 +585,7 @@ def _turn_text(
                     ),
                     "Do not repeat that argument shape. Return a new tool_call; do not explain or repair it in text.",
                     (
-                        'Valid raw-pixel scalar shape: {"x":'
+                        'Valid relative-coordinate scalar shape: {"x":'
                         f'{center_x},"y":{center_y},"x1":{center_x},'
                         f'"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
                         '}. Invalid array shape: {"x":[500],"y":[464],"x1":[500,800]}.'
@@ -584,11 +594,7 @@ def _turn_text(
                 )
             )
     raw_extra = state.get("extra")
-    extra = (
-        screen_context_to_pixels(raw_extra, display)
-        if isinstance(raw_extra, dict)
-        else raw_extra
-    )
+    extra = deepcopy(raw_extra) if isinstance(raw_extra, dict) else raw_extra
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)

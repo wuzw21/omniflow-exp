@@ -1,12 +1,9 @@
 from omniflow.core.config import DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
-def test_v2_planner_prompt_uses_raw_target_pixels() -> None:
-    assert "raw pixels" in DEFAULT_PLANNER_SYSTEM_PROMPT
-    assert (
-        "never output normalized 0..1000 coordinates"
-        in DEFAULT_PLANNER_SYSTEM_PROMPT
-    )
+def test_v2_planner_prompt_uses_device_independent_coordinates() -> None:
+    assert "relative 0..1000 coordinates" in DEFAULT_PLANNER_SYSTEM_PROMPT
+    assert "XML bounds remain raw pixels" in DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
 def test_v2_planner_prompt_preserves_function_fallback() -> None:

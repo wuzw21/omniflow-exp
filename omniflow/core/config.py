@@ -22,9 +22,10 @@ DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
     "Continue the user's complete goal from the current screen by choosing exactly "
-    "one provided GUI tool. Use raw pixels in the current original Display coordinate "
-    "frame; never output normalized 0..1000 coordinates. XML bounds use the same raw "
-    "frame, and transport image resizing does not change it. Call finished only "
+    "one provided GUI tool. Use device-independent relative 0..1000 coordinates on "
+    "each axis. XML bounds remain raw pixels in the current original Display frame, "
+    "so convert their centers to the relative frame. Transport image resizing does "
+    "not change the relative frame. Call finished only "
     "after the complete goal is visibly satisfied. Every coordinate is one scalar "
     "number, never an array, object, or combined coordinate pair. "
     "For open_app, use the exact "
