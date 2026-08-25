@@ -24,10 +24,52 @@ from src.integrations.android_world.run_episode import (
 from src.integrations.runlog import (
     adapt_source_run_log,
     convert_legacy_run_log,
+    infer_input_text_target,
     import_run_log,
     import_run_log_evidence,
     project_androidworld_step_actions,
 )
+
+
+def test_input_text_target_survives_scroll_revealing_more_editable_fields() -> None:
+    before = (
+        '<hierarchy><node class="android.widget.EditText" text="Title" '
+        'resource-id="recipe_title" editable="true" /></hierarchy>'
+    )
+    after = (
+        '<hierarchy><node class="android.widget.EditText" text="Soup" '
+        'resource-id="recipe_title" editable="true" />'
+        '<node class="android.widget.EditText" text="Categories" '
+        'resource-id="recipe_categories" editable="true" />'
+        '<node class="android.widget.EditText" text="Description" '
+        'resource-id="recipe_description" editable="true" /></hierarchy>'
+    )
+
+    assert infer_input_text_target(before, after, input_text="Soup") == {
+        "input_ordinal": 0,
+        "identity": {"text": "Title", "resource_id": "recipe_title"},
+    }
+
+
+def test_input_text_target_survives_scroll_hiding_other_editable_fields() -> None:
+    before = (
+        '<hierarchy><node class="android.widget.EditText" text="Source" '
+        'resource-id="recipe_source" editable="true" />'
+        '<node class="android.widget.EditText" text="Ingredients" '
+        'resource-id="recipe_ingredients" editable="true" /></hierarchy>'
+    )
+    after = (
+        '<hierarchy><node class="android.widget.EditText" text="adjustable" '
+        'resource-id="recipe_ingredients" editable="true" /></hierarchy>'
+    )
+
+    assert infer_input_text_target(before, after, input_text="adjustable") == {
+        "input_ordinal": 1,
+        "identity": {
+            "text": "Ingredients",
+            "resource_id": "recipe_ingredients",
+        },
+    }
 
 
 def test_runlog_import_recovers_missing_display_from_fullscreen_xml() -> None:

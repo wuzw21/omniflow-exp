@@ -57,21 +57,53 @@ def infer_input_text_target(
 
     before_inputs = input_nodes(before_root)
     after_inputs = input_nodes(after_root)
-    if not before_inputs or len(before_inputs) != len(after_inputs):
+    if not before_inputs or not after_inputs:
         return {}
 
     expected = " ".join(str(input_text or "").casefold().split())
-    changed: list[int] = []
-    for index, (before, after) in enumerate(
-        zip(before_inputs, after_inputs, strict=True)
-    ):
-        before_text = " ".join(str(before.attrib.get("text") or "").casefold().split())
-        after_text = " ".join(str(after.attrib.get("text") or "").casefold().split())
+    stable_changed: list[int] = []
+    after_by_resource_id: dict[str, list[ET.Element]] = {}
+    for node in after_inputs:
+        resource_id = str(node.attrib.get("resource-id") or "").strip()
+        if resource_id:
+            after_by_resource_id.setdefault(resource_id, []).append(node)
+    for index, before in enumerate(before_inputs):
+        resource_id = str(before.attrib.get("resource-id") or "").strip()
+        matches = after_by_resource_id.get(resource_id) or []
+        if not resource_id or len(matches) != 1:
+            continue
+        after = matches[0]
+        before_text = " ".join(
+            str(before.attrib.get("text") or "").casefold().split()
+        )
+        after_text = " ".join(
+            str(after.attrib.get("text") or "").casefold().split()
+        )
         if before_text == after_text:
             continue
         if expected and expected not in after_text:
             continue
-        changed.append(index)
+        stable_changed.append(index)
+    if len(stable_changed) == 1:
+        changed = stable_changed
+    elif len(before_inputs) != len(after_inputs):
+        return {}
+    else:
+        changed = []
+        for index, (before, after) in enumerate(
+            zip(before_inputs, after_inputs, strict=True)
+        ):
+            before_text = " ".join(
+                str(before.attrib.get("text") or "").casefold().split()
+            )
+            after_text = " ".join(
+                str(after.attrib.get("text") or "").casefold().split()
+            )
+            if before_text == after_text:
+                continue
+            if expected and expected not in after_text:
+                continue
+            changed.append(index)
     if len(changed) != 1:
         return {}
 
