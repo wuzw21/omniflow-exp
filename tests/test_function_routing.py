@@ -1925,6 +1925,7 @@ def test_bridge_planner_uses_unified_short_decision_policy() -> None:
     assert "When you choose a projected native XML node" in SYSTEM_PROMPT
     assert "does not apply\nto WebView or screenshot-only visual targets" in SYSTEM_PROMPT
     assert "do not repeat the same coordinates" in SYSTEM_PROMPT
+    assert "visible numeric keypad" in SYSTEM_PROMPT
 
 
 def test_clicking_unique_projected_native_node_uses_bounds_center() -> None:
