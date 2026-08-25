@@ -37,6 +37,7 @@ from src.experiment.protocol import (
 
 
 OOB_PACKAGE = "cn.com.omnimind.bot.debug"
+OOB_VERSION = "0.5.8.16"
 OOB_ACTIVITY = "cn.com.omnimind.bot.activity.LauncherActivity"
 OOB_REQUIRED_RECEIVERS = {
     ".DebugOmniFlowControlReceiver": "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW",
@@ -431,7 +432,6 @@ def _find_oob_apk(repo: Path, workspace_root: Path, asset_root: Path) -> Path | 
             repo / "runtime" / "assets" / "oob-x86_64-debug.apk",
             asset_root / "runtime" / "assets" / "oob-x86_64-debug.apk",
             workspace_root / "OpenOmniBot" / "app" / "build" / "outputs" / "apk" / "developStandard" / "debug" / "app-develop-standard-debug.apk",
-            workspace_root / "oob-downloads" / "v0.5.8.4" / "OpenOmniBot-v0.5.8.4-develop-standard-debug.apk",
             workspace_root / "releases" / "OmniFlow-mobilegpt-20260719" / ".artifacts" / "oob-develop-standard-debug.apk",
             workspace_root / "OmniFlow" / "runtime" / "assets" / "oob-x86_64-debug.apk",
             workspace_root / "evals" / "_workspace_runtime_archive_20260728" / "OmniFlow-4090-20260719-v1" / "runtime" / "assets" / "oob-x86_64-debug.apk",
@@ -459,6 +459,11 @@ def _validate_apks(
     assert oob_apk is not None
     oob_badging = _aapt_text(aapt, oob_apk, "badging")
     record("oob_package", f"package: name='{OOB_PACKAGE}'" in oob_badging, oob_badging.splitlines()[0])
+    record(
+        "oob_version",
+        f"versionName='{OOB_VERSION}'" in oob_badging,
+        oob_badging.splitlines()[0],
+    )
     oob_manifest = _aapt_text(aapt, oob_apk, "xmltree")
     for receiver, action in OOB_REQUIRED_RECEIVERS.items():
         record(
@@ -627,6 +632,15 @@ def _configure_device(
     accessibility_dump = _adb(adb, serial, "shell", "dumpsys", "accessibility").stdout
     checks = [
         {"name": "oob_installed", "status": "ok" if OOB_PACKAGE in package_dump else "failed", "required": True, "detail": serial},
+        {"name": "oob_version", "status": "ok" if f"versionName={OOB_VERSION}" in package_dump else "failed", "required": True, "detail": serial},
+        {
+            "name": "oob_control_receivers",
+            "status": "ok"
+            if all(receiver.lstrip(".") in package_dump for receiver in OOB_REQUIRED_RECEIVERS)
+            else "failed",
+            "required": True,
+            "detail": serial,
+        },
         {"name": "mobilegpt_installed", "status": "ok" if MOBILEGPT_PACKAGE in mobile_dump else "failed", "required": True, "detail": serial},
         {"name": "accessibility_bound", "status": "ok" if OOB_ACCESSIBILITY_SERVICE.rsplit("/", 1)[-1] in accessibility_dump else "failed", "required": True, "detail": serial},
     ]

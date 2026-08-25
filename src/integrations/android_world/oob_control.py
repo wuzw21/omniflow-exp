@@ -18,7 +18,7 @@ CONTROL_ACTION = "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW"
 CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
 CONTROL_ACCESSIBILITY_SERVICE = (
     f"{CONTROL_PACKAGE}/"
-    "com.google.android.accessibility.selecttospeak.SelectToSpeakService"
+    "cn.com.omnimind.accessibility.service.AssistsService"
 )
 CONTROL_RECEIVER = ".DebugOmniFlowControlReceiver"
 CONTROL_RESULT_PATH = "files/debug-omniflow-control-result.json"

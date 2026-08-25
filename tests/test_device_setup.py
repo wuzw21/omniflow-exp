@@ -13,6 +13,7 @@ from src.experiment.device_setup import (
     _python_import_probe_code,
     _python_install_timeout_sec,
     _python_requirement_installs,
+    _validate_apks,
 )
 
 
@@ -43,6 +44,39 @@ def test_health_probe_uses_shared_reset_observe_contract(
         "timeout_seconds": 30,
         "repair": True,
     }
+
+
+def test_setup_rejects_stale_oob_apk_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oob_apk = tmp_path / "omnibot-oob.apk"
+    mobilegpt_apk = tmp_path / "mobilegpt.apk"
+    oob_apk.write_bytes(b"oob")
+    mobilegpt_apk.write_bytes(b"mobilegpt")
+
+    def fake_aapt(_aapt: Path, apk: Path, mode: str) -> str:
+        if apk == mobilegpt_apk:
+            return "package: name='com.example.MobileGPT'"
+        if mode == "badging":
+            return "package: name='cn.com.omnimind.bot.debug' versionName='0.5.6.1'"
+        return " ".join(
+            (
+                ".DebugOmniFlowControlReceiver",
+                "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW",
+                ".DebugOmniFlowObserveReceiver",
+                "cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW",
+            )
+        )
+
+    monkeypatch.setattr("src.experiment.device_setup._aapt_text", fake_aapt)
+
+    with pytest.raises(RuntimeError, match="oob_version"):
+        _validate_apks(
+            aapt=tmp_path / "aapt",
+            oob_apk=oob_apk,
+            mobilegpt_apk=mobilegpt_apk,
+        )
 
 
 def test_python_install_timeout_covers_official_mobilegpt_dependencies(
