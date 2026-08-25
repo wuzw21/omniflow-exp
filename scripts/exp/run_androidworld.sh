@@ -3,6 +3,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 env_file="${OMNIFLOW_ENV_FILE:-$repo/config/9207_mobilegpt.env}"
 if [[ -n "$env_file" && "$env_file" != /* ]]; then
   echo "OMNIFLOW_ENV_FILE must be an absolute path: $env_file" >&2
@@ -12,6 +13,12 @@ if [[ -n "$env_file" && -f "$env_file" ]]; then
   set -a
   source "$env_file"
   set +a
+fi
+
+# The configured provider historically called this credential LLMTHU_API_KEY;
+# MobileGPT's official OpenAI client reads the standard name.
+if [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
+  export OPENAI_API_KEY="$LLMTHU_API_KEY"
 fi
 
 # AndroidWorld physical I/O is a hard OOB contract for this checkout.
