@@ -4130,7 +4130,7 @@ def _raw_replay_xml(value: Any) -> str:
 
 
 def _raw_replay_xml_node_signature(node: ET.Element) -> tuple[str, str] | None:
-    for key in ("resource-id", "content-desc", "text"):
+    for key in ("content-desc", "text", "resource-id"):
         value = str(node.attrib.get(key) or "").strip()
         if value:
             return key, value
@@ -4693,6 +4693,7 @@ def _apply_fixed_replay(
                 )
                 if semantic_payload is not None:
                     payload = semantic_payload
+                    step_record["androidworld_action"] = dict(payload)
                     step_record["semantic_target_anchor"] = True
                     step_record["parameter_source"] = "semantic_target_anchor"
                 semantic_recovery = None
