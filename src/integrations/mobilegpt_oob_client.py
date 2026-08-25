@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 
 from PIL import Image
 
+from src.experiment.mobilegpt_contract import MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL
 from src.integrations.android_world.oob_control import OobControlClient
 
 
@@ -699,9 +700,11 @@ def run_mobilegpt_oob_client(
                 **stats,
                 "token_usage_status": "tracked" if stats["model_calls"] else "unavailable",
                 "fallback_steps": 0,
+                "oob_action_index_protocol": MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL,
                 "mobilegpt_stats_jsonl": os.environ.get("MOBILEGPT_STATS_JSONL", ""),
                 "mobilegpt_protocol": {
                     "transport": "oob_control",
+                    "action_index": MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL,
                     "server_host": str(server_host),
                     "server_port": int(server_port),
                     "task_finished": bool(result.get("task_finished")),

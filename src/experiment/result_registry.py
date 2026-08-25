@@ -15,6 +15,7 @@ import shutil
 import tempfile
 from typing import Any, Mapping
 
+from src.experiment.mobilegpt_contract import MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL
 from src.experiment.paths import safe_component, sha256_file
 from src.experiment.protocol import DEVICES, RESULT_COMMANDS_FILE
 from src.experiment.result_schema import compact_result_row
@@ -499,6 +500,12 @@ def registered_result_keys_matching_task_params(
                     or formal_result_environment_failure_reasons(detail_row)
                     or detail_row.get("runtime_integrity_error")
                     == "mobilegpt_oob_action_target_missing"
+                    or (
+                        method == "mobilegpt"
+                        and detail_row.get("official_validator_success") is False
+                        and detail_row.get("oob_action_index_protocol")
+                        != MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL
+                    )
                     or recorded_params != expected_params
                 ):
                     continue

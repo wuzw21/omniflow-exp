@@ -129,6 +129,7 @@ def _write_registered_result(
     error: str = "",
     runtime_integrity_error: str = "",
     environment_failure: bool = False,
+    oob_index_protocol: str = "",
 ) -> None:
     result = runs_root / task / method / device / attempt
     result_path = result / "registered_result.json"
@@ -162,6 +163,7 @@ def _write_registered_result(
                 "error": error,
                 "runtime_integrity_error": runtime_integrity_error,
                 "environment_failure": environment_failure,
+                "oob_action_index_protocol": oob_index_protocol,
                 "task_random_seed": evaluation_seed,
                 "max_steps": max_steps,
                 "task_params": task_params,
@@ -273,6 +275,7 @@ def test_registered_result_task_params_reject_cross_device_rng_drift(
         method="mobilegpt",
         device="small5554",
         success=False,
+        oob_index_protocol="mobilegpt_source_node_id_v1",
     )
     _write_registered_result(
         runs_root,
@@ -280,6 +283,7 @@ def test_registered_result_task_params_reject_cross_device_rng_drift(
         method="mobilegpt",
         device="fold5564",
         success=False,
+        oob_index_protocol="mobilegpt_source_node_id_v1",
     )
     fold_result = next(
         (runs_root / task / "mobilegpt" / "fold5564").glob(
@@ -324,6 +328,33 @@ def test_registered_result_task_params_reject_oob_index_mapping_failure(
         device="small5554",
         success=False,
         runtime_integrity_error="mobilegpt_oob_action_target_missing",
+        oob_index_protocol="mobilegpt_source_node_id_v1",
+    )
+
+    matched = registered_result_keys_matching_task_params(
+        runs_root=runs_root,
+        task_name=task,
+        methods=("mobilegpt",),
+        devices=("small5554",),
+        source_seed=111,
+        evaluation_seed=113,
+        task_params={"seed": 113},
+    )
+
+    assert matched == set()
+
+
+def test_registered_mobilegpt_failure_requires_oob_index_protocol(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    task = "SimpleCalendarAddRepeatingEvent"
+    _write_registered_result(
+        runs_root,
+        task=task,
+        method="mobilegpt",
+        device="small5554",
+        success=False,
     )
 
     matched = registered_result_keys_matching_task_params(
