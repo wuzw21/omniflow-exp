@@ -461,6 +461,10 @@ def registered_result_keys_matching_task_params(
 
     root = runs_root.expanduser().resolve()
     expected_params = dict(task_params)
+    # Older source-derived registrations retained the source RunLog seed as a
+    # top-level provenance field. It does not alter AndroidWorld's generated
+    # task instance and must not invalidate otherwise identical parameters.
+    expected_params.pop("seed", None)
     matched: set[tuple[str, str]] = set()
     for method in methods:
         for device in devices:
@@ -484,12 +488,16 @@ def registered_result_keys_matching_task_params(
                     ),
                     public_row,
                 )
+                recorded_params = detail_row.get("task_params")
+                if isinstance(recorded_params, dict):
+                    recorded_params = dict(recorded_params)
+                    recorded_params.pop("seed", None)
                 if (
                     str(public_row.get("method") or "") != method
                     or str(public_row.get("device") or "") != device
                     or not has_official_validator_conclusion(detail_row)
                     or formal_result_environment_failure_reasons(detail_row)
-                    or detail_row.get("task_params") != expected_params
+                    or recorded_params != expected_params
                 ):
                     continue
                 expected_model = (device_models or {}).get(device)

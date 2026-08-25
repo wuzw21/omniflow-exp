@@ -287,7 +287,10 @@ def test_registered_result_task_params_reject_cross_device_rng_drift(
         )
     )
     fold_payload = json.loads(fold_result.read_text(encoding="utf-8"))
-    fold_payload["rows"][0]["task_params"] = {"seed": "thread-raced"}
+    fold_payload["rows"][0]["task_params"] = {
+        "seed": 1859998934,
+        "event_title": "thread-raced",
+    }
     _write_json(fold_result, fold_payload)
     fold_manifest = fold_result.with_name("registration_manifest.json")
     manifest_payload = json.loads(fold_manifest.read_text(encoding="utf-8"))
@@ -303,7 +306,7 @@ def test_registered_result_task_params_reject_cross_device_rng_drift(
         devices=("small5554", "fold5564"),
         source_seed=111,
         evaluation_seed=113,
-        task_params={"seed": 1859998934},
+        task_params={"seed": 113},
     )
 
     assert matched == {("mobilegpt", "small5554")}
