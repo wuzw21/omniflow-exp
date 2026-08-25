@@ -554,19 +554,7 @@ class OmniFlow:
                 observation = replay.final_state or observation
                 if replay.success:
                     function_session.mark_completed()
-                    return finish(
-                        True,
-                        profile=profile,
-                        trace=trace,
-                        function_id=function_session.selected_id,
-                        actions_executed=actions_executed,
-                        model_calls=model_calls,
-                        llm_usage=llm_usage,
-                        fallback_steps=fallback_steps,
-                        final_state=observation,
-                        planner_diagnostics=planner_diagnostics,
-                        terminal_detail={"done_reason": "function_completed"},
-                    )
+                    previous_action_error = None
                 else:
                     function_session.mark_failed(replay, observation)
                     previous_action_error = replay.error or "function_replay_failed"
@@ -733,21 +721,9 @@ class OmniFlow:
                     if replay.success:
                         resume_event["status"] = "succeeded"
                         function_session.mark_completed()
-                        return finish(
-                            True,
-                            profile=profile,
-                            trace=trace,
-                            function_id=function_session.selected_id,
-                            actions_executed=actions_executed,
-                            model_calls=model_calls,
-                            llm_usage=llm_usage,
-                            fallback_steps=fallback_steps,
-                            final_state=observation,
-                            planner_diagnostics=planner_diagnostics,
-                            terminal_detail={
-                                "done_reason": "function_completed_after_resume"
-                            },
-                        )
+                        last_error = "function_replay_completed_e2e_unverified"
+                        previous_action_error = None
+                        previous_action = None
                     else:
                         resume_event["status"] = "failed"
                         resume_event["error"] = (
@@ -1048,6 +1024,19 @@ def _execution_history(
     limit: int = 3,
 ) -> str:
     lines = ["Action execution history on the target device:"]
+    completed_function_steps: list[dict[str, Any]] = []
+    other_steps: list[dict[str, Any]] = []
+    for step in trace:
+        metadata = step.get("metadata") if isinstance(step, dict) else None
+        function_id = (
+            str(metadata.get("function_id") or "").strip()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if completed_function is not None and function_id == completed_function.id:
+            completed_function_steps.append(step)
+        else:
+            other_steps.append(step)
     if completed_function is not None:
         lines.extend(
             [
@@ -1059,9 +1048,14 @@ def _execution_history(
                     "Function core result: "
                     f"{_function_core_description(completed_function)}"
                 ),
+                "Completed Function action plan (already executed):",
             ]
         )
-    recent_trace = trace[-max(1, int(limit)) :]
+    recent_trace = (
+        completed_function_steps + other_steps[-max(1, int(limit)) :]
+        if completed_function is not None
+        else trace[-max(1, int(limit)) :]
+    )
     for fallback_index, step in enumerate(recent_trace, start=1):
         if not isinstance(step, dict):
             continue
@@ -1107,16 +1101,17 @@ def _execution_history(
     lines.extend(
         [
             (
-                "This history records tool execution only, not independent task "
-                "validation."
+                "Now perform a manual completion review: compare the user goal, "
+                "the completed Function result, and the current UI."
             ),
             (
-                "Before making any further Action, verify whether the complete "
-                "user goal is already satisfied."
+                "If the goal is satisfied, call `finished`. If it is not, choose "
+                "exactly one next Action and state the specific missing goal "
+                "condition in that Action's summary."
             ),
             (
-                "Do not repeat successful Actions. If the goal is complete, "
-                "call `finished`."
+                "Do not repeat any completed Function Action, navigate backward "
+                "merely to verify it, or re-open an already completed path."
             ),
         ]
     )

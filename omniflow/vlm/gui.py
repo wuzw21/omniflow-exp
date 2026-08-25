@@ -487,13 +487,13 @@ def _turn_text(
         execution_history = str(context.pop("execution_history", "") or "").strip()
         if has_successful_function_action(context):
             lines.append(
-                "The previous recalled Function tool call finished all of its "
-                "actions successfully. Those actions are already applied. Judge "
-                "the complete user goal from the current accessibility state. "
-                "Choose finished only if the whole goal is satisfied; otherwise "
-                "choose exactly one next tool. Never repeat or toggle the last "
-                "successful action merely to verify it, because that can undo the "
-                "completed operation."
+                "The recalled Function action plan finished successfully and its "
+                "effects are already applied. Manually judge the complete user "
+                "goal from the Function history and current accessibility state. "
+                "If satisfied, choose finished. Otherwise choose exactly one next "
+                "tool and use its summary to name the specific missing goal "
+                "condition. Never repeat a completed Function step or navigate "
+                "backward merely to verify it."
             )
         if context.get("previous_action_error") or context.get("recent_actions"):
             lines.append(
