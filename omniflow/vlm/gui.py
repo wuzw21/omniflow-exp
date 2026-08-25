@@ -222,6 +222,18 @@ def parse_model_turn_response(
         if isinstance(item, dict) and isinstance(item.get("function"), dict)
     }
     function_catalog = {function.id: function for function in functions}
+    if not tool and len(function_catalog) == 1:
+        only_function = next(iter(function_catalog.values()))
+        if (
+            only_function.agent_visible
+            and only_function.steps
+            and only_function.steps[0].action.tool == "open_app"
+        ):
+            # Some OpenAI-compatible streaming gateways preserve the sole tool
+            # call but omit its function name.  With exactly one visible global
+            # Function, the identity is unambiguous; do not infer it when the
+            # tool set contains multiple choices.
+            tool = only_function.id
     model_visible_tools.update(function_catalog)
     if tool not in model_visible_tools:
         raise ModelToolCallError(

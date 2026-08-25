@@ -1362,6 +1362,42 @@ def test_vlm_planner_does_not_retry_blank_tool() -> None:
     assert len(completions.requests) == 1
 
 
+def test_vlm_planner_binds_blank_name_to_single_global_function() -> None:
+    function = Function(
+        function_id="launch_task",
+        name="Launch task",
+        description="Open the app and begin the task.",
+        steps=(
+            FunctionStep(
+                0,
+                Action("open_app", {"package_name": "com.example.app"}),
+                "source-start",
+            ),
+        ),
+        schema_version=FUNCTION_ARTIFACT_VERSION,
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    )
+    tool_call, _ = parse_model_turn_response(
+        {
+            "requested_model": "test-model",
+            "resolved_model": "test-model",
+            "tool_calls": [
+                {"function": {"name": "", "arguments": "{}"}},
+            ],
+        },
+        requested_model="test-model",
+        turn_index=1,
+        functions=(function,),
+    )
+
+    assert tool_call.name == "launch_task"
+
+
 def test_vlm_planner_does_not_retry_invalid_open_app_package() -> None:
     completions = SequenceCompletions(
         [
