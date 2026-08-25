@@ -2,6 +2,7 @@
   "schema_version": "omniflow.androidworld.formal_protocol.v1",
   "description": "The single formal AndroidWorld experiment configuration.",
   "protocol": {
+    "task": "SystemBluetoothTurnOn",
     "methods": [
       "fixed_replay",
       "omniflow",
