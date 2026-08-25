@@ -23,6 +23,7 @@ from typing import Any
 from omniflow.core.trajectory import canonicalize_run_log as import_run_log
 from src.integrations.appagent import is_memory_manifest_valid
 from src.integrations.android_world.oob_control import (
+    CONTROL_ACCESSIBILITY_SERVICE as OOB_ACCESSIBILITY_SERVICE,
     CONTROL_PACKAGE as OOB_PACKAGE,
     OobControlClient,
 )
@@ -45,10 +46,6 @@ REQUIRED_DISTRIBUTION_VERSIONS = {"android-env": "1.2.3"}
 # experiments.  The legacy AndroidWorld forwarder and MobileGPT client may be
 # installed as dependency artifacts, but preflight must actively remove them
 # from the enabled service list so they cannot contend with OOB.
-OOB_ACCESSIBILITY_SERVICE = (
-    "cn.com.omnimind.bot.debug/"
-    "cn.com.omnimind.accessibility.service.AssistsService"
-)
 LEGACY_ACCESSIBILITY_SERVICES = (
     "com.google.androidenv.accessibilityforwarder/com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
     "com.example.MobileGPT/.MobileGPTAccessibilityService",

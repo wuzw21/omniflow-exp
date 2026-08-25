@@ -55,6 +55,9 @@ from src.integrations.android_world.environment import (
     AndroidWorldExperimentEnvironment,
 )
 from src.integrations.android_world.host import make_agent_result
+from src.integrations.android_world.oob_control import (
+    CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
+)
 from src.integrations.android_world.methods import (
     MethodAdapterContext,
     default_method_adapter_registry,
@@ -72,12 +75,6 @@ ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
     "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
 )
 OOB_CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
-OOB_CONTROL_ACCESSIBILITY_SERVICE = (
-    "cn.com.omnimind.bot.debug/"
-    "cn.com.omnimind.accessibility.service.AssistsService"
-)
-
-
 def _oob_control_accessibility_services(values: list[str]) -> list[str]:
     """Keep one deterministic accessibility stack for formal OOB execution."""
 

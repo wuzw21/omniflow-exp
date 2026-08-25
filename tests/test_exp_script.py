@@ -99,7 +99,7 @@ def test_preflight_accepts_offline_appagent_memory() -> None:
 def test_device_configuration_keeps_only_oob_experiment_service(monkeypatch) -> None:
     oob_service = (
         "cn.com.omnimind.bot.debug/"
-        "cn.com.omnimind.accessibility.service.AssistsService"
+        "com.google.android.accessibility.selecttospeak.SelectToSpeakService"
     )
     installed_services = (
         "com.google.androidenv.accessibilityforwarder/"
@@ -142,7 +142,7 @@ def test_device_configuration_accepts_label_only_bound_service_dump(
 ) -> None:
     oob_service = (
         "cn.com.omnimind.bot.debug/"
-        "cn.com.omnimind.accessibility.service.AssistsService"
+        "com.google.android.accessibility.selecttospeak.SelectToSpeakService"
     )
 
     def fake_run(command, timeout=10):
@@ -155,7 +155,7 @@ def test_device_configuration_accepts_label_only_bound_service_dump(
         ]:
             output = oob_service
         elif "dumpsys" in command and "package" in command:
-            output = "AssistsService"
+            output = "SelectToSpeakService"
         elif "dumpsys" in command:
             output = (
                 "Bound services:{Service[label=Omnibot]}\n"

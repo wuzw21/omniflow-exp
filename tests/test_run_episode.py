@@ -109,11 +109,11 @@ def test_oob_control_uses_only_formal_accessibility_services() -> None:
             "com.google.androidenv.accessibilityforwarder/Service",
             "com.example.unrelated/LegacyService",
             "cn.com.omnimind.bot.debug/"
-            "cn.com.omnimind.accessibility.service.AssistsService",
+            "com.google.android.accessibility.selecttospeak.SelectToSpeakService",
         ]
     ) == [
         "cn.com.omnimind.bot.debug/"
-        "cn.com.omnimind.accessibility.service.AssistsService",
+        "com.google.android.accessibility.selecttospeak.SelectToSpeakService",
     ]
 
 
