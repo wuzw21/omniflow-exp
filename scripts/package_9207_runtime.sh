@@ -29,10 +29,9 @@ verify_checksums() {
 }
 
 build_release() {
-  local omni_root home_root transfer_root checkpoint oob_apk
+  local omni_root transfer_root checkpoint oob_apk
   local flow_commit transfer_commit release_id archive payload python_bin
   omni_root="${OMNI_ROOT:-$(cd "$repo/.." && pwd)}"
-  home_root="${HOME_ROOT:-$(cd "$omni_root/../.." && pwd)}"
   transfer_root="${OMNITRANSFER_ROOT:-$omni_root/OmniTransfer}"
   checkpoint="${OMNITRANSFER_MATCHER_CHECKPOINT:-$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17/model.pt}"
   oob_apk="${OMNIFLOW_OOB_APK:-$repo/data/runtime/oob/OpenOmniBot-foolproof-debug.apk}"
@@ -50,12 +49,8 @@ build_release() {
     "$payload/git/omnitransfer.bundle" codex/runtime-api
   cp "$oob_apk" "$payload/assets/oob/OpenOmniBot-foolproof-debug.apk"
   cp "$checkpoint" "$payload/assets/omnitransfer/model.pt"
-  sed \
-    -e "s|@HOME_ROOT@|$home_root|g" \
-    -e "s|@OMNI_ROOT@|$omni_root|g" \
-    -e "s|@OMNIFLOW_ROOT@|$repo|g" \
-    -e "s|@OMNITRANSFER_ROOT@|$transfer_root|g" \
-    "$repo/config/runtime.env.template" > "$payload/config/runtime.env"
+  cp "$repo/config/runtime.env.template" \
+    "$payload/config/runtime.env.template"
 
   python_bin="${PYTHON_BIN:-$repo/.venv/bin/python}"
   RELEASE_ID="$release_id" FLOW_COMMIT="$flow_commit" \
@@ -99,7 +94,7 @@ install_release() {
   local archive="$1" omni_root="$2"
   local flow_root="$omni_root/OmniFlow-exp"
   local transfer_root="$omni_root/OmniTransfer"
-  local payload legacy_config secret_config
+  local home_root payload legacy_config secret_config
   temporary="$(mktemp -d)"
   tar -xzf "$archive" -C "$temporary"
   payload="$(find "$temporary" -mindepth 1 -maxdepth 1 -type d -print -quit)"
@@ -118,8 +113,14 @@ install_release() {
     "$flow_root/data/runtime/oob/OpenOmniBot-foolproof-debug.apk"
   install -D -m 0644 "$payload/assets/omnitransfer/model.pt" \
     "$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17/model.pt"
-  install -D -m 0644 "$payload/config/runtime.env" \
-    "$flow_root/config/runtime.env"
+  home_root="$(cd "$omni_root/../.." && pwd)"
+  sed \
+    -e "s|@HOME_ROOT@|$home_root|g" \
+    -e "s|@OMNI_ROOT@|$omni_root|g" \
+    -e "s|@OMNIFLOW_ROOT@|$flow_root|g" \
+    -e "s|@OMNITRANSFER_ROOT@|$transfer_root|g" \
+    "$payload/config/runtime.env.template" > "$flow_root/config/runtime.env"
+  chmod 0644 "$flow_root/config/runtime.env"
 
   legacy_config="$flow_root/config/9207_mobilegpt.env"
   secret_config="$flow_root/config/runtime.secrets.env"
