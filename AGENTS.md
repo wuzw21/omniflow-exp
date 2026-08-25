@@ -76,7 +76,7 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 ## OmniTransfer 合同
 
 - OmniTransfer 的 canonical checkout 永远是 `~/Projects/Omni/OmniTransfer`。
-- 页面命中只用 `omniflow/transfer/embedding.py`：canonical `UIGraph` 节点经原生手工 64D 表示和 8-word pooling 形成 512D `PageEncoder`；OmniTransfer runtime 仍负责动作映射。
+- 页面命中只用 `omniflow/transfer/embedding.py`：它调用 canonical OmniTransfer V10 `omnitransfer_point_conditioned_sparse_graph_v10` 统一模型的学习式 page-attention readout，输出归一化 1024D `PageEncoder`；不保留手工 64D、8-word pooling、512D 或第二 page encoder。动作映射仍只由 canonical OmniTransfer 统一 matcher runtime 负责。
 - 映射失败是明确的 transfer failure，回到正常 Planner/VLM fallback；绝不执行 source 坐标。
 - 禁止 resource-id/node-id lookup、坐标 passthrough、第二 page encoder、第二 action mapper。
 - checker 是独立共享库，可跨 Function 使用；一个 RunLog 可注册并按顺序执行多个 Function。

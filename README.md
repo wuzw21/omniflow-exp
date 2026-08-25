@@ -38,6 +38,8 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory /path/to/output-memory
 ```
 
-OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`。
+OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`，页面检索统一调用
+V10 `omnitransfer_point_conditioned_sparse_graph_v10` 模型的归一化 1024D
+page-attention readout；不维护第二套页面编码器或旧 64D/512D 表示。
 
 架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。
