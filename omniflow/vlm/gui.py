@@ -130,7 +130,12 @@ def build_model_turn_request(
     include_images = not lightweight_retry
     current_image = _state_image_data_uri(state) if include_images else ""
     if current_image:
-        content.append({"type": "image_url", "image_url": {"url": current_image}})
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": current_image, "detail": "low"},
+            }
+        )
     display = state.get("display") if isinstance(state.get("display"), dict) else None
     global_functions = tuple(
         function

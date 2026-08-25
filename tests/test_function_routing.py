@@ -1808,6 +1808,7 @@ def test_function_completion_review_keeps_final_screenshot_and_checked_state() -
 
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["detail"] == "low"
     assert '"checked":false' in content[0]["text"]
     assert "Those actions are already applied" in content[0]["text"]
     assert "Never repeat or toggle" in content[0]["text"]
@@ -1868,6 +1869,7 @@ def test_vlm_planner_function_completion_review_uses_final_screenshot() -> None:
     request = completions.requests[0]
     content = request["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["detail"] == "low"
     turn_text = content[0]["text"]
     assert '"checked":false' in turn_text
     assert "Never repeat or toggle" in turn_text
