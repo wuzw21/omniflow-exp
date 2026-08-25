@@ -4,21 +4,22 @@
 AndroidWorld 实验结果仍以运行结果、官方 validator 和独立实验工作簿为准；
 离线转换测试不占用、也不填充实验 cell。
 
-## 2026-08-23：RunLog 约束的官方 authoring
+## 2026-08-25：RunLog 到官方 Memory schema 的机械转换
 
-- 状态：完成离线实现与 focused tests；未启动模拟器，未执行真实任务。
+- 状态：完成离线实现与 focused tests；本流程不启动模拟器，不执行实时任务。
 - 输入：完整且 official validator 成功的 AndroidWorld RunLog。
-- authoring：继续调用 MobileGPT 官方 Server、Agent、Memory、XML encoder 和
-  reader；在官方 prompt 的 user-message 边界追加当前 RunLog 的权威动作证据。
-- 保存条件：官方执行流实际发出的动作必须与源 RunLog 逐步对齐。`click` 等
-  动作严格比较目标 index；`scroll` 允许官方补充执行所需的容器 index，但
-  动作类型和方向不得改变。
-- 失败条件：模型改选目标、改选动作、提前 `finish`、生成额外设备动作，或
-  保存后 reader 回读不一致时，转换失败且不能封存为可用 Memory。
-- 空响应：有限重试仍携带同一条 RunLog teacher evidence，不会退回无约束 prompt。
-- 离线验证：7 个 focused tests 通过，其中包含真实官方 Server/Agent/Memory
-  代码路径的 end-to-end 测试；模型与 embedding 使用本地测试 provider，未调用
-  外部 API。
+- 转换：不调用 Explore/Select/Derive，也不重新规划动作；RunLog 的每个已验证
+  transition 映射为 MobileGPT 官方 action/subtask，页面通过官方 XML encoder，
+  memory 通过官方 `Memory`/`PageManager` API 保存。
+- schema 约束：`click`、`double_tap`、`long_press`、`input_text`、`scroll/swipe`
+  和 `navigate_back` 分别映射到官方 action 名称；滚动动作必须带官方 scroll
+  container `index`。`input_text` 保留 RunLog 的 concrete 文本，因为官方
+  `adapt_action_to_arguments` 不会展开 `input_text` 字段中的占位符。
+- 失败条件：官方 reader 无法直接读回动作、动作名/目标 index/方向/输入文本
+  与 RunLog 不一致、finish 顺序错误，或 memory 图不完整时，转换失败且不能
+  封存为可用 Memory。读回为 `examples` fallback 的记录会被审计为非 direct hit。
+- 离线验证：focused tests 覆盖官方 Memory 写入、reader 读回、输入文本和滚动
+  schema；模型调用为 0，embedding 使用测试 provider，未调用外部 API。
 
 ## 实验组登记合同
 

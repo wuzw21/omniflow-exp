@@ -1938,6 +1938,11 @@ def seal_mobilegpt_converted_memory(
         or not isinstance(validation_rows, list)
         or not validation_rows
         or any(not isinstance(row, dict) or row.get("matched") is not True for row in validation_rows)
+        or any(
+            not isinstance(row, dict)
+            or row.get("semantic_alignment") is not True
+            for row in validation_rows
+        )
         or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
         != transition_count
         or audit.get("actions_supplied_to_mobilegpt") is not True
@@ -1992,6 +1997,7 @@ def seal_mobilegpt_converted_memory(
         "generalize_action_used": True,
         "source_reader_coverage_validation": True,
         "direct_subtasks_from_runlog": True,
+        "schema_semantics_validation": True,
     }
     for audit_field, expected in required_audit.items():
         if audit.get(audit_field) != expected:

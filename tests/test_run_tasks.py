@@ -1288,19 +1288,40 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
             return None
         return {"memory_root": str(tmp_path / "registered-mobilegpt")}
 
-    captured: list[str] = []
+    captured: dict[str, object] = {}
 
-    def run(command: list[str], **_: object) -> dict[str, object]:
-        captured.extend(command)
-        return {"returncode": 0, "timed_out": False, "wall_sec": 0.1}
+    source_path = tmp_path / "source.run_log.json"
+    source_path.write_text("{}", encoding="utf-8")
+
+    def convert(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        output_root = Path(str(kwargs["output_root"]))
+        output_root.mkdir(parents=True, exist_ok=True)
+        stats_summary = output_root / "source_stats_summary.json"
+        stats_summary.write_text(
+            json.dumps({"model_calls": 0, "total_tokens": 0}),
+            encoding="utf-8",
+        )
+        return {
+            "source_stats_summary": str(stats_summary),
+            "source_wall_sec": 0.1,
+        }
 
     monkeypatch.setattr(
         "src.experiment.run_tasks.canonical_prepared_memory_from_index",
         canonical,
     )
     monkeypatch.setattr(
-        "src.experiment.run_tasks.run_logged_command",
-        run,
+        "src.experiment.run_tasks._canonical_source",
+        lambda *_args, **_kwargs: ({}, source_path, {}),
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.convert_runlog_to_mobilegpt_bundle",
+        convert,
+    )
+    monkeypatch.setattr(
+        "src.experiment.run_tasks.refresh_data_index_from_pointer",
+        lambda **_kwargs: {},
     )
     monkeypatch.setattr(
         "src.experiment.run_tasks._validate_mobilegpt_memory_for_current_source",
@@ -1316,18 +1337,9 @@ def test_mobilegpt_preparation_is_an_internal_pipeline_phase(
         deadline=Deadline(60),
     )
 
-    assert captured[:4] == [
-        str(args.python_bin),
-        "-m",
-        "src.experiment.mobilegpt_source",
-        "prepare",
-    ]
-    assert "bash" not in captured
-    assert "--prepare-mobilegpt-memory" not in captured
-    assert str(args.memory_index) in captured
-    assert "--android-world-root" in captured
-    assert "--serial" in captured
-    assert "--adb-path" in captured
+    assert captured["source_run_log"] == source_path
+    assert captured["mobilegpt_root"] == args.mobilegpt_root
+    assert captured["model"] == args.formal_model
     assert memory_root == tmp_path / "registered-mobilegpt"
     assert phase["status"] == "created"
 

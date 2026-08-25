@@ -166,10 +166,12 @@ AndroidWorld 的正式采集、手工采集和 fixed replay capture 共用 `buil
 
 `source_evidence.py` 曾经暴露 `convert_runlog_memory(method=...)`，让共享 source
 模块根据字符串选择 provider。这是已经删除的浅 seam。AppAgent 仍拥有自己的
-converter；正式 MobileGPT memory 则只能由 `mobilegpt_source.py` 在 seed 111
-source emulator 上运行官方 cold episode 后生成。历史 RunLog-direct bundle 只读，
-不进入正式调度。新增 provider 时应新增自己的 adapter，而不是把分派字符串重新
-塞回 source 层。
+converter；正式 MobileGPT memory 由 `mobilegpt_source.py` 从 seed 111 的成功
+RunLog 进入唯一的机械转换入口，并调用官方 XML encoder、Memory/PageManager API
+和 reader 验证。转换产物虽然由 OmniFlow 封存和登记，但页面、subtask、action 和
+task path 均使用 MobileGPT 官方 schema；source emulator 不是转换的必要步骤。
+历史 native cold bundle 只读，不作为当前 direct converter 的运行时输入。新增
+provider 时应新增自己的 adapter，而不是把分派字符串重新塞回 source 层。
 
 ### AndroidWorld public result row
 

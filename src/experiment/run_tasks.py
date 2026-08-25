@@ -84,8 +84,7 @@ from src.experiment.protocol import (
 )
 from src.experiment.mobilegpt_contract import (
     MOBILEGPT_EMBEDDING_MODEL,
-    MOBILEGPT_MEMORY_SCHEMA,
-    MOBILEGPT_SOURCE_METHOD,
+    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.source_records import CanonicalRunLog
 from src.integrations.mobilegpt import (
@@ -94,6 +93,7 @@ from src.integrations.mobilegpt import (
 from src.integrations.runlog import project_androidworld_step_actions
 from src.integrations.skilldroid_replay import compile_droidrun_macro
 from src.integrations.official_forward import validate_autodroid_memory_root
+from src.experiment.mobilegpt_source import convert_runlog_to_mobilegpt_bundle
 
 
 @contextmanager
@@ -1480,9 +1480,11 @@ def _validate_prepared_mobilegpt_memory(
         raise ValueError(
             f"mobilegpt_source_memory_manifest_invalid:{manifest_path}"
         ) from error
+    schema_version = str(manifest.get("schema_version") or "")
+    expected_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA.get(schema_version)
     if (
-        manifest.get("schema_version") != MOBILEGPT_MEMORY_SCHEMA
-        or manifest.get("source_method") != MOBILEGPT_SOURCE_METHOD
+        expected_source_method is None
+        or str(manifest.get("source_method") or "") != expected_source_method
         or str(manifest.get("task_name") or "") != str(task_name)
     ):
         raise ValueError(
@@ -1503,7 +1505,7 @@ def _validate_prepared_mobilegpt_memory(
         task_name=str(task_name),
         source_seed=SOURCE_SEED,
         source_run_log=source_path,
-        expected_source_method=MOBILEGPT_SOURCE_METHOD,
+        expected_source_method=expected_source_method,
     )
     return {
         "task_name": str(task_name),
@@ -1610,76 +1612,40 @@ def prepare_mobilegpt_memory(
             "memory_validation": validation,
         }
     output_root = attempt_root / "assets" / "mobilegpt"
-    source_index = args.memory_index
-    _, source_serial, source_console_port = args.source_device
-    prepare_timeout_sec = max(
-        1,
-        min(
-            TASK_DEADLINE_SEC,
-            int(deadline.remaining(TASK_DEADLINE_SEC)),
+    _, source_path, _ = _canonical_source(
+        args.memory_index,
+        args.task,
+        require_protocol_seed=True,
+    )
+    conversion = convert_runlog_to_mobilegpt_bundle(
+        source_run_log=source_path,
+        mobilegpt_root=args.mobilegpt_root,
+        output_root=output_root,
+        model=args.formal_model,
+        embedding_model=(
+            str(os.environ.get("MOBILEGPT_EMBEDDING_MODEL") or "")
+            or MOBILEGPT_EMBEDDING_MODEL
         ),
     )
-    result = run_logged_command(
-        [
-            str(args.python_bin),
-            "-m",
-            "src.experiment.mobilegpt_source",
-            "prepare",
-            "--index",
-            str(source_index),
-            "--task",
-            args.task,
-            "--mobilegpt-root",
-            str(args.mobilegpt_root),
-            "--android-world-root",
-            str(args.android_world_root),
-            "--output-root",
-            str(output_root),
-            "--model",
-            args.formal_model,
-            "--memory-index",
-            str(args.memory_index),
-            "--serial",
-            str(source_serial),
-            "--console-port",
-            str(source_console_port),
-            "--adb-path",
-            str(args.adb_path),
-            "--max-steps",
-            str(args.max_steps),
-            "--timeout-sec",
-            str(prepare_timeout_sec),
-            "--wait-finish-timeout-sec",
-            str(prepare_timeout_sec),
-        ],
-        cwd=args.repo,
-        environment=dict(os.environ),
-        log_path=attempt_root / "prep" / "mobilegpt.log",
-        timeout_sec=deadline.remaining(prepare_timeout_sec),
+    stats_summary_path = Path(str(conversion["source_stats_summary"])).resolve()
+    stats_summary = json.loads(stats_summary_path.read_text(encoding="utf-8"))
+    refresh_data_index_from_pointer(
+        memory_index=args.memory_index,
+        additional_prepared_memory_roots=(output_root,),
+        replace_prepared_memory_roots=True,
     )
-    stats = []
-    for path in output_root.rglob("*stats.jsonl"):
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict):
-                stats.append(value)
+    result = {
+        "returncode": 0,
+        "timed_out": False,
+        "wall_sec": float(conversion.get("source_wall_sec") or 0.0),
+    }
     phase = {
         **result,
         "status": "created",
-        "model_calls": sum(
-            str(row.get("event") or "") in {"chat_call", "embedding_call"}
-            for row in stats
-        ),
-        "total_tokens": sum(int(row.get("total_tokens") or 0) for row in stats),
+        "model_calls": int(stats_summary.get("model_calls") or 0),
+        "total_tokens": int(stats_summary.get("total_tokens") or 0),
+        "conversion": conversion,
     }
-    if result["returncode"] != 0:
-        raise PipelinePhaseError(
-            f"mobilegpt_memory_prep_failed:{result['returncode']}",
-            phase,
-        )
     existing = canonical_prepared_memory_from_index(
         memory_index=args.memory_index,
         task_name=args.task,

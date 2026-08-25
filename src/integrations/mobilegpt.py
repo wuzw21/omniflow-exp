@@ -1654,6 +1654,137 @@ def _target_element(
     return candidates[0]
 
 
+def _scroll_target_element(
+    action: dict[str, Any],
+    parsed_xml: str,
+    *,
+    step_index: int,
+) -> ET.Element:
+    """Resolve the official MobileGPT scroll index from the source screen."""
+
+    try:
+        root = ET.fromstring(parsed_xml)
+    except ET.ParseError as error:
+        raise MobileGPTConversionError(
+            "mobilegpt_parsed_screen_invalid",
+            step_index=step_index,
+            error=str(error),
+        ) from error
+    indexed = [element for element in root.iter() if element.get("index") is not None]
+    candidates = [
+        element
+        for element in indexed
+        if element.tag == "scroll"
+        or str(element.get("scrollable") or "").strip().lower() == "true"
+    ]
+    point = _point(action)
+    if point is not None:
+        point_action = dict(action)
+        point_action["x"], point_action["y"] = point
+        pointed = [
+            element
+            for element in candidates
+            if _element_contains_action(element, point_action)
+        ]
+        if pointed:
+            candidates = pointed
+    if not candidates:
+        raise MobileGPTConversionError(
+            "source_scroll_target_unresolved",
+            step_index=step_index,
+            action_type=_action_type(action),
+        )
+    if len(candidates) > 1:
+        first_bounds = _bounds(candidates[0].get("bounds"))
+        second_bounds = _bounds(candidates[1].get("bounds"))
+        if first_bounds == second_bounds:
+            raise MobileGPTConversionError(
+                "source_scroll_target_ambiguous",
+                step_index=step_index,
+                candidate_count=len(candidates),
+            )
+    return candidates[0]
+
+
+def _reader_action_semantic_mismatch(
+    source_action_type: str,
+    source_action: dict[str, Any],
+    expected_action: dict[str, Any],
+    reader_action: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a mismatch when official Memory changes the action meaning."""
+
+    expected_name = str(expected_action.get("name") or "").strip().lower()
+    actual_name = str(reader_action.get("name") or "").strip().lower()
+    name_aliases = {
+        "navigate_back": {"back", "go-back", "navigate_back", "press_back"},
+        "answer": {"speak"},
+    }
+    allowed_names = name_aliases.get(source_action_type, {expected_name})
+    if actual_name not in allowed_names:
+        return {
+            "reason": "action_name",
+            "expected": expected_name,
+            "actual": actual_name,
+        }
+    expected_parameters = expected_action.get("parameters")
+    actual_parameters = reader_action.get("parameters")
+    if not isinstance(expected_parameters, dict) or not isinstance(actual_parameters, dict):
+        return {
+            "reason": "action_parameters",
+            "expected": expected_parameters,
+            "actual": actual_parameters,
+        }
+    if "index" in expected_parameters and str(
+        actual_parameters.get("index")
+    ) != str(expected_parameters.get("index")):
+        return {
+            "reason": "target_index",
+            "expected": expected_parameters.get("index"),
+            "actual": actual_parameters.get("index"),
+        }
+    if expected_name == "scroll" and str(
+        actual_parameters.get("direction") or ""
+    ).strip().lower() != str(expected_parameters.get("direction") or "").strip().lower():
+        return {
+            "reason": "scroll_direction",
+            "expected": expected_parameters.get("direction"),
+            "actual": actual_parameters.get("direction"),
+        }
+    if expected_name == "repeat-click" and int(
+        actual_parameters.get("number") or 0
+    ) != int(expected_parameters.get("number") or 0):
+        return {
+            "reason": "repeat_count",
+            "expected": expected_parameters.get("number"),
+            "actual": actual_parameters.get("number"),
+        }
+    if source_action_type == "input_text":
+        expected_text = str(source_action.get("text") or "")
+        actual_text = str(
+            actual_parameters.get("input_text")
+            or actual_parameters.get("text")
+            or actual_parameters.get("value")
+            or ""
+        )
+        if actual_text != expected_text:
+            return {
+                "reason": "input_text",
+                "expected": expected_text,
+                "actual": actual_text,
+            }
+    if source_action_type == "answer":
+        expected_message = str(source_action.get("text") or "")
+        actual_message = str(actual_parameters.get("message") or "")
+        if actual_message != expected_message:
+            return {
+                "reason": "answer_message",
+                "expected": expected_message,
+                "actual": actual_message,
+            }
+    return None
+
+
 def _parameter_values(task_parameters: dict[str, Any]) -> dict[str, str]:
     parameters: dict[str, str] = {}
     for raw_name, raw_value in task_parameters.items():
@@ -1968,6 +2099,12 @@ def _mobilegpt_action_from_runlog(
                 transition.next_forest,
                 input_text=str(action.get("text") or ""),
             )
+    elif action_type in {"scroll", "swipe"}:
+        target = _scroll_target_element(
+            action,
+            parsed_xml,
+            step_index=transition.step_index,
+        )
     bindings = _action_parameter_bindings(action, target, task_parameters)
     if action_type == "click":
         converted = {"name": "click", "parameters": {"index": index}}
@@ -1998,7 +2135,13 @@ def _mobilegpt_action_from_runlog(
                 "source_swipe_direction_unresolved",
                 step_index=transition.step_index,
             )
-        converted = {"name": "scroll", "parameters": {"direction": direction}}
+        converted = {
+            "name": "scroll",
+            "parameters": {
+                "index": str(target.get("index")),
+                "direction": direction,
+            },
+        }
     elif action_type == "navigate_back":
         converted = {"name": "back", "parameters": {}}
     elif action_type == "answer":
@@ -3344,6 +3487,11 @@ def convert_runlog_to_mobilegpt_memory(
 
     started = time.monotonic()
     audit_rows: list[dict[str, Any]] = []
+    source_actions_by_step: dict[int, dict[str, Any]] = {
+        int(transition.step_index): transition.action
+        for transition in transitions
+    }
+    raw_converted_by_step: dict[int, dict[str, Any]] = {}
     # Upstream Memory deliberately stores data below ``./memory``. Keep its
     # implementation unchanged, but run it from the prepared bundle's parent
     # so ``./memory`` resolves to the requested output instead of mutating the
@@ -3534,6 +3682,23 @@ def convert_runlog_to_mobilegpt_memory(
                     raw_parameters["input_text"] = str(
                         transition.action.get("text") or ""
                     )
+            raw_converted_by_step[int(transition.step_index)] = raw_converted
+            save_subtask = deepcopy(selected_subtask)
+            if action_type == "input_text":
+                # MobileGPT's official generalize_action can replace the
+                # input payload with ``<name__-1>``, but its official
+                # adapt_action_to_arguments does not expand placeholders in
+                # the ``input_text`` field.  Keep the official subtask and
+                # Memory.save_task path, while removing only the value that
+                # would make the persisted action non-executable.
+                save_parameters = save_subtask.get("parameters")
+                if isinstance(save_parameters, dict):
+                    source_text = str(transition.action.get("text") or "")
+                    save_subtask["parameters"] = {
+                        name: value
+                        for name, value in save_parameters.items()
+                        if str(value) != source_text
+                    }
             action_example = _native_action_example(
                 instruction=trajectory["instruction"],
                 selected_subtask=selected_subtask,
@@ -3553,7 +3718,7 @@ def convert_runlog_to_mobilegpt_memory(
                 {
                     "page_index": page_index,
                     "subtask_name": subtask["name"],
-                    "subtask": selected_subtask,
+                    "subtask": save_subtask,
                     "actions": [
                         {
                             "page_index": page_index,
@@ -3770,8 +3935,24 @@ def convert_runlog_to_mobilegpt_memory(
                 source_example_fallback_count += 1
                 row["reader_resolution"] = "native_example_fallback"
             else:
+                mismatch = _reader_action_semantic_mismatch(
+                    str(row["source_action_type"]),
+                    source_actions_by_step[int(row["source_step_index"])],
+                    raw_converted_by_step[int(row["source_step_index"])],
+                    recalled,
+                )
+                if mismatch is not None:
+                    raise MobileGPTConversionError(
+                        "mobilegpt_source_reader_action_semantics_mismatch",
+                        step_index=row["source_step_index"],
+                        page_index=page_index,
+                        subtask_name=row["memory_subtask_name"],
+                        mismatch=mismatch,
+                    )
                 source_direct_hit_count += 1
                 row["reader_resolution"] = "direct_hit"
+                row["reader_action"] = recalled
+                row["semantic_alignment"] = True
             if not isinstance(finished, dict) or finished.get("name") != "finish":
                 raise MobileGPTConversionError(
                     "mobilegpt_source_finish_recall_failed",
@@ -3826,6 +4007,9 @@ def convert_runlog_to_mobilegpt_memory(
         "direct_subtasks_from_runlog": True,
         "source_direct_hit_validation": source_example_fallback_count == 0,
         "source_reader_coverage_validation": True,
+        "schema_semantics_validation": all(
+            row.get("semantic_alignment") is True for row in audit_rows
+        ),
         "launch_only": launch_only,
         "transition_count": len(transitions),
         "validated_transition_count": sum(row["consumed_transitions"] for row in audit_rows),

@@ -14,15 +14,19 @@ MOBILEGPT_NATIVE_ACTION_INDEX_PROTOCOL = (
     "mobilegpt_official_accessibility_node_id_v1"
 )
 
-# Historical RunLog-direct bundles remain readable evidence, but are not
-# selectable as formal MobileGPT source memory.
+# RunLog-direct bundles are the formal memory source: a successful RunLog is
+# mechanically persisted through MobileGPT's official Memory APIs and then
+# loaded by the official warm executor.  The native cold-episode contract is
+# retained for historical evidence only.
 MOBILEGPT_RUNLOG_MEMORY_SCHEMA = "omniflow.mobilegpt.memory.v2"
 MOBILEGPT_RUNLOG_SOURCE_METHOD = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_RUNLOG_PREP_TYPE = "mobilegpt_runlog_direct_memory"
 MOBILEGPT_RUNLOG_LEARNING_MODE = "mobilegpt_runlog_direct_conversion"
 MOBILEGPT_AUDIT_SCHEMA = "omniflow.mobilegpt.audit.v2"
 
-MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset({MOBILEGPT_MEMORY_SCHEMA})
+MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS = frozenset(
+    {MOBILEGPT_MEMORY_SCHEMA, MOBILEGPT_RUNLOG_MEMORY_SCHEMA}
+)
 MOBILEGPT_SOURCE_METHOD_BY_SCHEMA = {
     MOBILEGPT_MEMORY_SCHEMA: MOBILEGPT_SOURCE_METHOD,
     MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_RUNLOG_SOURCE_METHOD,
@@ -38,5 +42,9 @@ MOBILEGPT_LEARNING_MODE_BY_SCHEMA = {
 MOBILEGPT_AUDIT_SCHEMA_BY_SCHEMA = {
     MOBILEGPT_RUNLOG_MEMORY_SCHEMA: MOBILEGPT_AUDIT_SCHEMA,
 }
-MOBILEGPT_SUPPORTED_SOURCE_METHODS = frozenset({MOBILEGPT_SOURCE_METHOD})
-MOBILEGPT_SUPPORTED_PREP_TYPES = frozenset({MOBILEGPT_PREP_TYPE})
+MOBILEGPT_SUPPORTED_SOURCE_METHODS = frozenset(
+    {MOBILEGPT_SOURCE_METHOD, MOBILEGPT_RUNLOG_SOURCE_METHOD}
+)
+MOBILEGPT_SUPPORTED_PREP_TYPES = frozenset(
+    {MOBILEGPT_PREP_TYPE, MOBILEGPT_RUNLOG_PREP_TYPE}
+)

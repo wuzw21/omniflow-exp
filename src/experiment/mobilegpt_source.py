@@ -21,6 +21,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_MEMORY_SCHEMA,
     MOBILEGPT_RUNLOG_MEMORY_SCHEMA,
     MOBILEGPT_SOURCE_METHOD,
+    MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.paths import sha256_file
 from src.experiment.protocol import SOURCE_SEED
@@ -242,7 +243,8 @@ def validate_mobilegpt_source_memory(
     manifest_path = Path(memory_root).expanduser().resolve().parent / MOBILEGPT_MEMORY_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     schema_version = str(manifest.get("schema_version") or "")
-    if schema_version != MOBILEGPT_MEMORY_SCHEMA:
+    expected_source_method = MOBILEGPT_SOURCE_METHOD_BY_SCHEMA.get(schema_version)
+    if expected_source_method is None:
         raise ValueError("mobilegpt_source_memory_schema_invalid")
     expected_target_package = str(target_info.get("target_package") or "").strip()
     actual_target_package = str(manifest.get("target_package") or "").strip()
@@ -258,13 +260,13 @@ def validate_mobilegpt_source_memory(
         source_run_log=source_run_log,
         compatible_source_sha256s=compatible_sha256s,
         expected_model=str(model),
-        expected_source_method=MOBILEGPT_SOURCE_METHOD,
+        expected_source_method=expected_source_method,
     )
     result = {
         "schema_version": "omniflow.mobilegpt.memory-check.v2",
         "task_name": item.task,
         "source_seed": SOURCE_SEED,
-        "source_method": MOBILEGPT_SOURCE_METHOD,
+        "source_method": expected_source_method,
         "source_run_log": str(source_run_log),
         "model": str(model),
         "validated": validated,
@@ -517,7 +519,7 @@ def convert_runlog_to_mobilegpt_bundle(
     target_app: str = "",
     preflight_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Convert one valid RunLog and seal one native MobileGPT bundle."""
+    """Convert one valid RunLog into an official-schema MobileGPT bundle."""
 
     normalized_model = str(model or "").strip()
     if not normalized_model:

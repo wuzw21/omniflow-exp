@@ -139,7 +139,7 @@ rg --files -g '*.py' | sort
 | --- | --- |
 | `src/integrations/__init__.py` | 适配器包标记 |
 | `src/integrations/runlog.py` | 外部/历史 RunLog 投影；canonical loader 在 `omniflow/runlog.py` |
-| `src/integrations/mobilegpt.py` | MobileGPT Server、官方 native memory reader 与历史只读 converter；不拥有正式 source episode |
+| `src/integrations/mobilegpt.py` | MobileGPT Server、官方 XML/Memory reader 与 RunLog→official-schema converter；不拥有正式 source episode |
 | `src/integrations/mobilegpt_memory.py` | MobileGPT Prepared Memory 的统计、图检查、manifest/evidence 校验；不拥有 task 调度 |
 | `src/integrations/mobilegpt_format.py` | 只调用 MobileGPT 官方 XML Encoder；不运行、不 patch MobileGPT |
 | `src/integrations/appagent.py` | AppAgent native memory conversion/validation；不拥有执行调度 |

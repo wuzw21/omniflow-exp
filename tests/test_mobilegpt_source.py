@@ -300,12 +300,14 @@ def _write_audit(path: Path, *, matched: bool = True) -> None:
                 "direct_subtasks_from_runlog": True,
                 "source_direct_hit_validation": True,
                 "source_reader_coverage_validation": True,
+                "schema_semantics_validation": True,
                 "transition_count": 1,
                 "validated_transition_count": 1,
                 "validation_rows": [
                     {
                         "source_step_index": 0,
                         "matched": matched,
+                        "semantic_alignment": matched,
                         "consumed_transitions": 1,
                     }
                 ],
@@ -462,7 +464,7 @@ def test_converted_memory_rejects_stale_target_package(tmp_path: Path) -> None:
 
     with pytest.raises(
         ValueError,
-        match="mobilegpt_source_memory_schema_invalid",
+        match="mobilegpt_source_memory_target_package_mismatch",
     ):
         mobilegpt_source.validate_mobilegpt_source_memory(
             index_path=index,
@@ -535,7 +537,7 @@ def test_converted_memory_rejects_incomplete_trajectory(tmp_path: Path) -> None:
 
 def test_only_one_mobilegpt_contract_is_active() -> None:
     assert MOBILEGPT_SUPPORTED_MEMORY_SCHEMAS == frozenset(
-        {MOBILEGPT_MEMORY_SCHEMA}
+        {MOBILEGPT_MEMORY_SCHEMA, MOBILEGPT_RUNLOG_MEMORY_SCHEMA}
     )
     assert MOBILEGPT_SOURCE_METHOD_BY_SCHEMA[MOBILEGPT_MEMORY_SCHEMA] == (
         MOBILEGPT_SOURCE_METHOD

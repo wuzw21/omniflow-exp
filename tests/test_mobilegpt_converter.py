@@ -1009,6 +1009,38 @@ def test_direct_conversion_uses_runlog_actions_without_semantic_agents(
     assert result["official_reader_validation"]["source_direct_hit_count"] == 2
 
 
+def test_direct_conversion_uses_official_scroll_index_and_semantics(
+    tmp_path: Path,
+) -> None:
+    source = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "scroll", "direction": "down"}],
+        forests=[
+            '<hierarchy><node text="List" class="android.widget.ScrollView" '
+            'scrollable="true" bounds="[0,0][100,100]" /></hierarchy>'
+        ],
+    )
+    audit = tmp_path / "audit.json"
+    result = convert_runlog_to_mobilegpt_memory(
+        source_run_log=source,
+        mobilegpt_root=MOBILEGPT_ROOT,
+        memory_root=tmp_path / "memory",
+        stats_path=tmp_path / "stats.jsonl",
+        audit_path=audit,
+        model="unused-offline",
+        embedding_provider=lambda _screen: [0.25, 0.75],
+    )
+
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    action = payload["validation_rows"][0]["memory_action"]
+    assert action["name"] == "scroll"
+    assert action["parameters"]["index"] == "0"
+    assert action["parameters"]["direction"] == "down"
+    assert payload["validation_rows"][0]["semantic_alignment"] is True
+    assert payload["schema_semantics_validation"] is True
+    assert result["official_reader_validation"]["source_direct_hit_count"] == 1
+
+
 def test_runlog_index_click_is_grounded_from_ui_element_bounds(
     tmp_path: Path,
 ) -> None:
@@ -1212,7 +1244,10 @@ def test_conversion_grounds_coordinate_free_input_to_focused_field(
         action_rows = list(csv.DictReader(handle))
     first_action = json.loads(action_rows[0]["action"])
     assert first_action["name"] == "input"
-    assert first_action["parameters"]["input_text"] == "<input_text__-1>"
+    # MobileGPT's official reader does not expand placeholders in its
+    # input_text field; the converted memory must therefore keep the verified
+    # RunLog text concrete so warm execution cannot type the placeholder.
+    assert first_action["parameters"]["input_text"] == "5558642097"
 
 
 def test_direct_conversion_writes_official_trigger_and_extra_ui_sets(
