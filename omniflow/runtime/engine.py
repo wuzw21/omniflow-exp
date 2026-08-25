@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 import inspect
 import json
 from pathlib import Path
+import re
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from omniflow.catalog import CatalogSnapshot
 from omniflow.core.config import Experiment, OmniFlowConfig
@@ -1257,20 +1259,96 @@ def _same_entry_observation(
     """Check the semantic state at the Function mapping/execution boundary.
 
     The entry gate must reject a real UI-state change, but AndroidWorld's
-    screenshot can change while the canonical accessibility state remains the
-    same (for example, a clock tick or screenshot encoding difference).  The
-    canonical state id is therefore the authority when both observations have
-    one.  Hosts without a state id retain the strict observation comparison.
+    screenshot and volatile accessibility labels can change while the
+    interaction structure remains the same (for example, a running timer).
+    Exact state identity remains the fast path; otherwise compare a stable
+    accessibility signature before rejecting the selected Function.
     """
     if before is None or after is None:
         return False
     before_state_id = str(before.extra.get("state_id") or "").strip()
     after_state_id = str(after.extra.get("state_id") or "").strip()
-    if before_state_id or after_state_id:
-        return bool(before_state_id and after_state_id) and (
-            before_state_id == after_state_id
-        )
+    if before_state_id and before_state_id == after_state_id:
+        return True
+    before_signature = _entry_observation_signature(before)
+    after_signature = _entry_observation_signature(after)
+    if before_signature is not None and after_signature is not None:
+        return before_signature == after_signature
     return _same_observation(before, after)
+
+
+_ENTRY_TIME_VALUE = re.compile(
+    r"(?<!\d)\d{1,3}(?::\d{2}){1,2}(?:[.,]\d{1,3})?(?!\d)"
+)
+_ENTRY_NUMERIC_VALUE = re.compile(r"^[+\-]?\d+(?:[.,]\d+)?%?$")
+_ENTRY_NODE_ATTRIBUTES = (
+    "class",
+    "package",
+    "resource-id",
+    "bounds",
+    "clickable",
+    "editable",
+    "scrollable",
+    "long-clickable",
+    "checkable",
+    "checked",
+    "selected",
+    "enabled",
+    "focused",
+)
+
+
+def _entry_observation_signature(
+    observation: Observation,
+) -> tuple[Any, ...] | None:
+    xml_text = str(observation.xml or "").strip()
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    nodes: list[tuple[Any, ...]] = []
+    for element in root.iter():
+        attributes = element.attrib
+        actionable = any(
+            str(attributes.get(name) or "").strip().lower() == "true"
+            for name in (
+                "clickable",
+                "editable",
+                "scrollable",
+                "long-clickable",
+            )
+        )
+        nodes.append(
+            (
+                element.tag,
+                *(
+                    str(attributes.get(name) or "").strip()
+                    for name in _ENTRY_NODE_ATTRIBUTES
+                ),
+                _stable_entry_label(attributes.get("text"), actionable=actionable),
+                _stable_entry_label(
+                    attributes.get("content-desc"),
+                    actionable=actionable,
+                ),
+            )
+        )
+    return (
+        str(observation.package_name or "").strip(),
+        str(observation.activity_name or "").strip(),
+        tuple(nodes),
+    )
+
+
+def _stable_entry_label(value: Any, *, actionable: bool) -> str:
+    label = " ".join(str(value or "").split()).strip()
+    if not label:
+        return ""
+    normalized = _ENTRY_TIME_VALUE.sub("<time>", label)
+    if not actionable and _ENTRY_NUMERIC_VALUE.fullmatch(normalized):
+        return "<number>"
+    return normalized
 
 
 def _optional_step_index(value: Any) -> int | None:
