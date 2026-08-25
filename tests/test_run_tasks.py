@@ -840,6 +840,15 @@ def test_e2e_selection_accepts_method_and_device_lists_or_all() -> None:
     assert _e2e_devices(all_selected) == DEVICES
 
 
+def test_e2e_selection_resolves_protocol_device_labels() -> None:
+    selected = SimpleNamespace(
+        e2e_method="mobilegpt",
+        e2e_device="standard45562,tablet45554",
+    )
+
+    assert _e2e_devices(selected) == (DEVICES[0], DEVICES[2])
+
+
 def test_mobilegpt_result_children_get_isolated_server_ports(
     tmp_path: Path,
 ) -> None:

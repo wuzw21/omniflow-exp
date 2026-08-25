@@ -1897,7 +1897,13 @@ def _e2e_devices(args: argparse.Namespace) -> tuple[tuple[str, str, int], ...]:
     if isinstance(selected, tuple):
         return (selected,)
     raw_devices = tuple(value.strip() for value in str(selected).split(",") if value.strip())
-    devices = tuple(_parse_source_device(value) for value in raw_devices)
+    devices_by_label = {device[0]: device for device in allowed_devices}
+    devices = tuple(
+        devices_by_label[value]
+        if value in devices_by_label
+        else _parse_source_device(value)
+        for value in raw_devices
+    )
     known = {device[0] for device in allowed_devices}
     unknown = tuple(device[0] for device in devices if device[0] not in known)
     if unknown:
