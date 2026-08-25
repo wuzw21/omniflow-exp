@@ -5378,6 +5378,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_launch_app: Any | None = None
     original_current_activity: Any | None = None
     original_oob_validator_get_state: Any | None = None
+    oob_validator_state_owner: Any | None = None
     original_get_clipboard_contents: Any | None = None
     try:
         _add_android_world_path(android_world_root)
@@ -5600,9 +5601,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 aw_setup.adb_utils,
             )
             if _is_oob_control_backend():
+                oob_validator_state_owner = instrumented_agent.env
                 original_oob_validator_get_state = (
                     _patch_androidworld_oob_validator_state(
-                        env,
+                        oob_validator_state_owner,
                         adb_serial=str(
                             os.environ.get("ANDROID_SERIAL")
                             or f"emulator-{int(args.console_port)}"
@@ -6126,8 +6128,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             adb_utils.launch_app = original_launch_app
         if original_current_activity is not None:
             adb_utils.get_current_activity = original_current_activity
-        if original_oob_validator_get_state is not None and env is not None:
-            env.get_state = original_oob_validator_get_state
+        if (
+            original_oob_validator_get_state is not None
+            and oob_validator_state_owner is not None
+        ):
+            oob_validator_state_owner.get_state = original_oob_validator_get_state
         for controller_type, original_execute_adb_call in adb_output_patches:
             controller_type.execute_adb_call = original_execute_adb_call
         if env is not None:
