@@ -162,20 +162,20 @@ def test_oob_action_translates_mobilegpt_scroll_intent_to_physical_gesture() -> 
         {
             "tool": "swipe",
             "args": {
-                "x1": 640,
-                "y1": 600,
-                "x2": 640,
-                "y2": 200,
+                "x1": 500,
+                "y1": 750,
+                "x2": 500,
+                "y2": 250,
                 "duration_ms": 400,
             },
         },
         {
             "tool": "swipe",
             "args": {
-                "x1": 640,
-                "y1": 200,
-                "x2": 640,
-                "y2": 600,
+                "x1": 500,
+                "y1": 250,
+                "x2": 500,
+                "y2": 750,
                 "duration_ms": 400,
             },
         },
