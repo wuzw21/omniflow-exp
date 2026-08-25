@@ -2333,6 +2333,14 @@ def _run_mobilegpt_client(
             return ""
         return server_log.read_text(encoding="utf-8", errors="replace")[-20000:]
 
+    def persist_raw_logs() -> None:
+        """Preserve upstream telemetry before the episode temp tree is removed."""
+
+        if stats_path.is_file():
+            shutil.copy2(stats_path, output / "mobilegpt_stats.jsonl")
+        if server_log is not None and server_log.is_file():
+            shutil.copy2(server_log, output / "official_server.log")
+
     def finish_with_probe(
         returncode: int,
         log: str,
@@ -2356,6 +2364,7 @@ def _run_mobilegpt_client(
             log + f"\n[omniflow] {reason}\n",
             encoding="utf-8",
         )
+        persist_raw_logs()
         return returncode, episode_started
 
     while time.monotonic() < deadline:
@@ -2390,6 +2399,7 @@ def _run_mobilegpt_client(
                 encoding="utf-8",
             )
             (output / "client_log.txt").write_text(log, encoding="utf-8")
+            persist_raw_logs()
             return 0, episode_started
         if probe["client_error"] and not probe["task_started"]:
             _run_adb(
@@ -2572,6 +2582,7 @@ def run_mobilegpt_client(
             handshake_timeout_sec=handshake_timeout_sec,
             server_log_path=server_log_path,
         )
+        episode_finished = time.monotonic()
         reward = float(task.is_successful(env))
         probe_path = output / "protocol_probe.json"
         try:
@@ -2637,7 +2648,11 @@ def run_mobilegpt_client(
             "mobilegpt_native_action_index_protocol": (
                 "mobilegpt_official_accessibility_node_id_v1"
             ),
-            "mobilegpt_stats_jsonl": str(stats_path),
+            "mobilegpt_stats_jsonl": str(
+                output / "mobilegpt_stats.jsonl"
+                if (output / "mobilegpt_stats.jsonl").is_file()
+                else stats_path
+            ),
             "mobilegpt_protocol": {
                 "transport": "official_accessibility",
                 "action_index": "mobilegpt_official_accessibility_node_id_v1",
@@ -2652,7 +2667,7 @@ def run_mobilegpt_client(
             "observe_backend": "mobilegpt_official_accessibility",
             "action_backend": "mobilegpt_official_accessibility",
             "duration_ms": round(
-                (time.monotonic() - episode_started) * 1000.0,
+                (episode_finished - episode_started) * 1000.0,
                 3,
             ),
             "protocol_probe": str(probe_path),
