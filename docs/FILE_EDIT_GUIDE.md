@@ -170,6 +170,7 @@ rg --files -g '*.py' | sort
 | `schemas/oob/*.json` | 外部 wire contract；任何字段/版本修改单独 schema commit |
 | `schemas/oob/README.md` | schema 语义和禁止事项 |
 | `tools/manual_androidworld_harness.py` | 人工诊断；不能创建 formal result、刷新 index 或代替 launcher |
+| `tools/convert_runlog_to_mobilegpt_memory.py` | 离线检查 RunLog→官方 MobileGPT action schema，并调用唯一 native memory converter；不执行 episode 或设备动作 |
 | `tests/runlog_fixtures.py` | 共用 RunLog fixture |
 | `tests/test_function_*.py` | Function compiler、writer、recall 和 management 合同 |
 | `tests/test_function_store_migration.py` | 旧 Store/bundle 到新版 Store 的迁移合同；迁移行为改变时同步修改，不要把旧格式重新接回 runtime |

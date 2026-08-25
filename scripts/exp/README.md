@@ -101,6 +101,20 @@ bash scripts/exp/run_androidworld.sh \
   --prepare-mobilegpt-memory-only
 ```
 
+只审核一份 RunLog 的动作归一化和官方 MobileGPT action schema、不生成 memory：
+
+```bash
+.venv/bin/python tools/convert_runlog_to_mobilegpt_memory.py \
+  --source-run-log PATH/TO/run_log.json \
+  --mobilegpt-root PATH/TO/mobilegpt \
+  --report PATH/TO/mobilegpt_source.json \
+  --check-only
+```
+
+去掉 `--check-only` 并提供 `--output-root` 与 `--model` 后，工具调用同一个
+native converter 生成完整 memory bundle。它不是实验执行入口，不启动设备、Server
+或 AndroidWorld episode。
+
 当前 AndroidWorld target 设备：
 
 | label | serial | profile |

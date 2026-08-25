@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 import pytest
@@ -116,6 +117,190 @@ def test_legacy_launcher_click_is_normalized_to_open_app(tmp_path: Path) -> None
     ]
     assert len(trajectory["transitions"]) == 1
     assert trajectory["transitions"][0].step_index == 1
+
+
+def test_keyboard_text_run_is_coalesced_to_mobilegpt_input_text(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_4"},
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_5"},
+            {"action_type": "scroll", "direction": "down"},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" text="Search" '
+            'editable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="4" '
+            'editable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="45" '
+            'editable="true" bounds="[0,0][100,100]"/></hierarchy>',
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+
+    assert [transition.action for transition in trajectory["transitions"]] == [
+        {"action_type": "input_text", "text": "45"},
+        {"action_type": "scroll", "direction": "down"},
+    ]
+    assert trajectory["transitions"][0].step_index == 0
+
+
+def test_keyboard_paste_is_coalesced_to_mobilegpt_input_text(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_PASTE"},
+            {"action_type": "click", "x": 150, "y": 150},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" text="" '
+            'editable="true" bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="hello" '
+            'editable="true" bounds="[0,0][100,100]"/>'
+            '<node text="Send" clickable="true" bounds="[100,100][200,200]"/>'
+            '</hierarchy>',
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+
+    assert trajectory["transitions"][0].action == {
+        "action_type": "input_text",
+        "text": "hello",
+    }
+
+
+def test_keyboard_cleanup_run_with_no_semantic_text_change_is_skipped(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_DEL"},
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_MOVE_END"},
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_SLASH"},
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_A"},
+            {"action_type": "click", "x": 150, "y": 150},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" text="n/a&#10;" '
+            'resource-id="ingredients" editable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="n/" '
+            'resource-id="ingredients" editable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="n/" '
+            'resource-id="ingredients" editable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="n/" '
+            'resource-id="ingredients" editable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="n/a" '
+            'resource-id="ingredients" editable="true" '
+            'bounds="[0,0][100,100]"/>'
+            '<node text="Save" clickable="true" bounds="[100,100][200,200]"/>'
+            '</hierarchy>',
+        ],
+    )
+
+    trajectory = _load_runlog_trajectory(path)
+
+    assert [transition.action for transition in trajectory["transitions"]] == [
+        {"action_type": "click", "x": 150, "y": 150}
+    ]
+    assert trajectory["skipped_actions"] == [
+        {"step_index": 0, "action_type": "input_text_cleanup"},
+        {"step_index": 1, "action_type": "input_text_cleanup"},
+        {"step_index": 2, "action_type": "input_text_cleanup"},
+        {"step_index": 3, "action_type": "input_text_cleanup"},
+    ]
+
+
+def test_offline_converter_tool_emits_official_mobilegpt_action_schema(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [
+            {"action_type": "press_keyboard", "keycode": "KEYCODE_PASTE"},
+            {"action_type": "wait"},
+        ],
+        forests=[
+            '<hierarchy><node class="android.widget.EditText" text="" '
+            'editable="true" clickable="true" focused="true" '
+            'bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+            '<hierarchy><node class="android.widget.EditText" text="hello" '
+            'editable="true" clickable="true" focused="true" '
+            'bounds="[0,0][100,100]"/>'
+            '</hierarchy>',
+        ],
+        packages=["com.example.app", "com.example.app"],
+    )
+    report = tmp_path / "mobilegpt_source.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "tools/convert_runlog_to_mobilegpt_memory.py",
+            "--source-run-log",
+            str(path),
+            "--mobilegpt-root",
+            str(MOBILEGPT_ROOT),
+            "--report",
+            str(report),
+            "--check-only",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["ready"] is True
+    assert payload["action_type_counts"] == {"input_text": 1}
+    assert len(payload["teacher_actions"]) == 1
+    teacher = payload["teacher_actions"][0]
+    assert teacher["source_step_index"] == 0
+    assert teacher["source_action_type"] == "input_text"
+    assert teacher["required_action"]["name"] == "input"
+    assert teacher["required_action"]["parameters"]["index"].isdigit()
+    assert (
+        teacher["required_action"]["parameters"]["input_text"]
+        == "<input_text__-1>"
+    )
+
+
+def test_official_schema_preflight_reports_ungroundable_action(
+    tmp_path: Path,
+) -> None:
+    path = _write_runlog(
+        tmp_path / "source.json",
+        [{"action_type": "click", "x": 500, "y": 500}],
+        forests=[
+            '<hierarchy><node text="Only target" clickable="true" '
+            'bounds="[0,0][100,100]"/></hierarchy>'
+        ],
+    )
+
+    report = preflight_runlog_conversion(
+        path,
+        mobilegpt_root=MOBILEGPT_ROOT,
+    )
+
+    assert report["ready"] is False
+    assert report["failure_code"] == "source_action_target_unresolved"
+    assert report["failure_details"] == {
+        "step_index": 0,
+        "action_type": "click",
+    }
 
 
 def test_preflight_accepts_compact_bmoca_runlog_with_state_catalog(
@@ -441,7 +626,7 @@ def test_preflight_exposes_authoritative_mobilegpt_teacher_actions(
             "source_action_type": "click",
             "required_action": {
                 "name": "click",
-                "parameters": {"index": "1"},
+                "parameters": {"index": "0"},
             },
             "target_label": "Stopwatch",
         }
@@ -652,14 +837,14 @@ def test_official_authoring_prompt_preserves_runlog_action_end_to_end(
     assert payload["teacher_action_alignment_complete"] is True
     assert payload["validation_rows"][0]["expected_action"] == {
         "name": "click",
-        "parameters": {"index": "1"},
+        "parameters": {"index": "0"},
     }
     assert payload["validation_rows"][0]["actual_action"] == payload[
         "validation_rows"
     ][0]["expected_action"]
     assert payload["validation_rows"][1]["expected_action"] == {
         "name": "click",
-        "parameters": {"index": "2"},
+        "parameters": {"index": "1"},
     }
     assert payload["validation_rows"][1]["actual_action"] == payload[
         "validation_rows"

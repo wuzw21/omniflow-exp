@@ -556,6 +556,145 @@ def _observation_for_step(step: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _keyboard_input_text_change(
+    before_observation: dict[str, Any],
+    after_observation: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Recover one editable field's text change from source XML evidence."""
+
+    before_xml = androidworld_observation_xml(before_observation)
+    after_xml = androidworld_observation_xml(after_observation)
+    try:
+        before_root = ET.fromstring(before_xml)
+        after_root = ET.fromstring(after_xml)
+    except ET.ParseError:
+        return None
+
+    def editable_nodes(root: ET.Element) -> list[ET.Element]:
+        return [
+            node
+            for node in root.iter()
+            if str(node.get("editable") or "").casefold() == "true"
+            or str(node.get("class") or "") == "android.widget.EditText"
+        ]
+
+    before_inputs = editable_nodes(before_root)
+    after_inputs = editable_nodes(after_root)
+    if not before_inputs or not after_inputs:
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    after_by_resource_id: dict[str, list[ET.Element]] = {}
+    for node in after_inputs:
+        resource_id = str(node.get("resource-id") or "").strip()
+        if resource_id:
+            after_by_resource_id.setdefault(resource_id, []).append(node)
+    for before in before_inputs:
+        resource_id = str(before.get("resource-id") or "").strip()
+        matches = after_by_resource_id.get(resource_id) or []
+        if not resource_id or len(matches) != 1:
+            continue
+        before_text = str(before.get("text") or "")
+        after_text = str(matches[0].get("text") or "")
+        if before_text != after_text:
+            candidates.append((before_text, after_text))
+
+    if not candidates and len(before_inputs) == len(after_inputs) == 1:
+        before_text = str(before_inputs[0].get("text") or "")
+        after_text = str(after_inputs[0].get("text") or "")
+        if before_text != after_text:
+            candidates.append((before_text, after_text))
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def _coalesce_legacy_keyboard_steps(
+    raw_steps: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Project evidenced keyboard text runs into MobileGPT's input_text schema."""
+
+    projected: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    ordinal = 0
+    while ordinal < len(raw_steps):
+        raw_step = raw_steps[ordinal]
+        action = raw_step.get("action") if isinstance(raw_step, dict) else None
+        normalized = (
+            _normalize_androidworld_source_action(action)
+            if isinstance(action, dict)
+            else {}
+        )
+        if _action_type(normalized) != "press_keyboard":
+            projected.append(raw_step)
+            ordinal += 1
+            continue
+
+        end = ordinal
+        while end + 1 < len(raw_steps):
+            next_action = raw_steps[end + 1].get("action")
+            if not isinstance(next_action, dict):
+                break
+            next_normalized = _normalize_androidworld_source_action(next_action)
+            if _action_type(next_normalized) != "press_keyboard":
+                break
+            end += 1
+
+        before_observation = _observation_for_step(raw_step)
+        terminal_step = raw_steps[end]
+        after_observation = terminal_step.get("next_observation")
+        if not isinstance(after_observation, dict) and end + 1 < len(raw_steps):
+            after_observation = _observation_for_step(raw_steps[end + 1])
+        text_change = (
+            _keyboard_input_text_change(before_observation, after_observation)
+            if isinstance(after_observation, dict)
+            else None
+        )
+        if text_change is None:
+            projected.extend(raw_steps[ordinal : end + 1])
+            ordinal = end + 1
+            continue
+
+        before_text, after_text = text_change
+        before_semantic = " ".join(before_text.casefold().split())
+        after_semantic = " ".join(after_text.casefold().split())
+        if before_semantic == after_semantic:
+            skipped.extend(
+                {
+                    "step_index": int(
+                        step.get("step_index", source_ordinal)
+                    ),
+                    "action_type": "input_text_cleanup",
+                }
+                for source_ordinal, step in enumerate(
+                    raw_steps[ordinal : end + 1],
+                    start=ordinal,
+                )
+            )
+            ordinal = end + 1
+            continue
+
+        synthetic = dict(raw_step)
+        synthetic["action"] = {
+            "action_type": "input_text",
+            "text": after_text,
+        }
+        synthetic["next_observation"] = after_observation
+        projected.append(synthetic)
+        skipped.extend(
+            {
+                "step_index": int(step.get("step_index", source_ordinal)),
+                "action_type": "press_keyboard_coalesced",
+            }
+            for source_ordinal, step in enumerate(
+                raw_steps[ordinal + 1 : end + 1],
+                start=ordinal + 1,
+            )
+        )
+        ordinal = end + 1
+    return projected, skipped
+
+
 def _action_type(action: dict[str, Any]) -> str:
     return str(action.get("action_type") or action.get("type") or "").strip()
 
@@ -681,7 +820,10 @@ def _load_runlog_trajectory(
     launch_action: dict[str, Any] | None = None
     launch_step_index = -1
     open_app_evidence: list[dict[str, Any]] = []
-    raw_steps = list(payload.get("steps") or [])
+    raw_steps, keyboard_skipped = _coalesce_legacy_keyboard_steps(
+        list(payload.get("steps") or [])
+    )
+    skipped.extend(keyboard_skipped)
     for ordinal, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
             continue
@@ -774,11 +916,8 @@ def _load_runlog_trajectory(
                 observation=observation,
                 forest=forest,
                 next_forest=(
-                    androidworld_observation_xml(
-                        _observation_for_step(raw_steps[ordinal + 1])
-                    )
-                    if ordinal + 1 < len(raw_steps)
-                    and isinstance(raw_steps[ordinal + 1], dict)
+                    androidworld_observation_xml(next_observation)
+                    if isinstance(next_observation, dict)
                     else ""
                 ),
             )
@@ -1194,14 +1333,30 @@ def preflight_runlog_conversion(
     for transition in transitions:
         name = _action_type(transition.action)
         counts[name] = counts.get(name, 0) + 1
-    teacher_actions = (
-        _teacher_actions_for_trajectory(
-            trajectory,
-            mobilegpt_root=mobilegpt_root,
+    try:
+        teacher_actions = (
+            _teacher_actions_for_trajectory(
+                trajectory,
+                mobilegpt_root=mobilegpt_root,
+            )
+            if mobilegpt_root is not None
+            else []
         )
-        if mobilegpt_root is not None
-        else []
-    )
+    except MobileGPTConversionError as error:
+        return {
+            "schema_version": CONVERSION_SOURCE_SCHEMA,
+            "source_run_log": str(path),
+            "task_name": trajectory["task_name"],
+            "target_package": trajectory["target_package"],
+            "transition_count": len(transitions),
+            "action_type_counts": counts,
+            "teacher_action_count": 0,
+            "teacher_actions": [],
+            "skipped_actions": trajectory["skipped_actions"],
+            "ready": False,
+            "failure_code": error.code,
+            "failure_details": error.details,
+        }
     return {
         "schema_version": CONVERSION_SOURCE_SCHEMA,
         "source_run_log": str(path),
@@ -2283,8 +2438,20 @@ def _official_xml_input(raw_xml: str) -> str:
         raise MobileGPTConversionError(
             "official_authoring_xml_invalid", error=str(error)
         ) from error
-    for index, node in enumerate(root.iter()):
-        node.set("index", str(index))
+    next_index = 0
+    for node in root.iter():
+        if node is root:
+            continue
+        # Upstream MobileGPT recognizes inputs only when the Android class
+        # name ends in ``EditText``.  Android exposes other editable controls
+        # (notably AutoCompleteTextView search fields) with the same explicit
+        # ``editable=true`` contract.  Project that Android schema fact into
+        # the one class understood by the official parser while preserving
+        # all target identity, text, bounds, and resource-id evidence.
+        if str(node.get("editable") or "").strip().casefold() == "true":
+            node.set("class", "android.widget.EditText")
+        node.set("index", str(next_index))
+        next_index += 1
     return ET.tostring(root, encoding="unicode")
 
 
@@ -3274,7 +3441,7 @@ def convert_runlog_to_mobilegpt_memory(
             raw_path = xml_root / f"{screen_index}.xml"
             raw_path.write_text(raw_xml, encoding="utf-8")
             parsed_xml, hierarchy_xml, encoded_xml = encode_xml(
-                raw_xml,
+                _official_xml_input(raw_xml),
                 mobilegpt_root=mobilegpt_root,
             )
             (xml_root / f"{screen_index}_parsed.xml").write_text(
