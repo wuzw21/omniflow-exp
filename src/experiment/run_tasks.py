@@ -92,10 +92,6 @@ def _sdk_tool(name: str) -> str:
     raise RuntimeError(f"android_sdk_tool_missing:{name}")
 
 
-def _mobilegpt_server_port(console_port: int) -> int:
-    return 12000 + int(console_port) % 40000
-
-
 def _device_booted(adb: str, serial: str) -> bool:
     try:
         state = subprocess.run(
@@ -253,8 +249,6 @@ def _run_command(
     ]
     if args.mobilegpt_root:
         command.extend(("--mobilegpt-root", args.mobilegpt_root))
-    if method == "mobilegpt":
-        command.extend(("--mobilegpt-port", str(_mobilegpt_server_port(port))))
     if args.appagent_root:
         command.extend(("--appagent-root", args.appagent_root))
     if args.source_run_log:
