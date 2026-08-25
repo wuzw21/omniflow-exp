@@ -522,6 +522,13 @@ class OmniFlow:
             runtime_steps_used += 1
             planner_metadata = _take_planner_metadata(self.planner)
             _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
+            planner_diagnostics.setdefault("planner_calls", []).append(
+                {
+                    "turn_index": runtime_steps_used - 1,
+                    "tool": planned_call.name,
+                    "arguments": dict(planned_call.arguments),
+                }
+            )
             selected_function = planner_function_catalog.get(planned_call.name)
             if selected_function is not None:
                 function_session.selected_id = selected_function.id
