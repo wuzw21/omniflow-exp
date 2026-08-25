@@ -65,7 +65,7 @@ class PluginSet:
 
 @dataclass(frozen=True)
 class RuntimeSettings:
-    max_steps: int = 20
+    max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
     max_function_tools: int = 8
 
