@@ -108,6 +108,11 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
+        source_state = _with_function_binding_context(
+            source_state,
+            function=function,
+            step_index=function_step.step_index,
+        )
         for checker_phase in ("pre_transfer", "pre_action"):
             checker_steps = await _run_shared_checker_phase(
                 checker_phase,
@@ -275,6 +280,11 @@ async def align_function_resume(
             host,
             function_step.source_state_id,
             state_loader=state_loader,
+        )
+        source_state = _with_function_binding_context(
+            source_state,
+            function=function,
+            step_index=function_step.step_index,
         )
         row: list[float | None] = []
         for observation in observations:
@@ -1069,11 +1079,15 @@ def default_transfer(
         )
         if source_offset is not None:
             request["source_offset"] = source_offset
-    bound_source_xml = _bind_parameterized_source_label(
-        source_xml,
-        source_element_id=source_element_id,
-        target_description=str(action.args.get("target_description") or ""),
-    )
+    bound_source_xml = source_xml
+    if source_state is not None and source_state.extra.get(
+        "parameterized_target_description"
+    ) is True:
+        bound_source_xml = _bind_parameterized_source_label(
+            source_xml,
+            source_element_id=source_element_id,
+            target_description=str(action.args.get("target_description") or ""),
+        )
     if bound_source_xml != source_xml:
         request["source_xml"] = bound_source_xml
         request["parameterized_source_semantics"] = True
@@ -1299,6 +1313,30 @@ def _action_uses_transfer_target(action: Action) -> bool:
     return False
 
 
+def _with_function_binding_context(
+    source_state: Observation | None,
+    *,
+    function: Function,
+    step_index: int,
+) -> Observation | None:
+    if source_state is None:
+        return None
+    target = f"$.steps[{int(step_index)}].action.args.target_description"
+    parameterized = any(
+        str(binding.get("target") or "") == target
+        for binding in function.bindings
+    )
+    if not parameterized:
+        return source_state
+    return replace(
+        source_state,
+        extra={
+            **dict(source_state.extra),
+            "parameterized_target_description": True,
+        },
+    )
+
+
 def _bind_parameterized_source_label(
     source_xml: str,
     *,
@@ -1383,10 +1421,21 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
         candidate = _element_detail(raw)
         candidate["rank"] = rank
         candidate["bounds"] = list(raw.get("bbox") or ())
+        candidate["execution_bounds"] = list(raw.get("execution_bbox") or ())
+        candidate["execution_candidate_id"] = str(
+            raw.get("execution_candidate_id") or ""
+        )
+        candidate["executable"] = raw.get("executable") is True
         candidate["score"] = raw.get("score")
         candidates.append(candidate)
     detail = {
         "mapping_mode": str(result.get("mapping_mode") or ""),
+        "matcher_release": str(result.get("matcher_release") or ""),
+        "matcher_backend": str(result.get("matcher_backend") or ""),
+        "matcher_checkpoint": str(result.get("matcher_checkpoint") or ""),
+        "matcher_checkpoint_sha256": str(
+            result.get("matcher_checkpoint_sha256") or ""
+        ),
         "source": source,
         "target": target,
         "candidates": candidates,
@@ -1421,6 +1470,13 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
         target_candidate_id = str(result.get("target_candidate_id") or "").strip()
         if target_candidate_id:
             detail["target_candidate_id"] = target_candidate_id
+        target_execution_candidate_id = str(
+            result.get("target_execution_candidate_id") or ""
+        ).strip()
+        if target_execution_candidate_id:
+            detail["target_execution_candidate_id"] = (
+                target_execution_candidate_id
+            )
     return detail
 
 

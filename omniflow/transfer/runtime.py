@@ -1096,6 +1096,8 @@ def _select_transfer_candidate(
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError("omnitransfer_candidate_coordinates_invalid") from error
     bounds = list(selected.get("bbox") or ())
+    execution_bounds = list(selected.get("execution_bbox") or ())
+    target_bounds = execution_bounds if len(execution_bounds) == 4 else bounds
     return {
         **ranking,
         "mapped": True,
@@ -1103,11 +1105,15 @@ def _select_transfer_candidate(
         "new_x": new_x,
         "new_y": new_y,
         "target_candidate_id": str(selected.get("candidate_id") or ""),
-        "target_bbox": bounds,
+        "target_bbox": target_bounds,
+        "target_identity_bbox": bounds,
+        "target_execution_candidate_id": str(
+            selected.get("execution_candidate_id") or ""
+        ),
         "target_center": (
-            [(float(bounds[0]) + float(bounds[2])) / 2.0,
-             (float(bounds[1]) + float(bounds[3])) / 2.0]
-            if len(bounds) == 4
+            [(float(target_bounds[0]) + float(target_bounds[2])) / 2.0,
+             (float(target_bounds[1]) + float(target_bounds[3])) / 2.0]
+            if len(target_bounds) == 4
             else []
         ),
     }

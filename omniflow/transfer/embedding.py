@@ -131,9 +131,6 @@ def _canonical_omnitransfer_root() -> Path:
         if configured
         else Path.home() / "Projects" / "Omni" / "OmniTransfer"
     ).resolve()
-    canonical = (Path.home() / "Projects" / "Omni" / "OmniTransfer").resolve()
-    if root != canonical:
-        raise ValueError(f"canonical_omnitransfer_root_required:{canonical}")
     if not (root / "src" / "omnitransfer").is_dir():
         raise RuntimeError(f"omnitransfer_root_missing:{root}")
     return root
@@ -141,9 +138,14 @@ def _canonical_omnitransfer_root() -> Path:
 
 def _v10_page_embedding_checkpoint(value: str | Path | None) -> Path:
     root = _canonical_omnitransfer_root()
+    configured = str(
+        os.environ.get("OMNITRANSFER_MATCHER_CHECKPOINT") or ""
+    ).strip()
     selected = (
         Path(value).expanduser().resolve()
         if value is not None
+        else Path(configured).expanduser().resolve()
+        if configured
         else (root / V10_PAGE_EMBEDDING_RELATIVE_PATH).resolve()
     )
     if selected != root and root not in selected.parents:
