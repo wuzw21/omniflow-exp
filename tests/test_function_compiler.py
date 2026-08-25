@@ -182,6 +182,54 @@ def test_compiler_exposes_goal_named_click_label_as_function_parameter() -> None
     }
 
 
+def test_compiler_exposes_exact_androidworld_task_parameter_for_input_text() -> None:
+    facts = {
+        "run_id": "task-parameter-location",
+        "goal": "Add a location marker for 47.1026191, 9.6083057 in OsmAnd.",
+        "task_parameters": {"location": "47.1026191, 9.6083057"},
+        "steps": [
+            {
+                "before_state_id": "search",
+                "action": {
+                    "tool": "input_text",
+                    "args": {
+                        "target_description": "Type to search all",
+                        "text": "47.1026191, 9.6083057",
+                    },
+                },
+                "result": {"success": True},
+            }
+        ],
+    }
+    proposal = {
+        "reason": "Enter the task location.",
+        "plan": {
+            "functions": [],
+            "complete_function": {
+                "function_id": "search_location",
+                "name": "Search for the requested location",
+                "description": "Enter the requested location in the search field.",
+                "source_step_indices": [0],
+                "parameters": [],
+            },
+        },
+    }
+
+    result = _materialize_authoring_plan(proposal, facts)
+    function = result["bundle"]["functions"][0]
+    assert function["input_schema"]["required"] == ["location"]
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.location",
+            "target": "$.steps[0].action.args.text",
+        }
+    ]
+    assert function["steps"][0]["action"]["args"]["text"] == ""
+    assert result["bundle"]["arguments"]["search_location"] == {
+        "location": "47.1026191, 9.6083057"
+    }
+
+
 def test_compiler_promotes_launcher_app_click_to_global_open_app(
     tmp_path: Path,
 ) -> None:

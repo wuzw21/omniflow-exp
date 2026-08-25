@@ -156,6 +156,9 @@ def compile_runlog_to_store(
         "schema_version": "omniflow.function-compilation-facts.v2",
         "run_id": str(payload.get("run_id") or "successful-source"),
         "goal": goal,
+        "task_parameters": json.loads(
+            json.dumps(payload.get("task_parameters") or {}, ensure_ascii=False)
+        ),
         "status": "succeeded",
         "success": True,
         "steps": steps,
@@ -986,6 +989,52 @@ def _goal_semantic_parameters(
     """
     goal = " ".join(str(facts.get("goal") or "").casefold().split())
     result: list[dict[str, Any]] = []
+
+    # AndroidWorld already records the public task API alongside the goal.
+    # Prefer that contract when a recorded string action contains the exact
+    # source value.  This covers values such as coordinates whose semantic
+    # slot (for example ``location``) is not literally named in the sentence.
+    task_parameters = facts.get("task_parameters")
+    if isinstance(task_parameters, dict):
+        for candidate in sorted(
+            candidates.values(),
+            key=lambda value: (
+                int(value.get("source_step_index", -1)),
+                str(value.get("arg_name") or ""),
+            ),
+        ):
+            source_index = int(candidate.get("source_step_index", -1))
+            arg_name = str(candidate.get("arg_name") or "").strip()
+            target = (source_index, arg_name)
+            if source_index not in indices or target in existing_targets:
+                continue
+            recorded_value = " ".join(
+                str(candidate.get("recorded_value") or "").casefold().split()
+            )
+            if not recorded_value:
+                continue
+            for raw_name, raw_value in task_parameters.items():
+                name = str(raw_name or "").strip()
+                value = " ".join(str(raw_value or "").casefold().split())
+                if (
+                    not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name)
+                    or name in existing_names
+                    or not value
+                    or value != recorded_value
+                ):
+                    continue
+                result.append(
+                    {
+                        "name": name,
+                        "description": f"{name.replace('_', ' ').capitalize()} supplied by the task.",
+                        "source_step_index": source_index,
+                        "arg_name": arg_name,
+                    }
+                )
+                existing_targets.add(target)
+                existing_names.add(name)
+                break
+
     for source_index in indices:
         candidate = candidates.get((source_index, "target_description"))
         if candidate is None or (source_index, "target_description") in existing_targets:
