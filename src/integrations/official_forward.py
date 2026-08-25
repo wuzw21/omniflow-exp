@@ -1692,12 +1692,7 @@ def _mobilegpt_environment_failure(
     return reason.startswith("mobilegpt_target_app_not_ready:")
 
 
-def _mobilegpt_instruction_broadcast_args(
-    instruction: str,
-    *,
-    server_host: str,
-    server_port: int,
-) -> list[str]:
+def _mobilegpt_instruction_broadcast_args(instruction: str) -> list[str]:
     """Build the shell-safe official-client instruction broadcast.
 
     ``adb shell`` joins its argv before handing it to the device shell.  An
@@ -1717,12 +1712,6 @@ def _mobilegpt_instruction_broadcast_args(
         "--es",
         "com.example.MobileGPT.INSTRUCTION_EXTRA",
         shlex.quote(str(instruction)),
-        "--es",
-        "com.example.MobileGPT.SERVER_HOST_EXTRA",
-        shlex.quote(str(server_host)),
-        "--ei",
-        "com.example.MobileGPT.SERVER_PORT_EXTRA",
-        str(int(server_port)),
     ]
 
 
@@ -1820,47 +1809,6 @@ def _configure_mobilegpt_client_launch_lifecycle(client_root: Path) -> None:
         return
     source = service_path.read_text(encoding="utf-8")
     changed = False
-    # The upstream APK bakes one host port into MobileGPTGlobal.  A shared
-    # host can therefore run only one emulator at a time.  Keep one reusable
-    # client APK, but let each episode provide its isolated Server endpoint
-    # in the same instruction broadcast.  Connect and send on the client's
-    # single-thread executor so the instruction cannot race the socket.
-    endpoint_marker = "omniflow_mobilegpt_runtime_endpoint"
-    if endpoint_marker not in source:
-        receiver_original = (
-            "                mExecutorService.execute(()->initNetworkConnection());\n"
-            "\n"
-            "                mExecutorService.execute(()->mClient.sendInstruction(instruction));\n"
-        )
-        receiver_replacement = (
-            "                // omniflow_mobilegpt_runtime_endpoint\n"
-            "                final String serverHost = intent.getStringExtra(\n"
-            "                        \"com.example.MobileGPT.SERVER_HOST_EXTRA\");\n"
-            "                final int serverPort = intent.getIntExtra(\n"
-            "                        \"com.example.MobileGPT.SERVER_PORT_EXTRA\",\n"
-            "                        MobileGPTGlobal.HOST_PORT);\n"
-            "                mExecutorService.execute(() -> {\n"
-            "                    initNetworkConnection(\n"
-            "                            serverHost == null ? MobileGPTGlobal.HOST_IP : serverHost,\n"
-            "                            serverPort);\n"
-            "                    mClient.sendInstruction(instruction);\n"
-            "                });\n"
-        )
-        method_original = (
-            "    private void initNetworkConnection() {\n"
-            "        mClient = new MobileGPTClient(MobileGPTGlobal.HOST_IP, MobileGPTGlobal.HOST_PORT);\n"
-        )
-        method_replacement = (
-            "    private void initNetworkConnection() {\n"
-            "        initNetworkConnection(MobileGPTGlobal.HOST_IP, MobileGPTGlobal.HOST_PORT);\n"
-            "    }\n\n"
-            "    private void initNetworkConnection(String serverHost, int serverPort) {\n"
-            "        mClient = new MobileGPTClient(serverHost, serverPort);\n"
-        )
-        if receiver_original in source and method_original in source:
-            source = source.replace(receiver_original, receiver_replacement, 1)
-            source = source.replace(method_original, method_replacement, 1)
-            changed = True
     # Android 13+ requires an explicit export policy for dynamically
     # registered receivers when the official APK targets API 33.  Without it
     # the service can bind and send its app list, but the shell broadcast that
@@ -2368,11 +2316,7 @@ def _run_mobilegpt_client(
     _run_adb(
         adb_path,
         serial,
-        _mobilegpt_instruction_broadcast_args(
-            instruction,
-            server_host=host,
-            server_port=server_port,
-        ),
+        _mobilegpt_instruction_broadcast_args(instruction),
     )
     stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
