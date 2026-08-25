@@ -1335,6 +1335,7 @@ if [[ -n "$e2e_task" ]]; then
     --source-avd "$source_avd"
     --emulator-gpu "$emulator_gpu"
     --runtime-preflight "$repo/src/experiment/checks.py"
+    --preflight-minimum-free-gb "$preflight_minimum_free_gb"
     --formal-model "$formal_model"
     --appagent-model "$appagent_model"
     --e2e-method "$e2e_method"

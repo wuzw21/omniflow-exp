@@ -2125,6 +2125,7 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     args.emulator_bin = tmp_path / "emulator"
     args.emulator_gpu = "swiftshader_indirect"
     args.runtime_preflight = tmp_path / "checks.py"
+    args.preflight_minimum_free_gb = 15.0
     calls: list[tuple[list[str], dict[str, object]]] = []
     lifecycle: list[str] = []
 
@@ -2157,6 +2158,7 @@ def test_mobilegpt_target_preflight_prepares_contacts_before_worker(
     assert preflight[preflight.index("--profile") + 1] == "mobilegpt"
     assert preflight[preflight.index("--serial") + 1] == DEVICES[2][1]
     assert preflight[preflight.index("--server-port") + 1] == "12345"
+    assert preflight[preflight.index("--minimum-free-gb") + 1] == "15.0"
     assert "--require-contacts-ready" in preflight
     assert preflight[preflight.index("--source-task") + 1] == args.task
     assert str(args.android_world_root) in str(

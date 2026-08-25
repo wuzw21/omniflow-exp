@@ -472,6 +472,8 @@ def ensure_target_devices(
                         (label, serial, console_port),
                     )
                 ),
+                "--minimum-free-gb",
+                str(float(getattr(args, "preflight_minimum_free_gb", 20.0))),
             ]
             if str(args.task).startswith("Contacts"):
                 preflight_command.append("--require-contacts-ready")
@@ -4854,6 +4856,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-avd", default=SOURCE_AVD)
     parser.add_argument("--emulator-gpu", default="swiftshader_indirect")
     parser.add_argument("--runtime-preflight", type=Path)
+    parser.add_argument("--preflight-minimum-free-gb", type=float, default=20.0)
     parser.add_argument("--formal-model", default=FORMAL_MODEL)
     parser.add_argument("--appagent-model", default=APPAGENT_MODEL)
     parser.add_argument("--bmoca-root", type=Path)

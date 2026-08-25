@@ -305,6 +305,19 @@ def test_androidworld_public_launcher_requires_oob_physical_backend() -> None:
     assert "AndroidWorld execution requires the OOB physical backend." in script_text
 
 
+def test_androidworld_public_launcher_forwards_configured_preflight_disk_floor() -> None:
+    script_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'preflight_minimum_free_gb="${OMNIFLOW_PREFLIGHT_MINIMUM_FREE_GB:-20}"'
+        in script_text
+    )
+    assert (
+        '--preflight-minimum-free-gb "$preflight_minimum_free_gb"'
+        in script_text
+    )
+
+
 def test_formal_protocol_uses_glm_chat_and_embedding_models() -> None:
     protocol = json.loads(
         (REPO / "config" / "paper_androidworld.json").read_text(encoding="utf-8")
