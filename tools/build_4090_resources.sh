@@ -394,22 +394,14 @@ manifest = {
 Path(os.environ["MANIFEST_PATH"]).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
 PY
 
-if [[ "$skip_device_setup" != 1 ]]; then
-  log "setting up source/target AndroidWorld devices"
-  (cd "$repo" && bash scripts/exp/run_androidworld.sh --setup-device all)
-fi
-
-log "running deployment validation"
+log "checking AndroidWorld command construction"
 (cd "$repo" && bash scripts/exp/run_androidworld.sh \
-  --check-only --e2e-task CameraTakePhoto --e2e-method all --e2e-device all \
-  --e2e-source-seed 111 --e2e-evaluation-seed 113)
-(cd "$repo" && "$python_bin" -m pytest -q tests/test_exp_script.py tests/test_run_tasks.py)
+  --task CameraTakePhoto --method all --device all --dry-run)
 
 if [[ "$run_smoke" == 1 ]]; then
   log "running CameraTakePhoto omniflow smoke test"
   (cd "$repo" && bash scripts/exp/run_androidworld.sh \
-    --e2e-task CameraTakePhoto --e2e-method omniflow --e2e-device small5554 \
-    --e2e-source-seed 111 --e2e-evaluation-seed 113 --control-backend oob)
+    --task CameraTakePhoto --method omniflow --device standard45562)
 fi
 
 log "ready"

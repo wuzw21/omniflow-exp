@@ -1,207 +1,36 @@
 # OmniFlow-exp
 
-论文 AndroidWorld / B-MoCA 实验代码。正式实验只有一个入口：
-`scripts/exp/run_androidworld.sh`。
-
-## 最常用：一个 task，测试我们的 Function 跨设备复用
-
-先准备一次环境变量：
+AndroidWorld 和 B-MoCA 实验仓库。AndroidWorld 只有一个公开入口：
 
 ```bash
-export OMNIFLOW_EXP_ASSET_ROOT=/absolute/OmniFlow-exp/data
-export OMNIFLOW_EXP_RESULTS_ROOT=/absolute/OmniFlow-exp/data
-export OMNIFLOW_EXP_MEMORY_ROOT=/absolute/OmniFlow-exp/data
-export OMNIFLOW_ENV_FILE=/absolute/model.env
-export OMNITRANSFER_ROOT="$HOME/Projects/Omni/OmniTransfer"
+bash scripts/exp/run_androidworld.sh
 ```
 
-模型和运行凭据只从显式的绝对路径 `OMNIFLOW_ENV_FILE` 加载；入口不会再读取
-仓库 `.env`、第二个 runtime env 或旧的 `LLMTHU_KEY` alias。正式 llmthu 配置只需
-提供 `LLMTHU_API_KEY`，endpoint/model 由 protocol 统一选择。
+入口直接调用 task scheduler；scheduler 为所选方法准备 Memory，然后启动一次
+AndroidWorld task。设备 lifecycle、task setup 和最终 validator 由 AndroidWorld
+episode 负责，入口不做 preflight。
 
-执行一个 task：
+常用参数都是可选的：
 
 ```bash
 bash scripts/exp/run_androidworld.sh \
-  --e2e-task TASK \
-  --e2e-method omniflow \
-  --e2e-device standard45562:emulator-45562:45562,fold45564:emulator-45564:45564,tablet45554:emulator-45554:45554 \
-  --e2e-source-seed 111 \
-  --e2e-evaluation-seed 113 \
-  --control-backend oob
+  --task CameraTakePhoto \
+  --method omniflow \
+  --device standard45562 \
+  --source-seed 111 \
+  --evaluation-seed 113
 ```
 
-流程只有四步：
-
-1. 检查 `data/current.json` 中是否已有该 task 的 Function；
-2. 没有时，可用 source RunLog 作为 observation authoring 输入；
-3. `compile_runlog_to_store` 写入 v2 `store.json` 和同目录
-   `transfer_states.json`；
-4. 校验通过后，在指定设备上执行 E2E。
-
-Authoring Agent 可先生成零个或多个可复用语义 Function，再生成一个最大的安全组合
-Function。RunLog 是证据而不是逐动作脚本：重复、重试、checker 和需要中间 Planner
-观察的动作都可不进入组合 Function。完整 Function 由 Agent 合并语义、参数 schema
-与 bindings，compiler 负责 schema、顺序、原子观察边界和参数提升硬校验；不使用
-嵌套 schema。因此一个成功 RunLog 最终生成至少一个 Function。
-Function 步骤按成功 RunLog 动作顺序保存，并通过 `source_state_id` 关联 source
-observation。source seed 固定为 `111`，evaluation seed 固定为 `113`。
-OmniFlow Planner 使用 `Qwen3.6-Plus` 的非流式、单工具、XML-only 请求；不会向
-Planner 上传截图。需要原生图片的外部视觉方法仍使用 `GLM-4.6V`。
-
-## 数据目录
-
-AndroidWorld 可见实验证据统一写入：
-
-```text
-data/androidworld/<task>/<method>/<device_model>_seed.../
-```
-
-每个 setting 下按 `runlog/attempt_NNN/`、`memory/attempt_NNN/` 和 `result/`
-保存执行；attempt 只用递增编号，不使用时间戳。每次 RunLog 执行直接保存为
-该 attempt 下的一份 `run_log.json` 和 `screenshots/screenshot_NNNNNN.png`，
-不创建 SHA 对象仓库。设备 CLI alias 只写 provenance，不进入目录名。B-MoCA
-始终独立位于 `data/bmoca/`。完成情况见
-[`data/androidworld/COMPLETION_STATUS.md`](data/androidworld/COMPLETION_STATUS.md)，
-可直接转换 memory 的 source 候选见
-[`data/androidworld/MEMORY_READY_SOURCES.md`](data/androidworld/MEMORY_READY_SOURCES.md)。
-
-## 本地数据与测试资料索引
-
-本项目和 OmniTransfer 共同组成跨设备学习器实验。两者的资料不要混用：
-
-| 用途 | 位置 | 说明 |
-| --- | --- | --- |
-| AndroidWorld 正式证据 | `data/androidworld/` | 当前运行时使用的 task、RunLog、Function memory 和结果 |
-| B-MoCA 正式证据 | `data/bmoca/` | B-MoCA 的环境、任务和评测结果 |
-| 运行时索引 | `data/current.json` | 唯一的本地 Function/RunLog 运行时索引 |
-| AndroidWorld 历史备份 | `data/.androidworld_legacy_backup/` | 只读历史资料，不参与当前运行时选择 |
-| OmniTransfer 正式数据集 | `../OmniTransfer/runtime/datasets/` | canonical dataset；训练、清洗和复现实验的正式数据源 |
-| OmniTransfer 评测资料 | `../OmniTransfer/runtime/evals/` | 映射测试集、评测输入、错误分析和评测证据 |
-| OmniTransfer release | `../OmniTransfer/runtime/releases/` | 可运行的 release 包；release 内部数据必须保持自包含 |
-| OmniTransfer 实验输出 | `../OmniTransfer/output/` | checkpoint、预测、review 和各次实验输出，不是 canonical dataset |
-| OmniTransfer 临时资料 | `../OmniTransfer/tmp/` | 本轮清洗和统一评测的工作文件，完成同步后可清理 |
-
-当前跨设备学习器清洗和统一测试资料位于：
-
-```text
-../OmniTransfer/tmp/unified_clean_audit_20260823/
-```
-
-其中：
-
-```text
-train/cleaned.jsonl          清洗后的训练数据
-dev/cleaned.jsonl            清洗后的开发数据
-test/cleaned.jsonl           清洗后的测试数据
-test_new_method.json         新方法统一评测报告
-test_control_no_local.json   对照方法评测报告
-*.predictions.jsonl          对应的逐样本预测
-```
-
-本地只允许进行数据清洗、质量检测、代码测试和评测入口验证。任何模型训练、
-微调或训练 smoke 都必须在远程 `9207` 环境执行；不要在本地启动训练。
-
-测试代码位置：
-
-```text
-OmniFlow-exp/tests/
-../OmniTransfer/tests/
-```
-
-离线测试入口：
+可选方法为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`；
+设备和默认值来自 `config/paper_androidworld.json`。传入的 seed、步数、fallback、
+deadline 和 model 会原样进入本次运行，不要求等于配置中的默认值。
 
 ```bash
-./.venv/bin/pytest -q
+bash scripts/exp/run_androidworld.sh --help
 ```
 
-### Page Embedding + OmniTransfer 离线回归闭环
+实验数据仍分别位于 `data/androidworld/` 和 `data/bmoca/`，运行时索引为
+`data/current.json`。OmniTransfer 使用 canonical checkout
+`~/Projects/Omni/OmniTransfer`。
 
-核心映射回归不启动 AndroidWorld、ADB、Planner 或模型。数据集保存在
-`data/offline_transfer_regression/<suite>/`，每个 case 是自包含的 source/target
-Observation pair、source action 和人工或成功轨迹给出的 ground truth。成功和失败
-RunLog 都进入同一个去重数据集；失败 pair 缺少可信答案时保留为
-`pending_annotation`，不会把错误动作当作标签。
-
-```bash
-# 成功或失败 RunLog pair 都用同一命令收集
-./.venv/bin/python -m src.experiment.offline_transfer_regression add-pair \
-  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
-  --source-run-log /absolute/source/run_log.json \
-  --target-run-log /absolute/target/run_log.json
-
-# 把 canonical offline comparison 中的失败 step 直接加入错误回归组
-./.venv/bin/python -m src.experiment.offline_transfer_regression add-errors \
-  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
-  --comparison /absolute/comparison.json
-
-# 运行全量闭环，并刷新当前错误视图
-./.venv/bin/python -m src.experiment.offline_transfer_regression run \
-  --dataset data/offline_transfer_regression/androidworld_core/dataset.json \
-  --report data/offline_transfer_regression/androidworld_core/latest_report.json \
-  --errors data/offline_transfer_regression/androidworld_core/errors.json
-```
-
-`annotate` 用于给 pending pair 补 `mapped + bounds` 或明确的 `null` 标签；
-`add-negative` 用于人工组合不同页面的 Embedding 负样本。`run` 始终重跑完整
-dataset，并把所有失败和待标注 case 同步到 `errors.json`。这个命令是离线数据
-质量工具，不是 AndroidWorld 实验入口，也不写 official validator 结果。
-
-重复文件清理记录（2026-08-23）：完全相同的 13 个评测压缩文件、一个重复查询
-文件和一个重复 quarantine 文件已移到系统废纸篓，保留副本分别位于
-`../OmniTransfer/runtime/evals/vision_widget_mapping/_repo/testset/`、
-`../OmniTransfer/runtime/evals/vision_widget_mapping/splits/` 和
-`../OmniTransfer/output/cleaned_ase_train_v2/`。release 内部的 hard link、
-历史归档和用户代码没有清理。
-
-## 选择方案或全矩阵
-
-只测我们的方案：
-
-```bash
---e2e-method omniflow
-```
-
-跑完整 method/device 矩阵：
-
-```bash
---e2e-method all --e2e-device all
-```
-
-也可以使用逗号列表选择部分 method 或设备。method 和设备必须来自当前
-protocol 配置；正常使用不需要手动修改配置文件。
-
-正式 AndroidWorld 矩阵固定包含 `fixed_replay`、`omniflow`、`mobilegpt`、
-`appagent` 和 `t3a_hint` 五个方法。历史 AutoDroid/DroidBot replay 仍保留在
-代码中作为只读兼容边界，不进入正式方法矩阵。
-
-设备第一次使用时先执行 setup：
-
-```bash
-PYTHON_BIN=/absolute/.venv/bin/python \
-OMNIFLOW_ANDROID_SDK_ROOT=/absolute/Android/Sdk \
-OMNIFLOW_ANDROIDWORLD_A11Y_APK=/absolute/accessibility_forwarder.apk \
-bash scripts/exp/run_androidworld.sh --setup-device all
-```
-
-setup 会安装所需依赖 APK；OmniFlow 使用 OOB 服务，而 MobileGPT 正式运行由其
-官方 Accessibility client 接管物理 observe/act。随后检查 AndroidWorld、AppAgent、
-MobileGPT、OmniTransfer 和模型环境；报告位于
-`data/androidworld/.archive/setup/<UTC>/setup_report.json`。
-
-## 其他入口
-
-```bash
-# 任务矩阵
-bash scripts/exp/run_androidworld.sh --tasks TASK
-
-# 静态检查，不启动 emulator
-bash scripts/exp/run_androidworld.sh --check-only --all-tasks
-
-# 离线测试
-./.venv/bin/pytest -q
-```
-
-更详细的入口参数见 [`scripts/exp/README.md`](scripts/exp/README.md)。
-架构和文件 owner 说明分别见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-和 [`docs/FILE_EDIT_GUIDE.md`](docs/FILE_EDIT_GUIDE.md)。
+架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 
 from omniflow.core.model import (
@@ -9,9 +10,10 @@ from omniflow.core.model import (
     Transfer,
 )
 
-_ANDROIDWORLD_CONFIG_PATH = (
-    Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
-)
+_ANDROIDWORLD_CONFIG_PATH = Path(
+    os.environ.get("OMNIFLOW_ANDROIDWORLD_CONFIG")
+    or Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
+).expanduser()
 _ANDROIDWORLD_CONFIG = json.loads(
     _ANDROIDWORLD_CONFIG_PATH.read_text(encoding="utf-8")
 )

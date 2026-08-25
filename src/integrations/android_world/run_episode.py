@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from omniflow.core.trajectory import observation_xml
+from src.experiment.checks import ensure_oob_device_ready
 from src.experiment.observation_evidence import (
     persist_target_run_evidence,
     transfer_state_coverage_audit,
@@ -3126,6 +3127,41 @@ def _prepare_androidworld_episode_apps(
             setup_module.app_snapshot.save_snapshot(app_name, env.controller)
 
 
+def _prepare_androidworld_episode_after_reset(
+    env: Any,
+    *,
+    setup_module: Any,
+    setup_apps: Sequence[Any],
+    console_port: int,
+    adb_path: str,
+) -> None:
+    """Restore the OOB physical layer after AndroidWorld resets task state."""
+
+    _prepare_androidworld_episode_apps(
+        env,
+        setup_module=setup_module,
+        setup_apps=setup_apps,
+    )
+    if not _is_oob_control_backend():
+        return
+    _ensure_oob_control_app(
+        console_port=int(console_port),
+        adb_path=str(adb_path or ""),
+    )
+    serial = f"emulator-{int(console_port)}"
+    readiness = ensure_oob_device_ready(
+        str(adb_path or "adb"),
+        serial,
+        timeout_seconds=30,
+        repair=True,
+    )
+    if readiness.get("ready") is not True:
+        raise RuntimeError(
+            "oob_post_reset_readiness_failed:"
+            + json.dumps(readiness, ensure_ascii=False, sort_keys=True)
+        )
+
+
 def _prepare_official_harness_episode(env: Any, *, selected_agent: str) -> None:
     if not str(selected_agent or "").startswith("official:"):
         return
@@ -5489,10 +5525,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             recording_session=recording_session,
             goal_hint=official_goal_hint_text,
             max_steps=max(1, int(args.max_steps)),
-            prepare_after_reset=lambda: _prepare_androidworld_episode_apps(
+            prepare_after_reset=lambda: _prepare_androidworld_episode_after_reset(
                 env,
                 setup_module=aw_setup,
                 setup_apps=setup_app_list,
+                console_port=int(args.console_port),
+                adb_path=str(args.adb_path or ""),
             ),
         )
         print(
