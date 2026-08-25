@@ -215,6 +215,68 @@ def test_androidworld_setup_skips_only_already_settled_notification_permission(
         controller_type.click_element = original
 
 
+def test_androidworld_setup_skips_absent_opentracks_bluetooth_prompt_only_when_granted(
+    monkeypatch,
+) -> None:
+    permission_status = "granted"
+
+    class AndroidToolController:
+        def __init__(self, env) -> None:
+            self._env = env
+
+        def click_element(self, element_text: str) -> None:
+            raise ValueError(
+                f'Target text "{element_text}" not found. Visible labels: '
+                "['Home', 'OpenTracks', 'Predicted app: OpenTracks']"
+            )
+
+    tools_module = SimpleNamespace(AndroidToolController=AndroidToolController)
+    adb_utils_module = SimpleNamespace(
+        issue_generic_request=lambda _args, _env: SimpleNamespace(
+            generic=SimpleNamespace(output=permission_status.encode("utf-8"))
+        )
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.time.sleep",
+        lambda _seconds: None,
+    )
+    monkeypatch.setattr(
+        "src.integrations.android_world.run_episode.importlib.import_module",
+        lambda name: (
+            tools_module
+            if name == "android_world.env.tools"
+            else adb_utils_module
+            if name == "android_world.env.adb_utils"
+            else pytest.fail(f"unexpected import: {name}")
+        ),
+    )
+    controller = AndroidToolController(
+        SimpleNamespace(
+            foreground_activity_name=(
+                "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+            ),
+            get_ui_elements=lambda: [
+                SimpleNamespace(
+                    text="OpenTracks",
+                    content_description="Predicted app: OpenTracks",
+                    package_name="com.google.android.apps.nexuslauncher",
+                )
+            ],
+        )
+    )
+
+    patch = _patch_androidworld_optional_setup_click()
+    assert patch is not None
+    controller_type, original = patch
+    try:
+        controller.click_element("Allow")
+        permission_status = "denied"
+        with pytest.raises(ValueError, match="Allow"):
+            controller.click_element("Allow")
+    finally:
+        controller_type.click_element = original
+
+
 def test_androidworld_setup_resolves_contacts_open_with_before_skip(
     monkeypatch,
 ) -> None:

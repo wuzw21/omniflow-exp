@@ -188,6 +188,40 @@ def _raw_replay_visible_setup_recovery(
     return "chrome_first_run:OK"
 
 
+def _androidworld_runtime_permissions_granted(
+    controller: Any,
+    *,
+    package_name: str,
+    permissions: Sequence[str],
+) -> bool:
+    """Return whether Android already settled an optional setup prompt."""
+
+    try:
+        adb_utils = importlib.import_module("android_world.env.adb_utils")
+        env = getattr(controller, "_env", None)
+        if env is None:
+            return False
+        for permission in permissions:
+            response = adb_utils.issue_generic_request(
+                [
+                    "shell",
+                    "pm",
+                    "check-permission",
+                    package_name,
+                    permission,
+                ],
+                env,
+            )
+            output = getattr(getattr(response, "generic", None), "output", b"")
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            if str(output or "").strip().casefold() != "granted":
+                return False
+    except (AttributeError, ModuleNotFoundError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
     try:
         tools_module = importlib.import_module("android_world.env.tools")
@@ -209,6 +243,23 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                 normalized_label in {"NEXT", "Skip", "Don't allow"}
                 and "Invalid element index" in message
             )
+            if (
+                normalized_label == "Allow"
+                and missing_target
+                and _androidworld_runtime_permissions_granted(
+                    controller,
+                    package_name="de.dennisguse.opentracks",
+                    permissions=(
+                        "android.permission.BLUETOOTH_CONNECT",
+                        "android.permission.BLUETOOTH_SCAN",
+                    ),
+                )
+            ):
+                logger.info(
+                    "AndroidWorld OpenTracks Bluetooth permissions are already "
+                    "granted; skipping the stale Allow lookup"
+                )
+                return None
             if normalized_label == "NEXT" and missing_target:
                 activity = str(
                     getattr(controller._env, "foreground_activity_name", "") or ""
