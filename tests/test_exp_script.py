@@ -252,6 +252,47 @@ def test_oob_readiness_repairs_host_and_accessibility_once(monkeypatch) -> None:
     ]
 
 
+def test_oob_readiness_waits_for_service_after_repair(monkeypatch) -> None:
+    probes = 0
+
+    class FakeOobControlClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def reset(self) -> None:
+            nonlocal probes
+            probes += 1
+            if probes < 3:
+                raise RuntimeError("accessibility service not ready")
+
+        def observe(self, *, wait_to_stabilize: bool):
+            assert wait_to_stabilize is True
+            return {"xml": "<hierarchy />", "package_name": "launcher"}
+
+    monkeypatch.setattr(
+        "src.experiment.checks.OobControlClient", FakeOobControlClient
+    )
+    monkeypatch.setattr(
+        "src.experiment.checks._run",
+        lambda command, timeout=10: subprocess.CompletedProcess(
+            command, 0, "", ""
+        ),
+    )
+    monkeypatch.setattr(
+        "src.experiment.checks.configure_default_device_services",
+        lambda _adb, _serial: {"healthy": True},
+    )
+    monkeypatch.setattr("src.experiment.checks.time.sleep", lambda _seconds: None)
+
+    result = ensure_oob_device_ready(
+        "adb", "emulator-45562", timeout_seconds=5
+    )
+
+    assert result["ready"] is True
+    assert result["repaired"] is True
+    assert probes == 3
+
+
 def test_formal_script_is_the_only_run_entry_and_has_safe_help() -> None:
     scripts = sorted(
         path.relative_to(REPO).as_posix()

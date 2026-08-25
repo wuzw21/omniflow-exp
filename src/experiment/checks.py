@@ -390,17 +390,22 @@ def ensure_oob_device_ready(
             }
     configured = configure_default_device_services(adb, serial)
     time.sleep(2)
-    try:
-        observed = probe()
-    except Exception as final_error:  # noqa: BLE001
-        return {
-            "ready": False,
-            "repaired": True,
-            "initial_error": initial_detail,
-            "error": str(final_error),
-            "repair_commands": repair_commands,
-            "device_services": configured,
-        }
+    repair_deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    while True:
+        try:
+            observed = probe()
+            break
+        except Exception as final_error:  # noqa: BLE001
+            if time.monotonic() >= repair_deadline:
+                return {
+                    "ready": False,
+                    "repaired": True,
+                    "initial_error": initial_detail,
+                    "error": str(final_error),
+                    "repair_commands": repair_commands,
+                    "device_services": configured,
+                }
+            time.sleep(min(1.0, max(0.0, repair_deadline - time.monotonic())))
     return {
         "ready": True,
         "repaired": True,
