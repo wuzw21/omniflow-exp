@@ -73,6 +73,7 @@ from src.experiment.protocol import (
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
+    OMNIFLOW_PLANNER_MODEL,
     SOURCE_AVD,
     SOURCE_DEVICE,
     SOURCE_MAX_STEPS,
@@ -873,6 +874,35 @@ def test_mobilegpt_result_children_get_isolated_server_ports(
 
     assert ports == [12345, 12355, 12365]
     assert len(set(ports)) == len(ports)
+
+
+def test_omniflow_result_uses_its_text_only_planner_model(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    args.formal_model = "GLM-4.6V"
+
+    omniflow = _androidworld_result_command(
+        args=args,
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        method="omniflow",
+        device=DEVICES[0],
+        store_path=tmp_path / "store.json",
+        mobilegpt_memory=None,
+        appagent_memory=None,
+    )
+    mobilegpt = _androidworld_result_command(
+        args=args,
+        attempt_id="attempt-test",
+        attempt_root=tmp_path / "attempt",
+        method="mobilegpt",
+        device=DEVICES[0],
+        store_path=None,
+        mobilegpt_memory=tmp_path / "memory",
+        appagent_memory=None,
+    )
+
+    assert omniflow[omniflow.index("--model") + 1] == OMNIFLOW_PLANNER_MODEL
+    assert mobilegpt[mobilegpt.index("--model") + 1] == "GLM-4.6V"
 
 
 def test_autodroid_is_explicit_supplemental_only() -> None:
