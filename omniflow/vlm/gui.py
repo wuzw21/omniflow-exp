@@ -422,6 +422,27 @@ def parse_model_turn_response(
                     str(arguments.get("target_description") or ""),
                 )
                 grounding_source = "target_description"
+                if (
+                    grounded is not None
+                    and projection.visual_context_required
+                    and "x" in arguments
+                    and "y" in arguments
+                    and not _projected_node_has_visible_label(grounded[0])
+                ):
+                    arguments = {
+                        **arguments,
+                        "target_description": (
+                            "visual: " + (summary or "unlabeled current-screen target")
+                        )[:160],
+                    }
+                    grounded = None
+                    adapter_metadata = {
+                        **dict(adapter_metadata or {}),
+                        "visual_grounding": {
+                            "name": "current_screen_visual_coordinates.v1",
+                            "source": "current_screenshot",
+                        },
+                    }
                 if grounded is None and not arguments.get("target_description"):
                     numeric_grounding = projected_numeric_summary_center(
                         projection,
@@ -505,6 +526,14 @@ def parse_model_turn_response(
             "turn_index": int(turn_index),
         }
     return ToolCall(tool, arguments), metadata
+
+
+def _projected_node_has_visible_label(node: Any) -> bool:
+    return any(
+        str(label or "").strip()
+        and ":id/" not in str(label or "").casefold()
+        for label in getattr(node, "labels", ())
+    )
 
 
 def function_tools(
