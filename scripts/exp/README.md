@@ -30,3 +30,9 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 五个 AndroidWorld 方法只在 Memory 准备方式上不同。Memory 就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
 结果是需要保留的实验产物；转换临时目录在任务结束后自动删除。
+
+9207 部署不再逐项复制代码、APK、权重和配置。使用
+`scripts/package_9207_runtime.sh build` 生成单个 release archive；包内固定
+OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置、manifest
+和 SHA256。`install` 更新 canonical checkout 与明确的 runtime 资产。API key 只保存
+在被 Git 忽略的 `config/runtime.secrets.env`，不进入 release archive。

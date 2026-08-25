@@ -1,5 +1,7 @@
 .DS_Store
 .env
+config/runtime.env
+config/runtime.secrets.env
 .venv/
 __pycache__/
 *.py[cod]
@@ -24,6 +26,7 @@ checkpoints/
 *.pt
 *.pth
 *.safetensors
+*.tar.gz
 *.run_log.json
 *.xml
 *.png
