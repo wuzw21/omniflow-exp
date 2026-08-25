@@ -1609,6 +1609,10 @@ def test_global_startup_function_owns_open_app_tool_slot() -> None:
 
     names = [tool["function"]["name"] for tool in request["tools"]]
     assert names == ["complete_task"]
+    assert request["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "complete_task"},
+    }
 
 
 def test_bridge_planner_uses_unified_short_decision_policy() -> None:

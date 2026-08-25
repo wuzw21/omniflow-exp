@@ -163,6 +163,12 @@ def build_model_turn_request(
         ]
         if len(tools) != 1:
             raise ValueError(f"model_turn_retry_tool_not_visible:{retry_tool_name}")
+    tool_choice: str | dict[str, Any] = "required"
+    if len(global_functions) == 1:
+        tool_choice = {
+            "type": "function",
+            "function": {"name": global_functions[0].id},
+        }
     return {
         "model": str(model),
         "messages": [
@@ -173,7 +179,7 @@ def build_model_turn_request(
         "temperature": 0,
         "stream": True,
         "tools": tools,
-        "tool_choice": "required",
+        "tool_choice": tool_choice,
         "parallel_tool_calls": False,
         "reasoning_effort": "none",
         "enable_thinking": False,
