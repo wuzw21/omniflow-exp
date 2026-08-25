@@ -260,6 +260,11 @@ def test_offline_converter_tool_emits_official_mobilegpt_action_schema(
         check=False,
         capture_output=True,
         text=True,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key != "PYTHONPATH"
+        },
     )
 
     assert completed.returncode == 0, completed.stderr
