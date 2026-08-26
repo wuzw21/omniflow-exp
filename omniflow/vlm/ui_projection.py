@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -212,9 +212,14 @@ def project_ui(
         )
     if not include_all_nodes:
         candidates = _prune_redundant_candidates(candidates, goal)
-    candidates = _promote_goal_controls(candidates)
     visually_opaque_action_count = sum(
         1 for item in candidates if item.group in {"goal_control", "visual"}
+    )
+    has_unlabeled_action = any(
+        item.group == "visual" and item.compact.get("a") for item in candidates
+    )
+    has_actionable_goal = any(
+        item.group == "goal" and item.compact.get("a") for item in candidates
     )
     visual_context_required = (
         any(
@@ -222,6 +227,7 @@ def project_ui(
             for marker in _VISUAL_GOAL_MARKERS
         )
         or visually_opaque_action_count >= _VISUALLY_OPAQUE_ACTION_THRESHOLD
+        or (has_unlabeled_action and has_actionable_goal)
     )
     group_order = _group_order_for(candidates)
     selected = (
@@ -353,39 +359,6 @@ def projected_numeric_summary_center(
     node = matches[0]
     left, top, right, bottom = node.bounds
     return node, ((left + right) / 2, (top + bottom) / 2), label
-
-
-def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
-    goal_bounds = [
-        item.bounds
-        for item in candidates
-        # Only an actionable goal match provides a meaningful anchor for a
-        # nearby unlabeled control.  A plain text node containing the target
-        # (for example an event title) must not promote unrelated navigation
-        # chrome such as a back button into goal_control.
-        if item.group == "goal"
-        and item.compact.get("a")
-        and item.bounds is not None
-    ]
-    if not goal_bounds:
-        return candidates
-    promoted: list[_Candidate] = []
-    for item in candidates:
-        if item.group != "visual" or item.bounds is None:
-            promoted.append(item)
-            continue
-        proximity = min(_rectangle_gap(item.bounds, target) for target in goal_bounds)
-        if proximity > 180:
-            promoted.append(item)
-            continue
-        promoted.append(
-            replace(
-                item,
-                group="goal_control",
-                score=item.score + 2000 - proximity * 5,
-            )
-        )
-    return promoted
 
 
 def _prune_redundant_candidates(
@@ -650,17 +623,6 @@ def _visual_specificity(bounds: tuple[int, int, int, int] | None) -> int:
     if min(width, height) / longest >= 0.7:
         score += 100
     return score
-
-
-def _rectangle_gap(
-    left_bounds: tuple[int, int, int, int],
-    right_bounds: tuple[int, int, int, int],
-) -> int:
-    left_left, left_top, left_right, left_bottom = left_bounds
-    right_left, right_top, right_right, right_bottom = right_bounds
-    horizontal = max(right_left - left_right, left_left - right_right, 0)
-    vertical = max(right_top - left_bottom, left_top - right_bottom, 0)
-    return horizontal + vertical
 
 
 def _parse_bounds(value: str) -> tuple[int, int, int, int] | None:
