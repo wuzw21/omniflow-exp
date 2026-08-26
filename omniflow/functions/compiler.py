@@ -9,8 +9,12 @@ import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from omniflow.core.trajectory import canonicalize_run_log, state_id
-from omniflow.functions.management import apply_parameters, parameter_candidates
+from omniflow.core.trajectory import require_complete_source_run_log, state_id
+from omniflow.functions.management import (
+    apply_parameters,
+    parameter_candidates,
+    semantic_parameter_evidence,
+)
 from omniflow.runlog import project_androidworld_step_actions
 from omniflow.runtime.checker import CheckerLibrary, validate_checker_rule
 
@@ -47,16 +51,18 @@ def compile_runlog_to_store(
         if not isinstance(value, dict):
             raise ValueError("source_runlog_must_be_object")
         raw = value
-    payload = canonicalize_run_log(raw)
+    payload = require_complete_source_run_log(raw)
     goal = str(payload.get("goal") or "").strip()
     if not goal:
         raise ValueError("successful_source_goal_required")
 
     steps: list[dict[str, Any]] = []
+    parameter_evidence: list[dict[str, Any]] = []
     recovery_examples: list[dict[str, Any]] = []
     omitted_action_types: set[str] = set()
     previous_successful_step: dict[str, Any] | None = None
     source_steps = payload["steps"]
+    execution_trace = _execution_trace_by_step_index(payload)
     for source_step_index, step in enumerate(source_steps):
         if not isinstance(step, dict):
             continue
@@ -102,21 +108,19 @@ def compile_runlog_to_store(
             action_type in {"click", "double_tap", "long_press", "swipe"}
             and isinstance(next_observation, dict)
             and before_state_id == after_state_id
-            and isinstance(metadata.get("action_effect"), dict)
-            and metadata["action_effect"].get("state_changed") is False
         ):
-            # A successful gesture that leaves the native observation exactly
-            # unchanged is not a reusable semantic capability.  Keeping it in
-            # a complete Function can make OmniTransfer select a non-clickable
-            # label or an inert container and abort an otherwise valid flow.
-            # Preserve the omission in the facts so authoring can account for
-            # it without turning the no-op into a recorded action.
             omitted_action_types.add(f"noop_{action_type}")
             previous_successful_step = step
             continue
+        execution_action = _source_execution_action(
+            step,
+            source_step_index=source_step_index,
+            execution_trace=execution_trace,
+        )
         projected_actions = project_androidworld_step_actions(
             step,
             previous_step=previous_successful_step,
+            execution_action=execution_action,
         )
         promoted_launcher_entry = False
         if not steps and projected_actions:
@@ -164,9 +168,18 @@ def compile_runlog_to_store(
                 action,
                 next_observation=next_observation,
             )
+            source_step_index = len(steps)
+            parameter_evidence.extend(
+                _source_action_parameter_evidence(
+                    source_step=step,
+                    action=action,
+                    source_step_index=source_step_index,
+                    task_parameters=payload.get("task_parameters"),
+                )
+            )
             steps.append(
                 {
-                    "source_step_index": len(steps),
+                    "source_step_index": source_step_index,
                     "before_state_id": before_state_id,
                     "action": action,
                     "result": {"success": True},
@@ -186,6 +199,7 @@ def compile_runlog_to_store(
         "status": "succeeded",
         "success": True,
         "steps": steps,
+        "parameter_evidence": parameter_evidence,
         "omitted_action_types": sorted(omitted_action_types),
     }
     facts["observation_dependent_handoff_indices"] = sorted(
@@ -204,17 +218,27 @@ selected immutable source actions.
 
 Inspect source_run in source_step_index order. The reason must account for every
 source index. Actions already marked origin=checker were removed before this plan;
-do not reconstruct them in the main flow. Within one Function, source_step_indices must be strictly increasing
-and contiguous. Never omit a click immediately following input_text when that click
-commits, submits, confirms, or advances the form; keep both in one Function.
+do not reconstruct them in the main flow. A semantic Function's source_step_indices
+must be strictly increasing and contiguous. The complete Function may omit unsafe
+middle actions but must preserve source order. Never omit a click immediately
+following input_text when that click commits, submits, confirms, or advances the
+form; keep both in one Function.
 Each source step's metadata.purpose explains what that action accomplishes. Preserve
 those purposes in the Function's ordered action description and core effect.
+The authored name must identify the concrete user-visible result, not merely a page
+or navigation verb. The authored description must name the resulting state, the
+completion condition, and the causal role of the final action. Never use vague text
+such as "perform the workflow", "navigate as needed", or "advance the task". The
+compiler will append immutable, exact tool signatures and ordered metadata.purpose
+entries from the RunLog; the model must not invent or rewrite those Action calls.
 
 If source_run.omitted_action_types contains answer or status, those terminal
 outputs are intentionally not Function actions. The complete Function is only a
 reusable prefix; its name and description must say that the Planner must observe
-the returned page and provide the answer/status afterward. Do not claim that the
-Function itself answered the task.
+the returned page, follow the current goal's requested attributes, locate the
+requested item, read the requested value or completion state, and provide the
+answer/status afterward. Do not claim that the Function itself answered the task,
+and do not copy source-instance task parameter values into this handoff.
 Actions listed as noop_* were successful gestures whose before and after native
 observations were identical; keep them omitted and explain the omission rather
 than reconstructing them as Function actions.
@@ -264,11 +288,21 @@ every parameter target selected by a semantic Function. Use parameters=[] for fi
 recorded values. Coordinates never appear in candidates and can never become
 Function inputs. Keep reason under 40 words, each description under 120 words, and
 return no prose outside the JSON object.
+When a value is selected as a parameter, remove its recorded instance literal from
+the Function name and description. Describe the requested semantic value and let the
+generated input schema carry the concrete value at call time.
+Use suggested_name exactly when a candidate provides it. Give distinct semantic
+values distinct parameter names. Reuse one parameter name across multiple targets
+only when those targets intentionally consume the same recorded semantic value.
 
 For a global Function whose first action is open_app, keep the canonical recorded
 package fixed when the goal identifies a concrete app such as Joplin or Settings.
-Only expose package_name when the goal explicitly asks the caller to choose an
-app or package; a model must never invent an app package from a friendly app name.
+Only expose package_name when its parameter_candidate includes the compiler-backed
+task_parameter_name="app_name" and value_contract="android_package_name" evidence.
+In that case name the parameter package_name, describe it as the installed Android
+package for the requested app, and make the Function name and description generic to
+the requested app rather than the recorded source app. A model must never put a
+friendly app label such as "clock" into package_name.
 """
     selected_model = str(model or "").strip() or None
     usage = {
@@ -293,10 +327,7 @@ app or package; a model must never invent an app package from a friendly app nam
             "reason": (
                 "Registered the safe reusable prefix; the Planner resumes at the "
                 "observation-dependent handoff."
-                if (
-                    _observation_dependent_input_indices(facts)
-                    or _observation_dependent_handoff_indices(facts)
-                )
+                if _observation_dependent_input_indices(facts)
                 else "Registered one complete recorded Function."
             ),
             "bundle": default_bundle,
@@ -330,7 +361,7 @@ app or package; a model must never invent an app package from a friendly app nam
                 },
             ],
             response_format={"type": "json_object"},
-            max_tokens=512,
+            max_tokens=1024,
             temperature=0,
             stream=False,
             reasoning_effort="none",
@@ -579,6 +610,67 @@ app or package; a model must never invent an app package from a friendly app nam
     return report
 
 
+def _execution_trace_by_step_index(
+    run_log: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
+    diagnostics = run_log.get("diagnostics")
+    trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
+    if not isinstance(trace, list):
+        return {}
+    indexed: dict[int, dict[str, Any]] = {}
+    for fallback_index, item in enumerate(trace):
+        if not isinstance(item, dict):
+            continue
+        raw_index = item.get("step_index", fallback_index)
+        if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+            continue
+        if raw_index in indexed:
+            raise ValueError(f"source_execution_trace_step_duplicate:{raw_index}")
+        indexed[raw_index] = item
+    return indexed
+
+
+def _source_execution_action(
+    source_step: dict[str, Any],
+    *,
+    source_step_index: int,
+    execution_trace: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    source_action = source_step.get("action")
+    if not isinstance(source_action, dict):
+        return None
+    trace_step = execution_trace.get(source_step_index)
+    trace_action = trace_step.get("action") if isinstance(trace_step, dict) else None
+    trace_result = trace_step.get("result") if isinstance(trace_step, dict) else None
+    trace_args = trace_action.get("args") if isinstance(trace_action, dict) else None
+    if source_action.get("action_type") == "open_app":
+        if (
+            isinstance(trace_action, dict)
+            and trace_action.get("tool") == "open_app"
+            and isinstance(trace_args, dict)
+            and str(trace_args.get("package_name") or "").strip()
+        ):
+            return trace_action
+        return None
+    if source_action.get("action_type") not in {"scroll", "swipe"}:
+        return None
+    coordinate_keys = ("x1", "y1", "x2", "y2")
+    if (
+        isinstance(trace_action, dict)
+        and trace_action.get("tool") == "swipe"
+        and isinstance(trace_result, dict)
+        and trace_result.get("success") is True
+        and isinstance(trace_args, dict)
+        and all(trace_args.get(key) is not None for key in coordinate_keys)
+    ):
+        return trace_action
+    if all(source_action.get(key) is not None for key in coordinate_keys):
+        return None
+    raise ValueError(
+        f"source_swipe_execution_evidence_required:{source_step_index}"
+    )
+
+
 def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
     function_view = {
         "bindings": [],
@@ -591,15 +683,43 @@ def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
             for index, step in enumerate(facts.get("steps") or ())
         ],
     }
-    candidates = [
-        {
+    evidence_by_target = {
+        (
+            evidence.get("source_step_index"),
+            str(evidence.get("arg_name") or "").strip(),
+        ): evidence
+        for evidence in facts.get("parameter_evidence") or ()
+        if isinstance(evidence, dict)
+    }
+    candidates = []
+    for candidate in parameter_candidates(function_view):
+        evidence = semantic_parameter_evidence(
+            function_view["steps"][int(candidate["step_index"])],
+            str(candidate["arg_name"]),
+            candidate["recorded_value"],
+            facts,
+        )
+        if evidence is None:
+            continue
+        value = {
             "source_step_index": candidate["step_index"],
             "tool": candidate["tool"],
             "arg_name": candidate["arg_name"],
             "recorded_value": candidate["recorded_value"],
+            **evidence,
         }
-        for candidate in parameter_candidates(function_view)
-    ]
+        evidence = evidence_by_target.get(
+            (candidate["step_index"], candidate["arg_name"])
+        )
+        if evidence is not None:
+            value.update(
+                {
+                    "task_parameter_name": evidence["task_parameter_name"],
+                    "task_parameter_value": evidence["task_parameter_value"],
+                    "value_contract": evidence["value_contract"],
+                }
+            )
+        candidates.append(value)
     fixed_open_app_steps = {
         int(step["step_index"])
         for step in function_view["steps"]
@@ -654,6 +774,7 @@ def _materialize_authoring_plan(
     complete_parameter_targets: set[tuple[int, str]] = set()
     complete_source_indices: set[int] = set()
     materialization_notes: list[str] = []
+    preserved_complete_sequence = False
     function_fields = {
         "function_id",
         "name",
@@ -698,7 +819,16 @@ def _materialize_authoring_plan(
         source_starts_with_open_app = bool(source_steps) and (
             source_steps[0].get("action", {}).get("tool") == "open_app"
         )
-        handoff_indices = _observation_dependent_handoff_indices(facts)
+        if not is_complete and indices != list(range(indices[0], indices[-1] + 1)):
+            raise ValueError("function_author_plan_local_steps_not_contiguous")
+        if is_complete and indices[-1] != len(source_steps) - 1:
+            raise ValueError("function_author_plan_complete_terminal_step_required")
+        if is_complete:
+            indices = list(range(len(source_steps)))
+            preserved_complete_sequence = True
+            materialization_notes.append(
+                "Compiler preserved every successful main-flow action in source order."
+            )
         if is_complete and observation_dependent_input_indices:
             dynamic_indices = [
                 index
@@ -738,40 +868,6 @@ def _materialize_authoring_plan(
             )
         if skip_function:
             continue
-        if handoff_indices:
-            generic_indices = [
-                index for index in indices if index in handoff_indices
-            ]
-            if generic_indices:
-                if is_complete:
-                    boundary = min(generic_indices)
-                    safe_indices = [index for index in indices if index < boundary]
-                    if safe_indices:
-                        indices = safe_indices
-                        description = (
-                            f"{description} Stop before the generic surface so "
-                            "the Planner can inspect the current page and choose "
-                            "the target."
-                        )
-                        materialization_notes.append(
-                            "Compiler split the global Function at a generic "
-                            f"coordinate surface (source step {boundary})."
-                        )
-                    else:
-                        skip_function = True
-                        materialization_notes.append(
-                            "Compiler omitted a global Function with no safe "
-                            "prefix before a generic coordinate surface."
-                        )
-                else:
-                    skip_function = True
-                    materialization_notes.append(
-                        "Compiler omitted a semantic Function containing a "
-                        "generic coordinate surface; the Planner owns the "
-                        "runtime handoff."
-                    )
-            if skip_function:
-                continue
         atomicized_count = 0
         if not (is_complete and source_starts_with_open_app):
             (
@@ -829,11 +925,6 @@ def _materialize_authoring_plan(
             ],
             "agent_visible": True,
         }
-        if is_complete:
-            function["description"] = _append_terminal_handoff_description(
-                function["description"],
-                facts,
-            )
         raw_parameters = raw_function.get("parameters")
         if not isinstance(raw_parameters, list):
             raise ValueError("function_author_plan_parameters_invalid")
@@ -865,11 +956,6 @@ def _materialize_authoring_plan(
                 candidates=candidates,
                 existing_targets=explicit_targets
                 | set(semantic_parameter_specs),
-                existing_names={
-                    str(parameter.get("name") or "").strip()
-                    for parameter in raw_parameters
-                    if isinstance(parameter, dict)
-                },
             ):
                 raw_parameters.append(automatic_parameter)
                 materialization_notes.append(
@@ -887,7 +973,8 @@ def _materialize_authoring_plan(
             if candidate is None:
                 raise ValueError("function_author_plan_parameter_target_invalid")
             if arg_name == "package_name" and not _goal_allows_dynamic_app_package(
-                facts.get("goal")
+                facts.get("goal"),
+                candidate=candidate,
             ):
                 materialization_notes.append(
                     "Compiler kept the concrete app package fixed instead of "
@@ -910,7 +997,16 @@ def _materialize_authoring_plan(
                     f"semantic Function (source step {source_index})."
                 )
                 continue
-            parameter_name = str(parameter.get("name") or "").strip()
+            parameter_name = str(
+                candidate.get("suggested_name")
+                or parameter.get("name")
+                or ""
+            ).strip()
+            if (
+                arg_name == "package_name"
+                and candidate.get("task_parameter_name") == "app_name"
+            ):
+                parameter_name = "package_name"
             parameter_target = (int(source_index), arg_name)
             if is_complete:
                 complete_parameter_targets.add(parameter_target)
@@ -935,12 +1031,30 @@ def _materialize_authoring_plan(
             )
             source_arguments[parameter_name] = candidate["recorded_value"]
         apply_parameters(function, parameter_proposals, facts)
+        _generalize_parameterized_semantics(
+            function,
+            source_arguments=source_arguments,
+        )
+        _normalize_dynamic_open_app_semantics(
+            function,
+            parameter_proposals=parameter_proposals,
+        )
         function["description"] = _append_registered_action_plan(
             function["description"],
             function=function,
             source_steps=source_steps,
             source_indices=indices,
+            source_arguments=source_arguments,
         )
+        if is_complete:
+            function["name"] = _generalize_task_parameter_literals(
+                function["name"],
+                facts.get("task_parameters"),
+            )
+            function["description"] = _append_terminal_handoff_description(
+                function["description"],
+                facts,
+            )
         if function_id in materialized_function_ids:
             if not is_complete:
                 raise ValueError("function_author_plan_duplicate_function_id")
@@ -971,7 +1085,12 @@ def _materialize_authoring_plan(
     if required_complete_parameters - complete_parameter_targets:
         raise ValueError("function_author_plan_complete_parameters_missing")
 
-    normalized_reason = reason.strip()
+    normalized_reason = (
+        "Compiler preserved every successful main-flow action in source order; "
+        "only explicit observation-dependent boundaries hand off to the Planner."
+        if preserved_complete_sequence
+        else reason.strip()
+    )
     if materialization_notes:
         normalized_reason = f"{normalized_reason} {' '.join(materialization_notes)}"
     return {
@@ -1007,19 +1126,10 @@ def _goal_semantic_parameters(
     indices: list[int],
     candidates: dict[tuple[int, str], dict[str, Any]],
     existing_targets: set[tuple[int, str]],
-    existing_names: set[str],
 ) -> list[dict[str, Any]]:
-    """Expose goal-named labels that are part of the public task API.
-
-    Authoring should normally choose these bindings.  The deterministic rule
-    covers the important failure mode where a model describes a selected
-    folder/item correctly but leaves the literal source label hard-coded.
-    It only applies when the exact label appears in the goal and the goal has
-    an unambiguous semantic slot (folder, file, contact, etc.); navigation
-    labels such as Sidebar are therefore left fixed.
-    """
-    goal = " ".join(str(facts.get("goal") or "").casefold().split())
+    """Expose compiler-approved task inputs on the complete Function API."""
     result: list[dict[str, Any]] = []
+    goal = " ".join(str(facts.get("goal") or "").casefold().split())
 
     # AndroidWorld already records the public task API alongside the goal.
     # Prefer that contract when a recorded string action contains the exact
@@ -1044,49 +1154,52 @@ def _goal_semantic_parameters(
             )
             if not recorded_value:
                 continue
-            for raw_name, raw_value in task_parameters.items():
-                name = str(raw_name or "").strip()
-                value = " ".join(str(raw_value or "").casefold().split())
-                if (
-                    not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name)
-                    or name in existing_names
-                    or not value
-                    or value != recorded_value
-                ):
-                    continue
+            suggested_name = str(candidate.get("suggested_name") or "").strip()
+            if not suggested_name and recorded_value in goal:
+                suggested_name = _labeled_input_parameter_name(
+                    facts,
+                    source_index=source_index,
+                )
+            if suggested_name:
+                description = (
+                    "Installed Android package for the app requested by the task."
+                    if suggested_name == "package_name"
+                    else f"{suggested_name.replace('_', ' ').capitalize()} supplied by the task."
+                )
                 result.append(
                     {
-                        "name": name,
-                        "description": f"{name.replace('_', ' ').capitalize()} supplied by the task.",
+                        "name": suggested_name,
+                        "description": description,
                         "source_step_index": source_index,
                         "arg_name": arg_name,
                     }
                 )
                 existing_targets.add(target)
-                existing_names.add(name)
-                break
-
-    for source_index in indices:
-        candidate = candidates.get((source_index, "target_description"))
-        if candidate is None or (source_index, "target_description") in existing_targets:
-            continue
-        value = " ".join(str(candidate.get("recorded_value") or "").casefold().split())
-        if not value or len(value) < 2 or value not in goal:
-            continue
-        parameter_name, description = _goal_parameter_slot(goal)
-        if not parameter_name or parameter_name in existing_names:
-            continue
-        result.append(
-            {
-                "name": parameter_name,
-                "description": description,
-                "source_step_index": source_index,
-                "arg_name": "target_description",
-            }
-        )
-        existing_targets.add((source_index, "target_description"))
-        existing_names.add(parameter_name)
+                continue
     return result
+
+
+def _labeled_input_parameter_name(
+    facts: dict[str, Any],
+    *,
+    source_index: int,
+) -> str:
+    steps = list(facts.get("steps") or ())
+    if source_index not in range(len(steps)):
+        return ""
+    action = steps[source_index].get("action")
+    if not isinstance(action, dict) or action.get("tool") != "input_text":
+        return ""
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    label = " ".join(
+        str(args.get("target_description") or "").casefold().split()
+    )
+    return {
+        "first name": "first_name",
+        "given name": "first_name",
+        "last name": "last_name",
+        "family name": "last_name",
+    }.get(label, "")
 
 
 def _task_parameter_proposals(
@@ -1098,60 +1211,47 @@ def _task_parameter_proposals(
     task_parameters = facts.get("task_parameters")
     if not isinstance(task_parameters, dict):
         return []
-    values = {
-        str(name).strip(): " ".join(str(value or "").casefold().split())
-        for name, value in task_parameters.items()
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(name).strip())
-    }
     proposals: list[dict[str, Any]] = []
-    used_names: set[str] = set()
+    source_candidates = _source_parameter_candidates(facts)
     for candidate in parameter_candidates(function):
         recorded = " ".join(
             str(candidate.get("recorded_value") or "").casefold().split()
         )
         if not recorded:
             continue
-        match = next(
+        source_candidate = next(
             (
-                (name, value)
-                for name, value in values.items()
-                if name not in used_names and value and value == recorded
+                item
+                for item in source_candidates
+                if int(item.get("source_step_index", -1))
+                == int(candidate["step_index"])
+                and str(item.get("arg_name") or "") == candidate["arg_name"]
+                and " ".join(
+                    str(item.get("recorded_value") or "").casefold().split()
+                )
+                == recorded
             ),
             None,
         )
-        if match is None:
+        if source_candidate is None:
             continue
-        name, _ = match
+        name = str(source_candidate.get("suggested_name") or "").strip()
+        if not name:
+            continue
         proposals.append(
             {
                 "name": name,
-                "description": f"{name.replace('_', ' ').capitalize()} supplied by the task.",
+                "description": (
+                    "Installed Android package for the app requested by the task."
+                    if name == "package_name"
+                    else f"{name.replace('_', ' ').capitalize()} supplied by the task."
+                ),
                 "step_index": int(candidate["step_index"]),
                 "arg_name": str(candidate["arg_name"]),
                 "recorded_value": str(candidate["recorded_value"]),
             }
         )
-        used_names.add(name)
     return proposals
-
-
-def _goal_parameter_slot(goal: str) -> tuple[str, str]:
-    slots = (
-        ("folder", "Folder or notebook named by the user."),
-        ("directory", "Directory named by the user."),
-        ("file", "File named by the user."),
-        ("contact", "Contact named by the user."),
-        ("person", "Person named by the user."),
-        ("recipe", "Recipe named by the user."),
-        ("event", "Event named by the user."),
-        ("task", "Task named by the user."),
-        ("note", "Note named by the user."),
-        ("app", "App named by the user."),
-    )
-    for marker, description in slots:
-        if re.search(rf"\b{re.escape(marker)}\b", goal):
-            return marker, description
-    return "", ""
 
 
 _GENERIC_COORDINATE_SURFACE_MARKERS = frozenset(
@@ -1215,19 +1315,99 @@ def _observation_dependent_handoff_indices(
     )
 
 
-def _goal_allows_dynamic_app_package(goal: Any) -> bool:
-    normalized = " ".join(str(goal or "").casefold().split())
-    return any(
-        marker in normalized
-        for marker in (
-            "requested app",
-            "choose an app",
-            "select an app",
-            "app package",
-            "package name",
-            "package_name",
-        )
+def _goal_allows_dynamic_app_package(
+    _goal: Any,
+    *,
+    candidate: dict[str, Any] | None = None,
+) -> bool:
+    if (
+        isinstance(candidate, dict)
+        and candidate.get("task_parameter_name") == "app_name"
+        and candidate.get("value_contract") == "android_package_name"
+    ):
+        return True
+    return False
+
+
+def _source_action_parameter_evidence(
+    *,
+    source_step: dict[str, Any],
+    action: dict[str, Any],
+    source_step_index: int,
+    task_parameters: Any,
+) -> list[dict[str, Any]]:
+    raw_action = source_step.get("action")
+    if not isinstance(raw_action, dict) or not isinstance(task_parameters, dict):
+        return []
+    if str(action.get("tool") or "") != "open_app":
+        return []
+    if str(raw_action.get("action_type") or "") != "open_app":
+        return []
+    raw_app_name = " ".join(str(raw_action.get("app_name") or "").casefold().split())
+    task_app_name = " ".join(
+        str(task_parameters.get("app_name") or "").casefold().split()
     )
+    package_name = str(action.get("args", {}).get("package_name") or "").strip()
+    if not raw_app_name or raw_app_name != task_app_name or not package_name:
+        return []
+    return [
+        {
+            "source_step_index": int(source_step_index),
+            "arg_name": "package_name",
+            "task_parameter_name": "app_name",
+            "task_parameter_value": str(task_parameters["app_name"]),
+            "recorded_value": package_name,
+            "value_contract": "android_package_name",
+        }
+    ]
+
+
+def _normalize_dynamic_open_app_semantics(
+    function: dict[str, Any],
+    *,
+    parameter_proposals: list[dict[str, Any]],
+) -> None:
+    if len(function.get("steps") or ()) != 1:
+        return
+    step = function["steps"][0]
+    if step.get("action", {}).get("tool") != "open_app":
+        return
+    dynamic_package = any(
+        proposal.get("arg_name") == "package_name"
+        and proposal.get("name") == "package_name"
+        for proposal in parameter_proposals
+    )
+    if not dynamic_package:
+        return
+    function["name"] = "Open requested app"
+    function["description"] = (
+        "Open the app requested by the task using its installed Android package. "
+        "The Function completes after dispatching that app; the Planner handles "
+        "any permission pop-up visible afterward."
+    )
+
+
+def _generalize_parameterized_semantics(
+    function: dict[str, Any],
+    *,
+    source_arguments: dict[str, Any],
+) -> None:
+    for parameter_name, recorded_value in sorted(
+        source_arguments.items(),
+        key=lambda item: len(str(item[1] or "")),
+        reverse=True,
+    ):
+        value = str(recorded_value or "").strip()
+        if not value:
+            continue
+        label = " ".join(str(parameter_name).replace("_", " ").split())
+        replacement = f"requested {label}" if label else "requested value"
+        for field in ("name", "description"):
+            function[field] = _replace_recorded_literal(
+                str(function.get(field) or ""),
+                value,
+                replacement,
+            )
 
 
 def _promote_launcher_app_entry(
@@ -1262,6 +1442,9 @@ def _canonicalize_open_app_action(
     """Persist the native package observed after a recorded app launch."""
 
     if str(action.get("tool") or "") != "open_app":
+        return action
+    package_name = str(action.get("args", {}).get("package_name") or "").strip()
+    if "." in package_name and " " not in package_name:
         return action
     after_package = _primary_observation_package(next_observation)
     if not after_package:
@@ -1466,8 +1649,7 @@ def _restore_post_input_commit_steps(
         if not (
             isinstance(source_action, dict)
             and source_action.get("tool") == "input_text"
-            and isinstance(commit_action, dict)
-            and commit_action.get("tool") == "click"
+            and _is_post_input_commit_action(commit_step)
         ):
             continue
         commit_state_id = str(commit_step.get("before_state_id") or "").strip()
@@ -1500,6 +1682,48 @@ def _restore_post_input_commit_steps(
     return restored
 
 
+def _is_post_input_commit_action(step: dict[str, Any]) -> bool:
+    action = step.get("action")
+    if not isinstance(action, dict) or action.get("tool") != "click":
+        return False
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+    target_tokens = set(
+        re.findall(
+            r"[a-z0-9]+",
+            str(args.get("target_description") or "")
+            .replace("_", " ")
+            .casefold(),
+        )
+    )
+    purpose_tokens = set(
+        re.findall(
+            r"[a-z0-9]+",
+            str(metadata.get("purpose") or "").replace("_", " ").casefold(),
+        )
+    )
+    target_markers = {
+        "advance",
+        "apply",
+        "commit",
+        "confirm",
+        "continue",
+        "create",
+        "done",
+        "finish",
+        "next",
+        "ok",
+        "save",
+        "send",
+        "submit",
+    }
+    purpose_markers = target_markers - {"next"}
+    return bool(
+        target_tokens.intersection(target_markers)
+        or purpose_tokens.intersection(purpose_markers)
+    )
+
+
 def _default_bundle(
     facts: dict[str, Any],
     recovery_examples: list[dict[str, Any]],
@@ -1508,8 +1732,7 @@ def _default_bundle(
     if not source_steps:
         return None
     dynamic_indices = _observation_dependent_input_indices(facts)
-    handoff_indices = _observation_dependent_handoff_indices(facts)
-    boundary_indices = dynamic_indices.union(handoff_indices)
+    boundary_indices = dynamic_indices
     if boundary_indices:
         boundary = min(boundary_indices)
         safe_prefix = source_steps[:boundary]
@@ -1555,13 +1778,26 @@ def _default_bundle(
                 }
                 for proposal in task_parameter_proposals
             ],
-            {"steps": facts.get("steps") or []},
+            facts,
+        )
+        _generalize_parameterized_semantics(
+            function,
+            source_arguments=task_parameter_values,
+        )
+        _normalize_dynamic_open_app_semantics(
+            function,
+            parameter_proposals=task_parameter_proposals,
         )
     function["description"] = _append_registered_action_plan(
         function["description"],
         function=function,
         source_steps=function_source_steps,
         source_indices=list(range(len(function.get("steps") or ()))),
+        source_arguments=task_parameter_values,
+    )
+    function["name"] = _generalize_task_parameter_literals(
+        function["name"],
+        facts.get("task_parameters"),
     )
     function["description"] = _append_terminal_handoff_description(
         function["description"],
@@ -1632,6 +1868,7 @@ def _append_registered_action_plan(
     function: dict[str, Any],
     source_steps: list[dict[str, Any]],
     source_indices: list[int],
+    source_arguments: dict[str, Any],
 ) -> str:
     core_effect = " ".join(str(description or "").split()).strip().rstrip(".")
     core = (
@@ -1670,44 +1907,97 @@ def _append_registered_action_plan(
             or metadata.get("summary")
             or ""
         ).strip().rstrip(".")
-        action_detail = _registered_action_detail(action)
-        detail = (
-            f"{purpose}; action: {action_detail}"
-            if purpose
-            else action_detail
+        purpose = _generalize_text_with_arguments(purpose, source_arguments)
+        action_detail = _registered_action_detail(
+            action,
+            function=function,
+            step_index=local_index,
         )
-        plan.append(f"{local_index + 1}) {detail.rstrip('.')}.")
+        detail = (
+            f"Purpose: {purpose}. Action: {action_detail}."
+            if purpose
+            else f"Action: {action_detail}."
+        )
+        plan.append(f"{local_index + 1}) {detail}")
     if not plan:
         return f"{core}."
     return f"{core}. Action plan: {' '.join(plan)}"
 
 
-def _registered_action_detail(action: dict[str, Any]) -> str:
+def _generalize_text_with_arguments(
+    text: str,
+    source_arguments: dict[str, Any],
+) -> str:
+    result = str(text or "")
+    for parameter_name, recorded_value in sorted(
+        source_arguments.items(),
+        key=lambda item: len(str(item[1] or "")),
+        reverse=True,
+    ):
+        value = str(recorded_value or "").strip()
+        if not value:
+            continue
+        replacement = f"${parameter_name}"
+        result = _replace_recorded_literal(result, value, replacement)
+    return result
+
+
+def _replace_recorded_literal(text: str, value: str, replacement: str) -> str:
+    pattern = re.escape(value)
+    if value[0].isalnum():
+        pattern = rf"(?<!\w){pattern}"
+    if value[-1].isalnum():
+        pattern = rf"{pattern}(?!\w)"
+    return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+
+def _registered_action_detail(
+    action: dict[str, Any],
+    *,
+    function: dict[str, Any],
+    step_index: int,
+) -> str:
     tool = str(action.get("tool") or "action").strip()
     args = action.get("args") if isinstance(action.get("args"), dict) else {}
-    target = str(args.get("target_description") or "").strip()
-    if tool == "open_app":
-        package_name = str(args.get("package_name") or "").strip()
-        return f'open app package "{package_name}" to enter the workflow'
-    if tool == "click":
-        return (
-            f'click "{target}" to advance the registered workflow'
-            if target
-            else "click the registered UI target to advance the workflow"
+    semantic_arg_names = {
+        "open_app": ("package_name",),
+        "click": ("target_description",),
+        "double_click": ("target_description",),
+        "long_press": ("target_description",),
+        "input_text": ("target_description", "text"),
+        "swipe": ("direction",),
+        "press_key": ("key",),
+    }.get(tool, tuple(sorted(args)))
+    signature_args = [
+        (
+            f"{arg_name}="
+            f"{_registered_action_arg(function, step_index, arg_name, args[arg_name])}"
         )
-    if tool == "input_text":
-        text = str(args.get("text") or "").strip()
-        target_text = f' in "{target}"' if target else ""
-        return f'enter "{text}"{target_text}'
-    if tool == "swipe":
-        direction = str(args.get("direction") or "").strip()
-        return (
-            f"swipe {direction or 'the registered direction'} "
-            "to reveal the next controls"
+        for arg_name in semantic_arg_names
+        if arg_name in args
+    ]
+    if not signature_args and tool in {"click", "double_click", "long_press"}:
+        signature_args.append(
+            'target="OmniTransfer mapping from the registered source state"'
         )
-    if target:
-        return f'{tool} "{target}"'
-    return f"execute {tool} with its registered arguments"
+    return f"{tool}({', '.join(signature_args)})"
+
+
+def _registered_action_arg(
+    function: dict[str, Any],
+    step_index: int,
+    arg_name: str,
+    recorded_value: Any,
+) -> str:
+    target = f"$.steps[{step_index}].action.args.{arg_name}"
+    for binding in function.get("bindings") or ():
+        if not isinstance(binding, dict) or binding.get("target") != target:
+            continue
+        source = str(binding.get("source") or "").strip()
+        parameter = source.removeprefix("$.arguments.")
+        if parameter and parameter != source:
+            return f"${parameter}"
+    return json.dumps(recorded_value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _append_terminal_handoff_description(
@@ -1720,11 +2010,51 @@ def _append_terminal_handoff_description(
     }
     if not omitted.intersection({"answer", "status"}):
         return description
+    description = _generalize_task_parameter_literals(
+        description,
+        facts.get("task_parameters"),
+    )
     suffix = (
-        " This Function only reaches the observed page; the Planner must "
-        "inspect it and provide the task answer or status afterward."
+        " This Function has completed only its registered prefix, not the task. "
+        "Continue from the current observed page and follow the current goal: use "
+        "its requested attributes to locate the requested item, read the requested "
+        "value or completion state, then return the required answer or status."
     )
     return description if description.endswith(suffix) else f"{description}{suffix}"
+
+
+def _generalize_task_parameter_literals(text: str, task_parameters: Any) -> str:
+    if not isinstance(task_parameters, dict):
+        return str(text or "")
+    result = str(text or "")
+    literals: list[tuple[str, str]] = []
+    for raw_name, raw_value in task_parameters.items():
+        name = str(raw_name or "").strip()
+        if name in {"app_name", "package_name", "seed"}:
+            continue
+        if isinstance(raw_value, bool) or not isinstance(
+            raw_value, (str, int, float)
+        ):
+            continue
+        value = str(raw_value).strip()
+        if len(value) < 2:
+            continue
+        label = " ".join(name.replace("_", " ").split()) or "task value"
+        literals.append((value, f"current-goal {label}"))
+    for value, replacement in sorted(
+        literals,
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        tokens = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
+        if len(tokens) > 1:
+            pattern = r"(?<!\w)" + r"(?:[\W_]+)".join(
+                re.escape(token) for token in tokens
+            ) + r"(?!\w)"
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        else:
+            result = _replace_recorded_literal(result, value, replacement)
+    return result
 
 
 def _is_transient_system_action(step: dict[str, Any]) -> bool:
