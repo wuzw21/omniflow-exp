@@ -359,7 +359,13 @@ def _promote_goal_controls(candidates: list[_Candidate]) -> list[_Candidate]:
     goal_bounds = [
         item.bounds
         for item in candidates
-        if item.group == "goal" and item.bounds is not None
+        # Only an actionable goal match provides a meaningful anchor for a
+        # nearby unlabeled control.  A plain text node containing the target
+        # (for example an event title) must not promote unrelated navigation
+        # chrome such as a back button into goal_control.
+        if item.group == "goal"
+        and item.compact.get("a")
+        and item.bounds is not None
     ]
     if not goal_bounds:
         return candidates
