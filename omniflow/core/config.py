@@ -32,8 +32,7 @@ GUI_AGENT_RULES = (
     "For switches and checkboxes, checked=false means off and checked=true means on; never toggle a control that already matches the goal.",
     "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
     "When several visible controls mention the goal, prefer the direct control whose label or summary explicitly says it will cause the requested state change; avoid browse-only controls such as history, saved items, or See all unless the direct control is unavailable.",
-    "If the previous successful action explicitly intended to complete the goal and its observed effect confirms a state change without contrary evidence, choose finished immediately instead of navigating for redundant verification.",
-    "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
+    "Read the complete action history and current accessibility observation before choosing the next action. If they indicate that the Goal has been completed, choose finished and briefly state the outcome; otherwise choose exactly one next action.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (

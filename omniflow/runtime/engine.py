@@ -1123,22 +1123,8 @@ def _execution_history(
     *,
     completed_function: Function | None = None,
     invocation_summary: str = "",
-    limit: int = 3,
 ) -> str:
     lines = ["Action execution history on the target device:"]
-    completed_function_steps: list[dict[str, Any]] = []
-    other_steps: list[dict[str, Any]] = []
-    for step in trace:
-        metadata = step.get("metadata") if isinstance(step, dict) else None
-        function_id = (
-            str(metadata.get("function_id") or "").strip()
-            if isinstance(metadata, dict)
-            else ""
-        )
-        if completed_function is not None and function_id == completed_function.id:
-            completed_function_steps.append(step)
-        else:
-            other_steps.append(step)
     if completed_function is not None:
         lines.extend(
             [
@@ -1158,12 +1144,7 @@ def _execution_history(
                 -1,
                 f'Planner selected this Function for: "{invocation_summary}".',
             )
-    recent_trace = (
-        completed_function_steps + other_steps[-max(1, int(limit)) :]
-        if completed_function is not None
-        else trace[-max(1, int(limit)) :]
-    )
-    for fallback_index, step in enumerate(recent_trace, start=1):
+    for fallback_index, step in enumerate(trace, start=1):
         if not isinstance(step, dict):
             continue
         try:
@@ -1197,23 +1178,6 @@ def _execution_history(
             description = f'{description} Planner intent: "{summary}".'
         index = int(step.get("step_index") or fallback_index - 1) + 1
         lines.append(f"{index}. [{source}] {description}")
-    lines.extend(
-        [
-            (
-                "Now perform a manual completion review: compare the user goal, "
-                "the completed Function result, and the current UI."
-            ),
-            (
-                "If the goal is satisfied, call `finished`. If it is not, choose "
-                "exactly one next Action and state the specific missing goal "
-                "condition in that Action's summary."
-            ),
-            (
-                "Do not repeat any completed Function Action, navigate backward "
-                "merely to verify it, or re-open an already completed path."
-            ),
-        ]
-    )
     return "\n".join(lines)
 
 

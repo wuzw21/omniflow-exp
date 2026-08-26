@@ -79,15 +79,10 @@ def build_model_turn_request(
         and function.steps[0].action.tool == "open_app"
     )
     compact_global_startup = bool(global_functions) and not lightweight_retry
-    completion_review = has_successful_function_action(state.get("extra"))
     projection = (
         UIProjection("<omitted>", 0, 0, 0)
         if lightweight_retry or compact_global_startup
-        else project_ui(
-            str(state.get("xml") or ""),
-            goal,
-            include_all_nodes=completion_review,
-        )
+        else project_ui(str(state.get("xml") or ""), goal)
     )
     visual_coordinate_mode = (
         projection.visual_context_required and _state_has_screenshot(state)
@@ -423,9 +418,6 @@ def parse_model_turn_response(
                 projection = project_ui(
                     str((state or {}).get("xml") or ""),
                     goal,
-                    include_all_nodes=has_successful_function_action(
-                        (state or {}).get("extra")
-                    ),
                 )
                 adapter_metadata = {
                     **dict(adapter_metadata or {}),
@@ -692,26 +684,14 @@ def _turn_text(
         if isinstance(raw_extra, dict)
         else None
     )
-    completion_review_required = False
-    completion_execution_history = ""
+    execution_history = ""
     if not lightweight_retry and isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
-        previous_action = context.pop("previous_action", None)
+        context.pop("function_execution", None)
+        context.pop("previous_action", None)
         recent_actions = context.pop("recent_actions", None)
-        if has_successful_function_action(context):
-            completion_review_required = True
-            completion_execution_history = execution_history
-            lines.append(
-                "The recalled Function action plan finished successfully and its "
-                "effects are already applied. Manually judge the complete user "
-                "goal from the Function history and current accessibility state. "
-                "If satisfied, choose finished. Otherwise choose exactly one next "
-                "tool and use its summary to name the specific missing goal "
-                "condition. Never repeat a completed Function step or navigate "
-                "backward merely to verify it."
-            )
         if context.get("previous_action_error") or recent_actions:
             lines.append(
                 "Inspect the action history, observed results, and any previous "
@@ -719,24 +699,6 @@ def _turn_text(
                 "authoritative. Do not repeat the same action or no-progress "
                 "sequence; choose a different visible control or path, finish, "
                 "or abort."
-            )
-        if execution_history and not completion_review_required:
-            lines.extend(("Completed tool-call history:", execution_history))
-        structured_history: dict[str, Any] = {}
-        if isinstance(previous_action, dict):
-            structured_history["previous_action"] = previous_action
-        if isinstance(recent_actions, list) and recent_actions:
-            structured_history["recent_actions"] = recent_actions[-3:]
-        if structured_history:
-            lines.extend(
-                (
-                    "Structured recent action evidence:",
-                    json.dumps(
-                        structured_history,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                )
             )
         if context:
             lines.extend(
@@ -746,14 +708,11 @@ def _turn_text(
                 )
             )
     if not lightweight_retry:
-        projection_label = (
-            "Complete accessibility nodes"
-            if completion_review_required
-            else "Relevant UI elements"
-        )
+        lines.extend(("Past Actions:", execution_history or "0. No action yet."))
+    if not lightweight_retry:
         lines.extend(
             (
-                f"{projection_label} ({projection.selected_count}/{projection.candidate_count}):",
+                f"Relevant UI elements ({projection.selected_count}/{projection.candidate_count}):",
                 projection.text,
             )
         )
@@ -778,59 +737,17 @@ def _turn_text(
                 "(for example Delete, Save, or Send), select it before generic "
                 "navigation such as More options."
             )
-    if completion_review_required:
-        lines.extend(
-            (
-                "Completion review uses the complete accessibility tree above; no "
-                "node was removed by relevance ranking or the normal node limit.",
-                (
-                    "Compact keys: k=class/tag, i=node id, t=text, d=description, "
-                    "h=hint, r=resource id, b=bounds, a=actions, v=action reference."
-                ),
-                f"Goal under review: {goal}",
-                "Registered completed Function and Action history:",
-                completion_execution_history,
-                (
-                    "Judge the user goal from both the completed Function history "
-                    "and every current node. Lines without v remain valid state "
-                    "evidence even though they are not actionable."
-                ),
-                (
-                    "Choose finished only after judging that the complete goal is "
-                    "satisfied. Otherwise choose one next Action and name the "
-                    "specific missing condition in its summary."
-                ),
-            )
-        )
-    return "\n".join(lines)
-
-
-def has_successful_function_action(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    function_execution = value.get("function_execution")
-    if isinstance(function_execution, dict) and str(
-        function_execution.get("replay_status") or ""
-    ).strip() == "actions_succeeded":
-        steps = function_execution.get("steps")
-        if isinstance(steps, list) and steps and all(
-            isinstance(item, dict) and item.get("success") is True
-            for item in steps
-        ):
-            return True
-    recent_actions = value.get("recent_actions")
-    return isinstance(recent_actions, list) and any(
-        isinstance(item, dict)
-        and item.get("success") is True
-        and bool(str(item.get("function_id") or "").strip())
-        for item in recent_actions
+    lines.append(
+        "Review the complete Past Actions and current UI. If they indicate that "
+        "the Goal has been completed, choose `finished`; otherwise choose exactly "
+        "one next Action."
     )
+    return "\n".join(lines)
 
 
 __all__ = [
     "ModelToolCallError",
     "SYSTEM_PROMPT",
     "build_model_turn_request",
-    "has_successful_function_action",
     "parse_model_turn_response",
 ]
