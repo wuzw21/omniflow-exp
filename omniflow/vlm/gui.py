@@ -427,6 +427,15 @@ def parse_model_turn_response(
                         (state or {}).get("extra")
                     ),
                 )
+                adapter_metadata = {
+                    **dict(adapter_metadata or {}),
+                    "ui_projection": {
+                        "candidate_count": projection.candidate_count,
+                        "selected_count": projection.selected_count,
+                        "visual_context_required": projection.visual_context_required,
+                        "visual_candidate_count": projection.visual_candidate_count,
+                    },
+                }
                 grounded = projected_node_center(
                     projection,
                     str(arguments.get("target_description") or ""),
