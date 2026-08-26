@@ -223,13 +223,15 @@ def project_ui(
         )
         or visually_opaque_action_count >= _VISUALLY_OPAQUE_ACTION_THRESHOLD
     )
+    group_order = _group_order_for(candidates)
     selected = (
-        _order_all_candidates(candidates)
+        _order_all_candidates(candidates, group_order=group_order)
         if include_all_nodes or _has_repeated_action_surface(candidates)
-        else _select_candidates(candidates, max_nodes=max_nodes)
+        else _select_candidates(candidates, max_nodes=max_nodes, group_order=group_order)
     )
     text, nodes = _render_candidates(
         selected,
+        group_order=group_order,
         suppress_unlabeled_action_references=visual_context_required,
     )
     return UIProjection(
@@ -245,13 +247,33 @@ def project_ui(
     )
 
 
-def _order_all_candidates(candidates: list[_Candidate]) -> list[_Candidate]:
+def _group_order_for(candidates: list[_Candidate]) -> tuple[str, ...]:
+    """Prioritize an explicit goal action over generic navigation controls."""
+    has_direct_goal_action = any(
+        item.group == "goal"
+        and item.compact.get("a")
+        and any(
+            str(item.compact.get(key) or "").strip()
+            for key in ("t", "d", "h", "c")
+        )
+        for item in candidates
+    )
+    if has_direct_goal_action:
+        return ("goal", "goal_control", "global", "visual", "other")
+    return _GROUP_ORDER
+
+
+def _order_all_candidates(
+    candidates: list[_Candidate],
+    *,
+    group_order: tuple[str, ...] = _GROUP_ORDER,
+) -> list[_Candidate]:
     """Order the complete tree for the model without dropping any XML node."""
 
     return sorted(
         candidates,
         key=lambda item: (
-            _GROUP_ORDER.index(item.group),
+            group_order.index(item.group),
             _screen_order(item),
             item.order,
         ),
@@ -469,11 +491,12 @@ def _select_candidates(
     candidates: list[_Candidate],
     *,
     max_nodes: int,
+    group_order: tuple[str, ...] = _GROUP_ORDER,
 ) -> list[_Candidate]:
     if max_nodes <= 0:
         return []
     selected: list[_Candidate] = []
-    for group in _GROUP_ORDER:
+    for group in group_order:
         remaining = max_nodes - len(selected)
         if remaining <= 0:
             break
@@ -487,7 +510,7 @@ def _select_candidates(
     return sorted(
         selected,
         key=lambda item: (
-            _GROUP_ORDER.index(item.group),
+            group_order.index(item.group),
             _screen_order(item),
             item.order,
         ),
@@ -497,12 +520,13 @@ def _select_candidates(
 def _render_candidates(
     candidates: list[_Candidate],
     *,
+    group_order: tuple[str, ...] = _GROUP_ORDER,
     suppress_unlabeled_action_references: bool = False,
 ) -> tuple[str, tuple[ProjectedNode, ...]]:
     lines: list[str] = []
     nodes: list[ProjectedNode] = []
     visual_reference = 0
-    for group in _GROUP_ORDER:
+    for group in group_order:
         group_candidates = [item for item in candidates if item.group == group]
         if not group_candidates:
             continue
