@@ -67,6 +67,23 @@ from src.integrations.runlog import import_run_log, project_androidworld_step_ac
 
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger(__name__)
+
+
+def _prefer_fts4_sqlite() -> None:
+    """Use the venv SQLite build with FTS4 when AndroidWorld needs Joplin DBs."""
+
+    try:
+        import pysqlite3
+
+        probe = pysqlite3.connect(":memory:")
+        probe.execute("CREATE VIRTUAL TABLE _omniflow_fts4_probe USING fts4(value)")
+        probe.close()
+    except Exception:
+        return
+    sys.modules["sqlite3"] = pysqlite3
+
+
+_prefer_fts4_sqlite()
 DEFAULT_RAW_REPLAY_ACTION_WAIT_SECONDS = 1.0
 ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
     "com.google.androidenv.accessibilityforwarder"
