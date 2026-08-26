@@ -225,7 +225,7 @@ def project_ui(
     )
     selected = (
         _order_all_candidates(candidates)
-        if include_all_nodes
+        if include_all_nodes or _has_repeated_action_surface(candidates)
         else _select_candidates(candidates, max_nodes=max_nodes)
     )
     text, nodes = _render_candidates(
@@ -256,6 +256,36 @@ def _order_all_candidates(candidates: list[_Candidate]) -> list[_Candidate]:
             item.order,
         ),
     )
+
+
+def _has_repeated_action_surface(candidates: list[_Candidate]) -> bool:
+    """Detect a grid/list surface whose unlabeled controls need visual context.
+
+    Android views such as calendar day cells often expose every cell as a
+    clickable node with the same resource id and no text/content description.
+    Relevance ranking cannot infer which cell the goal names, so retaining only
+    a handful of visual candidates makes the target unreachable.  This is an
+    adaptive UI-shape rule, not an app- or task-specific exception.
+    """
+    unlabeled_actions = [
+        item
+        for item in candidates
+        if item.compact.get("a")
+        and not any(
+            str(item.compact.get(key) or "").strip()
+            for key in ("t", "d", "h", "c")
+        )
+    ]
+    if len(unlabeled_actions) < 12:
+        return False
+    repeated_keys: dict[tuple[str, tuple[str, ...]], int] = {}
+    for item in unlabeled_actions:
+        key = (
+            str(item.compact.get("r") or ""),
+            tuple(str(action) for action in (item.compact.get("a") or ())),
+        )
+        repeated_keys[key] = repeated_keys.get(key, 0) + 1
+    return max(repeated_keys.values(), default=0) >= 8
 
 
 def projected_node_center(
