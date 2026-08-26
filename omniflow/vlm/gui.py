@@ -748,6 +748,27 @@ def _turn_text(
                 projection.text,
             )
         )
+        if projection.visual_context_required:
+            lines.extend(
+                (
+                    "This screen contains a repeated or unlabeled action surface. "
+                    "For a target that has no v=Axx reference, use the screenshot "
+                    "and return `target_description` beginning with `visual:` plus "
+                    "the current-screen relative x/y coordinates; never invent an "
+                    "A-reference from the node order.",
+                )
+            )
+        if any(
+            '"d":"Delete"' in line
+            or '"d":"Save"' in line
+            or '"d":"Send"' in line
+            for line in projection.text.splitlines()
+        ):
+            lines.append(
+                "When a labeled control directly performs the named goal effect "
+                "(for example Delete, Save, or Send), select it before generic "
+                "navigation such as More options."
+            )
     if completion_review_required:
         lines.extend(
             (
