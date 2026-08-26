@@ -33,7 +33,7 @@ GUI_AGENT_RULES = (
     "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
     "When several visible controls mention the goal, prefer the direct control whose label or summary explicitly says it will cause the requested state change; avoid browse-only controls such as history, saved items, or See all unless the direct control is unavailable.",
     "If the previous successful action explicitly intended to complete the goal and its observed effect confirms a state change without contrary evidence, choose finished immediately instead of navigating for redundant verification.",
-    "For a state-changing goal, never use answer as a substitute for the required physical change. Choose answer only when the goal explicitly asks for a factual response; otherwise continue until the current UI or a tool result shows the requested mutation, and do not claim success while the target item is still present.",
+    "For a state-changing goal, never use answer as a substitute for the required physical change. Choose answer only when the goal explicitly asks for a factual response; otherwise continue until the current UI or a tool result shows the requested mutation. Before finished, compare the goal with the latest accessibility tree: if the named target or its old state is still visible, the goal is not complete. Do not trust a natural-language action summary over the actual current controls and effects.",
     "Use finished only when current evidence or a previous tool result proves the full task is complete; report one factual outcome and never claim RunLog or Function registration that the host has not confirmed.",
 )
 

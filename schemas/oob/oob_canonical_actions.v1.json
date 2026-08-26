@@ -145,8 +145,8 @@
       "name": "finished",
       "kind": "decision",
       "ui_label": {"zh_cn": "完成", "en_us": "Finished"},
-      "description": {"zh_cn": "仅当当前页面或上一轮工具结果直接证明用户目标已经完成时结束。", "en_us": "End only when the current page or previous tool result directly proves the user's goal is complete."},
-      "prompt_guide": {"zh_cn": "- finished(content?): 仅在当前页面或上一轮工具结果直接证明目标完成时调用；不确定就继续执行下一步。", "en_us": "- finished(content?): Call only when the current page or previous tool result directly proves completion; if uncertain, continue with the next action."},
+      "description": {"zh_cn": "仅当当前页面或上一轮工具结果直接证明用户目标已经完成时结束；如果目标对象或旧状态仍在页面中，不得结束。", "en_us": "End only when the current page or previous tool result directly proves the user's goal is complete; if the named target or its old state is still visible, do not end."},
+      "prompt_guide": {"zh_cn": "- finished(content?): 仅在当前页面或上一轮工具结果直接证明目标完成时调用；如果目标对象或旧状态仍可见，继续执行实际操作；不要把自然语言 action summary 当作效果证据。", "en_us": "- finished(content?): Call only when the current page or previous tool result directly proves completion. If the named target or its old state is still visible, perform the required action instead; do not treat a natural-language action summary as effect evidence."},
       "replayable": false,
       "args_template": {"content": "Done"},
       "args": [
