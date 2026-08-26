@@ -10,6 +10,7 @@ from typing import Iterable
 # the same launchable package identity.
 _PACKAGE_ALIASES = {
     "com.google.android.googlecamera": "com.android.camera2",
+    "com.example.broccoli": "com.flauschcode.broccoli",
 }
 
 
