@@ -380,6 +380,13 @@ class OmniFlow:
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
         while runtime_steps_used < self.config.runtime.max_steps:
+            # Some Android UIs expose large, unlabeled action surfaces (for
+            # example calendar grids).  XML alone cannot identify which cell
+            # is intended, so obtain a visual observation only when the shared
+            # projection marks the current surface as visually grounded.  This
+            # keeps ordinary turns screenshot-free while avoiding coordinate or
+            # node guesses on opaque controls.
+            observation = await self._ensure_visual_observation(goal, observation)
             max_fallback_steps = self.config.runtime.max_fallback_steps
             fallback_this_turn = function_session.failed
             if (
@@ -797,6 +804,45 @@ class OmniFlow:
                 )
             )
         )
+
+    async def _ensure_visual_observation(
+        self,
+        goal: str,
+        observation: Observation,
+    ) -> Observation:
+        """Refresh the current state with a screenshot for opaque action surfaces.
+
+        The planner already knows how to use visual coordinates when a
+        ``UIProjection`` requires them.  The runtime must make that image
+        available after an action, however; most physical observations are
+        intentionally XML-only to control token and capture overhead.
+        """
+        if observation.image_base64:
+            return observation
+        screenshot_path = str(observation.extra.get("screenshot_path") or "").strip()
+        if screenshot_path:
+            return observation
+        from omniflow.vlm.ui_projection import project_ui
+
+        projection = project_ui(str(observation.xml or ""), goal)
+        if not projection.visual_context_required:
+            return observation
+        refreshed = await self._observe(screenshot=True)
+        if refreshed.image_base64:
+            return Observation(
+                xml=refreshed.xml,
+                package_name=refreshed.package_name,
+                activity_name=refreshed.activity_name,
+                image_base64=refreshed.image_base64,
+                extra={
+                    **dict(refreshed.extra),
+                    "visual_reobserve": {
+                        "candidate_count": projection.candidate_count,
+                        "visual_candidate_count": projection.visual_candidate_count,
+                    },
+                },
+            )
+        return refreshed
 
     async def acall_tool(
         self,
