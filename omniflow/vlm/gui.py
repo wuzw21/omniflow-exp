@@ -5,6 +5,7 @@ from copy import deepcopy
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 from typing import Any
 from xml.etree import ElementTree
 
@@ -56,13 +57,19 @@ def build_model_turn_request(
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
 ) -> dict[str, Any]:
+    display = (
+        state.get("display") if isinstance(state.get("display"), dict) else None
+    )
     text = _turn_text(
         goal=goal,
         state=state,
         max_steps=max_steps,
         turn_index=turn_index,
         target_package_name=target_package_name,
-        xml_text=_compact_accessibility_observation(str(state.get("xml") or "")),
+        xml_text=_compact_accessibility_observation(
+            str(state.get("xml") or ""),
+            display=display,
+        ),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     current_image = _state_image_data_uri(state) if _state_has_screenshot(state) else ""
@@ -76,7 +83,6 @@ def build_model_turn_request(
                 },
             }
         )
-    display = state.get("display") if isinstance(state.get("display"), dict) else None
     tools = relative_coordinate_tools(
         vlm_action_tools(include_summary=True),
         display,
@@ -160,7 +166,11 @@ def _image_mime_type(payload: bytes) -> str:
     return ""
 
 
-def _compact_accessibility_observation(xml_text: str) -> str:
+def _compact_accessibility_observation(
+    xml_text: str,
+    *,
+    display: dict[str, Any] | None = None,
+) -> str:
     source = str(xml_text or "").strip()
     if not source:
         return "<none>"
@@ -169,6 +179,7 @@ def _compact_accessibility_observation(xml_text: str) -> str:
     except ElementTree.ParseError:
         return source
 
+    width, height = _accessibility_dimensions(root, display)
     rows: list[str] = []
     for node in root.iter("node"):
         attributes = node.attrib
@@ -189,30 +200,69 @@ def _compact_accessibility_observation(xml_text: str) -> str:
             )
             if attributes.get(attribute) == "true"
         ]
-        if not any((text, description, hint, actions)):
+        labels = list(
+            dict.fromkeys(
+                value for value in (text, description, hint) if value
+            )
+        )
+        if actions and not labels and resource_id:
+            labels.append(resource_id.rsplit("/", 1)[-1])
+        if not labels and not actions:
             continue
-        row: dict[str, Any] = {}
+        row: dict[str, Any] = {"label": " | ".join(labels)} if labels else {}
         if actions:
-            row["id"] = str(attributes.get("id") or "")
-            row["class"] = str(attributes.get("class") or "").rsplit(".", 1)[-1]
-        if text:
-            row["text"] = text
-        if description:
-            row["description"] = description
-        if hint and hint != text:
-            row["hint"] = hint
-        if actions:
-            if resource_id:
-                row["resource_id"] = resource_id.rsplit("/", 1)[-1]
             bounds = str(attributes.get("bounds") or "").strip()
-            if bounds:
-                row["bounds"] = bounds
+            normalized_bounds = _normalized_bounds(
+                bounds,
+                width=width,
+                height=height,
+            )
+            if normalized_bounds:
+                row["bounds_0_1000"] = normalized_bounds
             row["actions"] = actions
             for state_name in ("checked", "selected", "focused"):
                 if attributes.get(state_name) == "true":
                     row[state_name] = True
         rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
     return "\n".join(rows) or "<none>"
+
+
+def _accessibility_dimensions(
+    root: ElementTree.Element,
+    display: dict[str, Any] | None,
+) -> tuple[float | None, float | None]:
+    try:
+        width = float(root.attrib.get("width") or 0)
+        height = float(root.attrib.get("height") or 0)
+    except (TypeError, ValueError):
+        width = height = 0
+    if width > 0 and height > 0:
+        return width, height
+    try:
+        return display_size(display)
+    except ValueError:
+        return None, None
+
+
+def _normalized_bounds(
+    bounds: str,
+    *,
+    width: float | None,
+    height: float | None,
+) -> str:
+    if width is None or height is None:
+        return ""
+    values = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", bounds)]
+    if len(values) != 4:
+        return ""
+    left, top, right, bottom = values
+    normalized = (
+        round(min(1000, max(0, left / width * 1000))),
+        round(min(1000, max(0, top / height * 1000))),
+        round(min(1000, max(0, right / width * 1000))),
+        round(min(1000, max(0, bottom / height * 1000))),
+    )
+    return f"[{normalized[0]},{normalized[1]}][{normalized[2]},{normalized[3]}]"
 
 
 def parse_model_turn_response(
@@ -425,9 +475,9 @@ def _turn_text(
         f"Current activity: {state.get('activity_name') or ''}",
         f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
         (
-            "Coordinate contract: for click, input_text, and long_press, return the target point from "
-            "the current screenshot or current accessibility bounds as normalized x/y numbers from "
-            "0..1000. Swipe coordinates "
+            "Coordinate contract: bounds_0_1000 and Action coordinates use the same current-screen "
+            "0..1000 scale. Only rows with actions are interactive. Label-only rows are read-only "
+            "evidence. Swipe coordinates "
             "use the same current-screen scale. Example: swipe "
             '{"summary":"Scroll up","direction":"up","x1":'
             f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
@@ -467,7 +517,7 @@ def _turn_text(
         lines.extend(("Feedback:", "\n".join(feedback)))
     lines.extend(
         (
-            "Current accessibility elements (all visible semantic or actionable nodes; empty layout nodes omitted):",
+            "Current accessibility elements (label-only rows are read-only; rows with actions are interactive):",
             xml_text or "<none>",
         )
     )

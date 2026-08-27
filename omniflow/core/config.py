@@ -25,9 +25,9 @@ DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 GUI_AGENT_RULES = (
     "Observe the latest screenshot and accessibility state before every action.",
     "Choose exactly one provided tool call for the immediate next action; never guess a control that is not visible in the current observation.",
-    "For click, input_text, long_press, and swipe, return current-screen normalized 0..1000 coordinates and never reuse source-device or earlier-screen coordinates.",
+    "For click, input_text, long_press, and swipe, use current-screen bounds_0_1000 and return normalized 0..1000 coordinates; never reuse source-device or earlier-screen coordinates.",
+    "Only accessibility rows with actions are interactive; label-only rows are read-only screen evidence.",
     "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
-    "For a task about a range or collection, inspect the complete requested scope before answering.",
     "Use the action history to understand completed work. Choose finished only when the goal is complete; otherwise choose one next action.",
 )
 
