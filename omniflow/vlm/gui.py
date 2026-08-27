@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from copy import deepcopy
 from io import BytesIO
 import json
@@ -23,6 +24,7 @@ from omniflow.vlm_coordinates import (
 )
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
+_MAX_ACCESSIBILITY_ROWS = 24
 
 _PLANNER_CONTEXT_KEYS = (
     "planner_feedback",
@@ -30,6 +32,8 @@ _PLANNER_CONTEXT_KEYS = (
     "execution_history",
     "user_input",
 )
+
+PlannerContextProjector = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class ModelToolCallError(ValueError):
@@ -56,20 +60,22 @@ def build_model_turn_request(
     target_package_name: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
+    context_projector: PlannerContextProjector | None = None,
 ) -> dict[str, Any]:
+    projected_context = (context_projector or project_planner_context)(dict(state))
+    if not isinstance(projected_context, dict):
+        raise TypeError("planner_context_projector_result_invalid")
+    projected_state = {**state, **projected_context}
     display = (
         state.get("display") if isinstance(state.get("display"), dict) else None
     )
     text = _turn_text(
         goal=goal,
-        state=state,
+        state=projected_state,
         max_steps=max_steps,
         turn_index=turn_index,
         target_package_name=target_package_name,
-        xml_text=_compact_accessibility_observation(
-            str(state.get("xml") or ""),
-            display=display,
-        ),
+        xml_text=str(projected_state.get("xml") or ""),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     current_image = _state_image_data_uri(state) if _state_has_screenshot(state) else ""
@@ -84,10 +90,10 @@ def build_model_turn_request(
             }
         )
     tools = relative_coordinate_tools(
-        vlm_action_tools(include_summary=True),
+        vlm_action_tools(include_summary=False),
         display,
     )
-    tools.extend(function_tools(functions, include_summary=True))
+    tools.extend(function_tools(functions, include_summary=False))
     request: dict[str, Any] = {
         "model": str(model),
         "messages": [
@@ -105,6 +111,18 @@ def build_model_turn_request(
     request["thinking"] = {"type": "disabled"}
     request["reasoning_effort"] = "none"
     return request
+
+
+def project_planner_context(state: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(state)
+    display = projected.get("display")
+    projected["xml"] = _compact_accessibility_observation(
+        str(projected.get("xml") or ""),
+        display=display if isinstance(display, dict) else None,
+        current_package=str(projected.get("package_name") or "").strip(),
+        max_rows=_MAX_ACCESSIBILITY_ROWS,
+    )
+    return projected
 
 
 def _state_has_screenshot(state: dict[str, Any]) -> bool:
@@ -170,6 +188,8 @@ def _compact_accessibility_observation(
     xml_text: str,
     *,
     display: dict[str, Any] | None = None,
+    current_package: str = "",
+    max_rows: int = _MAX_ACCESSIBILITY_ROWS,
 ) -> str:
     source = str(xml_text or "").strip()
     if not source:
@@ -180,7 +200,9 @@ def _compact_accessibility_observation(
         return source
 
     width, height = _accessibility_dimensions(root, display)
-    projected: list[tuple[dict[str, Any], tuple[str, tuple[str, ...]] | None]] = []
+    projected: list[
+        tuple[dict[str, Any], tuple[str, tuple[str, ...]] | None, bool, bool]
+    ] = []
     for node in root.iter("node"):
         attributes = node.attrib
         if attributes.get("visible-to-user") == "false":
@@ -227,19 +249,42 @@ def _compact_accessibility_observation(
             for state_name in ("checked", "selected", "focused"):
                 if attributes.get(state_name) == "true":
                     row[state_name] = True
-        projected.append((row, visual_region_key))
+        node_package = str(attributes.get("package") or "").strip()
+        projected.append(
+            (
+                row,
+                visual_region_key,
+                bool(actions),
+                not current_package or node_package == current_package,
+            )
+        )
 
     repeated_visual_regions: dict[tuple[str, tuple[str, ...]], int] = {}
-    for _row, key in projected:
+    for _row, key, _interactive, _current_app in projected:
         if key is not None:
             repeated_visual_regions[key] = repeated_visual_regions.get(key, 0) + 1
 
+    interactive_labels = {
+        str(row.get("label") or "").strip().casefold()
+        for row, _key, interactive, _current_app in projected
+        if interactive and str(row.get("label") or "").strip()
+    }
+    ordered = sorted(
+        projected,
+        key=lambda item: (
+            0 if item[3] else 1,
+            0 if item[2] else 1,
+        ),
+    )
     rows: list[str] = []
     emitted_visual_groups: set[tuple[str, tuple[str, ...]]] = set()
     emitted_rows: set[str] = set()
-    for row, key in projected:
+    omitted = 0
+    row_limit = max(1, int(max_rows))
+    for row, key, interactive, _current_app in ordered:
         if key is not None and repeated_visual_regions.get(key, 0) > 4:
             if key in emitted_visual_groups:
+                omitted += 1
                 continue
             emitted_visual_groups.add(key)
             row = {
@@ -247,11 +292,32 @@ def _compact_accessibility_observation(
                 "count": repeated_visual_regions[key],
                 "grounding": "use current screenshot",
             }
+        label = str(row.get("label") or "").strip().casefold()
+        if not interactive and label and any(
+            label in interactive_label for interactive_label in interactive_labels
+        ):
+            omitted += 1
+            continue
         serialized = json.dumps(row, ensure_ascii=False, separators=(",", ":"))
         if serialized in emitted_rows:
+            omitted += 1
+            continue
+        if len(rows) >= row_limit:
+            omitted += 1
             continue
         emitted_rows.add(serialized)
         rows.append(serialized)
+    if omitted:
+        rows.append(
+            json.dumps(
+                {
+                    "omitted_elements": omitted,
+                    "grounding": "use current screenshot",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
     return "\n".join(rows) or "<none>"
 
 
@@ -559,7 +625,9 @@ def _turn_text(
 
 __all__ = [
     "ModelToolCallError",
+    "PlannerContextProjector",
     "SYSTEM_PROMPT",
     "build_model_turn_request",
     "parse_model_turn_response",
+    "project_planner_context",
 ]

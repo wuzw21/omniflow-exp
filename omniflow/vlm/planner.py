@@ -9,6 +9,7 @@ from omniflow.core.config import DEFAULT_MAX_STEPS
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.vlm.gui import (
     ModelToolCallError,
+    PlannerContextProjector,
     build_model_turn_request,
     parse_model_turn_response,
 )
@@ -39,6 +40,7 @@ class VLMPlanner:
         target_package_name: str = "",
         max_steps: int = DEFAULT_MAX_STEPS,
         metadata_sink: MetadataSink | None = None,
+        context_projector: PlannerContextProjector | None = None,
     ):
         if provider not in {"openai", "openai_compatible"}:
             raise ValueError("VLMPlanner supports OpenAI-compatible providers only")
@@ -51,6 +53,7 @@ class VLMPlanner:
         self._client = client
         self._transport = transport
         self._metadata_sink = metadata_sink
+        self._context_projector = context_projector
         self._api_key, self._base_url = resolve_openai_compatible_config(
             api_key=api_key,
             base_url=base_url,
@@ -84,6 +87,7 @@ class VLMPlanner:
                 functions=functions,
                 max_steps=self.max_steps,
                 turn_index=self._turn_index,
+                context_projector=self._context_projector,
             )
             envelope = {
                 "goal": str(goal),
