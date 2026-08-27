@@ -7,7 +7,6 @@
       "fixed_replay",
       "omniflow",
       "mobilegpt",
-      "appagent",
       "t3a_hint"
     ],
     "devices": [
@@ -44,7 +43,7 @@
     "step_timeout_sec": 60,
     "validator_flush_grace_sec": 300,
     "fixed_task_seed": true,
-    "fixed_task_params": false,
+    "fixed_task_params": true,
     "fold_state": 2,
     "fold_size": "2208x1840",
     "model": "Qwen3.6-Plus",
