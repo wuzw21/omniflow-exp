@@ -25,7 +25,6 @@ SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 _PLANNER_CONTEXT_KEYS = (
     "planner_feedback",
     "previous_action_error",
-    "recent_actions",
     "execution_history",
     "user_input",
 )
@@ -55,8 +54,6 @@ def build_model_turn_request(
     target_package_name: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
-    validation_error: str = "",
-    rejected_tool_call: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = _turn_text(
         goal=goal,
@@ -64,8 +61,6 @@ def build_model_turn_request(
         max_steps=max_steps,
         turn_index=turn_index,
         target_package_name=target_package_name,
-        validation_error=validation_error,
-        rejected_tool_call=rejected_tool_call,
         xml_text=str(state.get("xml") or ""),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
@@ -360,14 +355,11 @@ def _turn_text(
     max_steps: int,
     turn_index: int,
     target_package_name: str,
-    validation_error: str,
-    rejected_tool_call: dict[str, Any] | None,
     xml_text: str,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
-    width, height = display_size(display)
+    display_size(display)
     center_x = 500
-    center_y = 500
     upper_y = 700
     lower_y = 300
     lines = [
@@ -388,38 +380,6 @@ def _turn_text(
     ]
     if target_package_name:
         lines.append(f"Target package: {target_package_name}")
-    if validation_error.strip():
-        lines.extend(
-            (
-                "Your previous native tool_call was rejected by the registered schema:",
-                validation_error.strip(),
-                "Return one corrected native tool_call using the schema exactly. Do not rename, wrap, combine, or infer fields.",
-                (
-                    "Coordinate fields such as x and y must each be one relative "
-                    "JSON number from 0..1000 on its axis. Never use "
-                    "[x, y], an object, string, or boolean."
-                ),
-            )
-        )
-        if rejected_tool_call:
-            lines.extend(
-                (
-                    "Rejected native tool_call from your immediately previous attempt (verbatim):",
-                    json.dumps(
-                        rejected_tool_call,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                    "Do not repeat that argument shape. Return a new tool_call; do not explain or repair it in text.",
-                    (
-                        'Valid relative-coordinate scalar shape: {"x":'
-                        f'{center_x},"y":{center_y},"x1":{center_x},'
-                        f'"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
-                        '}. Invalid array shape: {"x":[500],"y":[464],"x1":[500,800]}.'
-                    ),
-                    "If your rejected call placed one intended point in x as [X,Y], choose the scalars yourself and emit x:X and y:Y in the new call. The runtime will not transform the array for you.",
-                )
-            )
     raw_extra = state.get("extra")
     extra = (
         {
@@ -431,28 +391,24 @@ def _turn_text(
         else None
     )
     execution_history = ""
-    planner_feedback = ""
+    feedback: list[str] = []
     if isinstance(extra, dict) and extra:
         context = dict(extra)
-        context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
         planner_feedback = str(context.pop("planner_feedback", "") or "").strip()
-        recent_actions = context.pop("recent_actions", None)
-        if context.get("previous_action_error") or recent_actions:
-            lines.append(
-                "Use the action history and any previous error as context, then "
-                "choose the next action from the latest screenshot and accessibility observation."
-            )
-        if context:
-            lines.extend(
-                (
-                    "Recent execution context:",
-                    json.dumps(context, ensure_ascii=False, separators=(",", ":")),
-                )
-            )
+        previous_action_error = str(
+            context.pop("previous_action_error", "") or ""
+        ).strip()
+        user_input = str(context.pop("user_input", "") or "").strip()
+        if planner_feedback:
+            feedback.append(planner_feedback)
+        if previous_action_error:
+            feedback.append(f"Previous action error: {previous_action_error}")
+        if user_input:
+            feedback.append(f"User input: {user_input}")
     lines.extend(("Past Actions:", execution_history or "0. No action yet."))
-    if planner_feedback:
-        lines.extend(("Planner feedback:", planner_feedback))
+    if feedback:
+        lines.extend(("Feedback:", "\n".join(feedback)))
     lines.extend(
         (
             "Current accessibility observation:",

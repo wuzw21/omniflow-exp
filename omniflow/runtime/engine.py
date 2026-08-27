@@ -415,7 +415,6 @@ class OmniFlow:
                     final_state=observation,
                     planner_diagnostics=planner_diagnostics,
                 )
-            recent_actions = _recent_actions(trace)
             execution_history = (
                 _execution_history(
                     trace,
@@ -427,7 +426,6 @@ class OmniFlow:
             )
             if (
                 previous_action_error
-                or recent_actions
                 or pending_user_input
                 or execution_history
             ):
@@ -439,9 +437,6 @@ class OmniFlow:
                     extra={
                         **dict(observation.extra),
                         "previous_action_error": previous_action_error,
-                        **(
-                            {"recent_actions": recent_actions} if recent_actions else {}
-                        ),
                         **(
                             {"execution_history": execution_history}
                             if execution_history
@@ -927,7 +922,6 @@ class OmniFlow:
             key: observation.extra[key]
             for key in (
                 "previous_action_error",
-                "recent_actions",
                 "execution_history",
                 "user_input",
             )
@@ -1269,32 +1263,6 @@ def _function_fallback_context(
         }
         return {key: value for key, value in context.items() if value}
     return {"expected_action": expected_action} if expected_action else None
-
-
-def _recent_actions(
-    trace: list[dict[str, Any]],
-    *,
-    limit: int = 8,
-) -> list[dict[str, Any]]:
-    history: list[dict[str, Any]] = []
-    for step in trace[-max(1, int(limit)) :]:
-        if not isinstance(step, dict):
-            continue
-        action = step["action"]
-        result = step["result"]
-        metadata = step.get("metadata") or {}
-        item = {
-            "tool": str(action.get("tool") or ""),
-            "args": dict(action.get("args") or {}),
-            "success": result.get("success") is True,
-            "error": result.get("error"),
-            "function_id": metadata.get("function_id") or None,
-        }
-        action_effect = metadata.get("action_effect")
-        if isinstance(action_effect, dict):
-            item["effect"] = dict(action_effect)
-        history.append(item)
-    return history
 
 
 def _execution_history(

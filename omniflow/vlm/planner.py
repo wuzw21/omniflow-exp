@@ -69,8 +69,6 @@ class VLMPlanner:
     ) -> ToolCall:
         state = planner_state(observation)
         installed_app_catalog = dict(installed_apps or {})
-        validation_error = ""
-        rejected_tool_call: dict[str, Any] | None = None
         self._metadata.clear()
         self._rejected_tool_calls.clear()
         metadata: dict[str, Any] = {}
@@ -86,8 +84,6 @@ class VLMPlanner:
                 functions=functions,
                 max_steps=self.max_steps,
                 turn_index=self._turn_index,
-                validation_error=validation_error,
-                rejected_tool_call=rejected_tool_call,
             )
             envelope = {
                 "goal": str(goal),
@@ -134,11 +130,10 @@ class VLMPlanner:
                         {"rejected_tool_calls": list(self._rejected_tool_calls)}
                     )
                     raise
-                validation_error = str(error)
-                rejected_tool_call = {
-                    "tool": error.tool_name or None,
-                    "arguments": error.arguments,
-                }
+                state = _with_planner_feedback(
+                    state,
+                    _schema_rejection_feedback(error),
+                )
         else:
             raise AssertionError("unreachable")
 
@@ -247,12 +242,37 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         in {
             "planner_feedback",
             "previous_action_error",
-            "recent_actions",
             "execution_history",
             "user_input",
         }
     }
     return {key: value for key, value in state.items() if value is not None}
+
+
+def _with_planner_feedback(state: dict[str, Any], feedback: str) -> dict[str, Any]:
+    updated = dict(state)
+    extra = dict(updated.get("extra") or {})
+    existing = str(extra.get("planner_feedback") or "").strip()
+    extra["planner_feedback"] = "\n".join(
+        part for part in (existing, str(feedback).strip()) if part
+    )
+    updated["extra"] = extra
+    return updated
+
+
+def _schema_rejection_feedback(error: ModelToolCallError) -> str:
+    rejected = {
+        "tool": error.tool_name or None,
+        "arguments": error.arguments,
+    }
+    return "\n".join(
+        (
+            "The previous tool call was rejected by its registered schema.",
+            f"Error: {error}",
+            "Rejected call: " + repr(rejected),
+            "Return exactly one corrected tool call using the registered schema.",
+        )
+    )
 
 
 def normalize_openai_model_turn_response(
