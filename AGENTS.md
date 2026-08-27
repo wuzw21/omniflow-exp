@@ -120,6 +120,10 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   10.1-inch WXGA tablet，API 33 / Android 13，1280×800。`source5560` 永远是
   source-only，不得作为 target。`OmniFlowTargetSmall`、`pixel5576` 和
   `AndroidWorldAvd4090` 已从正式 target 协议退役，只能作为只读历史兼容输入。
+- `Standard` 是实验平台角色，只能表示 Pixel 6 Pro / Android 13 / 1440×3120；它
+  不能别名到 `small_phone` 或 `OmniFlowTargetSmall`。`small_phone` 只表示 source 的
+  Pixel small phone / Android 13 / 720×1280。设备内部名字与该平台语义不一致时，
+  必须修正启动的 AVD，禁止通过改 profile 或结果标签伪装成 Standard。
 - 旧 10-cell/extended 结果和表格只作为历史证据放在桌面归档 `.archive/`；不得再作为
   对外主表或被后续任务更新。迁移时必须保留原始文件、来源路径、文件时间和 SHA-256
   provenance，并去重而不是覆盖冲突版本。
