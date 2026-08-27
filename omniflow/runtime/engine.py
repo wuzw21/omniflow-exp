@@ -635,11 +635,22 @@ class OmniFlow:
                             )
                         continue
             observation = await self._ensure_planner_screenshot(observation)
+            fallback_arguments = function_resolution.get("arguments")
+            planner_goal = (
+                _direct_function_fallback_goal(
+                    function_session.bound,
+                    fallback_arguments,
+                )
+                if fallback_this_turn
+                and function_session.bound is not None
+                and isinstance(fallback_arguments, dict)
+                else goal
+            )
             try:
                 planned_call = ToolCall.from_value(
                     await _await(
                         self.planner.one_step_tool_call(
-                            goal,
+                            planner_goal,
                             observation,
                             planner_functions,
                             dict(self.installed_apps),
