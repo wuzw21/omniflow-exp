@@ -788,8 +788,23 @@ def _materialize_authoring_plan(
         "source_step_index",
         "arg_name",
     }
+    complete_function_id = str(raw_complete_function.get("function_id") or "").strip()
+    complete_source_indices = raw_complete_function.get("source_step_indices")
+    deduplicated_functions: list[Any] = []
+    for raw_function in raw_functions:
+        if isinstance(raw_function, dict) and (
+            str(raw_function.get("function_id") or "").strip()
+            == complete_function_id
+            or raw_function.get("source_step_indices") == complete_source_indices
+        ):
+            materialization_notes.append(
+                "Compiler omitted a redundant local Function that duplicated "
+                "the complete Function."
+            )
+            continue
+        deduplicated_functions.append(raw_function)
     planned_functions = [
-        *((raw_function, False) for raw_function in raw_functions),
+        *((raw_function, False) for raw_function in deduplicated_functions),
         (raw_complete_function, True),
     ]
     for raw_function, is_complete in planned_functions:
@@ -824,10 +839,9 @@ def _materialize_authoring_plan(
         if is_complete and indices[-1] != len(source_steps) - 1:
             raise ValueError("function_author_plan_complete_terminal_step_required")
         if is_complete:
-            indices = list(range(len(source_steps)))
-            preserved_complete_sequence = True
+            preserved_complete_sequence = indices == list(range(len(source_steps)))
             materialization_notes.append(
-                "Compiler preserved every successful main-flow action in source order."
+                "Compiler materialized the author-selected maximal safe complete Function."
             )
         if is_complete and observation_dependent_input_indices:
             dynamic_indices = [
@@ -848,6 +862,7 @@ def _materialize_authoring_plan(
                         "Compiler split the global Function at an "
                         f"observation-dependent input (source step {boundary})."
                     )
+                    preserved_complete_sequence = False
                 else:
                     skip_function = True
                     materialization_notes.append(
