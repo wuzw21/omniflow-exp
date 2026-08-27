@@ -84,9 +84,9 @@ def openai_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]
             properties["summary"] = {
                 "type": "string",
                 "description": (
-                    "Immediate subgoal and expected progress of this action, in "
-                    "at most 20 Chinese characters or one short sentence. This "
-                    "becomes short step memory on the next turn."
+                    "One concise sentence containing any accumulated goal-relevant "
+                    "facts that must survive to the next turn, plus the immediate "
+                    "purpose of this action. This becomes cross-turn memory."
                 ),
             }
             required.append("summary")

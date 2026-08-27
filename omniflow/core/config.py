@@ -28,7 +28,7 @@ GUI_AGENT_RULES = (
     "For click, input_text, long_press, and swipe, use current-screen bounds_0_1000 and return normalized 0..1000 coordinates; never reuse source-device or earlier-screen coordinates.",
     "Only accessibility rows with actions are interactive; label-only rows are read-only screen evidence.",
     "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
-    "Use the action history to understand completed work. Choose finished only when the goal is complete; otherwise choose one next action.",
+    "Use the action history as cross-turn memory: carry forward concise goal-relevant facts already observed, and choose finished only when the goal is complete; otherwise choose one next action.",
     "When choosing finished, always include a short non-empty content summary of the completed result.",
 )
 
