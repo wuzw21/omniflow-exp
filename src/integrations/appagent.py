@@ -22,7 +22,13 @@ from PIL import Image
 from omniflow.core.trajectory import observation_display, observation_xml
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_THINKING,
     MAX_STEPS,
+)
+from src.experiment.paths import (
+    relative_reference,
+    resolve_relative_reference,
 )
 from src.experiment.protocol import (
     SOURCE_SEED as APPAGENT_SOURCE_SEED,
@@ -1273,7 +1279,10 @@ def seal_appagent_memory(
     teacher = load_appagent_teacher_source(teacher_path)
     if teacher.get("task_name") != normalized_task:
         raise ValueError("appagent_memory_teacher_task_mismatch")
-    source_run_log = Path(str(teacher.get("source_run_log") or "")).expanduser()
+    source_run_log = resolve_relative_reference(
+        teacher.get("source_run_log"),
+        base=teacher_path.parent,
+    )
     if not source_run_log.is_file():
         raise FileNotFoundError(f"appagent_source_run_log_missing:{source_run_log}")
 
@@ -1316,6 +1325,15 @@ def seal_appagent_memory(
     }
     if usage["total_tokens"] <= 0:
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+    for row in usage_rows:
+        requested_model = str(row.get("requested_model") or "").strip()
+        if requested_model and requested_model != normalized_document_model:
+            raise ValueError("appagent_document_requested_model_mismatch")
+        if "thinking" in row and row.get("thinking") != {"type": FORMAL_THINKING}:
+            raise ValueError("appagent_document_thinking_mismatch")
+        endpoint_value = str(row.get("endpoint") or "").strip()
+        if endpoint_value and endpoint_value != _chat_completions_url(FORMAL_MODEL_BASE_URL):
+            raise ValueError("appagent_document_endpoint_mismatch")
     if set(usage["models"]) != {normalized_document_model}:
         raise ValueError(
             "appagent_document_generation_model_mismatch:"
@@ -1360,17 +1378,21 @@ def seal_appagent_memory(
         "source_seed": APPAGENT_SOURCE_SEED,
         "source_method": normalized_source_method,
         "source_run_id": str(teacher.get("source_run_id") or ""),
-        "source_run_log": str(source_run_log.resolve()),
+        "source_run_log": relative_reference(source_run_log, base=root),
         "source_run_log_sha256": _file_sha256(source_run_log),
-        "teacher_source": str(teacher_path),
+        "teacher_source": relative_reference(teacher_path, base=root),
         "teacher_source_sha256": _file_sha256(teacher_path),
         "teacher_action_count": int(teacher.get("action_count") or 0),
         "teacher_actions_consumed": int(teacher.get("action_count") or 0),
         "demo_action_count": int(teacher.get("demo_action_count") or 0),
         "teacher_complete": True,
-        "demo_root": str(demo_root),
+        "demo_root": relative_reference(demo_root, base=root),
         "demo_sha256": _tree_sha256(demo_root),
-        "source_result": str(source_result_path) if source_result_path else None,
+        "source_result": (
+            relative_reference(source_result_path, base=root)
+            if source_result_path
+            else None
+        ),
         "source_result_sha256": (
             _file_sha256(source_result_path) if source_result_path else None
         ),
@@ -1379,21 +1401,29 @@ def seal_appagent_memory(
             source_result_row.get("androidworld_validator_result") or {}
         ).get("reward"),
         "source_episode_metrics": source_episode_metrics,
-        "document_generation_log": str(document_log_path),
+        "document_generation_log": relative_reference(document_log_path, base=root),
         "document_generation_log_sha256": _file_sha256(document_log_path),
-        "document_generation_usage_path": str(usage_path),
+        "document_generation_usage_path": relative_reference(usage_path, base=root),
         "document_generation_usage_sha256": _file_sha256(usage_path),
         "doc_generation_usage": usage,
         "document_generation_model": normalized_document_model,
+        "model_contract": {
+            "model": normalized_document_model,
+            "endpoint": FORMAL_MODEL_BASE_URL,
+            "thinking": {"type": FORMAL_THINKING},
+        },
         "prep_wall_sec": round(float(prep_wall_sec), 6),
-        "demo_docs_root": str(docs_root),
+        "demo_docs_root": relative_reference(docs_root, base=root),
         "demo_docs_sha256": _tree_sha256(docs_root),
         "demo_docs_file_count": docs_file_count,
         "native_format": "appagent.demo_docs",
         "conversion_mode": conversion_mode,
         "source_emulator_used": not offline_conversion,
         "native_memory_evidence": (
-            str(Path(native_memory_evidence).expanduser().resolve())
+            relative_reference(
+                Path(native_memory_evidence).expanduser().resolve(),
+                base=root,
+            )
             if native_memory_evidence is not None
             else None
         ),
@@ -1476,7 +1506,11 @@ def validate_appagent_memory(
         if payload.get("source_emulator_used") is not False:
             raise ValueError("appagent_memory_source_emulator_forbidden")
         evidence_value = str(payload.get("native_memory_evidence") or "").strip()
-        evidence = Path(evidence_value) if evidence_value else None
+        evidence = (
+            resolve_relative_reference(evidence_value, base=root)
+            if evidence_value
+            else None
+        )
         if evidence is not None and not evidence.is_file():
             raise FileNotFoundError(
                 f"appagent_native_memory_evidence_missing:{evidence}"
@@ -1507,6 +1541,18 @@ def validate_appagent_memory(
         raise ValueError("appagent_memory_doc_wall_time_missing")
     if float(payload.get("prep_wall_sec") or 0.0) <= 0:
         raise ValueError("appagent_memory_prep_wall_time_missing")
+    model_contract = payload.get("model_contract")
+    if model_contract is not None:
+        if not isinstance(model_contract, dict):
+            raise ValueError("appagent_memory_model_contract_invalid")
+        if str(model_contract.get("model") or "") != str(
+            payload.get("document_generation_model") or ""
+        ):
+            raise ValueError("appagent_memory_model_contract_model_mismatch")
+        if str(model_contract.get("endpoint") or "") != FORMAL_MODEL_BASE_URL:
+            raise ValueError("appagent_memory_model_contract_endpoint_mismatch")
+        if model_contract.get("thinking") != {"type": FORMAL_THINKING}:
+            raise ValueError("appagent_memory_model_contract_thinking_mismatch")
     if payload.get("teacher_complete") is not True or int(
         payload.get("teacher_actions_consumed") or 0
     ) != int(payload.get("teacher_action_count") or -1):
@@ -1526,8 +1572,13 @@ def validate_appagent_memory(
     ):
         if payload.get(key) is not False:
             raise ValueError(f"appagent_memory_leakage:{key}")
-    _require_hash(payload, "teacher_source", "teacher_source_sha256")
-    teacher_source = load_appagent_teacher_source(payload["teacher_source"])
+    teacher_path = _require_hash(
+        payload,
+        "teacher_source",
+        "teacher_source_sha256",
+        root=root,
+    )
+    teacher_source = load_appagent_teacher_source(teacher_path)
     if teacher_source.get("task_name") != payload.get("task_name"):
         raise ValueError("appagent_memory_teacher_task_mismatch")
     if int(teacher_source.get("action_count") or 0) != teacher_action_count:
@@ -1535,31 +1586,59 @@ def validate_appagent_memory(
     if int(teacher_source.get("demo_action_count") or 0) != demo_action_count:
         raise ValueError("appagent_memory_action_count_mismatch")
     if not offline_conversion:
-        _require_hash(payload, "source_result", "source_result_sha256")
-    _require_hash(
+        _require_hash(
+            payload,
+            "source_result",
+            "source_result_sha256",
+            root=root,
+        )
+    document_log_path = _require_hash(
         payload,
         "document_generation_log",
         "document_generation_log_sha256",
+        root=root,
     )
-    _require_hash(
+    usage_path = _require_hash(
         payload,
         "document_generation_usage_path",
         "document_generation_usage_sha256",
+        root=root,
     )
-    demo_root = Path(str(payload.get("demo_root") or ""))
-    docs_root = Path(str(payload.get("demo_docs_root") or ""))
+    demo_root = resolve_relative_reference(payload.get("demo_root"), base=root)
+    docs_root = resolve_relative_reference(
+        payload.get("demo_docs_root"),
+        base=root,
+    )
     _validate_demo_artifacts(
         demo_root,
         expected_teacher_action_count=teacher_action_count,
         expected_demo_action_count=demo_action_count,
     )
+    if _tree_sha256(demo_root) != str(payload.get("demo_sha256") or ""):
+        raise ValueError("appagent_memory_demo_hash_mismatch")
     if _validate_demo_docs(docs_root) != int(payload.get("demo_docs_file_count") or 0):
         raise ValueError("appagent_memory_docs_count_mismatch")
+    if _tree_sha256(docs_root) != str(payload.get("demo_docs_sha256") or ""):
+        raise ValueError("appagent_memory_docs_hash_mismatch")
     expected_source = (
         Path(source_run_log).expanduser().resolve()
         if source_run_log is not None
-        else Path(str(payload.get("source_run_log") or "")).expanduser().resolve()
+        else resolve_relative_reference(payload.get("source_run_log"), base=root)
     )
+    if not expected_source.is_file():
+        raise FileNotFoundError(f"appagent_memory_source_run_log_missing:{expected_source}")
+    if _file_sha256(expected_source) != str(payload.get("source_run_log_sha256") or ""):
+        raise ValueError("appagent_memory_source_run_log_hash_mismatch")
+    teacher_source_path = resolve_relative_reference(
+        teacher_source.get("source_run_log"),
+        base=teacher_path.parent,
+    )
+    if _file_sha256(teacher_source_path) != str(
+        teacher_source.get("source_run_log_sha256") or ""
+    ):
+        raise ValueError("appagent_memory_teacher_source_run_log_hash_mismatch")
+    if _file_sha256(teacher_source_path) != str(payload.get("source_run_log_sha256") or ""):
+        raise ValueError("appagent_memory_source_provenance_mismatch")
     return dict(payload)
 
 
@@ -2434,10 +2513,26 @@ def _validate_demo_docs(docs_root: Path) -> int:
     return len(paths)
 
 
-def _require_hash(payload: dict[str, Any], path_key: str, hash_key: str) -> None:
-    path = Path(str(payload.get(path_key) or ""))
+def _require_hash(
+    payload: dict[str, Any],
+    path_key: str,
+    hash_key: str,
+    *,
+    root: Path,
+) -> Path:
+    path = resolve_relative_reference(payload.get(path_key), base=root)
     if not path.is_file():
         raise FileNotFoundError(f"appagent_memory_file_missing:{path_key}:{path}")
+    expected = str(payload.get(hash_key) or "").strip()
+    if not expected:
+        raise ValueError(f"appagent_memory_hash_missing:{hash_key}")
+    actual = _file_sha256(path)
+    if actual != expected:
+        raise ValueError(
+            f"appagent_memory_hash_mismatch:{path_key}:"
+            f"expected={expected}:actual={actual}"
+        )
+    return path
 
 
 def _tag_center(

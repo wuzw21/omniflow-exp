@@ -16,6 +16,7 @@ from typing import Any, Sequence
 
 from src.experiment.function_v2 import compile_function_v2
 from src.experiment.appagent_source import convert_runlog_to_appagent_memory
+from src.experiment.paths import relative_reference, resolve_path, sha256_file
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
@@ -36,6 +37,11 @@ from src.experiment.protocol import (
     require_formal_model,
 )
 from src.integrations.mobilegpt import convert_runlog_to_mobilegpt_bundle
+from src.integrations.mobilegpt import validate_prepared_memory
+from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
+from src.integrations.appagent import validate_appagent_memory
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _methods(value: str) -> tuple[str, ...]:
@@ -115,7 +121,7 @@ def _method_memory_path(memory_root: str | Path, method: str) -> Path:
     separately to every atomic run.
     """
 
-    root = Path(memory_root).expanduser().resolve()
+    root = resolve_path(memory_root)
     if method == "omniflow":
         return root / "omniflow" / "store.json"
     if method == "mobilegpt":
@@ -123,6 +129,100 @@ def _method_memory_path(memory_root: str | Path, method: str) -> Path:
     if method == "appagent":
         return root / "appagent"
     raise ValueError(f"method_has_no_memory_input:{method}")
+
+
+def _relative_output(value: str | Path) -> str:
+    """Return a repository-relative address for CLI/report output."""
+
+    return relative_reference(Path(value).expanduser().resolve(), base=REPO_ROOT)
+
+
+def _reuse_existing_memory(
+    *,
+    method: str,
+    source: Path,
+    memory_root: Path,
+    task_name: str,
+) -> tuple[dict[str, Any], Path] | None:
+    """Reuse one explicit, complete Memory without any authoring call.
+
+    Existing output is intentionally not searched for or selected.  The
+    caller supplies the exact address; a partial or incompatible address is a
+    hard error so a stale experiment can never silently become a new result.
+    """
+
+    if not memory_root.exists():
+        return None
+    source_digest = sha256_file(source)
+    if method == "appagent":
+        validated = validate_appagent_memory(
+            memory_root,
+            task_name=task_name,
+            source_run_log=source,
+        )
+        if str(validated.get("document_generation_model") or "") != FORMAL_MODEL:
+            raise ValueError("appagent_memory_model_mismatch")
+        if str(validated.get("source_run_log_sha256") or "") != source_digest:
+            raise ValueError("appagent_memory_source_run_log_mismatch")
+        return (
+            {
+                "method": method,
+                "task_name": task_name,
+                "memory_root": _relative_output(memory_root),
+                "manifest": validated,
+                "reused": True,
+            },
+            memory_root,
+        )
+    if method == "mobilegpt":
+        memory = memory_root / "memory"
+        validated = validate_prepared_memory(
+            memory,
+            task_name=task_name,
+            source_seed=SOURCE_SEED,
+            source_run_log=source,
+            expected_model=FORMAL_MODEL,
+            expected_source_method=MOBILEGPT_SOURCE_METHOD,
+        )
+        manifest = validated.get("manifest") or {}
+        recorded = ((manifest.get("source_run_log") or {}).get("sha256"))
+        if recorded and str(recorded) != source_digest:
+            raise ValueError("mobilegpt_memory_source_run_log_mismatch")
+        return (
+            {
+                "method": method,
+                "task_name": task_name,
+                "memory_root": _relative_output(memory),
+                "manifest": manifest,
+                "reused": True,
+            },
+            memory,
+        )
+    if method == "omniflow":
+        store = memory_root / "store.json"
+        copied_source = memory_root / "run_log.json"
+        report_path = memory_root / "compile_report.json"
+        if not store.is_file() or not copied_source.is_file() or not report_path.is_file():
+            raise FileNotFoundError("omniflow_memory_bundle_incomplete")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(report, dict) or str(report.get("model") or "") != FORMAL_MODEL:
+            raise ValueError("omniflow_memory_model_mismatch")
+        if sha256_file(copied_source) != source_digest:
+            raise ValueError("omniflow_memory_source_run_log_mismatch")
+        store_payload = json.loads(store.read_text(encoding="utf-8"))
+        if not isinstance(store_payload, dict) or not store_payload:
+            raise ValueError("omniflow_memory_store_invalid")
+        return (
+            {
+                "method": method,
+                "task_name": task_name,
+                "memory_root": _relative_output(store),
+                "manifest": report,
+                "reused": True,
+            },
+            store,
+        )
+    raise ValueError(f"method_has_no_memory_reuse:{method}")
 
 
 def _device_booted(adb: str, serial: str) -> bool:
@@ -247,25 +347,27 @@ def _ensure_devices_started(
 
 
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
-    source = Path(args.source_run_log).expanduser()
-    output = Path(args.memory).expanduser()
+    source = resolve_path(args.source_run_log)
+    output = resolve_path(args.memory)
 
     methods = ("omniflow", "mobilegpt", "appagent") if args.method == "all" else (args.method,)
-    if args.method == "all":
-        if not str(args.mobilegpt_root or "").strip():
-            raise ValueError("all_conversion_requires_mobilegpt_root")
-        for dependency, label in (
-            (args.mobilegpt_root, "mobilegpt"),
-            (args.appagent_root, "appagent"),
-        ):
-            if not Path(str(dependency)).expanduser().is_dir():
-                raise FileNotFoundError(
-                    f"all_conversion_dependency_missing:{label}:{dependency}"
-                )
+    if not source.is_file():
+        raise FileNotFoundError(f"source_run_log_missing:{source}")
     reports: list[dict[str, Any]] = []
     memories: dict[str, str] = {}
     for method in methods:
         method_output = output / method if args.method == "all" else output
+        reused = _reuse_existing_memory(
+            method=method,
+            source=source,
+            memory_root=method_output,
+            task_name=args.task,
+        )
+        if reused is not None:
+            report, memory_path = reused
+            reports.append(report)
+            memories[method] = _relative_output(memory_path)
+            continue
         if method == "omniflow":
             report = compile_function_v2(
                 source,
@@ -277,6 +379,12 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
             )
             memory = Path(str(report["store_path"]))
         elif method == "mobilegpt":
+            if not str(args.mobilegpt_root or "").strip():
+                raise ValueError("conversion_requires_mobilegpt_root:mobilegpt")
+            if not Path(str(args.mobilegpt_root)).expanduser().is_dir():
+                raise FileNotFoundError(
+                    f"conversion_dependency_missing:mobilegpt:{args.mobilegpt_root}"
+                )
             report = convert_runlog_to_mobilegpt_bundle(
                 source_run_log=source,
                 mobilegpt_root=args.mobilegpt_root,
@@ -286,6 +394,12 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
             )
             memory = Path(str(report["memory_root"]))
         elif method == "appagent":
+            if not str(args.appagent_root or "").strip():
+                raise ValueError("conversion_requires_appagent_root:appagent")
+            if not Path(str(args.appagent_root)).expanduser().is_dir():
+                raise FileNotFoundError(
+                    f"conversion_dependency_missing:appagent:{args.appagent_root}"
+                )
             report = convert_runlog_to_appagent_memory(
                 source_run_log=source,
                 appagent_root=args.appagent_root,
@@ -296,15 +410,15 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
         else:
             raise ValueError(f"unknown_conversion_method:{method}")
         reports.append(report)
-        memories[method] = str(memory)
+        memories[method] = _relative_output(memory)
 
     if args.method == "all":
         return {
             "action": "convert-memory",
             "task": args.task,
             "methods": list(methods),
-            "source_run_log": str(source),
-            "memory_root": str(output.resolve()),
+            "source_run_log": _relative_output(source),
+            "memory_root": _relative_output(output),
             "memories": memories,
         }
     return {
@@ -369,6 +483,7 @@ def _run_command(
     return method, label, subprocess.run(
         command,
         env=environment,
+        cwd=REPO_ROOT,
         check=False,
     ).returncode
 
@@ -446,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--memory", default="")
     parser.add_argument("--source-run-log", default="")
-    parser.add_argument("--output", default=str(repo / "data" / "androidworld"))
+    parser.add_argument("--output", default="data/androidworld")
     parser.add_argument(
         "--mobilegpt-root",
         default=os.environ.get("OMNIFLOW_MOBILEGPT_ROOT", ""),
@@ -455,7 +570,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--appagent-root",
         default=os.environ.get(
             "OMNIFLOW_APPAGENT_ROOT",
-            str(Path.home() / "Projects" / "Omni" / "OmniFlow" / "runtime" / "external" / "appagent"),
+            "../OmniFlow/runtime/external/appagent",
         ),
     )
     parser.add_argument("--dry-run", action="store_true")

@@ -9,7 +9,7 @@ bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device standard45562 \
-  --memory /path/to/store.json
+  --memory data/androidworld/_memories/omniflow/store.json
 ```
 
 实验参数不通过命令行动态覆盖，固定值来自 `config/paper_androidworld.json`。
@@ -25,19 +25,24 @@ execution/lifecycle 时间、Store、RunLog 和 SHA-256；三端并行时按实�
 `--method source --device source5560` 使用无 Memory 的 OmniFlow Planner、统一
 OOB 物理层和官方 validator，采集 seed-111 Source RunLog。
 
-Memory 在直接执行时是显式地址；入口不会查 index 或自动寻找历史 Memory。保存
+Memory 在直接执行时是显式地址；入口不会查 index 或自动寻找历史 Memory。仓库内的
+配置和 manifest 使用相对路径，外部依赖只在运行边界解析。保存
 Memory 与直接执行是两个协议：
 
 - `convert-memory`：输入一份 source RunLog，输出一个或多个固定 Memory 地址；
 - `run`：输入 task、method、device 和 Memory 地址，直接执行一次实验。
+
+如果 `convert-memory` 的目标地址已经存在，入口只在该地址通过 source RunLog、task、
+模型和文件哈希校验时复用它；不会再次调用官方 authoring 模型。校验失败需要人工
+处理该明确地址，入口不会扫描或挑选别的结果。
 
 保存 Memory：
 
 ```bash
 bash scripts/exp/run_androidworld.sh convert-memory \
   --task CameraTakePhoto --method omniflow \
-  --source-run-log /path/to/run_log.json \
-  --memory /path/to/output-memory
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories
 ```
 
 直接执行：
@@ -46,8 +51,8 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto --method omniflow \
   --device standard45562 \
-  --source-run-log /path/to/source/run_log.json \
-  --memory /path/to/omniflow/store.json
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories/omniflow/store.json
 ```
 
 要用一份 source RunLog 生成并运行全部方法，使用 `--method all` 和同一个 Memory

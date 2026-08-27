@@ -26,7 +26,8 @@ AppAgent 通过 official forwarder 接入，但 observe/act 仍由同一个 Omni
 - AndroidWorld 官方结果与 RunLog：论文实验输出。
 
 AppAgent 的 Memory 是其官方 demo 文档格式；它与 OmniFlow Store、MobileGPT
-Memory 互不混用，但都只从同一份成功 source RunLog 派生一次。
+Memory 互不混用，但都只从同一份成功 source RunLog 派生一次。新 manifest 的所有
+资产引用相对于 Memory 根目录；旧绝对引用只作为兼容证据读取。
 
 ## 两个公开协议
 
@@ -92,5 +93,7 @@ SaveMemory  ──> stable Memory addresses
 
 历史结果扫描、自动 attempt 选择、scheduler manifest、重复 registry/ledger、启动日志和
 转换缓存都不参与运行。Memory 转换中间文件使用系统临时目录，任务结束自动删除。
+显式传入的已有 Memory 会先进行完整校验（source SHA-256、内部文件哈希、task、模型、
+协议字段）；校验通过即复用，校验失败不会触发隐式重转换。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。

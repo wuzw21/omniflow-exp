@@ -10,6 +10,8 @@ from typing import Any
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
 from omniflow.vlm.model_config import resolve_openai_compatible_config
+from src.experiment.paths import relative_reference, sha256_file
+from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
 
 
 def compile_function_v2(
@@ -88,6 +90,34 @@ def compile_function_v2(
         if evidence_screenshots.is_dir():
             shutil.copytree(evidence_screenshots, root / "screenshots")
     report["enhanced"] = bool(enhance)
+    if isinstance(run_log, (str, Path)):
+        # The compiler historically persisted absolute workstation paths in
+        # its report.  Keep the in-process return value usable by the runner,
+        # but make the on-disk report relocatable and auditable.
+        report["source_run_log"] = relative_reference(source_path, base=root)
+        report["source_run_log_sha256"] = sha256_file(source_path)
+    report["model_contract"] = {
+        "model": str(model or "") if enhance else "",
+        "endpoint": FORMAL_MODEL_BASE_URL if enhance else None,
+        "thinking": {"type": FORMAL_THINKING} if enhance else None,
+    }
+    report_path = root / "compile_report.json"
+    if report_path.is_file():
+        persisted = dict(report)
+        for key in (
+            "store_path",
+            "checker_store_path",
+            "transfer_state_catalog",
+            "run_log_path",
+            "source_run_log",
+        ):
+            value = persisted.get(key)
+            if value:
+                persisted[key] = relative_reference(value, base=root)
+        report_path.write_text(
+            json.dumps(persisted, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     if authoring_trace is not None:
         authoring_trace.append(
             {

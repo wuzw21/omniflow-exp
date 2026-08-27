@@ -18,6 +18,7 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_SOURCE_METHOD_BY_SCHEMA,
 )
 from src.experiment.paths import resolve_path
+from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
 from src.integrations import mobilegpt
 
 
@@ -891,6 +892,23 @@ def _validate_mobilegpt_converted_memory(
             "mobilegpt_virtual_memory_source_method_mismatch:"
             f"expected={normalized_expected_source_method}:actual={source_method}"
         )
+    source_model = str(manifest.get("source_model") or "").strip()
+    normalized_expected_model = str(expected_model or "").strip()
+    if normalized_expected_model and source_model != normalized_expected_model:
+        raise ValueError(
+            "mobilegpt_virtual_memory_model_mismatch:"
+            f"expected={normalized_expected_model}:actual={source_model}"
+        )
+    model_contract = manifest.get("model_contract")
+    if model_contract is not None:
+        if not isinstance(model_contract, dict):
+            raise ValueError("mobilegpt_virtual_memory_model_contract_invalid")
+        if str(model_contract.get("model") or "") != source_model:
+            raise ValueError("mobilegpt_virtual_memory_model_contract_model_mismatch")
+        if str(model_contract.get("endpoint") or "") != FORMAL_MODEL_BASE_URL:
+            raise ValueError("mobilegpt_virtual_memory_model_contract_endpoint_mismatch")
+        if model_contract.get("thinking") != {"type": FORMAL_THINKING}:
+            raise ValueError("mobilegpt_virtual_memory_model_contract_thinking_mismatch")
 
     provenance = manifest.get("provenance")
     if not isinstance(provenance, dict):

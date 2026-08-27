@@ -34,6 +34,7 @@ from src.integrations.appagent import (
     seal_appagent_memory,
 )
 from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
+from src.experiment.paths import relative_reference
 
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
@@ -250,6 +251,9 @@ def run_official_document_generation(
             record = {
                 "model": (payload.get("model") if isinstance(payload, dict) else None)
                 or normalized_model,
+                "requested_model": normalized_model,
+                "endpoint": endpoint,
+                "thinking": {"type": FORMAL_THINKING},
                 "prompt_tokens": int(usage.get("prompt_tokens") or 0),
                 "completion_tokens": int(usage.get("completion_tokens") or 0),
                 "total_tokens": int(usage.get("total_tokens") or 0),
@@ -629,6 +633,10 @@ def convert_runlog_to_appagent_memory(
     # opened.  Keep the complete teacher action count for provenance, while
     # sealing only actions belonging to the selected AppAgent app.
     teacher_source["demo_action_count"] = len(demo_records)
+    # The teacher file belongs to this memory root.  Keep its source evidence
+    # relocatable instead of baking the author's workstation path into the
+    # official AppAgent asset.
+    teacher_source["source_run_log"] = relative_reference(source_path, base=root)
     teacher_source_path = root / "teacher_source.json"
     teacher_source_path.write_text(
         json.dumps(teacher_source, ensure_ascii=False, indent=2) + "\n",

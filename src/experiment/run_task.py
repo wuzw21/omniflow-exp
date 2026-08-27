@@ -73,16 +73,14 @@ from src.integrations.official_forward import (
 )
 
 DEFAULT_ANDROID_WORLD_ROOT = (
-    Path.home()
-    / "Projects"
-    / "Omni"
+    Path("..")
     / "releases"
     / f"android-world-{ANDROIDWORLD_REVISION}"
 )
 DEFAULT_OUTPUT_ROOT = (
-    REPO_ROOT / "data" / "androidworld"
+    Path("data") / "androidworld"
 )
-DEFAULT_MOBILEGPT_ROOT = REPO_ROOT / "data" / "runtime" / "external" / "mobilegpt"
+DEFAULT_MOBILEGPT_ROOT = Path("data") / "runtime" / "external" / "mobilegpt"
 DEFAULT_MOBILEGPT_STATS_JSONL = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats.jsonl"
 )
@@ -240,10 +238,12 @@ def _subprocess_env(
         env.get("LLMTHU_API_KEY") or ""
     ).strip():
         env["OPENAI_API_KEY"] = str(env["LLMTHU_API_KEY"])
-    if not str(env.get("OPENAI_BASE_URL") or "").strip() and str(
-        env.get("LLMTHU_API_KEY") or ""
-    ).strip():
-        env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    # A stale shell endpoint is an experimental variable.  The formal
+    # protocol owns the provider seam for every AndroidWorld method.
+    env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    env["MOBILEGPT_CHAT_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    env["MOBILEGPT_EMBEDDING_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    env["MOBILEGPT_CHAT_MODEL"] = FORMAL_MODEL
     env.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
     return env
 
@@ -1590,6 +1590,11 @@ def seal_mobilegpt_converted_memory(
         "source_seed": int(source_seed),
         "source_method": source_method,
         "source_model": str(source_model or ""),
+        "model_contract": {
+            "model": str(source_model or ""),
+            "endpoint": FORMAL_MODEL_BASE_URL,
+            "thinking": {"type": FORMAL_THINKING},
+        },
         "target_package": str(target_package),
         "target_app": str(target_app or target_package),
         "memory": {
@@ -3961,6 +3966,8 @@ def build_appagent_command(
         env={
             "ANDROID_SERIAL": target.serial,
             "OPENAI_MODEL": APPAGENT_MODEL,
+            "OPENAI_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "APPAGENT_THINKING": FORMAL_THINKING,
             "PYTHONPATH": os.pathsep.join(
                 value for value in (str(repo_root), runtime_env.get("PYTHONPATH", "")) if value
             ),
@@ -3994,6 +4001,9 @@ def _configure_mobilegpt_formal_server(
         spec,
         env={
             **spec.env,
+            "MOBILEGPT_CHAT_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "MOBILEGPT_EMBEDDING_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "MOBILEGPT_THINKING": FORMAL_THINKING,
             **(
                 {"MOBILEGPT_CHAT_MODEL": normalized_model}
                 if normalized_model
@@ -4579,7 +4589,10 @@ def run_task(args: argparse.Namespace) -> int:
 
     for method in methods:
         memory_root = attempt_root / "memory" / method
-        _claim_method_memory_root(memory_root)
+        # A dry-run is an inspection of the command contract and must not
+        # reserve or create an immutable result directory.
+        if not args.dry_run:
+            _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
         appagent_docs_root: Path | None = None
         if _is_mobilegpt_method(method):
@@ -4903,15 +4916,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--appagent-root",
         default=os.environ.get(
             "OMNIFLOW_APPAGENT_ROOT",
-            str(
-                Path.home()
-                / "Projects"
-                / "Omni"
-                / "OmniFlow"
-                / "runtime"
-                / "external"
-                / "appagent"
-            ),
+            "../OmniFlow/runtime/external/appagent",
         ),
     )
     result_parser.add_argument("--appagent-memory-root", default="")

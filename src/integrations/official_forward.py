@@ -549,6 +549,9 @@ def _omniflow_appagent_get_model_response(self, prompt, images):
             "event": "model_call",
             "attempt": attempt,
             "model": self.model,
+            "requested_model": self.model,
+            "endpoint": self.base_url,
+            "thinking": {"type": thinking_mode},
             "message_keys": sorted(message.keys()) if isinstance(message, dict) else [],
             "content_chars": len(str((message or {}).get("content") or "")) if isinstance(message, dict) else 0,
             "reasoning_chars": len(str((message or {}).get("reasoning_content") or "")) if isinstance(message, dict) else 0,
@@ -1443,6 +1446,9 @@ _MOBILEGPT_CHAT_CALLS = 0
 
 def query(messages, model="Qwen3.6-Plus", is_list=False):
     global _MOBILEGPT_CHAT_CALLS
+    # Do not trust a legacy caller's model alias at the provider seam.  The
+    # launcher publishes the formal protocol model once for this process.
+    model = os.getenv("MOBILEGPT_CHAT_MODEL", model)
     client = OpenAI(
         api_key=os.getenv("MOBILEGPT_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL"),
@@ -1455,6 +1461,7 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
         if thinking_mode
         else {}
     )
+    chat_base_url = os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
     _omniflow_chat_limit = max(
         1, int(os.getenv("MOBILEGPT_MAX_CHAT_CALLS", "64"))
     )
@@ -1493,7 +1500,6 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
             # OmniMind's GPT-5.4-compatible channel rejects the legacy
             # frequency/presence penalty fields.  Keep them for other
             # OpenAI-compatible providers, but omit them for OmniMind.
-            chat_base_url = os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
             if "omnimind.com.cn" not in chat_base_url:
                 request_kwargs["frequency_penalty"] = 0
                 request_kwargs["presence_penalty"] = 0
@@ -1505,6 +1511,9 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
                 write_omniflow_mobilegpt_event({
                     "event": "chat_error",
                     "model": model,
+                    "requested_model": model,
+                    "endpoint": chat_base_url,
+                    "thinking": request_extra_body.get("thinking"),
                     "attempt": attempt,
                     "error": type(error).__name__,
                 })
@@ -1522,6 +1531,9 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
             write_omniflow_mobilegpt_event({
                 "event": "chat_call",
                 "model": model,
+                "requested_model": model,
+                "endpoint": chat_base_url,
+                "thinking": request_extra_body.get("thinking"),
                 "attempt": attempt,
                 "content_chars": len(str(getattr(message, "content", None) or "")),
                 "reasoning_chars": len(str(getattr(message, "reasoning_content", None) or "")),

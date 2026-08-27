@@ -17,7 +17,7 @@ bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device standard45562 \
-  --memory /path/to/store.json
+  --memory data/androidworld/_memories/omniflow/store.json
 ```
 
 论文 target 为 Pixel 6 Pro、7.6 英寸 Fold 和 10.1 英寸 WXGA Tablet。一次选择
@@ -29,7 +29,7 @@ bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device all \
-  --memory /path/to/store.json
+  --memory data/androidworld/_memories/omniflow/store.json
 ```
 
 正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
@@ -43,8 +43,10 @@ bash scripts/exp/run_androidworld.sh --help
 ```
 
 Memory 保存和实验执行是两个独立协议，但都使用同一个入口，不读取 index。
-`convert-memory` 只产生稳定的 Memory 地址；`run` 只消费已经存在的 Memory，不负责
-转换或选择历史结果。
+仓库内配置和 Memory manifest 使用相对路径；外部依赖只在进程启动边界解析为本机路径。
+`convert-memory` 只产生稳定的 Memory 地址；如果这个明确地址已经存在且校验通过，
+入口直接复用，不再次调用模型；如果地址不完整或 source/model 不匹配，则报错并停止，
+不会自动重跑或选择历史结果。
 
 保存 Memory：
 
@@ -52,8 +54,8 @@ Memory 保存和实验执行是两个独立协议，但都使用同一个入口�
 bash scripts/exp/run_androidworld.sh convert-memory \
   --task CameraTakePhoto \
   --method omniflow \
-  --source-run-log /path/to/run_log.json \
-  --memory /path/to/output-memory
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories
 ```
 
 直接执行：
@@ -63,8 +65,8 @@ bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \
   --method omniflow \
   --device standard45562 \
-  --source-run-log /path/to/source/run_log.json \
-  --memory /path/to/omniflow/store.json
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories/omniflow/store.json
 ```
 
 如果需要从一份 source RunLog 一次性生成三个需要 Memory 的方法，可使用固定的
@@ -73,17 +75,18 @@ bash scripts/exp/run_androidworld.sh run \
 ```bash
 bash scripts/exp/run_androidworld.sh convert-memory \
   --task CameraTakePhoto --method all \
-  --source-run-log /path/to/run_log.json \
-  --memory /path/to/memories
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories
 
 bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto --method all --device all \
-  --source-run-log /path/to/run_log.json \
-  --memory /path/to/memories
+  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
+  --memory data/androidworld/_memories
 ```
 
 该布局只包含 `omniflow/store.json`、`mobilegpt/memory/` 和 `appagent/` 三份派生
-Memory，不复制 source RunLog，也不扫描历史结果。
+Memory，不复制 source RunLog，也不扫描历史结果。manifest 内的 source、demo、日志和
+校验文件均相对于 Memory 根目录记录，因而可以随仓库一起搬迁。
 
 OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`，页面检索统一调用
 V10 `omnitransfer_point_conditioned_sparse_graph_v10` 模型的归一化 1024D

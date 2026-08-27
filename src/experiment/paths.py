@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -44,6 +45,40 @@ def resolve_reference(
     if path.is_absolute():
         return path.resolve()
     return (resolve_path(index_path, root=root).parent / path).resolve()
+
+
+def relative_reference(value: str | Path, *, base: str | Path) -> str:
+    """Serialize one artifact path relative to an owning manifest directory.
+
+    Artifact manifests must be relocatable.  Runtime code may still resolve the
+    returned reference against the manifest directory, but the serialized
+    value never contains the workstation's absolute checkout path.
+    """
+
+    target = Path(value).expanduser().resolve()
+    owner = Path(base).expanduser().resolve()
+    return os.path.relpath(target, owner).replace(os.sep, "/")
+
+
+def resolve_relative_reference(
+    value: str | Path,
+    *,
+    base: str | Path,
+    allow_legacy_absolute: bool = True,
+) -> Path:
+    """Resolve a manifest reference relative to its owning directory.
+
+    Existing experimental memories used absolute references.  They remain
+    readable for evidence preservation, while all newly written manifests use
+    :func:`relative_reference`.
+    """
+
+    path = Path(str(value or "")).expanduser()
+    if path.is_absolute():
+        if not allow_legacy_absolute:
+            raise ValueError("absolute_artifact_reference_forbidden")
+        return path.resolve()
+    return (Path(base).expanduser().resolve() / path).resolve()
 
 
 def safe_component(

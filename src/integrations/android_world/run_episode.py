@@ -46,6 +46,7 @@ from src.experiment.protocol import (
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
+    FORMAL_THINKING,
     MAX_STEPS,
     PLANNER_TIMEOUT_SEC,
     TASK_SEED,
@@ -1069,6 +1070,7 @@ class _OpenAICompatibleMultimodalWrapper:
             # ``enable_thinking=false`` silently turned the requested Qwen
             # reasoning mode off at the final OpenAI-compatible boundary.
             "enable_thinking": True,
+            "thinking": {"type": FORMAL_THINKING},
         }
         headers = {
             "Content-Type": "application/json",
@@ -1095,6 +1097,9 @@ class _OpenAICompatibleMultimodalWrapper:
             "duration_ms": None,
             "response_text": None,
             "response_metadata": None,
+            "model": self.model,
+            "endpoint": self.endpoint,
+            "thinking": {"type": FORMAL_THINKING},
         }
         request_started = perf_counter()
         for attempt_index in range(max(1, self.max_retry)):
