@@ -28,6 +28,68 @@ AppAgent 通过 official forwarder 接入，但 observe/act 仍由同一个 Omni
 AppAgent 的 Memory 是其官方 demo 文档格式；它与 OmniFlow Store、MobileGPT
 Memory 互不混用，但都只从同一份成功 source RunLog 派生一次。
 
+## 两个公开协议
+
+实验入口只保留两个互相独立的协议。第一个协议产生地址，第二个协议消费地址；
+执行协议不负责转换、复制、扫描或挑选历史 Memory。
+
+### SaveMemory
+
+请求：
+
+```text
+convert-memory
+  task             = 一个 AndroidWorld task
+  method           = omniflow | mobilegpt | appagent | all
+  source_run_log   = 唯一成功 source RunLog 的显式路径
+  memory           = 新 Memory 输出目录
+```
+
+单方法请求返回一个 `memory` 地址。`method=all` 返回一个 `memories` 映射：
+
+```text
+omniflow  -> <memory>/omniflow/store.json
+mobilegpt -> <memory>/mobilegpt/memory/
+appagent  -> <memory>/appagent/
+```
+
+`fixed_replay` 直接把 source RunLog 作为 Memory 地址，`t3a_hint` 使用同一份
+source 证据；二者不生成第二份 source 副本。只有 SaveMemory 成功返回的地址才是
+可用 Memory；失败调用留下的部分目录不得交给 DirectRun。
+
+### DirectRun
+
+请求：
+
+```text
+run
+  task             = 同一 AndroidWorld task
+  method           = 一个正式方法，或 all
+  device           = canonical device，或 all
+  source_run_log   = 同一 source 证据路径
+  memory           = 单方法 Memory 地址，或 SaveMemory 返回的 Memory root
+```
+
+单方法执行把 `memory` 原样传给对应 method。`method=all` 只按固定目录约定将
+Memory root 路由给各方法，然后并行使用配置中的设备；它不会重新转换 Memory，
+也不会从历史目录推断地址。task parameters 从显式 source 证据保持一致，target
+evaluation seed 仍由统一协议固定为 113。
+
+两个协议的职责边界是：
+
+```text
+one source RunLog
+        │
+        ▼
+SaveMemory  ──> stable Memory addresses
+                         │
+                         ▼
+                 DirectRun(task, method, device, memory)
+                         │
+                         ▼
+              AndroidWorld result + official validator
+```
+
 历史结果扫描、自动 attempt 选择、scheduler manifest、重复 registry/ledger、启动日志和
 转换缓存都不参与运行。Memory 转换中间文件使用系统临时目录，任务结束自动删除。
 

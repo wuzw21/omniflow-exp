@@ -25,13 +25,29 @@ execution/lifecycle 时间、Store、RunLog 和 SHA-256；三端并行时按实�
 `--method source --device source5560` 使用无 Memory 的 OmniFlow Planner、统一
 OOB 物理层和官方 validator，采集 seed-111 Source RunLog。
 
-Memory 可省略；入口不会查 index 或自动寻找历史 Memory。转换 Memory：
+Memory 在直接执行时是显式地址；入口不会查 index 或自动寻找历史 Memory。保存
+Memory 与直接执行是两个协议：
+
+- `convert-memory`：输入一份 source RunLog，输出一个或多个固定 Memory 地址；
+- `run`：输入 task、method、device 和 Memory 地址，直接执行一次实验。
+
+保存 Memory：
 
 ```bash
 bash scripts/exp/run_androidworld.sh convert-memory \
   --task CameraTakePhoto --method omniflow \
   --source-run-log /path/to/run_log.json \
   --memory /path/to/output-memory
+```
+
+直接执行：
+
+```bash
+bash scripts/exp/run_androidworld.sh run \
+  --task CameraTakePhoto --method omniflow \
+  --device standard45562 \
+  --source-run-log /path/to/source/run_log.json \
+  --memory /path/to/omniflow/store.json
 ```
 
 要用一份 source RunLog 生成并运行全部方法，使用 `--method all` 和同一个 Memory

@@ -42,7 +42,11 @@ AndroidWorld/OOB/validator 流程；`script_replay` 不属于 AndroidWorld 方�
 bash scripts/exp/run_androidworld.sh --help
 ```
 
-Memory 转换也使用同一个入口，不读取 index：
+Memory 保存和实验执行是两个独立协议，但都使用同一个入口，不读取 index。
+`convert-memory` 只产生稳定的 Memory 地址；`run` 只消费已经存在的 Memory，不负责
+转换或选择历史结果。
+
+保存 Memory：
 
 ```bash
 bash scripts/exp/run_androidworld.sh convert-memory \
@@ -50,6 +54,17 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --method omniflow \
   --source-run-log /path/to/run_log.json \
   --memory /path/to/output-memory
+```
+
+直接执行：
+
+```bash
+bash scripts/exp/run_androidworld.sh run \
+  --task CameraTakePhoto \
+  --method omniflow \
+  --device standard45562 \
+  --source-run-log /path/to/source/run_log.json \
+  --memory /path/to/omniflow/store.json
 ```
 
 如果需要从一份 source RunLog 一次性生成三个需要 Memory 的方法，可使用固定的
