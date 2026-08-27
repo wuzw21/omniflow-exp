@@ -33,6 +33,7 @@ from src.integrations.appagent import (
     mark_appagent_teacher_target_interactive,
     seal_appagent_memory,
 )
+from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
 
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
@@ -151,10 +152,10 @@ def _write_runtime_config(
         "OPENAI_API_BASE": endpoint,
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_MODEL": model,
-        # Keep the temporary authoring call bounded; the staged model adapter
-        # also disables provider-side reasoning explicitly.
+        # Keep the temporary authoring call bounded; reasoning mode is fixed by
+        # the formal protocol and is not a per-conversion override.
         "MAX_TOKENS": int(max_tokens),
-        "THINKING": "disabled",
+        "THINKING": FORMAL_THINKING,
         "TEMPERATURE": 0.0,
         "REQUEST_INTERVAL": 0.0,
         "DASHSCOPE_API_KEY": "",
@@ -196,17 +197,17 @@ def run_official_document_generation(
     # This verifies both the exact official revision and its runtime modules.
     OfficialAppAgentRuntime(root)
     api_key = str(
-        os.environ.get("OPENAI_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or ""
+        os.environ.get("LLMTHU_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or ""
     ).strip()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for AppAgent docs")
-    endpoint = _chat_completions_url(
-        str(
-            os.environ.get("OPENAI_BASE_URL")
-            or os.environ.get("OMNIFLOW_OPENAI_BASE_URL")
-            or "https://api.openai.com/v1"
-        )
-    )
+        raise RuntimeError("formal_model_api_key_required_for_appagent_docs")
+    # Do not let a stale shell variable silently move this experiment to a
+    # different provider.  The protocol owns the model endpoint for every
+    # method and for source-memory authoring.
+    endpoint = _chat_completions_url(FORMAL_MODEL_BASE_URL)
     output_log.parent.mkdir(parents=True, exist_ok=True)
     output_usage.parent.mkdir(parents=True, exist_ok=True)
     if output_log.exists() or output_usage.exists():

@@ -62,6 +62,10 @@ FOLD_STATE = int(ANDROIDWORLD_PROTOCOL["fold_state"])
 FOLD_SIZE = str(ANDROIDWORLD_PROTOCOL["fold_size"])
 FORMAL_MODEL = "Qwen3.6-Plus"
 OMNIFLOW_PLANNER_MODEL = FORMAL_MODEL
+APPAGENT_MODEL = FORMAL_MODEL
+# All online and authoring calls use the same bounded Qwen reasoning mode.
+# The value is part of the protocol, not a per-method runtime override.
+FORMAL_THINKING = "enabled"
 FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )

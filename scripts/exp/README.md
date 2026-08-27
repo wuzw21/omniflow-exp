@@ -34,11 +34,14 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory /path/to/output-memory
 ```
 
-四个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory
+五个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory
 就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
 结果是需要保留的实验产物；同一 setting 固定使用 `attempt_001`，不会自动创建新的
 attempt 或自动选择“最好”的 attempt；转换临时目录在任务结束后自动删除。
+
+AppAgent 通过同一入口执行，但其官方 executor 位于 disposable workspace；OOB
+仍是唯一 observe/act 物理层，AndroidWorld 官方 validator 仍是唯一成功判据。
 
 结果中的 `duration_ms` 是包含 task lifecycle、setup 和官方 validator 的完整 wall
 time；论文中的方法执行时间使用 `execution_duration_ms`，它只累计 `agent.step`，明确

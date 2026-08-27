@@ -7,6 +7,7 @@
       "fixed_replay",
       "omniflow",
       "mobilegpt",
+      "appagent",
       "t3a_hint"
     ],
     "devices": [
@@ -48,6 +49,7 @@
     "fold_size": "2208x1840",
     "model": "Qwen3.6-Plus",
     "omniflow_planner_model": "Qwen3.6-Plus",
+    "appagent_model": "Qwen3.6-Plus",
     "model_endpoint_profile": "llmthu",
     "model_base_url": "https://llmapi.paratera.com/v1",
     "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"

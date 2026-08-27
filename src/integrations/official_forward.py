@@ -27,6 +27,9 @@ from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
 )
 from src.experiment.protocol import (
+    APPAGENT_MODEL,
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_THINKING,
     MAX_STEPS,
     TASK_DEADLINE_SEC,
     TASK_SEED,
@@ -3115,7 +3118,7 @@ def run_appagent_executor(
             child_env["OMNIFLOW_ADB_PATH"] = str(adb_path)
             child_env["OMNIFLOW_APPA_AGENT_SERIAL"] = str(serial)
             child_env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] = "oob"
-            child_env["APPAGENT_THINKING"] = "disabled"
+            child_env["APPAGENT_THINKING"] = FORMAL_THINKING
             appagent_stats_path = output / "appagent_stats.jsonl"
             child_env["APPAGENT_STATS_JSONL"] = str(appagent_stats_path)
             with official_log.open("w", encoding="utf-8") as log_file:
@@ -3250,10 +3253,9 @@ def run_appagent_executor(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward one task to an official baseline")
-    # AndroidWorld exposes MobileGPT as the only official external baseline.
-    # AppAgent remains historical code/evidence but is intentionally not a
-    # runnable experiment route.
-    parser.add_argument("--baseline", choices=("mobilegpt",), default="mobilegpt")
+    parser.add_argument(
+        "--baseline", choices=("mobilegpt", "appagent"), default="mobilegpt"
+    )
     parser.add_argument("--root")
     parser.add_argument("--serial", default="")
     parser.add_argument("--adb", default="adb")
@@ -3318,6 +3320,38 @@ def main() -> int:
             handshake_timeout_sec=args.handshake_timeout_sec,
             server_log_path=args.server_log,
         )
+    required = {
+        "executor": args.executor,
+        "app-name": args.app_name,
+        "serial": args.serial,
+        "workspace": args.workspace,
+        "output": args.output,
+        "task": args.task,
+        "android-world-root": args.android_world_root,
+    }
+    missing = [name for name, value in required.items() if not str(value or "").strip()]
+    if missing:
+        parser.error("appagent arguments required: " + ",".join(missing))
+    os.environ["OPENAI_MODEL"] = APPAGENT_MODEL
+    return run_appagent_executor(
+        python_executable=sys.executable,
+        executor=args.executor,
+        app_name=args.app_name,
+        serial=args.serial,
+        workspace=args.workspace,
+        goal=args.goal,
+        timeout_sec=args.timeout,
+        android_world_root=args.android_world_root,
+        task_name=args.task,
+        task_params_json=args.task_params_json,
+        task_seed=args.task_seed,
+        console_port=args.console_port,
+        grpc_port=args.grpc_port,
+        adb_path=args.adb,
+        output_root=args.output,
+        perform_emulator_setup=not args.no_perform_emulator_setup,
+        max_steps=args.max_steps,
+    )
 
 
 if __name__ == "__main__":

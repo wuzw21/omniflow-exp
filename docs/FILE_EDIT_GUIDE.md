@@ -10,6 +10,7 @@
 | AndroidWorld lifecycle、OOB I/O、官方 validator | `src/integrations/android_world/run_episode.py` |
 | OmniFlow Function 编译 | `src/experiment/function_v2.py` |
 | MobileGPT Memory 转换 | `src/integrations/mobilegpt.py` |
+| AppAgent Memory 转换 | `src/experiment/appagent_source.py`、`src/integrations/appagent.py` |
 | 运行时协议默认值 | `config/paper_androidworld.json`、`src/experiment/protocol.py` |
 | AndroidWorld 证据写入 | `src/experiment/observation_evidence.py` |
 

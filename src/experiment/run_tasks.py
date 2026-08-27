@@ -15,6 +15,7 @@ import time
 from typing import Any, Sequence
 
 from src.experiment.function_v2 import compile_function_v2
+from src.experiment.appagent_source import convert_runlog_to_appagent_memory
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
@@ -249,6 +250,14 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
             source_seed=SOURCE_SEED,
         )
         memory = Path(str(report["memory_root"]))
+    elif args.method == "appagent":
+        report = convert_runlog_to_appagent_memory(
+            source_run_log=source,
+            appagent_root=args.appagent_root,
+            memory_root=output,
+            model=FORMAL_MODEL,
+        )
+        memory = Path(str(report["memory_root"]))
     else:
         memory = source
     return {
@@ -282,6 +291,8 @@ def _run_command(
     ]
     if args.mobilegpt_root:
         command.extend(("--mobilegpt-root", args.mobilegpt_root))
+    if args.appagent_root:
+        command.extend(("--appagent-root", args.appagent_root))
     if method == "mobilegpt":
         command.extend(
             (
@@ -375,6 +386,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mobilegpt-root",
         default=os.environ.get("OMNIFLOW_MOBILEGPT_ROOT", ""),
+    )
+    parser.add_argument(
+        "--appagent-root",
+        default=os.environ.get(
+            "OMNIFLOW_APPAGENT_ROOT",
+            str(Path.home() / "Projects" / "Omni" / "OmniFlow" / "runtime" / "external" / "appagent"),
+        ),
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.set_defaults(repo=repo)

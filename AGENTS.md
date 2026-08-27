@@ -20,12 +20,11 @@
   或额外 catalog。AndroidWorld 官方 RunLog/结果保存在同一 setting 的 `runlog/`。
 - 转换中间文件、调度日志和一次性测试计划必须放系统临时目录并自动删除；它们不属于
   Memory。`fixed_replay` 的 Memory 就是 source RunLog/script，本身不做冷启动转换。
-- MobileGPT 直接/冷启动运行不读取 source RunLog：AndroidWorld 官方根据 task 和
-  evaluation seed 生成参数，目标 app 来自官方 task 的 `app_names`，MobileGPT 只接收
-  goal 与 Open App 目标后自主探索。已安装的官方 Accessibility client 必须直接复用；
-  只有未安装或显式要求 rebuild 时才构建 APK，禁止每个 episode 重复 Gradle/install。
-  自主探索成功后保存 MobileGPT 官方原生 Memory，后续实验只复用该 Memory；不再把
-  AndroidWorld source RunLog 转换成 MobileGPT Memory。
+- MobileGPT 正式实验使用一份成功 source RunLog 转换出的 MobileGPT 官方 Memory；
+  AndroidWorld 官方根据 task、固定 task parameters 和 evaluation seed 生成参数，
+  目标 app 来自官方 task 的 `app_names`。已安装的官方 Accessibility client 必须直接
+  复用；只有未安装或显式要求 rebuild 时才构建 APK，禁止每个 episode 重复
+  Gradle/install。转换和执行都只使用这一份显式传入的 Memory，不读取历史结果自动选择。
 - MobileGPT、AndroidWorld baseline 和 OmniFlow 共用同一套已初始化设备。OOB APK、
   benchmark APK、权限和 app snapshot 只在设备初始化阶段准备一次；正式
   task 只做 AndroidWorld 官方 task reset 和页面初始化，不重复 Gradle、APK
@@ -78,8 +77,9 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 - 成功 RunLog 由 authoring Agent 提取零个或多个连续局部 Function，并生成一个覆盖全部成功主流程动作的完整 Function。Agent 和 Compiler 都不得删除、重排或截断所选连续段的中间动作；`origin=checker` 恢复动作仍由独立共享 Checker 提取和执行。Compiler 只校验 schema、连续 source 顺序和可证明的参数提升。最终 Function 数量大于等于一，不增加嵌套或 parent/child schema。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
-- AndroidWorld 116×12 主矩阵的正式 E2E 方法只有 `fixed_replay`、`omniflow`、
-  `mobilegpt`、`t3a_hint`。`appagent` 仅作为历史证据保留，不再进入新主矩阵。
+- AndroidWorld 当前统一 E2E 方法为 `fixed_replay`、`omniflow`、`mobilegpt`、
+  `appagent`、`t3a_hint`。AppAgent 通过同一入口和 OOB/validator 路径执行，
+  不再作为历史专用方法；`script_replay` 仍不进入 AndroidWorld 方法。
 - B-MoCA 的 replay selector 属于外部 benchmark 合同，不复制进 AndroidWorld method 名称。
 - AndroidWorld 的 OmniFlow 正式执行只有完整 E2E Planner 循环：runner 只传 goal、
   Function Store 和设备环境；Planner 从 Function `input_schema` 生成参数，runtime
@@ -105,10 +105,10 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 - 长期训练规则：任何模型训练、微调或训练 smoke 都必须在 `9207` 远程环境执行；本地只允许数据清洗、质量检测、代码测试和评测入口验证，不得在本地启动训练。
 - 所有实验资产、RunLog、截图、Store、transfer states、memory 和结果都在 `data/`；不要提交它们、credentials、APK、权重或 emulator image。
 - 项目长期记忆：`OmniFlow-AndroidWorld-Experiments` 的唯一对外主表是
-  `OmniFlow_AndroidWorld_116Tasks_12cell.xlsx`，固定为 116 个任务 × 12 个正式
-  E2E 实验格 = 1392 个实验格。12 格只由四种方法 `fixed_replay`、`omniflow`、
-  `mobilegpt`、`t3a_hint` × Standard/Fold/Tablet 构成；AppAgent、Cold、转换阶段和
-  Source 不占 E2E cell。每个任务只登记一份成功 Source 证据，作为四种方法共同的
+  `OmniFlow_AndroidWorld_116Tasks_15cell.xlsx`，固定为 116 个任务 × 15 个正式
+  E2E 实验格 = 1740 个实验格。15 格由五种方法 `fixed_replay`、`omniflow`、
+  `mobilegpt`、`appagent`、`t3a_hint` × Standard/Fold/Tablet 构成；转换阶段和
+  Source 不占 E2E cell。每个任务只登记一份成功 Source 证据，作为五种方法共同的
   派生输入。该目录 `~/Desktop/OmniFlow-AndroidWorld-Experiments` 是权威归档源；
   更新主表时必须同时保存 RunLog、model usage、seed、设备、Function/Memory 路径和
   SHA-256 provenance，并更新同名 `.inspect.ndjson`。
@@ -149,15 +149,15 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   ```
 
 - `<method>` 只使用统一名称：source 证据用 `source`；正式实验用 `fixed_replay`、
-  `omniflow`、`mobilegpt`、`t3a_hint`。`appagent` 只允许存在于历史归档，禁止创建新的
-  正式 cell。禁止用 collector 名、模型昵称、时间戳前缀或历史 runner 名创建平行 method。
+  `omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。禁止用 collector 名、模型昵称、
+  时间戳前缀或历史 runner 名创建平行 method。
 - 设备按 `device.json` 中探测到的真实 `device_model` 归类，不按 adb serial、端口、host alias 或人为昵称归类。设备目录保留实际运行 seed 作为 provenance；新跑的正式 source 默认使用 111，正式 target 结果同时写 `_eval<evaluation_seed>`。
 - 可见 RunLog 目录只能命名为 `attempt_NNN`，同一 device 目录内从 `attempt_001` 递增。禁止保留 `manual_*`、`object_*`、`forced_live_plan_*`、hash 后缀或时间戳别名；导入时统一转换后再进入可见目录。
 - setting 身份由 `task_name + method + 真实 device_model + 规范化 task_parameters + 协议配置` 决定，不由 RunLog seed、目录旧名、run_id、文件 hash 或设备别名决定。判断一个任务是否已有可转换 memory 的 source 时，只要求 `task_name` 相同且成功证据链完整，不要求 task parameters 或 seed 与当前实例一致。
 - 同一 setting 的可见结果只保留一组：先选择 official success 且截图、XML/UI tree、native observation、action/result 链完整的版本；证据完整度相同时保留完成时间最新者。失败、旧副本和冲突版本移入 `data/androidworld/.archive/`，不得覆盖仍需保留的原始数据。
 - 归档迁移保留原相对路径、文件时间和可核验 provenance；`.archive/` 不参与 runtime 选择和完成数统计。零 step、`status=running`、无截图/XML 的占位 RunLog 不得作为可用结果或 memory source。
 - 每个 Function v2 只保存动作和 `source_state_id`；source observation 位于 sibling `transfer_states.json`，不得内联或手改 Store。
-- `data/androidworld/COMPLETION_STATUS.md` 展示 116×12 正式 E2E cell 完成情况；
+- `data/androidworld/COMPLETION_STATUS.md` 展示 116×15 正式 E2E cell 完成情况；
   `MEMORY_READY_SOURCES.md` 每个任务只展示一份可复用 source；`RUNLOG_INDEX.md` 和
   `ARCHIVE_AUDIT.json` 提供逐 RunLog 证据与机器审计。目录迁移、去重或导入结束后
   必须通过官方 refresh 入口更新 `data/current.json`，再重生成这些文档。

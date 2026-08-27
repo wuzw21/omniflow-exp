@@ -45,6 +45,8 @@ from src.experiment.paths import (
 )
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
+    APPAGENT_MODEL,
+    FORMAL_THINKING,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     DEVICES,
@@ -1986,7 +1988,7 @@ def build_mobilegpt_server_command(
         # Keep list discovery bounded, but leave enough
         # completion room for the official selector/derive JSON not to be
         # truncated on screens with many available actions.
-        env["MOBILEGPT_THINKING"] = "disabled"
+        env["MOBILEGPT_THINKING"] = FORMAL_THINKING
         env["MOBILEGPT_MAX_TOKENS"] = str(
             runtime_env.get("MOBILEGPT_MAX_TOKENS") or "2048"
         )
@@ -3788,6 +3790,153 @@ def build_mobilegpt_command(
     )
 
 
+def build_appagent_command(
+    item: CanonicalRunLog,
+    *,
+    method_name: str,
+    target: DeviceTarget,
+    android_world_root: str | Path,
+    output_root: str | Path,
+    appagent_root: str | Path,
+    docs_root: str | Path,
+    max_steps: int,
+    timeout_sec: int,
+    task_random_seed: int,
+    task_params: dict[str, Any],
+    adb_path: str,
+    repo_root: Path = REPO_ROOT,
+) -> CommandSpec:
+    """Build the official AppAgent executor command on the shared OOB bridge."""
+
+    resolved_appagent_root = resolve_path(appagent_root, root=repo_root)
+    resolved_docs_root = resolve_path(docs_root, root=repo_root)
+    resolved_device = _device_label(
+        explicit_label=target.label,
+        serial=target.serial,
+        console_port=target.console_port,
+    )
+    setting_root = _experiment_run_dir(
+        output_root,
+        task=item.task,
+        method=_safe_stem(method_name, fallback="appagent"),
+        device=resolved_device,
+        serial=target.serial,
+        console_port=target.console_port,
+        repo_root=repo_root,
+    )
+    resolved_output = _next_attempt(setting_root, "runlog")
+    workspace = resolved_output / "official_workspace"
+    runtime_env = _subprocess_env({})
+    endpoint = FORMAL_MODEL_BASE_URL.rstrip("/")
+    if not endpoint.endswith("/chat/completions"):
+        endpoint += "/chat/completions"
+    goal = task_goal_for_params(
+        item.task,
+        item.goal,
+        android_world_root=android_world_root,
+        task_params=task_params,
+    )
+    app_name = resolved_docs_root.parent.name
+    from src.integrations.official_forward import prepare_appagent_workspace
+
+    forward = prepare_appagent_workspace(
+        official_root=resolved_appagent_root,
+        docs_root=resolved_docs_root,
+        workspace=workspace,
+        app_name=app_name,
+        serial=target.serial,
+        adb_path=adb_path or "adb",
+        config={
+            "MODEL": "OpenAI",
+            "OPENAI_API_BASE": endpoint,
+            "OPENAI_API_KEY": str(
+                runtime_env.get("LLMTHU_API_KEY")
+                or runtime_env.get("OPENAI_API_KEY")
+                or ""
+            ),
+            "OPENAI_API_MODEL": APPAGENT_MODEL,
+            "MAX_TOKENS": 512,
+            "THINKING": FORMAL_THINKING,
+            "TEMPERATURE": 0.0,
+            "REQUEST_INTERVAL": 0.0,
+            "DASHSCOPE_API_KEY": "",
+            "QWEN_MODEL": APPAGENT_MODEL,
+            "ANDROID_SCREENSHOT_DIR": "/sdcard",
+            "ANDROID_XML_DIR": "/sdcard",
+            "DOC_REFINE": False,
+            "MAX_ROUNDS": int(max_steps),
+            "DARK_MODE": False,
+            "MIN_DIST": 30,
+        },
+    )
+    output = resolved_output
+    argv = [
+        sys.executable,
+        "-m",
+        "src.integrations.official_forward",
+        "--baseline",
+        "appagent",
+        "--executor",
+        str(resolved_appagent_root / "scripts" / "task_executor.py"),
+        "--app-name",
+        app_name,
+        "--serial",
+        target.serial,
+        "--workspace",
+        str(workspace),
+        "--output",
+        str(output),
+        "--goal",
+        goal,
+        "--timeout",
+        str(float(timeout_sec)),
+        "--android-world-root",
+        str(resolve_path(android_world_root, root=repo_root)),
+        "--task",
+        item.task,
+        "--task-params-json",
+        json.dumps(task_params, ensure_ascii=False, separators=(",", ":"), default=_json_default),
+        "--task-seed",
+        str(int(task_random_seed)),
+        "--console-port",
+        str(int(target.console_port)),
+        "--grpc-port",
+        str(int(target.console_port) + 3000),
+        "--adb",
+        str(adb_path or "adb"),
+        "--max-steps",
+        str(int(max_steps)),
+        "--no-perform-emulator-setup",
+    ]
+    return CommandSpec(
+        label=f"appagent:official:{target.label}",
+        argv=argv,
+        env={
+            "ANDROID_SERIAL": target.serial,
+            "OPENAI_MODEL": APPAGENT_MODEL,
+            "PYTHONPATH": os.pathsep.join(
+                value for value in (str(repo_root), runtime_env.get("PYTHONPATH", "")) if value
+            ),
+            "PATH": str(Path(forward["adb_proxy"]).parent) + os.pathsep + runtime_env.get("PATH", ""),
+        },
+        cwd=workspace,
+        output_path=output,
+        timeout_sec=float(timeout_sec),
+        stdin_text="",
+        metadata={
+            "mode": "appagent_official_deployment",
+            "agent": "official_appagent",
+            "device_target": target.to_dict(),
+            "appagent_root": str(resolved_appagent_root),
+            "appagent_docs_root": str(resolved_docs_root),
+            "official_workspace": str(workspace),
+            "official_app_name": app_name,
+            "external_forward_only": True,
+            "shared_control_backend": "oob",
+        },
+    )
+
+
 def _configure_mobilegpt_formal_server(
     spec: CommandSpec,
     *,
@@ -4321,12 +4470,15 @@ def run_task(args: argparse.Namespace) -> int:
     args.mobilegpt_app_ready_timeout_sec = DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC
     args.mobilegpt_app_ready_poll_sec = DEFAULT_MOBILEGPT_APP_READY_POLL_SEC
     args.mobilegpt_open_target_app = ""
+    args.appagent_model = APPAGENT_MODEL
     memory = str(getattr(args, "memory", "") or "").strip()
     if memory:
         if args.method == "omniflow":
             args.store_path = memory
         elif args.method == "mobilegpt":
             args.mobilegpt_source_memory_root = memory
+        elif args.method == "appagent":
+            args.appagent_memory_root = memory
         elif args.method == "fixed_replay":
             args.source_run_log = memory
     selected = _select_from_args(args)
@@ -4360,7 +4512,9 @@ def run_task(args: argparse.Namespace) -> int:
         else _source_seed_output_root(attempt_root, source_seed)
     )
     attempt_id = attempt_root.name
-    task_params_override = _task_params_override_from_args(args)
+    # The source RunLog is the one task-parameter authority shared by all
+    # methods. There is no per-method parameter override in the formal run.
+    task_params_override = dict(item.params or {})
     task_seed = (
         random.randint(1, 2**31 - 1)
         if bool(args.random_task_seed)
@@ -4373,6 +4527,7 @@ def run_task(args: argparse.Namespace) -> int:
         memory_root = attempt_root / "memory" / method
         _claim_method_memory_root(memory_root)
         source_action_hint_path: Path | None = None
+        appagent_docs_root: Path | None = None
         if _is_mobilegpt_method(method):
             mobilegpt_records, mobilegpt_failed = _run_result_mobilegpt(
                 args=args,
@@ -4397,6 +4552,19 @@ def run_task(args: argparse.Namespace) -> int:
             store_path = resolve_path(store_text) if store_text else None
         else:
             store_path = memory_root / "unused-store.json"
+
+        if method == "appagent":
+            source_memory_root = resolve_path(args.appagent_memory_root)
+            appagent_manifest = _read_object(
+                source_memory_root / "appagent_manifest.json"
+            )
+            appagent_docs_root = Path(
+                str(appagent_manifest.get("demo_docs_root") or "")
+            ).expanduser()
+            if not appagent_docs_root.is_dir():
+                raise FileNotFoundError(
+                    f"appagent_demo_docs_missing:{appagent_docs_root}"
+                )
 
         if method == "fixed_replay":
             replay_run_log, replay_materialization, replay_profile = (
@@ -4511,6 +4679,23 @@ def run_task(args: argparse.Namespace) -> int:
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     planner_provider=args.planner_provider,
                     model=args.model,
+                )
+            elif method == "appagent":
+                if appagent_docs_root is None:
+                    raise ValueError("appagent_memory_docs_root_missing")
+                spec = build_appagent_command(
+                    item,
+                    method_name=method,
+                    target=target,
+                    android_world_root=args.android_world_root,
+                    output_root=output_root,
+                    appagent_root=args.appagent_root,
+                    docs_root=appagent_docs_root,
+                    max_steps=int(args.max_steps or MAX_STEPS),
+                    timeout_sec=int(args.timeout_sec or TASK_DEADLINE_SEC),
+                    task_random_seed=int(task_seed),
+                    task_params=task_params_override,
+                    adb_path=args.adb_path,
                 )
             elif method == "t3a_hint":
                 spec = build_official_command(
@@ -4660,6 +4845,22 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument(
         "--mobilegpt-root", default=str(DEFAULT_MOBILEGPT_ROOT)
     )
+    result_parser.add_argument(
+        "--appagent-root",
+        default=os.environ.get(
+            "OMNIFLOW_APPAGENT_ROOT",
+            str(
+                Path.home()
+                / "Projects"
+                / "Omni"
+                / "OmniFlow"
+                / "runtime"
+                / "external"
+                / "appagent"
+            ),
+        ),
+    )
+    result_parser.add_argument("--appagent-memory-root", default="")
     result_parser.add_argument(
         "--mobilegpt-source-memory-root",
         default="",
