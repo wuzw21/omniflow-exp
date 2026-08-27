@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 from omniflow.core.trajectory import (
     canonicalize_run_log,
 )
+from omniflow.transfer.admission import MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE
 from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
     canonical_method_name,
@@ -2111,6 +2112,214 @@ def _percentage_text(value: Any) -> str:
     return f"{percentage:.1f}%"
 
 
+def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    trace = diagnostics.get("execution_trace")
+    trace_rows = (
+        [row for row in trace if isinstance(row, dict)]
+        if isinstance(trace, list)
+        else []
+    )
+    function_rows: list[dict[str, Any]] = []
+    transfer_rows: list[dict[str, Any]] = []
+    planner_actions: list[str] = []
+    failures: list[str] = []
+    for row in trace_rows:
+        action = row.get("action")
+        action_value = action if isinstance(action, dict) else {}
+        tool = str(action_value.get("tool") or "unknown").strip()
+        metadata = row.get("metadata")
+        metadata_value = metadata if isinstance(metadata, dict) else {}
+        result = row.get("result")
+        result_value = result if isinstance(result, dict) else {}
+        function_id = str(metadata_value.get("function_id") or "").strip()
+        success = result_value.get("success") is True
+        if function_id:
+            function_rows.append(row)
+        elif success:
+            planner_actions.append(tool)
+        transfer = metadata_value.get("transfer")
+        if isinstance(transfer, dict):
+            transfer_rows.append(row)
+        if not function_id or success:
+            continue
+        step_index = metadata_value.get("function_step_index")
+        try:
+            step_text = str(int(step_index) + 1)
+        except (TypeError, ValueError):
+            step_text = "unknown"
+        error = str(result_value.get("error") or "unknown_execution_error").strip()
+        detail = f"step={step_text} tool={tool} error={error}"
+        if isinstance(transfer, dict):
+            score = _coerce_float(transfer.get("score"))
+            detail += f" score={score:.3f}"
+            if error == "omnitransfer_low_confidence":
+                detail += (
+                    f"<{MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE:.3f}"
+                    " admission_threshold"
+                )
+            candidates = transfer.get("candidates")
+            candidate_rows: list[str] = []
+            for candidate in candidates[:3] if isinstance(candidates, list) else ():
+                if not isinstance(candidate, dict):
+                    continue
+                label = str(
+                    candidate.get("text")
+                    or candidate.get("content_desc")
+                    or candidate.get("resource_id")
+                    or candidate.get("execution_candidate_id")
+                    or "unlabeled"
+                ).strip()
+                candidate_rows.append(
+                    f"{label}({_coerce_float(candidate.get('score')):.3f})"
+                )
+            if candidate_rows:
+                detail += " candidates=" + ", ".join(candidate_rows)
+        failures.append(detail)
+    function_success = sum(
+        isinstance(row.get("result"), dict)
+        and row["result"].get("success") is True
+        for row in function_rows
+    )
+    transfer_success = 0
+    for row in transfer_rows:
+        result = row.get("result")
+        result_value = result if isinstance(result, dict) else {}
+        error = str(result_value.get("error") or "").strip()
+        if result_value.get("success") is True or not error.startswith("omnitransfer_"):
+            transfer_success += 1
+    resume = diagnostics.get("function_resume")
+    resume_value = resume if isinstance(resume, dict) else {}
+    usage = diagnostics.get("llm_usage")
+    usage_value = usage if isinstance(usage, dict) else {}
+    components = usage_value.get("by_component")
+    component_values = components if isinstance(components, dict) else {}
+    router = component_values.get("function_router")
+    planner = component_values.get("planner")
+    router_value = router if isinstance(router, dict) else {}
+    planner_value = planner if isinstance(planner, dict) else {}
+    function_resolution = diagnostics.get("function_resolution")
+    resolution_value = (
+        function_resolution if isinstance(function_resolution, dict) else {}
+    )
+    selected_function_id = str(
+        resolution_value.get("selected_function_id") or ""
+    ).strip()
+    if not selected_function_id:
+        for row in function_rows:
+            metadata = row.get("metadata")
+            metadata_value = metadata if isinstance(metadata, dict) else {}
+            selected_function_id = str(
+                metadata_value.get("function_id") or ""
+            ).strip()
+            if selected_function_id:
+                break
+    resolution_status = str(resolution_value.get("status") or "unknown").strip()
+    binding_status = str(
+        resolution_value.get("binding_status") or "not_attempted"
+    ).strip()
+    replay_status = str(
+        resolution_value.get("replay_status") or "not_started"
+    ).strip()
+    if function_rows and resolution_status == "planner_tool_space":
+        resolution_status = "planner_selected"
+    if function_rows and replay_status == "not_started":
+        replay_status = "failed" if failures else "executed_without_recorded_failure"
+    resolution_failures: list[str] = []
+    binding_error = str(resolution_value.get("binding_error") or "").strip()
+    if binding_status == "failed":
+        resolution_failures.append(f"binding_failed:{binding_error or 'unknown'}")
+    replay_error = str(resolution_value.get("replay_error") or "").strip()
+    if replay_status == "failed" and replay_error and not failures:
+        resolution_failures.append(f"replay_failed:{replay_error}")
+    recall = resolution_value.get("recall")
+    recall_value = recall if isinstance(recall, dict) else {}
+    events = recall_value.get("events")
+    recall_events = (
+        [event for event in events if isinstance(event, dict)]
+        if isinstance(events, list)
+        else []
+    )
+    if not selected_function_id:
+        for event in recall_events:
+            cache = event.get("function_cache")
+            cache_value = cache if isinstance(cache, dict) else {}
+            cache_status = str(cache_value.get("status") or "").strip()
+            if cache_status in {
+                "below_threshold",
+                "router_unavailable",
+                "rejected",
+                "error",
+                "unknown_selection",
+                "binding_failed",
+                "entry_state_changed",
+            }:
+                cache_error = str(cache_value.get("error") or "").strip()
+                detail = f"cache_{cache_status}"
+                if cache_error:
+                    detail += f":{cache_error}"
+                cache_decisions = cache_value.get("decisions")
+                score_rows: list[str] = []
+                for decision in (
+                    cache_decisions if isinstance(cache_decisions, list) else ()
+                ):
+                    if not isinstance(decision, dict):
+                        continue
+                    function_id = str(
+                        decision.get("function_id") or "unknown"
+                    ).strip()
+                    confidence = _coerce_float(decision.get("confidence"))
+                    score_rows.append(f"{function_id}({confidence:.3f})")
+                if score_rows:
+                    threshold = _coerce_float(cache_value.get("threshold"))
+                    detail += (
+                        f" threshold={threshold:.3f} candidates="
+                        + ", ".join(score_rows)
+                    )
+                resolution_failures.append(detail)
+                break
+        if not resolution_failures:
+            rejection_rows: list[str] = []
+            for event in recall_events:
+                decisions = event.get("decisions")
+                for decision in decisions if isinstance(decisions, list) else ():
+                    if not isinstance(decision, dict):
+                        continue
+                    rejection_reason = str(
+                        decision.get("rejection_reason") or ""
+                    ).strip()
+                    if not rejection_reason or rejection_reason == "function_excluded_for_run":
+                        continue
+                    function_id = str(decision.get("function_id") or "unknown").strip()
+                    rejection_rows.append(f"{function_id}:{rejection_reason}")
+            if rejection_rows:
+                resolution_failures.append(
+                    "recall_rejected:" + ", ".join(dict.fromkeys(rejection_rows))
+                )
+            elif not any(event.get("candidate_function_ids") for event in recall_events):
+                resolution_failures.append("recall_returned_no_function_candidate")
+    return {
+        "function_attempts": len(function_rows),
+        "function_success": function_success,
+        "function_failure": len(function_rows) - function_success,
+        "transfer_attempts": len(transfer_rows),
+        "transfer_success": transfer_success,
+        "transfer_failure": len(transfer_rows) - transfer_success,
+        "failures": failures,
+        "resolution_failures": resolution_failures,
+        "selected_function_id": selected_function_id,
+        "resolution_status": resolution_status,
+        "binding_status": binding_status,
+        "replay_status": replay_status,
+        "planner_actions": planner_actions,
+        "resume_attempts": _coerce_int(resume_value.get("attempt_count")),
+        "resume_success": _coerce_int(resume_value.get("success_count")),
+        "router_tokens": _coerce_int(router_value.get("total_tokens")),
+        "planner_tokens": _coerce_int(planner_value.get("total_tokens")),
+        "router_calls": _coerce_int(router_value.get("model_calls")),
+        "planner_calls": _coerce_int(planner_value.get("model_calls")),
+    }
+
+
 def format_omniflow_result_block(
     *,
     output_path: Path,
@@ -2169,6 +2378,7 @@ def format_omniflow_result_block(
         if isinstance(diagnostics.get("execution_summary"), dict)
         else {}
     )
+    audit = _execution_audit(diagnostics)
     fallback_steps = _coerce_int(
         task_result.get("fallback_steps")
         if "fallback_steps" in task_result
@@ -2231,12 +2441,67 @@ def format_omniflow_result_block(
             ),
             "",
             (
-                f"Function={function_actions}/{function_denominator}；"
+                f"Function successful physical reuse={function_actions}/"
+                f"{function_denominator}；"
                 f"reuse={_percentage_text(reuse.get('reuse_rate'))}；"
                 f"fallback={fallback_steps}；model_calls={model_calls}"
             ),
             "",
+            (
+                f"Function attempts/success/failure="
+                f"{audit['function_attempts']}/{audit['function_success']}/"
+                f"{audit['function_failure']}；Transfer attempts/success/failure="
+                f"{audit['transfer_attempts']}/{audit['transfer_success']}/"
+                f"{audit['transfer_failure']}"
+            ),
+            "",
+            (
+                "Function outcome："
+                f"selected={audit['selected_function_id'] or 'none'}；"
+                f"resolution={audit['resolution_status']}；"
+                f"binding={audit['binding_status']}；"
+                f"replay={audit['replay_status']}"
+            ),
+            "",
+            (
+                "Function failure reasons："
+                + (
+                    " | ".join(
+                        str(value)
+                        for value in (
+                            list(audit["failures"])
+                            + list(audit["resolution_failures"])
+                        )
+                    )
+                    if audit["failures"] or audit["resolution_failures"]
+                    else "none"
+                )
+            ),
+            "",
+            (
+                "Planner physical actions="
+                + (", ".join(str(value) for value in audit["planner_actions"]) or "none")
+                + f"；Function resume={audit['resume_success']}/{audit['resume_attempts']}"
+            ),
+            "",
+            (
+                "Reuse gap："
+                + (
+                    f"{function_denominator - function_actions} successful physical "
+                    "action(s) came from Planner; this gap is not itself a Function "
+                    "failure"
+                    if function_denominator > function_actions
+                    else "none"
+                )
+            ),
+            "",
             f"tokens={prompt_tokens}/{completion_tokens}/{total_tokens}",
+            "",
+            (
+                f"token components：router={audit['router_tokens']} "
+                f"({audit['router_calls']} call(s))；planner={audit['planner_tokens']} "
+                f"({audit['planner_calls']} call(s))"
+            ),
             "",
             (
                 f"execution={execution_ms / 1000.0:.3f}s（排除 setup/validator）；"
