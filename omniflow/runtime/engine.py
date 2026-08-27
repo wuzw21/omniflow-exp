@@ -34,6 +34,7 @@ from omniflow.runtime.execution import (
 )
 from omniflow.transfer.embedding import PageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
+from omniflow.vlm_coordinates import display_size
 
 
 _FUNCTION_CACHE_CONFIDENCE_THRESHOLD = 0.95
@@ -1231,6 +1232,12 @@ def _function_fallback_context(
             else {}
         )
         candidates = transfer.get("candidates")
+        target = transfer.get("target")
+        target_display = (
+            target.get("display")
+            if isinstance(target, dict) and isinstance(target.get("display"), dict)
+            else None
+        )
         hint_candidates: list[dict[str, Any]] = []
         for candidate in (
             candidates[: max(1, int(limit))]
@@ -1246,8 +1253,6 @@ def _function_fallback_context(
                     "text",
                     "content_desc",
                     "class",
-                    "bounds",
-                    "execution_bounds",
                     "resource_id",
                     "execution_candidate_id",
                     "executable",
@@ -1255,6 +1260,18 @@ def _function_fallback_context(
                 )
                 if candidate.get(key) is not None
             }
+            bounds_0_1000 = _fallback_bounds_0_1000(
+                candidate.get("bounds"),
+                target_display,
+            )
+            if bounds_0_1000:
+                hint["bounds_0_1000"] = bounds_0_1000
+            execution_bounds_0_1000 = _fallback_bounds_0_1000(
+                candidate.get("execution_bounds"),
+                target_display,
+            )
+            if execution_bounds_0_1000:
+                hint["execution_bounds_0_1000"] = execution_bounds_0_1000
             hint_candidates.append(hint)
         context = {
             "expected_action": expected_action,
@@ -1263,6 +1280,26 @@ def _function_fallback_context(
         }
         return {key: value for key, value in context.items() if value}
     return {"expected_action": expected_action} if expected_action else None
+
+
+def _fallback_bounds_0_1000(
+    bounds: Any,
+    display: dict[str, Any] | None,
+) -> str:
+    if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+        return ""
+    try:
+        width, height = display_size(display)
+        left, top, right, bottom = (float(value) for value in bounds)
+    except (TypeError, ValueError):
+        return ""
+    normalized = (
+        round(min(1000, max(0, left / width * 1000))),
+        round(min(1000, max(0, top / height * 1000))),
+        round(min(1000, max(0, right / width * 1000))),
+        round(min(1000, max(0, bottom / height * 1000))),
+    )
+    return f"[{normalized[0]},{normalized[1]}][{normalized[2]},{normalized[3]}]"
 
 
 def _execution_history(

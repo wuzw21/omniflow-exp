@@ -29,6 +29,7 @@ GUI_AGENT_RULES = (
     "Only accessibility rows with actions are interactive; label-only rows are read-only screen evidence.",
     "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
     "Use the action history to understand completed work. Choose finished only when the goal is complete; otherwise choose one next action.",
+    "When choosing finished, always include a short non-empty content summary of the completed result.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (
