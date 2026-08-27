@@ -14,8 +14,12 @@ REJECT_FUNCTION_TOOL = "reject_recalled_function"
 FUNCTION_ROUTER_SYSTEM_PROMPT = (
     "Decide whether one recalled GUI Function fully covers the user's complete "
     "goal. Select a Function only when its semantic name and description match "
-    "the whole goal. Fill its schema arguments only from values explicit in the "
-    "goal; never guess missing values. Otherwise call reject_recalled_function. "
+    "the whole goal. Treat every fixed choice in the Function description and "
+    "every parameter description as a hard applicability contract. Reject a "
+    "Function when the goal conflicts with any fixed mode, type, format, category, "
+    "or destination. Fill each argument in the exact form described by its schema "
+    "using only values explicit and unambiguous in the goal; never guess missing "
+    "values. Otherwise call reject_recalled_function. "
     "Return exactly one provided native tool call."
 )
 

@@ -192,6 +192,18 @@ target-side values are never Function parameters. The complete_function must rep
 every parameter target selected by a local Function. Use parameters=[] for fixed
 recorded values. Keep reason under 40 words, each description under 120 words, and
 return no prose outside the JSON object.
+Treat every outcome-affecting recorded choice as a hard applicability constraint.
+State fixed modes, types, formats, categories, destinations, and similar choices in
+the Function description whenever changing them could change the task result. If a
+parameter_candidate has different recorded_value and task_parameter_value, describe
+the exact value accepted by the recorded input action and preserve any fixed prefix,
+suffix, type, or format in both the parameter and complete Function descriptions.
+Never claim that a Function covers goals outside those recorded fixed constraints.
+For a short linear workflow whose successful actions already form one stable
+end-to-end sequence, use functions=[] and author only the complete_function. Do not
+duplicate the complete workflow into local Functions by default. Author a local
+Function only when the evidence shows a separately reusable contiguous capability or
+an observation-dependent breakpoint that cannot safely stay in the complete flow.
 When a value is selected as a parameter, remove its recorded instance literal from
 the Function name and description. Describe the requested semantic value and let the
 generated input schema carry the concrete value at call time.

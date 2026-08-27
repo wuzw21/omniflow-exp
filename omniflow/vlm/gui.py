@@ -149,14 +149,14 @@ def _compact_image_data_uri(value: str) -> str:
         return value
     try:
         image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB")
-        thumbnail_box = (640, 360) if image.width > image.height else (360, 640)
+        thumbnail_box = (480, 270) if image.width > image.height else (270, 480)
         image.thumbnail(thumbnail_box, Image.Resampling.LANCZOS)
         output = BytesIO()
-        image.save(output, format="JPEG", quality=60, optimize=True)
+        image.save(output, format="WEBP", quality=45, method=6)
         compact = base64.b64encode(output.getvalue()).decode("ascii")
     except Exception:
         return value
-    return f"data:image/jpeg;base64,{compact}"
+    return f"data:image/webp;base64,{compact}"
 
 
 def _image_data_uri(path: str) -> str:
