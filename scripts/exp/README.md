@@ -12,11 +12,18 @@ bash scripts/exp/run_androidworld.sh run \
   --memory /path/to/store.json
 ```
 
-全部参数都可省略，默认值来自 `config/paper_androidworld.json`。
-除配置中的设备 label 外，临时设备可显式写成 `LABEL:SERIAL:PORT`。
+实验参数不通过命令行动态覆盖，固定值来自 `config/paper_androidworld.json`。
+正式运行和 Memory 转换固定使用 `Qwen3.6-Plus`；传入其他模型会被入口拒绝。
+设备只能使用配置中的 canonical label。
 
 `--device all` 选择论文的 Pixel 6 Pro、Fold 和 Tablet 三台 target。入口只启动尚未
 在线的 AVD，已在线设备直接复用；不同设备并发，同一设备上的多个 method 顺序执行。
+每个 OmniFlow target 结束并封存官方 RunLog 后，单任务 runner 会立即打印一块可直接
+复制的结果，统一包含 validator、物理动作、Function 复用、fallback、模型调用、token、
+execution/lifecycle 时间、Store、RunLog 和 SHA-256；三端并行时按实际完成顺序输出。
+
+`--method source --device source5560` 使用无 Memory 的 OmniFlow Planner、统一
+OOB 物理层和官方 validator，采集 seed-111 Source RunLog。
 
 Memory 可省略；入口不会查 index 或自动寻找历史 Memory。转换 Memory：
 
@@ -27,9 +34,11 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory /path/to/output-memory
 ```
 
-五个 AndroidWorld 方法只在 Memory 准备方式上不同。Memory 就绪后都进入同一条
+四个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory
+就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
-结果是需要保留的实验产物；转换临时目录在任务结束后自动删除。
+结果是需要保留的实验产物；同一 setting 固定使用 `attempt_001`，不会自动创建新的
+attempt 或自动选择“最好”的 attempt；转换临时目录在任务结束后自动删除。
 
 结果中的 `duration_ms` 是包含 task lifecycle、setup 和官方 validator 的完整 wall
 time；论文中的方法执行时间使用 `execution_duration_ms`，它只累计 `agent.step`，明确

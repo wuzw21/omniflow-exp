@@ -6,9 +6,9 @@ AndroidWorld 和 B-MoCA 实验仓库。AndroidWorld 只有一个公开入口：
 bash scripts/exp/run_androidworld.sh
 ```
 
-入口直接调用 task scheduler；scheduler 为所选方法准备 Memory，然后启动一次
-AndroidWorld task。设备 lifecycle、task setup 和最终 validator 由 AndroidWorld
-episode 负责，入口不做 preflight。
+入口直接调用统一 runner；runner 只使用调用者明确传入的 task、method、device 和
+Memory，然后启动一次 AndroidWorld task。设备 lifecycle、task setup 和最终 validator
+由 AndroidWorld episode 负责。
 
 常用参数都是可选的：
 
@@ -32,9 +32,11 @@ bash scripts/exp/run_androidworld.sh run \
   --memory /path/to/store.json
 ```
 
-可选方法为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`；
-设备和默认值来自 `config/paper_androidworld.json`。传入的 seed、步数、fallback、
-deadline 和 model 会原样进入本次运行，不要求等于配置中的默认值。
+正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`t3a_hint`。
+`appagent` 和 `script_replay` 不再是可运行的 AndroidWorld 方法；旧实现和旧结果
+仅作为历史证据保留。
+设备和默认值来自 `config/paper_androidworld.json`。正式运行和 Memory 转换固定使用
+`Qwen3.6-Plus`；显式传入其他模型会在入口处拒绝。
 
 ```bash
 bash scripts/exp/run_androidworld.sh --help

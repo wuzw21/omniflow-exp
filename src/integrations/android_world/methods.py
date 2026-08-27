@@ -17,8 +17,7 @@ from src.experiment.protocol import (
 
 _UNSUPPORTED_SELECTOR_ERROR = (
     "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-    "or `official:<name>`. External baselines are launched by the official "
-    "baseline forwarder."
+    "or `official:t3a_gpt4`."
 )
 
 REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v2"
@@ -33,8 +32,6 @@ def reuse_metrics(
     actions_executed: int = 0,
     canonical_run: dict[str, Any] | None = None,
     mobilegpt_stats: dict[str, Any] | None = None,
-    appagent_result: dict[str, Any] | None = None,
-    appagent_log: str | Path | None = None,
     source_action_hint: dict[str, Any] | None = None,
     uses_source_action_hints: bool = False,
 ) -> dict[str, Any]:
@@ -83,18 +80,6 @@ def reuse_metrics(
         unit = "memory_lookup"
         evidence = "exact_native_memory_events" if denominator else "unavailable"
         artifact_used = denominator > 0
-    elif normalized == "appagent":
-        result = dict(appagent_result or {})
-        if appagent_log and not result:
-            result = _appagent_log_usage(Path(appagent_log).expanduser())
-        denominator = max(0, int(result.get("decision_round_count") or 0))
-        numerator = min(
-            denominator,
-            max(0, int(result.get("documentation_round_count") or 0)),
-        )
-        unit = "decision_round"
-        evidence = "exact_native_document_rounds" if denominator else "unavailable"
-        artifact_used = numerator > 0
     elif normalized == "t3a_hint":
         hint = dict(source_action_hint or {})
         hint_active = bool(
@@ -169,20 +154,11 @@ def reuse_metrics_from_result_row(
         "memory_lookup_count": row.get("episode_memory_lookup_count"),
         "memory_hit_count": row.get("episode_memory_hit_count"),
     }
-    appagent_result = row.get("appagent_result")
-    if not isinstance(appagent_result, dict):
-        appagent_result = {}
-    appagent_log = None
-    output_path = str(row.get("output_path") or row.get("run_dir") or "").strip()
-    if output_path:
-        appagent_log = Path(output_path).expanduser() / "appagent_runtime/appagent_task_log.jsonl"
     return reuse_metrics(
         normalized,
         actions_executed=actions,
         canonical_run=canonical_run,
         mobilegpt_stats=mobilegpt_stats,
-        appagent_result=appagent_result,
-        appagent_log=appagent_log,
         source_action_hint=(
             row.get("source_action_hint")
             if isinstance(row.get("source_action_hint"), dict)
@@ -244,27 +220,6 @@ def _execution_step_changed_state(step: dict[str, Any]) -> bool:
     return bool(before_xml and after_xml and before_xml != after_xml)
 
 
-def _appagent_log_usage(path: Path) -> dict[str, int]:
-    decision_round_count = 0
-    documentation_round_count = 0
-    if not path.is_file():
-        return {}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict) or "round" not in row or "response" not in row:
-            continue
-        decision_round_count += 1
-        if row.get("visible_document_uids"):
-            documentation_round_count += 1
-    return {
-        "decision_round_count": decision_round_count,
-        "documentation_round_count": documentation_round_count,
-    }
-
-
 def _json_object(value: Any) -> dict[str, Any]:
     path_text = str(value or "").strip()
     if not path_text:
@@ -294,19 +249,12 @@ class MethodAdapterContext:
     planner_timeout_sec: float | None = None
     max_steps: int = MAX_STEPS
     raw_replay_run_log: str = ""
-    appagent_root: str = ""
-    appagent_workspace_root: str = ""
-    appagent_docs_root: str = ""
-    appagent_teacher_source: str = ""
-    appagent_name: str = ""
-    appagent_output_root: str = ""
     task_seed: int | None = None
     evidence_root: str = ""
     performance_metrics: Any | None = None
     build_omniflow_agent: Callable[..., Any] | None = None
     apply_fixed_replay: Callable[..., Any] | None = None
     build_official_agent: Callable[..., Any] | None = None
-    appagent_llm_factory: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -379,11 +327,15 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         or FORMAL_MODEL_ENDPOINT_PROFILE
     )
     planner = None
+    function_router = None
     if (
-        resolved_planner_model
-        or resolved_planner_provider
-        or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
-    ) and context.selector != "fixed_replay":
+        (
+            resolved_planner_model
+            or resolved_planner_provider
+            or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
+        )
+            and context.selector != "fixed_replay"
+    ):
         from omniflow.vlm.planner import VLMPlanner
 
         planner_api_key, planner_base_url = resolve_openai_compatible_config(
@@ -402,6 +354,16 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
             timeout=resolved_planner_timeout,
             max_steps=context.max_steps,
         )
+        if context.selector == "omniflow" and str(context.store_path).strip():
+            from omniflow.vlm.function_router import VLMFunctionRouter
+
+            function_router = VLMFunctionRouter(
+                provider=resolved_planner_provider or "openai",
+                model=resolved_planner_model,
+                api_key=planner_api_key,
+                base_url=planner_base_url,
+                timeout=resolved_planner_timeout,
+            )
     build_kwargs: dict[str, Any] = {
         "env": context.env,
         "store_path": context.store_path,
@@ -412,10 +374,14 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         "evidence_root": context.evidence_root or None,
         "performance_metrics": context.performance_metrics,
     }
-    if context.selector == "fixed_replay" or not str(context.store_path).strip():
+    if context.selector == "fixed_replay" or not str(
+        context.store_path
+    ).strip():
         build_kwargs["allow_empty_store"] = True
     if planner is not None:
         build_kwargs["planner"] = planner
+    if function_router is not None:
+        build_kwargs["function_router"] = function_router
     built_agent = build_agent(**build_kwargs)
     if context.selector != "fixed_replay":
         return built_agent
@@ -432,21 +398,13 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
     )
 
 
-def _build_appagent(context: MethodAdapterContext) -> Any:
-    del context
-    raise ValueError(
-        "appagent_is_external_only: use scripts/exp/run_androidworld.sh "
-        "with OMNIFLOW_ANDROIDWORLD_METHOD=appagent"
-    )
-
-
 def _build_official(context: MethodAdapterContext) -> Any:
     official_agent_name = str(
         context.selector.split(":", maxsplit=1)[1] or ""
     ).strip()
-    if not official_agent_name:
+    if official_agent_name != "t3a_gpt4":
         raise ValueError(
-            "--agent official:<name> requires one upstream AndroidWorld agent name"
+            "disabled_official_agent:only_official_t3a_gpt4_is_enabled"
         )
     build_official_agent = _required_dependency(
         context.build_official_agent,
@@ -456,6 +414,10 @@ def _build_official(context: MethodAdapterContext) -> Any:
         env=context.env,
         official_agent_name=official_agent_name,
         model_name=context.planner_model,
+        adb_serial=context.adb_serial,
+        adb_path=context.adb_path,
+        evidence_root=context.evidence_root,
+        performance_metrics=context.performance_metrics,
     )
 
 

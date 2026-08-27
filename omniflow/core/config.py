@@ -25,7 +25,9 @@ DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 GUI_AGENT_RULES = (
     "Accessibility XML is the authoritative evidence for visible controls, state, and bounds.",
     "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
-    "For click and input_text, select an exact A-reference from the encoded accessibility observation; lines without an A-reference are evidence only and are never clickable. The runtime grounds the node center. Only swipe uses normalized 0..1000 coordinates.",
+    "For click and input_text, use the current screenshot and accessibility observation together, then return the visible target point as normalized 0..1000 coordinates.",
+    "Never reuse coordinates from an earlier screen. If the target is not visible in the current screenshot, choose wait or a visible navigation control instead of guessing.",
+    "After open_app, verify Current package and the latest observation before touching app controls. If a system permission, settings, launcher, or loading surface is visible, act only on its visible control or wait for the requested app; do not apply coordinates from the requested app to that surface.",
     "Functions are verified multi-step action paths in the same action space as native GUI tools. When a Function matches the task, prefer it because it can complete several actions quickly; if it fails, inspect the result and continue with another Function or native GUI action.",
     "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; if it made no progress on the latest screen, do not repeat the loop—choose a different visible control or path, or stop if none remains.",
     "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",

@@ -42,52 +42,104 @@ def project_androidworld_step_actions(
     value: dict[str, Any],
     *,
     previous_step: dict[str, Any] | None = None,
+    next_observation: dict[str, Any] | None = None,
+    execution_action: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or not isinstance(value.get("observation"), dict):
         raise ValueError("androidworld_run_log_step_required")
     action = dict(value.get("action") or {})
     observation = value["observation"]
-    projected: list[dict[str, Any]] = []
-    if (
-        action.get("action_type") == "input_text"
-        and _androidworld_input_point_is_editable(action, observation)
-    ):
-        projected.append(
-            canonicalize_action(
-                {"tool": "click", "args": _androidworld_action_point(action, observation)},
-                replayable_only=True,
-            )
-        )
     projected_action = _androidworld_action_to_omniflow(
         action,
         observation=observation,
+        next_observation=next_observation,
+        execution_action=execution_action,
     )
-    if (
-        action.get("action_type") == "input_text"
-        and not str(projected_action["args"].get("target_description") or "").strip()
-    ):
-        target_description = _previous_click_target_description(previous_step)
-        if target_description:
-            projected_action["args"]["target_description"] = target_description
-    projected.append(projected_action)
-    return projected
+    return [projected_action]
 
 
-def _previous_click_target_description(
-    previous_step: dict[str, Any] | None,
-) -> str:
-    if not isinstance(previous_step, dict):
-        return ""
-    action = previous_step.get("action")
-    observation = previous_step.get("observation")
+def project_run_log_step_actions(
+    run_log: dict[str, Any],
+    source_step_index: int,
+    *,
+    previous_step: dict[str, Any] | None = None,
+    next_observation: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Project one RunLog step through its canonical execution evidence."""
+
+    steps = run_log.get("steps")
+    if not isinstance(steps, list) or not 0 <= source_step_index < len(steps):
+        raise ValueError("androidworld_run_log_step_index_invalid")
+    step = steps[source_step_index]
+    if not isinstance(step, dict):
+        raise ValueError("androidworld_run_log_step_required")
+    return project_androidworld_step_actions(
+        step,
+        previous_step=previous_step,
+        next_observation=(
+            next_observation
+            if isinstance(next_observation, dict)
+            else step.get("next_observation")
+            if isinstance(step.get("next_observation"), dict)
+            else None
+        ),
+        execution_action=_run_log_execution_action(run_log, source_step_index),
+    )
+
+
+def _run_log_execution_action(
+    run_log: dict[str, Any],
+    source_step_index: int,
+) -> dict[str, Any] | None:
+    diagnostics = run_log.get("diagnostics")
+    trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
+    if not isinstance(trace, list):
+        return None
+    indexed: dict[int, dict[str, Any]] = {}
+    for fallback_index, item in enumerate(trace):
+        if not isinstance(item, dict):
+            continue
+        raw_index = item.get("step_index", fallback_index)
+        if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+            continue
+        if raw_index in indexed:
+            raise ValueError(f"source_execution_trace_step_duplicate:{raw_index}")
+        indexed[raw_index] = item
+    trace_step = indexed.get(source_step_index)
+    if trace_step is None:
+        return None
+    source_action = run_log["steps"][source_step_index].get("action")
+    if not isinstance(source_action, dict):
+        return None
+    trace_action = trace_step.get("action")
+    trace_result = trace_step.get("result")
+    trace_args = trace_action.get("args") if isinstance(trace_action, dict) else None
+    if source_action.get("action_type") == "open_app":
+        if (
+            isinstance(trace_action, dict)
+            and trace_action.get("tool") == "open_app"
+            and isinstance(trace_args, dict)
+            and str(trace_args.get("package_name") or "").strip()
+        ):
+            return trace_action
+        return None
+    if source_action.get("action_type") not in {"scroll", "swipe"}:
+        return None
+    coordinate_keys = ("x1", "y1", "x2", "y2")
     if (
-        not isinstance(action, dict)
-        or action.get("action_type") not in {"click", "double_tap"}
-        or not isinstance(observation, dict)
+        isinstance(trace_action, dict)
+        and trace_action.get("tool") == "swipe"
+        and isinstance(trace_result, dict)
+        and trace_result.get("success") is True
+        and isinstance(trace_args, dict)
+        and all(trace_args.get(key) is not None for key in coordinate_keys)
     ):
-        return ""
-    _point, target = _androidworld_input_target(action, observation)
-    return _androidworld_input_target_description(target) if target is not None else ""
+        return trace_action
+    if all(source_action.get(key) is not None for key in coordinate_keys):
+        return None
+    raise ValueError(
+        f"source_swipe_execution_evidence_required:{source_step_index}"
+    )
 
 
 def _store_transfer_state(
@@ -180,19 +232,10 @@ def _fullscreen_xml_display(xml: str) -> tuple[int, int] | None:
     return (width, height) if width > 0 and height > 0 else None
 
 
-def _androidworld_input_point_is_editable(
-    action: dict[str, Any],
-    observation: dict[str, Any],
-) -> bool:
-    if _androidworld_action_point(action, observation) is None:
-        return False
-    _, node = _androidworld_input_target(action, observation)
-    return node is not None
-
-
 def _androidworld_input_target(
     action: dict[str, Any],
     observation: dict[str, Any],
+    next_observation: dict[str, Any] | None = None,
 ) -> tuple[dict[str, float] | None, ET.Element | None]:
     display = _observation_display(observation)
     if display is None:
@@ -204,9 +247,24 @@ def _androidworld_input_target(
     editable_nodes = [
         node
         for node in root.iter()
-        if str(node.attrib.get("editable") or "").casefold() == "true"
-        or str(node.attrib.get("class") or "").endswith("EditText")
+        if _is_androidworld_input_node(node)
     ]
+    transition_target = _changed_input_target(
+        observation,
+        next_observation,
+        input_text=str(action.get("text") or ""),
+    )
+    if transition_target is not None:
+        bounds = _parse_xml_bounds(transition_target.attrib.get("bounds"))
+        if bounds is not None:
+            left, top, right, bottom = bounds
+            return (
+                {
+                    "x": (left + right) / 2.0 / display[0] * 1000.0,
+                    "y": (top + bottom) / 2.0 / display[1] * 1000.0,
+                },
+                transition_target,
+            )
     point = _androidworld_action_point(action, observation)
     if point is None:
         focused = [
@@ -242,6 +300,79 @@ def _androidworld_input_target(
             continue
         containing.append(node)
     return point, min(containing, key=_xml_node_area, default=None)
+
+
+def _changed_input_target(
+    observation: dict[str, Any],
+    next_observation: dict[str, Any] | None,
+    *,
+    input_text: str,
+) -> ET.Element | None:
+    """Find the editable node whose text changed after the recorded input."""
+
+    if not isinstance(next_observation, dict):
+        return None
+    try:
+        before_root = ET.fromstring(observation_xml(observation))
+        after_root = ET.fromstring(observation_xml(next_observation))
+    except ET.ParseError:
+        return None
+
+    def input_nodes(root: ET.Element) -> list[ET.Element]:
+        return [
+            node
+            for node in root.iter()
+            if _is_androidworld_input_node(node)
+        ]
+
+    before_nodes = input_nodes(before_root)
+    after_nodes = input_nodes(after_root)
+    if not before_nodes or not after_nodes:
+        return None
+    expected = " ".join(str(input_text or "").casefold().split())
+
+    def normalized_text(node: ET.Element) -> str:
+        return " ".join(str(node.attrib.get("text") or "").casefold().split())
+
+    def compact_text(value: str) -> str:
+        return "".join(character for character in value if character.isalnum())
+
+    def node_key(node: ET.Element) -> tuple[str, str] | None:
+        for key in ("resource-id", "id"):
+            value = str(node.attrib.get(key) or "").strip()
+            if value:
+                return key, value
+        return None
+
+    after_by_key: dict[tuple[str, str], list[ET.Element]] = {}
+    for node in after_nodes:
+        key = node_key(node)
+        if key is not None:
+            after_by_key.setdefault(key, []).append(node)
+
+    matches: list[ET.Element] = []
+    for ordinal, before in enumerate(before_nodes):
+        after: ET.Element | None = None
+        key = node_key(before)
+        keyed = after_by_key.get(key) if key is not None else None
+        if keyed and len(keyed) == 1:
+            after = keyed[0]
+        elif len(before_nodes) == len(after_nodes):
+            after = after_nodes[ordinal]
+        if after is None or normalized_text(before) == normalized_text(after):
+            continue
+        after_text = normalized_text(after)
+        if expected and compact_text(expected) not in compact_text(after_text):
+            continue
+        matches.append(before)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _is_androidworld_input_node(node: ET.Element) -> bool:
+    if str(node.attrib.get("editable") or "").casefold() == "true":
+        return True
+    class_name = str(node.attrib.get("class") or "")
+    return class_name.endswith(("EditText", "AutoCompleteTextView"))
 
 
 def _xml_node_area(node: ET.Element) -> float:
@@ -280,82 +411,19 @@ def _androidworld_click_target(
     return min(containing, key=_xml_node_area, default=None)
 
 
-def _androidworld_input_target_description(node: ET.Element) -> str:
-    for attribute in ("content-desc", "text", "resource-id"):
-        value = str(node.attrib.get(attribute) or "").strip()
-        if value:
-            return value.rsplit("/", 1)[-1]
-    # AndroidWorld often exposes a clickable row/container without its child
-    # label on the clickable node itself.  Promote the first meaningful
-    # descendant label so the Function records the semantic target (for
-    # example, a notebook name) instead of the generic "editable text field".
-    for descendant in node.iter():
-        if descendant is node:
-            continue
-        for attribute in ("content-desc", "text"):
-            value = str(descendant.attrib.get(attribute) or "").strip()
-            if value:
-                return value
-    return "editable text field"
-
-
-def _androidworld_overlapping_label(
-    observation: dict[str, Any],
-    target: ET.Element,
-) -> str:
-    """Find a semantic label in a flattened sibling-based Android tree."""
-    target_bounds = _parse_xml_bounds(target.attrib.get("bounds"))
-    if target_bounds is None:
-        return ""
-    try:
-        root = ET.fromstring(observation_xml(observation))
-    except ET.ParseError:
-        return ""
-    candidates: list[tuple[float, str]] = []
-    for node in root.iter("node"):
-        if node is target:
-            continue
-        label = ""
-        for attribute in ("content-desc", "text"):
-            label = str(node.attrib.get(attribute) or "").strip()
-            if label:
-                break
-        bounds = _parse_xml_bounds(node.attrib.get("bounds"))
-        if not label or bounds is None:
-            continue
-        left, top, right, bottom = bounds
-        t_left, t_top, t_right, t_bottom = target_bounds
-        overlap = max(0.0, min(right, t_right) - max(left, t_left)) * max(
-            0.0,
-            min(bottom, t_bottom) - max(top, t_top),
-        )
-        if overlap > 0:
-            candidates.append((overlap, label))
-    return max(candidates, default=(0.0, ""))[1]
-
-
 def _androidworld_action_to_omniflow(
     value: Any,
     *,
     observation: dict[str, Any],
+    next_observation: dict[str, Any] | None = None,
+    execution_action: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     action = dict(value) if isinstance(value, dict) else {}
     action_type = str(action.get("action_type") or "").strip()
     if action_type in {"click", "double_tap"}:
-        args = _required_androidworld_action_point(action, observation)
-        target = _androidworld_click_target(action, observation)
-        if target is not None:
-            target_description = _androidworld_input_target_description(target)
-            if target_description == "editable text field":
-                target_description = _androidworld_overlapping_label(
-                    observation,
-                    target,
-                )
-            if target_description:
-                args["target_description"] = target_description
         projected = {
             "tool": "click",
-            "args": args,
+            "args": _required_androidworld_action_point(action, observation),
         }
     elif action_type == "long_press":
         projected = {
@@ -363,27 +431,60 @@ def _androidworld_action_to_omniflow(
             "args": _required_androidworld_action_point(action, observation),
         }
     elif action_type == "input_text":
-        point, target = _androidworld_input_target(action, observation)
+        point, _target = _androidworld_input_target(
+            action,
+            observation,
+            next_observation=next_observation,
+        )
         args: dict[str, Any] = {"text": action.get("text", "")}
-        if point is not None and target is not None:
+        if point is not None:
             args.update(point)
-            args["target_description"] = _androidworld_input_target_description(target)
         projected = {"tool": "input_text", "args": args}
     elif action_type in {"scroll", "swipe"}:
-        projected = {
-            "tool": "swipe",
-            "args": {
-                "direction": str(action.get("direction") or ""),
-                **_androidworld_standard_swipe(
+        swipe_args: dict[str, Any] = {
+            "direction": str(action.get("direction") or ""),
+        }
+        if action_type == "scroll":
+            swipe_args.update(
+                _androidworld_standard_swipe(
                     action_type,
                     str(action.get("direction") or ""),
-                ),
-            },
+                )
+            )
+        else:
+            exact_swipe = _execution_swipe(execution_action, source_action=action)
+            if exact_swipe is None:
+                exact_swipe = _androidworld_exact_swipe(action, observation)
+            swipe_args.update(
+                exact_swipe
+                if exact_swipe is not None
+                else _androidworld_standard_swipe(
+                    action_type,
+                    str(action.get("direction") or ""),
+                )
+            )
+        projected = {
+            "tool": "swipe",
+            "args": swipe_args,
         }
     elif action_type == "open_app":
+        execution_args = (
+            execution_action.get("args")
+            if isinstance(execution_action, dict)
+            and execution_action.get("tool") == "open_app"
+            and isinstance(execution_action.get("args"), dict)
+            else {}
+        )
         projected = {
             "tool": "open_app",
-            "args": {"package_name": str(action.get("app_name") or "")},
+            "args": {
+                "package_name": str(
+                    execution_args.get("package_name")
+                    or action.get("package_name")
+                    or action.get("app_name")
+                    or ""
+                )
+            },
         }
     elif action_type == "navigate_back":
         projected = {"tool": "press_key", "args": {"key": "back"}}
@@ -394,6 +495,12 @@ def _androidworld_action_to_omniflow(
     elif action_type == "press_keyboard":
         keycode = str(action.get("keycode") or "").strip().upper()
         keycode = keycode.removeprefix("KEYCODE_")
+        if keycode == "PASTE":
+            return canonicalize_action(
+                {"tool": "paste", "args": {}},
+                replayable_only=True,
+                allow_non_action=True,
+            )
         key = {
             "DEL": "delete",
             "DELETE": "delete",
@@ -465,15 +572,33 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
         root = ET.fromstring(xml)
     except ET.ParseError:
         return None
-    node = next(
-        (
-            item
-            for item in root.iter("node")
-            if str(item.attrib.get("id") or "") == str(index)
-        ),
-        None,
-    )
-    return _parse_xml_bounds(node.attrib.get("bounds")) if node is not None else None
+    elements: list[ET.Element] = []
+    windows = list(root.iter("window"))
+    for window in windows:
+        ordered_nodes: list[tuple[int, ET.Element]] = []
+        for element in window.iter("node"):
+            raw_id = str(element.attrib.get("id") or "")
+            try:
+                order = int(raw_id.rsplit(":", maxsplit=1)[1])
+            except (IndexError, ValueError):
+                return None
+            ordered_nodes.append((order, element))
+        for _, element in sorted(ordered_nodes, key=lambda item: item[0]):
+            child_nodes = [child for child in element if child.tag == "node"]
+            if (
+                not child_nodes
+                or str(element.attrib.get("content-desc") or "").strip()
+                or str(element.attrib.get("scrollable") or "").casefold() == "true"
+            ):
+                elements.append(element)
+    if not windows:
+        top_nodes = [child for child in root if child.tag == "node"]
+        if len(top_nodes) != 1:
+            return None
+        elements = list(top_nodes[0].iter("node"))[1:]
+    if not 0 <= index < len(elements):
+        return None
+    return _parse_xml_bounds(elements[index].attrib.get("bounds"))
 
 
 def _parse_xml_bounds(value: Any) -> tuple[float, float, float, float] | None:
@@ -527,6 +652,53 @@ def _androidworld_standard_swipe(
     except KeyError as error:
         raise ValueError(f"androidworld_action_direction_required:{action_type}") from error
     return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def _execution_swipe(
+    value: dict[str, Any] | None,
+    *,
+    source_action: dict[str, Any],
+) -> dict[str, float | int] | None:
+    if not isinstance(value, dict) or str(value.get("tool") or "") != "swipe":
+        return None
+    args = value.get("args")
+    if not isinstance(args, dict):
+        return None
+    coordinate_keys = ("x1", "y1", "x2", "y2")
+    if not all(args.get(key) is not None for key in coordinate_keys):
+        return None
+    source_direction = str(source_action.get("direction") or "").strip()
+    execution_direction = str(args.get("direction") or "").strip()
+    if source_direction and execution_direction and source_direction != execution_direction:
+        raise ValueError("androidworld_swipe_execution_direction_mismatch")
+    result: dict[str, float | int] = {
+        key: float(args[key]) for key in coordinate_keys
+    }
+    if args.get("duration_ms") is not None:
+        result["duration_ms"] = int(args["duration_ms"])
+    return result
+
+
+def _androidworld_exact_swipe(
+    action: dict[str, Any],
+    observation: dict[str, Any],
+) -> dict[str, float | int] | None:
+    coordinate_keys = ("x1", "y1", "x2", "y2")
+    if not all(action.get(key) is not None for key in coordinate_keys):
+        return None
+    display = _observation_display(observation)
+    if display is None:
+        raise ValueError("androidworld_action_display_required:swipe")
+    width, height = display
+    result: dict[str, float | int] = {
+        "x1": float(action["x1"]) / width * 1000.0,
+        "y1": float(action["y1"]) / height * 1000.0,
+        "x2": float(action["x2"]) / width * 1000.0,
+        "y2": float(action["y2"]) / height * 1000.0,
+    }
+    if action.get("duration_ms") is not None:
+        result["duration_ms"] = int(action["duration_ms"])
+    return result
 
 
 def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:

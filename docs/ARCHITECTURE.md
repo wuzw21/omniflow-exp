@@ -11,13 +11,12 @@ scripts/exp/run_androidworld.sh
 
 - shell 只转发参数。
 - `run_tasks.py` 只实现 `convert-memory` 和 `run`，Memory 路径由调用者直接传入；
-  `run` 复用在线 AVD、启动缺失的所选 AVD，并按设备并发调度。
+  `run` 复用在线 AVD、启动缺失的所选 AVD，并按设备并发执行。
 - `run_task.py` 启动一个 method + device 的原子任务。
 - `run_episode.py` 使用 AndroidWorld setup、OmniFlow OOB observe/act 和 AndroidWorld 官方 validator。
 
-正式方法只有 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent` 和
-`t3a_hint`。它们的差异只在 Memory 准备和 Planner/Executor adapter；设备 lifecycle
-与官方结果路径共用。
+正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`t3a_hint`。
+`appagent`、`script_replay` 和旧设备别名不进入新的 AndroidWorld 运行路径。
 
 运行时仅需要：
 
@@ -25,7 +24,7 @@ scripts/exp/run_androidworld.sh
 - 各方法 Memory：实际执行输入。
 - AndroidWorld 官方结果与 RunLog：论文实验输出。
 
-scheduler manifest、完成结果扫描、seed/path preflight、重复 registry/ledger、启动日志和
+历史结果扫描、自动 attempt 选择、scheduler manifest、重复 registry/ledger、启动日志和
 转换缓存都不参与运行。Memory 转换中间文件使用系统临时目录，任务结束自动删除。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。

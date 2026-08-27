@@ -515,7 +515,11 @@ class OmniFlow:
             }
             recall_event["function_cache"] = cache_audit
             routed_call: ToolCall | None = None
-            if not cache_functions:
+            if fallback_this_turn:
+                cache_audit["status"] = "bypassed_after_function_failure"
+            elif function_session.completed is not None:
+                cache_audit["status"] = "bypassed_after_function_completion"
+            elif not cache_functions:
                 cache_audit["status"] = "below_threshold"
             elif self.function_router is None:
                 cache_audit["status"] = "router_unavailable"
@@ -1461,21 +1465,14 @@ def _function_core_description(function: Function) -> str:
 
 def _describe_completed_action(action: Action) -> str:
     args = action.args
-    target = str(args.get("target_description") or "").strip()
     if action.tool == "open_app":
         package_name = str(args.get("package_name") or "").strip()
         return f'Opened app package "{package_name}" successfully.'
     if action.tool == "click":
-        if target:
-            return f'Clicked target "{target}" successfully.'
         return "Clicked the recorded target position successfully."
     if action.tool == "long_press":
-        if target:
-            return f'Long-pressed target "{target}" successfully.'
         return "Long-pressed the recorded screen position successfully."
     if action.tool == "input_text":
-        if target:
-            return f'Entered text into target "{target}" successfully.'
         return "Entered the required text successfully."
     if action.tool == "swipe":
         direction = str(args.get("direction") or "").strip()

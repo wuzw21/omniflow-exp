@@ -68,12 +68,6 @@ def parse_function_artifact(value: dict[str, Any]) -> Function:
             raise ValueError("function_action_args_must_be_object")
         if "target" in action["args"]:
             raise ValueError(f"function_action_target_forbidden:{index}")
-        if str(action.get("tool") or "") == "input_text" and not str(
-            action["args"].get("target_description") or ""
-        ).strip():
-            raise ValueError(
-                f"function_input_target_description_required:{index}"
-            )
         canonical_steps.append(
             {
                 "step_index": index,

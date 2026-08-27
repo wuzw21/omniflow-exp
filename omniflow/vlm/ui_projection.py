@@ -21,13 +21,6 @@ _ACTION_ATTRIBUTES = (
 )
 _ENGLISH_TOKEN = re.compile(r"[a-z0-9]+")
 _CHINESE_TOKEN = re.compile(r"[\u4e00-\u9fff]+")
-_NUMERIC_CONTROL_SUMMARY = re.compile(
-    r"(?:"
-    r"(?:digit|number|key|button|\u6570\u5b57|\u6309\u952e|\u6309\u94ae)\s*"
-    r"|(?:tap|click|press|select|\u70b9\u51fb|\u6309\u4e0b|\u9009\u62e9)\s+(?:the\s+)?"
-    r")['\"]?(\d{1,2})(?!\d)",
-    re.IGNORECASE,
-)
 _VISUAL_GOAL_MARKERS = (
     "广告",
     "弹窗",
@@ -314,51 +307,6 @@ def _has_repeated_action_surface(candidates: list[_Candidate]) -> bool:
         )
         repeated_keys[key] = repeated_keys.get(key, 0) + 1
     return max(repeated_keys.values(), default=0) >= 8
-
-
-def projected_node_center(
-    projection: UIProjection,
-    target_description: str,
-) -> tuple[ProjectedNode, tuple[float, float]] | None:
-    target = _normalized_label(target_description)
-    if not target:
-        return None
-    reference_match = re.search(r"(?<![a-z0-9])a\d{2,}(?![a-z0-9])", target)
-    if reference_match is None or reference_match.group(0) != target:
-        return None
-    reference = reference_match.group(0).upper()
-    matches = [
-        node
-        for node in projection.nodes
-        if node.reference == reference and not node.inside_webview
-    ]
-    if len(matches) != 1:
-        return None
-    node = matches[0]
-    left, top, right, bottom = node.bounds
-    return node, ((left + right) / 2, (top + bottom) / 2)
-
-
-def projected_numeric_summary_center(
-    projection: UIProjection,
-    summary: str,
-) -> tuple[ProjectedNode, tuple[float, float], str] | None:
-    """Resolve an explicitly named numeric control from a model action summary."""
-    label_match = _NUMERIC_CONTROL_SUMMARY.search(str(summary or ""))
-    if label_match is None:
-        return None
-    label = label_match.group(1)
-    matches = [
-        node
-        for node in projection.nodes
-        if not node.inside_webview
-        and label in {_normalized_label(value) for value in node.labels}
-    ]
-    if len(matches) != 1:
-        return None
-    node = matches[0]
-    left, top, right, bottom = node.bounds
-    return node, ((left + right) / 2, (top + bottom) / 2), label
 
 
 def _prune_redundant_candidates(
@@ -657,6 +605,4 @@ __all__ = [
     "ProjectedNode",
     "UIProjection",
     "project_ui",
-    "projected_numeric_summary_center",
-    "projected_node_center",
 ]

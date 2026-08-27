@@ -24,6 +24,16 @@ class Observation:
             display = value.get("display")
             if isinstance(display, dict):
                 extra["display"] = dict(display)
+            screenshot = value.get("screenshot")
+            if isinstance(screenshot, dict):
+                path = screenshot.get("path")
+                if isinstance(path, str) and path.strip():
+                    extra.setdefault("screenshot_path", path.strip())
+                if not isinstance(display, dict):
+                    width = screenshot.get("width")
+                    height = screenshot.get("height")
+                    if isinstance(width, int) and isinstance(height, int):
+                        extra["display"] = {"width": width, "height": height}
             return cls(
                 xml=value.get("xml"),
                 package_name=value.get("package_name"),

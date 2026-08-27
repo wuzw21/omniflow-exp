@@ -7,6 +7,7 @@ import os
 from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
 
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
+SOURCE_METHOD = "source"
 DEFAULT_TASK = str(ANDROIDWORLD_PROTOCOL["task"])
 DEVICES = tuple(
     (
@@ -48,6 +49,9 @@ FUNCTION_ENHANCEMENT_TIMEOUT_SEC = int(
 BMOCA_RESULT_TIMEOUT_SEC = int(ANDROIDWORLD_PROTOCOL["bmoca_result_timeout_sec"])
 TASK_DEADLINE_SEC = int(ANDROIDWORLD_PROTOCOL["task_deadline_sec"])
 STEP_TIMEOUT_SEC = int(ANDROIDWORLD_PROTOCOL["step_timeout_sec"])
+# Formal AndroidWorld runs do not accept a per-run planner timeout.  Keep the
+# one request budget here with the rest of the protocol constants.
+PLANNER_TIMEOUT_SEC = 30.0
 VALIDATOR_FLUSH_GRACE_SEC = int(
     ANDROIDWORLD_PROTOCOL["validator_flush_grace_sec"]
 )
@@ -56,12 +60,8 @@ FIXED_TASK_SEED = bool(ANDROIDWORLD_PROTOCOL["fixed_task_seed"])
 FIXED_TASK_PARAMS = bool(ANDROIDWORLD_PROTOCOL["fixed_task_params"])
 FOLD_STATE = int(ANDROIDWORLD_PROTOCOL["fold_state"])
 FOLD_SIZE = str(ANDROIDWORLD_PROTOCOL["fold_size"])
-FORMAL_MODEL = str(
-    os.environ.get("OMNIFLOW_FORMAL_MODEL")
-    or ANDROIDWORLD_PROTOCOL["model"]
-)
-OMNIFLOW_PLANNER_MODEL = str(ANDROIDWORLD_PROTOCOL["omniflow_planner_model"])
-APPAGENT_MODEL = str(ANDROIDWORLD_PROTOCOL["appagent_model"])
+FORMAL_MODEL = "Qwen3.6-Plus"
+OMNIFLOW_PLANNER_MODEL = FORMAL_MODEL
 FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )
@@ -75,6 +75,28 @@ DROIDRUN_VERSION = str(_DROIDRUN["version"])
 DROIDRUN_COMMIT = str(_DROIDRUN["commit"])
 DROIDRUN_PORTAL_VERSION = str(_DROIDRUN["portal_version"])
 DROIDRUN_PORTAL_COMMIT = str(_DROIDRUN["portal_commit"])
+
+
+def require_formal_model(value: str | None = None) -> str:
+    resolved = str(value or "").strip()
+    configured = str(ANDROIDWORLD_PROTOCOL.get("model") or "").strip()
+    configured_planner = str(
+        ANDROIDWORLD_PROTOCOL.get("omniflow_planner_model") or ""
+    ).strip()
+    if configured != FORMAL_MODEL:
+        raise ValueError(
+            f"formal_model_config_invalid:expected={FORMAL_MODEL}:configured={configured}"
+        )
+    if configured_planner != FORMAL_MODEL:
+        raise ValueError(
+            "formal_planner_model_config_invalid:"
+            f"expected={FORMAL_MODEL}:configured={configured_planner}"
+        )
+    if resolved and resolved != FORMAL_MODEL:
+        raise ValueError(
+            f"formal_model_mismatch:expected={FORMAL_MODEL}:received={resolved}"
+        )
+    return FORMAL_MODEL
 
 # Active result vocabulary. The registry reads the old one_task names only for
 # immutable historical attempts and never writes them again.

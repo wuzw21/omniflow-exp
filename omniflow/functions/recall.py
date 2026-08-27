@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from omniflow.core.model import Function, Observation, Transfer, TransferResult
+from omniflow.core.model import Action, Function, Observation, Transfer, TransferResult
 from omniflow.transfer.admission import assess_transfer, requires_contextual_mapping
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
 
@@ -67,8 +67,9 @@ async def recall_functions(
         decision["coarse_selected"] = True
         source_state_id = function.steps[0].source_state_id
         source_observation = source_states.get(source_state_id)
-        if not requires_contextual_mapping(function.steps[0].action.tool):
-            transfer_result = TransferResult(function.steps[0].action)
+        entry_action = function.steps[0].action
+        if not requires_contextual_mapping(entry_action.tool, entry_action.args):
+            transfer_result = TransferResult(entry_action)
         elif transfer is None:
             decision["rejection_reason"] = "function_transfer_unavailable"
             continue
@@ -186,8 +187,12 @@ def _score_function(
     )
     observed_page_similarity = float(page_match["page_similarity"] or 0.0)
     entry_page_override = (
-        "open_app"
-        if function.steps and function.steps[0].action.tool == "open_app"
+        _entry_page_override(
+            function.steps[0].action,
+            source_observation=source_observation,
+            current_observation=current_observation,
+        )
+        if function.steps
         else None
     )
     page_similarity = (
@@ -220,6 +225,28 @@ def _score_function(
         "entry_mapping_target": None,
         "rejection_reason": None,
     }
+
+
+def _entry_page_override(
+    action: Action,
+    *,
+    source_observation: Observation | None,
+    current_observation: Observation,
+) -> str | None:
+    if action.tool == "open_app":
+        return "open_app"
+    if requires_contextual_mapping(action.tool, action.args):
+        return None
+    if action.tool != "swipe":
+        return None
+    if not _is_directional_swipe(action):
+        return None
+    return "semantic_swipe"
+
+
+def _is_directional_swipe(action: Action) -> bool:
+    direction = str(action.args.get("direction") or "").strip().lower()
+    return direction in {"down", "up", "left", "right"}
 
 
 async def _await(value: Any) -> Any:

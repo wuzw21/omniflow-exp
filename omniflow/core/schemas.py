@@ -16,14 +16,16 @@ VLM_ACTION_TOOL_NAMES = (
     "swipe",
     "open_app",
     "press_key",
+    "wait",
     "finished",
 )
 _VLM_ACTION_ARGUMENT_NAMES = {
-    "click": ("target_description",),
-    "input_text": ("target_description", "text"),
+    "click": ("x", "y"),
+    "input_text": ("text", "x", "y"),
     "swipe": ("direction", "x1", "y1", "x2", "y2"),
     "open_app": ("package_name",),
     "press_key": ("key",),
+    "wait": ("duration_ms",),
     "finished": ("content",),
 }
 
@@ -155,17 +157,6 @@ def vlm_action_tools(*, include_summary: bool = False) -> list[dict[str, Any]]:
         parameters["required"] = [
             key for key in parameters.get("required", ()) if key in allowed
         ]
-        if name in {"click", "input_text"}:
-            target_schema = parameters["properties"].get("target_description")
-            if isinstance(target_schema, dict):
-                target_schema["description"] = (
-                    "Exact A-reference from the current encoded accessibility "
-                    "observation. Only lines with v=Axx are actionable. The runtime "
-                    "clicks the node center; do not provide a label or coordinates."
-                )
-                target_schema["pattern"] = "^A[0-9]{2}$"
-            if "target_description" not in parameters["required"]:
-                parameters["required"].append("target_description")
         tools.append(tool)
     return tools
 

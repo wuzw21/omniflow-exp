@@ -30,6 +30,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from omniflow import Action, RunResult
 from omniflow.core.trajectory import observation_xml
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
@@ -42,9 +43,13 @@ from src.experiment.performance_metrics import (
     write_performance_metrics,
 )
 from src.experiment.protocol import (
+    FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_STEPS,
+    PLANNER_TIMEOUT_SEC,
+    TASK_SEED,
+    require_formal_model,
 )
 from src.integrations.android_world.agent import (
     MODE_OMNIFLOW,
@@ -54,7 +59,7 @@ from src.integrations.android_world.environment import (
     AndroidWorldEnvironmentConfig,
     AndroidWorldExperimentEnvironment,
 )
-from src.integrations.android_world.host import make_agent_result
+from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 from src.integrations.android_world.methods import (
     MethodAdapterContext,
     default_method_adapter_registry,
@@ -64,7 +69,11 @@ from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
     CONTROL_PACKAGE as OOB_CONTROL_PACKAGE,
 )
-from src.integrations.runlog import import_run_log, project_androidworld_step_actions
+from src.integrations.runlog import (
+    import_run_log,
+    project_androidworld_step_actions,
+    project_run_log_step_actions,
+)
 
 OMNIFLOW_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger(__name__)
@@ -257,6 +266,31 @@ def _patch_androidworld_optional_setup_click() -> tuple[Any, Any] | None:
                 normalized_label in {"NEXT", "Skip", "Don't allow"}
                 and "Invalid element index" in message
             )
+            if missing_target:
+                elements = controller._env.get_ui_elements() or []
+                labels = {
+                    _normalize_androidworld_setup_label(
+                        getattr(element, "text", None)
+                        or getattr(element, "content_description", None)
+                        or ""
+                    )
+                    for element in elements
+                }
+                if "OK" in labels and any(
+                    label.startswith("This app was built for an older version of Android")
+                    for label in labels
+                ):
+                    logger.info(
+                        "AndroidWorld setup is dismissing the legacy-app dialog "
+                        "before retrying %s",
+                        element_text,
+                    )
+                    original(controller, "OK")
+                    for _ in range(6):
+                        try:
+                            return original(controller, element_text)
+                        except ValueError:
+                            time.sleep(0.5)
             if (
                 normalized_label == "Allow"
                 and missing_target
@@ -943,12 +977,7 @@ class _OpenAICompatibleMultimodalWrapper:
         temperature: float = 0.0,
         max_tokens: int = 512,
     ) -> None:
-        resolved_model = (
-            str(model_name or "").strip()
-            or str(os.environ.get("OPENAI_MODEL") or "").strip()
-            or str(os.environ.get("OMNIFLOW_PLANNER_MODEL") or "").strip()
-            or "Qwen3.6-Plus"
-        )
+        resolved_model = str(model_name or "").strip() or FORMAL_MODEL
         resolved_base_url = (
             str(base_url or "").strip()
             or str(os.environ.get("OPENAI_BASE_URL") or "").strip()
@@ -1035,8 +1064,11 @@ class _OpenAICompatibleMultimodalWrapper:
             "temperature": self.temperature,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
-            "reasoning_effort": "none",
-            "enable_thinking": False,
+            # Qwen's native reasoning must stay enabled for the AndroidWorld
+            # T3A/Hint path.  ``reasoning_effort=none`` and
+            # ``enable_thinking=false`` silently turned the requested Qwen
+            # reasoning mode off at the final OpenAI-compatible boundary.
+            "enable_thinking": True,
         }
         headers = {
             "Content-Type": "application/json",
@@ -1499,6 +1531,75 @@ def _add_android_world_path(android_world_root: Path) -> None:
         sys.path.insert(0, root)
 
 
+def _patch_androidworld_short_date_compat() -> tuple[Any, Any] | None:
+    """Accept legacy AndroidWorld params that omit the calendar year.
+
+    Older successful source RunLogs store dates such as ``October 09`` while
+    the pinned AndroidWorld release now parses only ``October 09 2023``.  The
+    task's device clock is the authoritative year for these legacy values;
+    full-year dates continue through the official parser unchanged.
+    """
+
+    try:
+        datetime_utils = importlib.import_module(
+            "android_world.task_evals.information_retrieval.datetime_utils"
+        )
+        device_constants = importlib.import_module(
+            "android_world.env.device_constants"
+        )
+    except ImportError:
+        return None
+    original = getattr(datetime_utils, "get_date", None)
+    if not callable(original):
+        return None
+
+    def get_date(value: str) -> datetime.date:
+        try:
+            return original(value)
+        except ValueError:
+            normalized = value.strip().lower()
+            base_date = device_constants.DT.date()
+            relative_days = {
+                "today": 0,
+                "tomorrow": 1,
+                "yesterday": -1,
+            }
+            if normalized in relative_days:
+                return base_date + datetime.timedelta(
+                    days=relative_days[normalized]
+                )
+
+            weekday_match = re.fullmatch(
+                r"(?:this |the )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: after next)?",
+                normalized,
+            )
+            if weekday_match and (
+                normalized.startswith("this ")
+                or normalized.startswith("the ")
+            ):
+                target_weekday = (
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                ).index(weekday_match.group(1))
+                days_ahead = (target_weekday - base_date.weekday()) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                if normalized.endswith(" after next"):
+                    days_ahead += 7
+                return base_date + datetime.timedelta(days=days_ahead)
+
+            legacy_value = f"{value} {device_constants.DT.year}"
+            return datetime.datetime.strptime(legacy_value, "%B %d %Y").date()
+
+    datetime_utils.get_date = get_date
+    return datetime_utils, original
+
+
 def _rehydrate_task_params(
     *,
     params: dict[str, object],
@@ -1507,6 +1608,51 @@ def _rehydrate_task_params(
     """Restore AndroidWorld task params that were serialized through JSON."""
 
     hydrated = dict(params)
+    is_information_retrieval = task_type is not None and any(
+        base.__name__ == "InformationRetrieval"
+        for base in getattr(task_type, "__mro__", ())
+    )
+    if is_information_retrieval:
+        if "seed" not in hydrated:
+            raise ValueError("InformationRetrieval task params require seed")
+        from android_world.task_evals.information_retrieval import datetime_utils
+        task_template = task_type(hydrated).task_template
+        canonical_params = dict(hydrated)
+        for task_param in task_template.task_params:
+            key = str(task_param.name)
+            if key not in hydrated:
+                raise ValueError(
+                    "InformationRetrieval task params missing canonical field: "
+                    f"{key}"
+                )
+            serialized_value = hydrated[key]
+            possible_values = list(task_param.possible_values)
+            matches: list[str] = []
+            for possible_value in possible_values:
+                equivalent = serialized_value == possible_value
+                if not equivalent and isinstance(serialized_value, str):
+                    try:
+                        equivalent = (
+                            possible_value.format(**hydrated) == serialized_value
+                        )
+                    except (KeyError, ValueError):
+                        equivalent = False
+                    if not equivalent:
+                        try:
+                            equivalent = datetime_utils.get_date(
+                                possible_value
+                            ) == datetime_utils.get_date(serialized_value)
+                        except ValueError:
+                            equivalent = False
+                if equivalent and possible_value not in matches:
+                    matches.append(possible_value)
+            if len(matches) != 1:
+                raise ValueError(
+                    "InformationRetrieval task params do not match one canonical "
+                    f"value: {key}"
+                )
+            canonical_params[key] = matches[0]
+        hydrated = canonical_params
     if task_type is not None and task_type.__name__ == "MarkorTranscribeReceipt":
         if "seed" not in hydrated:
             raise ValueError("MarkorTranscribeReceipt task params require seed")
@@ -1740,6 +1886,15 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
                 "oob_control_apk_package_identity_mismatch:"
                 f"{serial}:expected={OOB_CONTROL_PACKAGE}"
             )
+    enabled_package = subprocess.run(
+        [adb_bin, "-s", serial, "shell", "pm", "enable", OOB_CONTROL_PACKAGE],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if enabled_package.returncode != 0:
+        raise RuntimeError(f"oob_control_package_enable_failed:{serial}")
     enabled = subprocess.run(
         [adb_bin, "-s", serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"],
         capture_output=True,
@@ -2101,6 +2256,30 @@ def start_androidworld_task_session(
 
     _patch_androidworld_broadcast_compat(adb_utils)
     type(task).set_device_time(startup.env)
+    # VLC's task fixtures read its on-device app_db during initialization.
+    # A freshly initialized emulator does not create that database until the
+    # app has been launched once; perform this one-time official AndroidWorld
+    # warm-up before initialize_task. MobileGPT still owns all formal episode
+    # app launches and Accessibility actions after this seam returns.
+    if any(
+        str(name).strip().lower() == "vlc"
+        for name in getattr(task, "app_names", ())
+    ):
+        # AndroidWorld's own VlcApp.setup performs the launcher-style warm-up
+        # (including onboarding/permission handling) that creates app_db.  A
+        # plain start_activity/monkey launch leaves a fresh tablet in the
+        # onboarding activity and the task initializer then fails before the
+        # MobileGPT episode starts.  Only invoke setup when the database is
+        # genuinely absent; calling it on an initialized device would try to
+        # click a non-existent skip button.
+        from android_world.env.setup_device.apps import VlcApp
+        from android_world.utils import file_utils
+
+        db_dir = "/data/data/org.videolan.vlc/app_db"
+        if not file_utils.check_directory_exists(db_dir, startup.env.controller):
+            VlcApp.setup(startup.env)
+        else:
+            adb_utils.launch_app("vlc", startup.env.controller)
     task.initialize_task(startup.env)
     return startup, task
 
@@ -2487,38 +2666,20 @@ def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | Non
                 timeout=resolved_timeout,
                 device_specific=device_specific,
             )
-        try:
-            return original(
-                self,
-                args,
-                timeout=resolved_timeout,
-                device_specific=device_specific,
-            )
-        except Exception as error:
-            details = [repr(error), str(error)]
-            for attribute in ("stdout", "stderr", "output", "cmd"):
-                value = getattr(error, attribute, None)
-                if value is not None:
-                    details.append(
-                        value.decode("utf-8", errors="replace")
-                        if isinstance(value, bytes)
-                        else str(value)
-                    )
-            if "Unknown option --bypass-low-target-sdk-block" not in "\n".join(
-                details
-            ):
-                raise
-            fallback_args = [
-                value
-                for value in normalized
-                if value != "--bypass-low-target-sdk-block"
-            ]
-            return original(
-                self,
-                fallback_args,
-                timeout=resolved_timeout,
-                device_specific=device_specific,
-            )
+        # The target emulator images reject this flag deterministically.  Do
+        # not spend AndroidWorld's retry budget on a command that cannot work;
+        # issue the equivalent install without the optional flag directly.
+        fallback_args = [
+            value
+            for value in normalized
+            if value != "--bypass-low-target-sdk-block"
+        ]
+        return original(
+            self,
+            fallback_args,
+            timeout=resolved_timeout,
+            device_specific=device_specific,
+        )
 
     controller_type.execute_command = execute_command
     return controller_type, original
@@ -3425,11 +3586,157 @@ class _SanitizingCheckpointer:
         return self._delegate.load(fields=fields)
 
 
+class _OobOfficialAgentEnvironment:
+    """Expose the official T3A interface through the canonical OOB host."""
+
+    def __init__(
+        self,
+        env: Any,
+        *,
+        adb_serial: str = "",
+        adb_path: str = "",
+        evidence_root: str | Path | None = None,
+        performance_metrics: PerformanceMetrics | None = None,
+    ) -> None:
+        self._env = env
+        self._host = AndroidWorldHost(
+            env,
+            adb_serial=adb_serial,
+            adb_path=adb_path,
+            post_action_wait_seconds=0.0,
+            open_app_ready_timeout_seconds=15.0,
+            evidence_root=evidence_root,
+            performance_metrics=performance_metrics,
+            control_backend="oob",
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._env, name)
+
+    @property
+    def controller(self) -> Any:
+        return getattr(self._env, "controller")
+
+    @property
+    def logical_screen_size(self) -> tuple[int, int]:
+        state = self.get_state(wait_to_stabilize=False)
+        auxiliaries = getattr(state, "auxiliaries", {})
+        display = auxiliaries.get("display") if isinstance(auxiliaries, dict) else None
+        if isinstance(display, dict):
+            return (
+                int(display.get("width") or 1),
+                int(display.get("height") or 1),
+            )
+        width, height = self._host._screen_size(state)
+        return int(width), int(height)
+
+    def get_state(self, **kwargs: Any) -> Any:
+        from src.integrations.android_world.oob_control import oob_state_from_payload
+
+        observation = self._host.observe(
+            xml=True,
+            screenshot=True,
+            app_info=True,
+            **kwargs,
+        )
+        return oob_state_from_payload(
+            {
+                "xml": observation.xml,
+                "image_base64": observation.image_base64,
+                "display": observation.extra.get("display"),
+                "package_name": observation.package_name,
+                "activity_name": observation.activity_name,
+            },
+            fallback_screen_size=self._host._screen_size(),
+        )
+
+    @staticmethod
+    def _bbox(element: Any) -> tuple[float, float, float, float] | None:
+        bbox = getattr(element, "bbox_pixels", None) or getattr(element, "bbox", None)
+        if bbox is None:
+            return None
+        try:
+            return tuple(
+                float(getattr(bbox, key))
+                for key in ("x_min", "y_min", "x_max", "y_max")
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _element_point(self, state: Any, index: Any) -> tuple[float, float]:
+        try:
+            element_index = int(index)
+        except (TypeError, ValueError) as error:
+            raise ValueError("t3a_oob_element_index_invalid") from error
+        elements = list(getattr(state, "ui_elements", ()) or ())
+        if not 0 <= element_index < len(elements):
+            raise ValueError(f"t3a_oob_element_index_out_of_range:{element_index}")
+        bounds = self._bbox(elements[element_index])
+        if bounds is None:
+            raise ValueError(f"t3a_oob_element_bounds_missing:{element_index}")
+        left, top, right, bottom = bounds
+        width, height = self._host._screen_size(state)
+        return (
+            max(0.0, min(1000.0, ((left + right) / 2.0) / width * 1000.0)),
+            max(0.0, min(1000.0, ((top + bottom) / 2.0) / height * 1000.0)),
+        )
+
+    def execute_action(self, action: Any) -> None:
+        action_type = str(getattr(action, "action_type", "") or "").strip().lower()
+        if action_type in {"answer", "status", "unknown"}:
+            return
+        state = None
+        if action_type in {"click", "long_press", "long-press", "input_text", "input-text"}:
+            state = self.get_state(wait_to_stabilize=True)
+        tool = {
+            "click": "click",
+            "long_press": "long_press",
+            "long-press": "long_press",
+            "input_text": "input_text",
+            "input-text": "input_text",
+            "scroll": "swipe",
+            "swipe": "swipe",
+            "open_app": "open_app",
+            "navigate_back": "press_back",
+            "navigate_home": "press_home",
+            "keyboard_enter": "press_enter",
+            "wait": "wait",
+        }.get(action_type)
+        if not tool:
+            raise ValueError(f"t3a_oob_action_unsupported:{action_type or 'missing'}")
+        args: dict[str, Any] = {}
+        if state is not None:
+            width, height = self._host._screen_size(state)
+            index = getattr(action, "index", None)
+            if index is not None:
+                x, y = self._element_point(state, index)
+            else:
+                x = float(getattr(action, "x", 0) or 0) / width * 1000.0
+                y = float(getattr(action, "y", 0) or 0) / height * 1000.0
+            args.update(x=x, y=y)
+        if action_type in {"input_text", "input-text"}:
+            args["text"] = str(getattr(action, "text", "") or "")
+        elif action_type in {"scroll", "swipe"}:
+            args["direction"] = str(getattr(action, "direction", "") or "down")
+        elif action_type == "open_app":
+            args["app_name"] = str(getattr(action, "app_name", "") or "")
+        result = self._host.act(Action(tool=tool, args=args))
+        if not result.success:
+            raise RuntimeError(result.error or f"t3a_oob_action_failed:{action_type}")
+
+    def reset(self, go_home: bool = False) -> Any:
+        return self._host.reset(go_home=go_home)
+
+
 def _build_official_androidworld_agent(
     *,
     env: Any,
     official_agent_name: str,
     model_name: str | None = None,
+    adb_serial: str = "",
+    adb_path: str = "",
+    evidence_root: str | Path | None = None,
+    performance_metrics: PerformanceMetrics | None = None,
 ) -> Any:
     """Build one upstream AndroidWorld agent for direct benchmark execution.
 
@@ -3448,7 +3755,14 @@ def _build_official_androidworld_agent(
     llm = _OpenAICompatibleMultimodalWrapper(model_name=model_name)
     from android_world.agents import t3a
 
-    agent = t3a.T3A(env, llm)
+    agent_env = _OobOfficialAgentEnvironment(
+        env,
+        adb_serial=adb_serial,
+        adb_path=adb_path,
+        evidence_root=evidence_root,
+        performance_metrics=performance_metrics,
+    )
+    agent = t3a.T3A(agent_env, llm)
     agent._omniflow_llm_usage_tracker = llm
     agent.name = resolved_name
     return agent
@@ -3467,54 +3781,34 @@ def _read_raw_replay_run_log(path_text: str) -> dict[str, Any]:
 
 
 def _raw_replay_step_actions(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Project the accepted RunLog schema to recorded actions."""
-
-    def replay_action(action: dict[str, Any]) -> dict[str, Any]:
-        tool = str(action["tool"])
-        params = dict(action.get("args") or {})
-        projected = {"type": tool, "params": params}
-        if (
-            tool in {"click", "long_press", "input_text", "swipe"}
-            and any(
-                key in params
-                for key in ("x", "y", "x1", "y1", "x2", "y2")
-            )
-        ):
-            projected["coordinate_space"] = "canonical_0_1000"
-        return projected
+    """Project successful main-flow RunLog actions through the Function projector."""
 
     run_log = import_run_log(data)
     actions: list[dict[str, Any]] = []
-    for step in run_log["steps"]:
+    previous_successful_step: dict[str, Any] | None = None
+    for source_step_index, step in enumerate(run_log["steps"]):
         if step["result"]["success"] is not True:
             continue
         action_type = str(step["action"].get("action_type") or "")
-        if action_type in {"status", "unknown"}:
+        if action_type in {"answer", "status", "unknown"}:
             continue
-        if action_type == "answer":
+        previous_for_projection = previous_successful_step
+        previous_successful_step = step
+        metadata = step.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("origin") == "checker":
+            continue
+        for projected in project_run_log_step_actions(
+            run_log,
+            source_step_index,
+            previous_step=previous_for_projection,
+        ):
             actions.append(
                 {
-                    "type": "answer",
-                    "params": {
-                        "text": str(step["action"].get("text") or ""),
-                    },
+                    "tool": projected["tool"],
+                    "args": dict(projected.get("args") or {}),
+                    "_source_step_index": source_step_index,
                 }
             )
-            continue
-        if action_type in {"scroll", "swipe"}:
-            actions.append(
-                {
-                    "type": action_type,
-                    "params": {
-                        "direction": str(step["action"].get("direction") or ""),
-                    },
-                }
-            )
-            continue
-        actions.extend(
-            replay_action(action)
-            for action in project_androidworld_step_actions(step)
-        )
     return actions
 
 
@@ -3884,6 +4178,14 @@ def _raw_replay_action_to_payload(
     target_size: tuple[int, int],
     resolution: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    if source_action.get("tool") and isinstance(source_action.get("args"), dict):
+        return {
+            "action_type": "raw_omniflow_action",
+            "action": {
+                "tool": str(source_action["tool"]),
+                "args": dict(source_action["args"]),
+            },
+        }, None
     action_type = str(
         source_action.get("type")
         or source_action.get("tool")
@@ -4002,6 +4304,11 @@ def _raw_replay_action_to_payload(
             return {"action_type": "navigate_home"}, None
         if key in {"enter", "keyboard_enter"}:
             return {"action_type": "keyboard_enter"}, None
+        if key in {"delete", "del", "backspace", "keycode_del"}:
+            return {
+                "action_type": "press_keyboard",
+                "keycode": "KEYCODE_DEL",
+            }, None
         return None, "unsupported_androidworld_key"
 
     if action_type in {"back", "press_back", "navigate_back"}:
@@ -4455,7 +4762,6 @@ def _apply_fixed_replay(
     original_set_max_steps = getattr(agent, "set_max_steps", None)
     run_log_data = _read_raw_replay_run_log(run_log_json_path)
     source_actions = _raw_replay_step_actions(run_log_data)
-    source_steps = import_run_log(run_log_data)["steps"]
     source_size = _raw_replay_source_size(run_log_data)
     state: dict[str, Any] = {"ran": False, "payload": None}
     replay_host = getattr(agent, "host", None)
@@ -4483,8 +4789,16 @@ def _apply_fixed_replay(
         *,
         target_size: tuple[int, int],
     ) -> None:
-        from android_world.env import json_action
-
+        if payload.get("action_type") == "raw_omniflow_action":
+            host_result = agent.host.act(dict(payload["action"]))
+            if getattr(host_result, "success", False) is not True:
+                raise RuntimeError(
+                    str(
+                        getattr(host_result, "error", "")
+                        or "fixed replay OmniFlow action failed"
+                    )
+                )
+            return
         if payload.get("action_type") == "raw_open_app":
             _launch_raw_replay_app(
                 str(payload["app_identifier"]),
@@ -4541,8 +4855,27 @@ def _apply_fixed_replay(
                     str(getattr(host_result, "error", "") or "raw replay action failed")
                 )
             return
-        action = json_action.JSONAction(**payload)
-        agent.env.execute_action(action)
+        if payload.get("action_type") == "input_text":
+            target_width, target_height = target_size
+            args: dict[str, Any] = {
+                "text": str(payload.get("text") or ""),
+                "clear_text": bool(payload.get("clear_text", True)),
+            }
+            if payload.get("x") is not None and payload.get("y") is not None:
+                args.update(
+                    x=float(payload["x"]) / float(target_width) * 1000.0,
+                    y=float(payload["y"]) / float(target_height) * 1000.0,
+                )
+            host_result = agent.host.act({"tool": "input_text", "args": args})
+            if getattr(host_result, "success", False) is not True:
+                raise RuntimeError(
+                    str(getattr(host_result, "error", "") or "raw replay input failed")
+                )
+            return
+        raise RuntimeError(
+            "fixed_replay_action_not_projected_through_omniflow_host:"
+            f"{payload.get('action_type')}"
+        )
 
     def _forced_step(goal: str):
         goal_text = str(goal or "").strip()
@@ -4659,93 +4992,12 @@ def _apply_fixed_replay(
                 break
             try:
                 assert payload is not None
-                target_observation = None
-                target_xml = ""
-                if callable(replay_observe):
-                    try:
-                        target_observation = replay_observe(
-                            xml=True,
-                            screenshot=False,
-                            app_info=True,
-                        )
-                        target_xml = _raw_replay_xml(target_observation)
-                    except Exception as exc:  # noqa: BLE001 - coordinate fallback
-                        step_record["semantic_resolution_error"] = str(exc)
-                source_step = (
-                    source_steps[index]
-                    if index < len(source_steps)
-                    and isinstance(source_steps[index], dict)
-                    else {}
-                )
-                source_before_xml = _raw_replay_xml(
-                    source_step.get("observation")
-                    if isinstance(source_step, dict)
-                    else None
-                )
-                source_after_xml = _raw_replay_xml(
-                    source_step.get("next_observation")
-                    if isinstance(source_step, dict)
-                    else None
-                )
-                route_checker_satisfied = _raw_replay_route_action_already_satisfied(
-                    source_action=original_source_action,
-                    source_xml=source_before_xml,
-                    target_xml=target_xml,
-                )
-                if (
-                    target_xml
-                    and str(original_source_action.get("type") or "").lower()
-                    in {"click", "tap", "double_tap", "long_press", "longpress"}
-                    and (
-                        route_checker_satisfied
-                        or (
-                            source_after_xml
-                            and _raw_replay_semantic_skip(
-                                source_before_xml=source_before_xml,
-                                source_after_xml=source_after_xml,
-                                target_xml=target_xml,
-                            )
-                        )
-                    )
-                ):
-                    step_record.update(
-                        completed=True,
-                        skipped=True,
-                        skip_reason="target_already_matches_recorded_post_state",
-                        parameter_source="semantic_checker_state",
-                        wait_after_s=0.0,
-                    )
-                    step_results.append(step_record)
-                    continue
-                semantic_payload = _raw_replay_semantic_click_payload(
-                    source_action=original_source_action,
-                    source_xml=source_before_xml,
-                    target_xml=target_xml,
+                _execute_payload(
+                    payload,
                     target_size=action_target_size,
                 )
-                if semantic_payload is not None:
-                    payload = semantic_payload
-                    step_record["androidworld_action"] = dict(payload)
-                    step_record["semantic_target_anchor"] = True
-                    step_record["parameter_source"] = "semantic_target_anchor"
-                semantic_recovery = None
-                if payload.get("action_type") in {"click", "long_press"}:
-                    semantic_recovery = _raw_replay_visible_setup_recovery(
-                        agent,
-                        goal_text=goal_text,
-                    )
-                if semantic_recovery:
-                    step_record["semantic_recovery"] = semantic_recovery
-                    step_record["parameter_source"] = "semantic_visible_text"
-                else:
-                    _execute_payload(
-                        payload,
-                        target_size=action_target_size,
-                    )
                 actions_executed += 1
-                if semantic_recovery:
-                    direct_actions += 1
-                elif parameter_source == "recorded_coordinate":
+                if parameter_source == "recorded_coordinate":
                     recorded_coordinate_actions += 1
                 else:
                     direct_actions += 1
@@ -4952,12 +5204,6 @@ def _build_launch_agent(
     planner_timeout_sec: float | None = None,
     max_steps: int = MAX_STEPS,
     raw_replay_run_log: str = "",
-    appagent_root: str = "",
-    appagent_workspace_root: str = "",
-    appagent_docs_root: str = "",
-    appagent_teacher_source: str = "",
-    appagent_name: str = "",
-    appagent_output_root: str = "",
     task_seed: int | None = None,
     evidence_root: str = "",
     performance_metrics: PerformanceMetrics | None = None,
@@ -4971,8 +5217,7 @@ def _build_launch_agent(
         env: AndroidWorld environment already created by `env_launcher`.
         store_path: Function Store path used only by the cache-first agent.
         adb_serial: Device serial forwarded to the canonical AndroidWorld host.
-        raw_replay_run_log: Optional source runlog used only by the fixed replay
-            baseline agent.
+            raw_replay_run_log: Source RunLog for ``fixed_replay``.
 
     Returns:
         One ready-to-run agent instance for `suite_utils.run(...)`.
@@ -4992,12 +5237,6 @@ def _build_launch_agent(
             planner_timeout_sec=planner_timeout_sec,
             max_steps=max_steps,
             raw_replay_run_log=raw_replay_run_log,
-            appagent_root=appagent_root,
-            appagent_workspace_root=appagent_workspace_root,
-            appagent_docs_root=appagent_docs_root,
-            appagent_teacher_source=appagent_teacher_source,
-            appagent_name=appagent_name,
-            appagent_output_root=appagent_output_root,
             task_seed=task_seed,
             evidence_root=evidence_root,
             performance_metrics=performance_metrics,
@@ -5060,7 +5299,6 @@ def build_parser() -> argparse.ArgumentParser:
             default=MODE_OMNIFLOW,
         help=(
             "Agent selector. `omniflow` keeps the shared cache-first adapter; "
-            "`appagent` runs pinned AppAgent deployment; "
             "`official:t3a_gpt4` keeps the paper baseline compatibility path."
         ),
     )
@@ -5092,13 +5330,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--raw-replay-run-log",
         default="",
-        help="Source runlog used only by --agent fixed_replay.",
+        help="Source RunLog for fixed_replay.",
     )
-    parser.add_argument("--appagent-root", default="")
-    parser.add_argument("--appagent-workspace-root", default="")
-    parser.add_argument("--appagent-docs-root", default="")
-    parser.add_argument("--appagent-teacher-source", default="")
-    parser.add_argument("--appagent-name", default="")
     parser.add_argument(
         "--task-params-json",
         default="",
@@ -5128,16 +5361,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("OMNIFLOW_PLANNER_MODEL", ""),
+        default=FORMAL_MODEL,
         help=(
             "Optional online planner model for --agent omniflow, for example "
-            "`gpt-4o`, `qwen-vl-plus`, or `qwen-vl-max`."
+            "`Qwen3.6-Plus`."
         ),
     )
     parser.add_argument(
         "--model-endpoint-profile",
         choices=("auto", "openai", "llmthu"),
-        default=FORMAL_MODEL_ENDPOINT_PROFILE,
+        default=(
+            os.environ.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE")
+            or FORMAL_MODEL_ENDPOINT_PROFILE
+        ),
         help="Credential and endpoint profile for the selected model.",
     )
     parser.add_argument(
@@ -5396,8 +5632,35 @@ def _decode_task_params(
     return task_params
 
 
+def _canonical_task_parameters(
+    task: Any,
+    task_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    raw_parameters = getattr(task, "params", {})
+    parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
+    context_parameters = (
+        task_context.get("task_parameters")
+        if isinstance(task_context, dict)
+        else None
+    )
+    if isinstance(context_parameters, dict):
+        parameters.update(context_parameters)
+    return parameters
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    if args.environment == "androidworld":
+        # This module is an internal lifecycle owner.  It must not become a
+        # second experiment protocol when called directly.
+        args.task_random_seed = TASK_SEED
+        args.max_steps = MAX_STEPS
+        args.fixed_task_seed = True
+        args.perform_emulator_setup = False
+        args.planner_provider = ""
+        args.model_endpoint_profile = FORMAL_MODEL_ENDPOINT_PROFILE
+        args.planner_timeout_sec = PLANNER_TIMEOUT_SEC
+        args.model = require_formal_model()
     selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
     if str(args.planner_provider or "").strip():
         os.environ["OMNIFLOW_PLANNER_PROVIDER"] = str(args.planner_provider).strip()
@@ -5409,6 +5672,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.environment == "bmoca":
         return _run_bmoca_e2e(args)
+    if selected_agent not in {"omniflow", "fixed_replay", "official:t3a_gpt4"}:
+        raise ValueError(
+            "disabled_androidworld_agent:use omniflow, fixed_replay, or official:t3a_gpt4"
+        )
     android_world_root = Path(args.android_world_root).expanduser().resolve()
     run_py = android_world_root / "run.py"
     if not run_py.exists():
@@ -5423,8 +5690,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_current_activity: Any | None = None
     original_get_clipboard_contents: Any | None = None
     original_send_android_intent: Any | None = None
+    original_short_date_compat: tuple[Any, Any] | None = None
     try:
         _add_android_world_path(android_world_root)
+        original_short_date_compat = _patch_androidworld_short_date_compat()
 
         from android_world import checkpointer as checkpointer_lib
         from android_world import registry, suite_utils
@@ -5556,12 +5825,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_endpoint_profile=str(args.model_endpoint_profile or "auto"),
             planner_timeout_sec=float(args.planner_timeout_sec or 60.0),
             max_steps=max(1, int(args.max_steps)),
-            appagent_root=str(args.appagent_root or ""),
-            appagent_workspace_root=str(args.appagent_workspace_root or ""),
-            appagent_docs_root=str(args.appagent_docs_root or ""),
-            appagent_teacher_source=str(args.appagent_teacher_source or ""),
-            appagent_name=str(args.appagent_name or ""),
-            appagent_output_root=str(run_output_dir / "appagent_runtime"),
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
             performance_metrics=performance_metrics,
@@ -5779,10 +6042,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     canonical_run = recording_session.seal_run_log(
                         task_name=task_name,
                         goal=goal_text,
-                        task_parameters=(
-                            dict(task_context.get("task_parameters") or {})
-                            if isinstance(task_context, dict)
-                            else {}
+                        task_parameters=_canonical_task_parameters(
+                            task,
+                            task_context,
                         ),
                         seed=int(args.task_random_seed),
                         validator_official=official_validator_used,
@@ -5921,12 +6183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
                     )
                     if model_calls > 0:
-                        model_name = str(
-                            args.model
-                            or os.environ.get("OMNIFLOW_PLANNER_MODEL")
-                            or os.environ.get("OPENAI_MODEL")
-                            or ""
-                        ).strip() or None
+                        model_name = str(args.model or FORMAL_MODEL).strip() or None
                         _, model_base_url = resolve_openai_compatible_config(
                             base_url=_model_base_url_for_profile(
                                 args.model_endpoint_profile
@@ -6186,6 +6443,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if original_send_android_intent is not None:
             adb_utils.send_android_intent = original_send_android_intent
+        if original_short_date_compat is not None:
+            datetime_utils, original_get_date = original_short_date_compat
+            datetime_utils.get_date = original_get_date
         if original_get_clipboard_contents is not None:
             adb_utils.get_clipboard_contents = original_get_clipboard_contents
         if original_launch_app is not None:

@@ -11,6 +11,12 @@ from omniflow.core.model import Observation, TransferResult
 
 MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE = 0.8
 _CONTEXTUAL_MAPPING_TOOLS = frozenset({"click", "long_press", "input_text", "swipe"})
+_SEMANTIC_SCROLL_GESTURES = {
+    "down": (500.0, 500.0, 500.0, 0.0),
+    "up": (500.0, 500.0, 500.0, 1000.0),
+    "right": (500.0, 500.0, 0.0, 500.0),
+    "left": (500.0, 500.0, 1000.0, 500.0),
+}
 
 
 @dataclass(frozen=True)
@@ -34,12 +40,17 @@ def assess_transfer(
             transfer.reason or "omnitransfer_null_target",
             _mapping_confidence(transfer.detail),
         )
-    if not requires_contextual_mapping(transfer.action.tool):
+    if not requires_contextual_mapping(
+        transfer.action.tool,
+        transfer.action.args,
+    ):
         return TransferAdmission(True, None, 1.0)
     confidence = _mapping_confidence(transfer.detail)
     if confidence is None:
         return TransferAdmission(False, "omnitransfer_confidence_missing", None)
     if confidence < float(minimum_confidence):
+        if _exact_executable_identity_match(transfer.detail):
+            return TransferAdmission(True, None, confidence)
         return TransferAdmission(False, "omnitransfer_low_confidence", confidence)
     if observation is not None and not _target_is_executable(
         transfer,
@@ -59,8 +70,20 @@ def assess_transfer(
     return TransferAdmission(True, None, confidence)
 
 
-def requires_contextual_mapping(tool: str) -> bool:
-    return str(tool).strip() in _CONTEXTUAL_MAPPING_TOOLS
+def requires_contextual_mapping(
+    tool: str,
+    args: dict[str, Any] | None = None,
+) -> bool:
+    normalized = str(tool).strip()
+    if normalized == "swipe" and _is_semantic_scroll(args):
+        return False
+    return normalized in _CONTEXTUAL_MAPPING_TOOLS
+
+
+def _is_semantic_scroll(args: dict[str, Any] | None) -> bool:
+    params = args if isinstance(args, dict) else {}
+    direction = str(params.get("direction") or "").strip().lower()
+    return direction in _SEMANTIC_SCROLL_GESTURES
 
 
 def _mapping_confidence(detail: dict[str, Any]) -> float | None:
@@ -140,6 +163,8 @@ def _target_semantics_match(detail: dict[str, Any]) -> bool:
 
     if _candidate_semantics_match(source, target):
         return True
+    if _execution_wrapper_matches_source(source, target, detail):
+        return True
     mapped_bounds = _candidate_bounds(detail.get("target"))
     if mapped_bounds is None:
         return False
@@ -154,14 +179,47 @@ def _target_semantics_match(detail: dict[str, Any]) -> bool:
     )
 
 
+def _execution_wrapper_matches_source(
+    source: dict[str, Any],
+    target: dict[str, Any],
+    detail: dict[str, Any],
+) -> bool:
+    source_resource = _semantic_value(source.get("resource_id"))
+    execution_resource = _semantic_value(target.get("execution_candidate_id"))
+    if not source_resource or source_resource != execution_resource:
+        return False
+    if target.get("executable") is not True:
+        return False
+    execution_bounds = _candidate_bounds(
+        {"bounds": target.get("execution_bounds")}
+    )
+    mapped_bounds = _candidate_bounds(detail.get("target"))
+    return execution_bounds is not None and execution_bounds == mapped_bounds
+
+
+def _exact_executable_identity_match(detail: dict[str, Any]) -> bool:
+    """Allow a low-probability match only with an explicit safe identity."""
+
+    source = detail.get("source")
+    candidates = detail.get("candidates")
+    if not isinstance(source, dict) or not isinstance(candidates, list) or not candidates:
+        return False
+    target = candidates[0]
+    if not isinstance(target, dict) or target.get("executable") is not True:
+        return False
+    source_resource = _semantic_value(source.get("resource_id"))
+    target_resource = _semantic_value(target.get("resource_id"))
+    return bool(source_resource and source_resource == target_resource)
+
+
 def _candidate_semantics_match(
     source: dict[str, Any],
     target: dict[str, Any],
 ) -> bool:
     source_resource = _semantic_value(source.get("resource_id"))
     target_resource = _semantic_value(target.get("resource_id"))
-    if source_resource and target_resource and source_resource == target_resource:
-        return True
+    if source_resource and target_resource:
+        return source_resource == target_resource
 
     source_editable = str(source.get("editable") or "").casefold()
     target_editable = str(target.get("editable") or "").casefold()
@@ -181,7 +239,7 @@ def _candidate_semantics_match(
         if value
     }
     if not source_labels:
-        return True
+        return not source_resource
     target_labels = {
         value
         for value in (

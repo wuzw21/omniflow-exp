@@ -712,6 +712,9 @@ class AndroidWorldHost:
                 payload["keycode"] = "KEYCODE_DEL"
             else:
                 raise ValueError(f"unsupported AndroidWorld key: {key or 'missing'}")
+        elif action_name == "paste":
+            action_type = "press_keyboard"
+            payload["keycode"] = "KEYCODE_PASTE"
         if action_type is None:
             raise ValueError(f"unsupported AndroidWorld action: {action_name}")
         payload["action_type"] = action_type
@@ -758,7 +761,7 @@ class AndroidWorldHost:
         try:
             if self.control_client is not None:
                 def execute() -> dict[str, Any]:
-                    if action.tool == "press_key":
+                    if action.tool in {"press_key", "paste"}:
                         # OOB's ENTER is an IME action for focused text fields;
                         # AndroidWorld's native key event also handles system
                         # dialogs. Keep global key semantics compatible across

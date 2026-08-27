@@ -10,7 +10,6 @@
 | AndroidWorld lifecycle、OOB I/O、官方 validator | `src/integrations/android_world/run_episode.py` |
 | OmniFlow Function 编译 | `src/experiment/function_v2.py` |
 | MobileGPT Memory 转换 | `src/integrations/mobilegpt.py` |
-| AppAgent Memory 转换 | `src/experiment/appagent_source.py` |
 | 运行时协议默认值 | `config/paper_androidworld.json`、`src/experiment/protocol.py` |
 | AndroidWorld 证据写入 | `src/experiment/observation_evidence.py` |
 
@@ -19,5 +18,5 @@ OOB 控制或官方 validator 是否会失效。仅用于旧 preflight、测试�
 scheduler summary、离线回归或重复索引的文件不保留。
 
 不要新增第二 launcher、第二 scheduler、第二 Function writer、第二结果注册器或路径
-校验层。task、method、device、seed、步数、fallback、deadline、model 都通过入口的
-可选参数传入；入口不为特定 seed 或机器路径设置硬门槛。
+校验层。task、method、device 和显式 Memory 是唯一运行输入；seed、步数、fallback、
+deadline、模型和 retry policy 固定在协议 owner 中，正式模型固定为 `Qwen3.6-Plus`。

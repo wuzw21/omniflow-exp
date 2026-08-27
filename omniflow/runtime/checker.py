@@ -572,11 +572,7 @@ def _transient_recovery(
         return None
     return Action(
         "click",
-        {
-            "target_description": "关闭临时遮挡",
-            "x": point[0],
-            "y": point[1],
-        },
+        {"x": point[0], "y": point[1]},
     )
 
 
@@ -687,13 +683,6 @@ def _relative_center(
 def _original_targets(action: Action, point: tuple[float, float]) -> bool:
     if action.tool != "click":
         return False
-    description = _normalize(action.args.get("target_description"))
-    if (
-        description in _EXACT_SKIP_LABELS
-        or description in _GENERIC_CLOSE_LABELS
-        or any(explicit in description for explicit in _EXPLICIT_LABELS)
-    ):
-        return True
     try:
         x = float(action.args["x"])
         y = float(action.args["y"])

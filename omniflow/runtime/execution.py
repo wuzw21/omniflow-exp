@@ -40,9 +40,6 @@ from omniflow.transfer.admission import (
     assess_transfer,
 )
 from omniflow.transfer.runtime import (
-    source_semantic_anchor,
-    source_semantic_offset,
-    source_semantic_point,
     transfer_action,
 )
 
@@ -89,29 +86,11 @@ async def execute_function(
     )
     resume_metadata_pending = dict(resume_metadata or {})
     for step_offset, function_step in enumerate(steps):
-        if _starts_observation_dependent_click_repeat(steps, step_offset):
-            return RunResult(
-                False,
-                function.id,
-                executed,
-                error="observation_dependent_repeat_requires_planner",
-                final_state=current,
-                detail={
-                    "trace": trace,
-                    "failed_step_index": function_step.step_index,
-                    "next_step_index": function_step.step_index,
-                },
-            )
         action = function_step.action
         source_state = await _load_state(
             host,
             function_step.source_state_id,
             state_loader=state_loader,
-        )
-        source_state = _with_function_binding_context(
-            source_state,
-            function=function,
-            step_index=function_step.step_index,
         )
         for checker_phase in ("pre_transfer", "pre_action"):
             checker_steps = await _run_shared_checker_phase(
@@ -240,21 +219,6 @@ async def execute_function(
     )
 
 
-def _starts_observation_dependent_click_repeat(
-    steps: tuple[FunctionStep, ...],
-    step_offset: int,
-) -> bool:
-    if step_offset + 1 >= len(steps):
-        return False
-    current = steps[step_offset]
-    following = steps[step_offset + 1]
-    return (
-        current.action.tool == "click"
-        and following.action == current.action
-        and following.source_state_id != current.source_state_id
-    )
-
-
 async def align_function_resume(
     function: Function,
     *,
@@ -265,12 +229,13 @@ async def align_function_resume(
     state_loader: StateLoader | None = None,
 ) -> dict[str, Any] | None:
     transfer_fn = plugins.transfer
+    observations = _distinct_alignment_observations(observations)
     if transfer_fn is None or len(observations) < 2:
         return None
     remaining = [
         step for step in function.steps if step.step_index >= int(start_step_index)
     ]
-    candidate_steps = remaining[: len(observations)]
+    candidate_steps = _alignment_candidate_steps(remaining)
     if not candidate_steps:
         return None
 
@@ -280,11 +245,6 @@ async def align_function_resume(
             host,
             function_step.source_state_id,
             state_loader=state_loader,
-        )
-        source_state = _with_function_binding_context(
-            source_state,
-            function=function,
-            step_index=function_step.step_index,
         )
         row: list[float | None] = []
         for observation in observations:
@@ -406,6 +366,45 @@ async def align_function_resume(
         "target_observation_count": target_count,
         "path": path,
     }
+
+
+def _distinct_alignment_observations(
+    observations: list[Observation],
+) -> list[Observation]:
+    distinct: list[Observation] = []
+    for observation in observations:
+        if distinct and _same_alignment_observation(distinct[-1], observation):
+            continue
+        distinct.append(observation)
+    return distinct
+
+
+def _same_alignment_observation(
+    left: Observation,
+    right: Observation,
+) -> bool:
+    if (left.package_name, left.activity_name) != (
+        right.package_name,
+        right.activity_name,
+    ):
+        return False
+    left_xml = str(left.xml or "")
+    right_xml = str(right.xml or "")
+    if left_xml or right_xml:
+        return left_xml == right_xml
+    return left.image_base64 == right.image_base64
+
+
+def _alignment_candidate_steps(
+    steps: list[FunctionStep],
+) -> list[FunctionStep]:
+    candidates: list[FunctionStep] = []
+    for step in steps:
+        if candidates and candidates[-1].source_state_id == step.source_state_id:
+            candidates[-1] = step
+        else:
+            candidates.append(step)
+    return candidates
 
 
 async def execute_robust_action(
@@ -1026,12 +1025,7 @@ def default_transfer(
         return _transfer_swipe(action, observation, source_state)
     if action.tool not in {"click", "input_text", "long_press"}:
         return TransferResult(action)
-    if not all(
-        action.args.get(key) is not None for key in ("x", "y")
-    ) and not (
-        action.tool == "input_text"
-        and str(action.args.get("target_description") or "").strip()
-    ):
+    if not all(action.args.get(key) is not None for key in ("x", "y")):
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
     target_xml = str(observation.xml or "")
     if not target_xml:
@@ -1055,6 +1049,12 @@ def default_transfer(
         "action_type": action.tool,
         "top_k": 3,
     }
+    source_screenshot_path = _observation_screenshot_path(source_state)
+    target_screenshot_path = _observation_screenshot_path(observation)
+    if source_screenshot_path:
+        request["source_screenshot_path"] = source_screenshot_path
+    if target_screenshot_path:
+        request["target_screenshot_path"] = target_screenshot_path
     try:
         source_point = _relative_source_point(
             source_state,
@@ -1062,39 +1062,10 @@ def default_transfer(
             float(action.args["y"]),
         )
     except (KeyError, TypeError, ValueError):
-        source_point = (
-            source_semantic_point(
-                source_xml,
-                str(action.args.get("target_description") or ""),
-            )
-            if action.tool == "input_text"
-            else None
-        )
+        source_point = None
     if source_point is None:
         return TransferResult(None, reason="omnitransfer_invalid_source_point")
     request["source_point"] = source_point
-    source_element_id = source_semantic_anchor(source_xml, source_point)
-    if source_element_id:
-        request["source_element_id"] = source_element_id
-        source_offset = source_semantic_offset(
-            source_xml,
-            source_point,
-            source_element_id,
-        )
-        if source_offset is not None:
-            request["source_offset"] = source_offset
-    bound_source_xml = source_xml
-    if source_state is not None and source_state.extra.get(
-        "parameterized_target_description"
-    ) is True:
-        bound_source_xml = _bind_parameterized_source_label(
-            source_xml,
-            source_element_id=source_element_id,
-            target_description=str(action.args.get("target_description") or ""),
-        )
-    if bound_source_xml != source_xml:
-        request["source_xml"] = bound_source_xml
-        request["parameterized_source_semantics"] = True
     try:
         result = transfer_action(**request)
     except Exception as exc:
@@ -1165,98 +1136,122 @@ def _transfer_swipe(
     display_size = _display_size(observation, elements)
     if display_size is None:
         return TransferResult(None, reason=_display_size_error(observation, elements))
+    source_elements = _elements(source_xml)
+    source_display_size = _display_size(source_state, source_elements)
+    if source_display_size is None:
+        return TransferResult(None, reason="omnitransfer_source_display_size_missing")
     width, height = display_size
     params = dict(action.args)
-    mapping_modes: list[str] = []
-    endpoint_details: list[dict[str, Any]] = []
-    for index, (x_key, y_key) in enumerate((("x1", "y1"), ("x2", "y2"))):
-        try:
-            source_point = _relative_source_point(
+    try:
+        source_points = tuple(
+            _relative_source_point(
                 source_state,
                 float(params[x_key]),
                 float(params[y_key]),
             )
-        except (KeyError, TypeError, ValueError):
-            return TransferResult(None, reason="omnitransfer_invalid_source_point")
-        try:
-            request: dict[str, Any] = {
-                "target_xml": target_xml,
-                "source_xml": source_xml,
-                "source_package_name": source_state.package_name,
-                "target_package_name": observation.package_name,
-                "source_activity_name": source_state.activity_name,
-                "target_activity_name": observation.activity_name,
-                "action_type": action.tool,
-                "top_k": 3,
-            }
-            request["source_point"] = source_point
-            result = transfer_action(
-                **request,
+            for x_key, y_key in (("x1", "y1"), ("x2", "y2"))
+        )
+    except (KeyError, TypeError, ValueError):
+        return TransferResult(None, reason="omnitransfer_invalid_source_point")
+    source_container = _swipe_container(source_xml, source_points)
+    if source_container is None:
+        return _recoverable_transfer_failure(
+            "omnitransfer_swipe_source_container_missing",
+            {},
+        )
+    source_bounds = source_container["bounds"]
+    source_center = (
+        (source_bounds[0] + source_bounds[2]) / 2.0,
+        (source_bounds[1] + source_bounds[3]) / 2.0,
+    )
+    request: dict[str, Any] = {
+        "target_xml": target_xml,
+        "source_xml": source_xml,
+        "source_point": source_center,
+        "source_package_name": source_state.package_name,
+        "target_package_name": observation.package_name,
+        "source_activity_name": source_state.activity_name,
+        "target_activity_name": observation.activity_name,
+        "action_type": action.tool,
+        "top_k": 3,
+    }
+    source_screenshot_path = _observation_screenshot_path(source_state)
+    target_screenshot_path = _observation_screenshot_path(observation)
+    if source_screenshot_path:
+        request["source_screenshot_path"] = source_screenshot_path
+    if target_screenshot_path:
+        request["target_screenshot_path"] = target_screenshot_path
+    try:
+        result = transfer_action(**request)
+    except Exception as exc:
+        return TransferResult(None, reason=f"omnitransfer_error:{exc}")
+    detail = _transfer_detail(result)
+    if result.get("mapped") is not True:
+        reason = result.get("reason") or result.get("mapping_mode") or "failed"
+        if "low_confidence" in str(reason):
+            return _recoverable_transfer_failure(
+                "omnitransfer_low_confidence",
+                detail,
             )
-        except Exception as exc:
-            return TransferResult(None, reason=f"omnitransfer_error:{exc}")
-        if result.get("mapped") is not True:
-            reason = result.get("reason") or result.get("mapping_mode") or "failed"
-            detail = _transfer_detail(result)
-            if "low_confidence" in str(reason):
-                return _recoverable_transfer_failure(
-                    "omnitransfer_low_confidence",
-                    detail,
-                )
-            return TransferResult(
-                None,
-                reason=f"omnitransfer_{reason}",
-                detail=detail,
+        return TransferResult(
+            None,
+            reason=f"omnitransfer_{reason}",
+            detail=detail,
+        )
+    container_transfer = TransferResult(
+        Action(action.tool, {}),
+        reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
+        detail=detail,
+    )
+    container_admission = assess_transfer(container_transfer)
+    if not container_admission.accepted:
+        return _recoverable_transfer_failure(
+            container_admission.reason or "omnitransfer_low_confidence",
+            detail,
+        )
+    target_container = _mapped_swipe_container(target_xml, result)
+    if target_container is None:
+        return _recoverable_transfer_failure(
+            "omnitransfer_swipe_target_not_executable",
+            detail,
+        )
+    target_bounds = target_container["bounds"]
+    for source_point, (x_key, y_key) in zip(
+        source_points,
+        (("x1", "y1"), ("x2", "y2")),
+        strict=True,
+    ):
+        offset_x = (source_point[0] - source_bounds[0]) / (
+            source_bounds[2] - source_bounds[0]
+        )
+        offset_y = (source_point[1] - source_bounds[1]) / (
+            source_bounds[3] - source_bounds[1]
+        )
+        if not all(0.0 <= value <= 1.0 for value in (offset_x, offset_y)):
+            return _recoverable_transfer_failure(
+                "omnitransfer_swipe_source_point_outside_container",
+                detail,
             )
-        try:
-            target_x = float(result["new_x"])
-            target_y = float(result["new_y"])
-        except (KeyError, TypeError, ValueError):
-            return TransferResult(None, reason="omnitransfer_invalid_target")
-        if not math.isfinite(target_x) or not math.isfinite(target_y):
-            return TransferResult(None, reason="omnitransfer_invalid_target")
+        target_x = target_bounds[0] + offset_x * (
+            target_bounds[2] - target_bounds[0]
+        )
+        target_y = target_bounds[1] + offset_y * (
+            target_bounds[3] - target_bounds[1]
+        )
         params[x_key] = target_x / width * 1000.0
         params[y_key] = target_y / height * 1000.0
-        mapping_modes.append(str(result.get("mapping_mode") or "omnitransfer_mapped"))
-        endpoint_details.append(_transfer_detail(result))
-        endpoint_transfer = TransferResult(
-            Action(action.tool, {}),
-            reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
-            detail=endpoint_details[-1],
+    if not _mapped_swipe_preserves_gesture(action.args, params):
+        return _recoverable_transfer_failure(
+            "omnitransfer_swipe_gesture_degenerate",
+            detail,
         )
-        endpoint_admission = assess_transfer(endpoint_transfer)
-        if not endpoint_admission.accepted:
-            return _recoverable_transfer_failure(
-                endpoint_admission.reason or "omnitransfer_low_confidence",
-                {
-                    "mapping_mode": str(
-                        result.get("mapping_mode") or "omnitransfer_mapped"
-                    ),
-                    "endpoints": endpoint_details,
-                    "score": endpoint_admission.confidence,
-                },
-            )
-    reason = mapping_modes[0] if len(set(mapping_modes)) == 1 else "omnitransfer_mapped"
-    detail: dict[str, Any] = {
-        "mapping_mode": reason,
-        "endpoints": endpoint_details,
+    detail["source_swipe_container"] = _swipe_container_detail(source_container)
+    detail["target_swipe_container"] = _swipe_container_detail(target_container)
+    detail["mapped_swipe"] = {
+        key: params[key] for key in ("direction", "x1", "y1", "x2", "y2")
+        if key in params
     }
-    probabilities = [
-        probability
-        for probability in (
-            _alignment_probability(endpoint) for endpoint in endpoint_details
-        )
-        if probability is not None
-    ]
-    if probabilities:
-        detail["score"] = min(probabilities)
-    margins = [
-        float(endpoint["margin"])
-        for endpoint in endpoint_details
-        if isinstance(endpoint.get("margin"), (int, float))
-    ]
-    if margins:
-        detail["margin"] = min(margins)
+    reason = str(result.get("mapping_mode") or "omnitransfer_mapped")
     return TransferResult(
         Action(action.tool, params),
         reason=reason,
@@ -1264,11 +1259,178 @@ def _transfer_swipe(
     )
 
 
+def _observation_screenshot_path(observation: Observation | None) -> str:
+    if observation is None:
+        return ""
+    direct = str(observation.extra.get("screenshot_path") or "").strip()
+    if direct:
+        return direct
+    androidworld_state = observation.extra.get("androidworld_state")
+    if not isinstance(androidworld_state, dict):
+        return ""
+    pixels = androidworld_state.get("pixels")
+    if not isinstance(pixels, dict):
+        return ""
+    return str(pixels.get("path") or "").strip()
+
+
+def _swipe_container(
+    xml_text: str,
+    points: tuple[tuple[float, float], ...],
+) -> dict[str, Any] | None:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    candidates: list[dict[str, Any]] = []
+    resource_counts: dict[str, int] = {}
+    for element in root.iter():
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        if resource_id:
+            resource_counts[resource_id] = resource_counts.get(resource_id, 0) + 1
+    for element in root.iter():
+        if str(element.attrib.get("scrollable") or "").lower() != "true":
+            continue
+        if str(element.attrib.get("enabled", "true")).lower() == "false":
+            continue
+        bounds = _bounds(element.attrib.get("bounds"))
+        if bounds is None or not all(_point_in_bounds(point, bounds) for point in points):
+            continue
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        node_id = str(element.attrib.get("id") or "").strip()
+        element_id = (
+            resource_id
+            if resource_id and resource_counts.get(resource_id) == 1
+            else node_id
+        )
+        if not element_id:
+            continue
+        candidates.append(
+            {
+                "bounds": tuple(float(value) for value in bounds),
+                "element_id": element_id,
+                "resource_id": resource_id,
+                "node_id": node_id,
+                "class": str(element.attrib.get("class") or element.tag),
+            }
+        )
+    return min(
+        candidates,
+        key=lambda candidate: (
+            (candidate["bounds"][2] - candidate["bounds"][0])
+            * (candidate["bounds"][3] - candidate["bounds"][1]),
+            candidate["element_id"],
+        ),
+        default=None,
+    )
+
+
+def _mapped_swipe_container(
+    target_xml: str,
+    result: dict[str, Any],
+) -> dict[str, Any] | None:
+    target_bounds = _numeric_bounds(result.get("target_bbox"))
+    if target_bounds is None:
+        return None
+    target_ids = {
+        str(result.get(key) or "").strip()
+        for key in ("target_candidate_id", "target_execution_candidate_id")
+        if str(result.get(key) or "").strip()
+    }
+    try:
+        root = ET.fromstring(target_xml)
+    except ET.ParseError:
+        return None
+    candidates: list[dict[str, Any]] = []
+    for element in root.iter():
+        if str(element.attrib.get("scrollable") or "").lower() != "true":
+            continue
+        if str(element.attrib.get("enabled", "true")).lower() == "false":
+            continue
+        bounds = _bounds(element.attrib.get("bounds"))
+        if bounds is None:
+            continue
+        numeric_bounds = tuple(float(value) for value in bounds)
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        node_id = str(element.attrib.get("id") or "").strip()
+        identifiers = {resource_id, resource_id.rsplit("/", 1)[-1], node_id} - {""}
+        bounds_match = all(
+            abs(left - right) <= 1.0
+            for left, right in zip(numeric_bounds, target_bounds, strict=True)
+        )
+        if not bounds_match and not target_ids.intersection(identifiers):
+            continue
+        candidates.append(
+            {
+                "bounds": numeric_bounds,
+                "element_id": resource_id or node_id,
+                "resource_id": resource_id,
+                "node_id": node_id,
+                "class": str(element.attrib.get("class") or element.tag),
+            }
+        )
+    return min(
+        candidates,
+        key=lambda candidate: (
+            0 if candidate["bounds"] == target_bounds else 1,
+            (candidate["bounds"][2] - candidate["bounds"][0])
+            * (candidate["bounds"][3] - candidate["bounds"][1]),
+        ),
+        default=None,
+    )
+
+
+def _point_in_bounds(
+    point: tuple[float, float],
+    bounds: tuple[int, int, int, int],
+) -> bool:
+    return bounds[0] <= point[0] <= bounds[2] and bounds[1] <= point[1] <= bounds[3]
+
+
+def _mapped_swipe_preserves_gesture(
+    source_args: dict[str, Any],
+    target_args: dict[str, Any],
+) -> bool:
+    try:
+        source_dx = float(source_args["x2"]) - float(source_args["x1"])
+        source_dy = float(source_args["y2"]) - float(source_args["y1"])
+        target_dx = float(target_args["x2"]) - float(target_args["x1"])
+        target_dy = float(target_args["y2"]) - float(target_args["y1"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    source_direction = _swipe_direction(source_args, source_dx, source_dy)
+    target_direction = _swipe_direction({}, target_dx, target_dy)
+    if source_direction != target_direction:
+        return False
+    source_distance = max(abs(source_dx), abs(source_dy))
+    target_distance = max(abs(target_dx), abs(target_dy))
+    return target_distance >= max(25.0, source_distance * 0.25)
+
+
+def _swipe_direction(
+    args: dict[str, Any],
+    delta_x: float,
+    delta_y: float,
+) -> str:
+    direction = str(args.get("direction") or "").strip().lower()
+    if direction in {"left", "right", "up", "down"}:
+        return direction
+    if abs(delta_x) > abs(delta_y):
+        return "right" if delta_x > 0 else "left"
+    return "down" if delta_y > 0 else "up"
+
+
+def _swipe_container_detail(container: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: container[key]
+        for key in ("element_id", "resource_id", "node_id", "class", "bounds")
+        if container.get(key) not in (None, "")
+    }
+
+
 def _action_uses_transfer_target(action: Action) -> bool:
     if action.tool == "input_text":
-        return bool(str(action.args.get("target_description") or "").strip()) or all(
-            action.args.get(key) is not None for key in ("x", "y")
-        )
+        return all(action.args.get(key) is not None for key in ("x", "y"))
     if action.tool in {"click", "long_press"}:
         return all(action.args.get(key) is not None for key in ("x", "y"))
     if action.tool == "swipe":
@@ -1277,77 +1439,6 @@ def _action_uses_transfer_target(action: Action) -> bool:
             for key in ("x1", "y1", "x2", "y2")
         )
     return False
-
-
-def _with_function_binding_context(
-    source_state: Observation | None,
-    *,
-    function: Function,
-    step_index: int,
-) -> Observation | None:
-    if source_state is None:
-        return None
-    target = f"$.steps[{int(step_index)}].action.args.target_description"
-    parameterized = any(
-        str(binding.get("target") or "") == target
-        for binding in function.bindings
-    )
-    if not parameterized:
-        return source_state
-    return replace(
-        source_state,
-        extra={
-            **dict(source_state.extra),
-            "parameterized_target_description": True,
-        },
-    )
-
-
-def _bind_parameterized_source_label(
-    source_xml: str,
-    *,
-    source_element_id: str,
-    target_description: str,
-) -> str:
-    """Bind a public semantic argument before calling the real Transfer.
-
-    OmniTransfer maps a source anchor to a target anchor.  When a Function
-    exposes a label as an API argument, the source anchor must carry that
-    bound label for the same learned mapping to select the requested target;
-    otherwise the immutable recorded label would still select the source
-    instance (for example, Finance instead of Personal).  This changes only
-    the transient XML request and never the stored evidence or target lookup.
-    """
-    description = " ".join(str(target_description or "").split())
-    element_id = str(source_element_id or "").strip()
-    if not description or not element_id or not source_xml:
-        return source_xml
-    try:
-        root = ET.fromstring(source_xml)
-    except ET.ParseError:
-        return source_xml
-    element = next(
-        (
-            node
-            for node in root.iter("node")
-            if str(node.attrib.get("id") or "") == element_id
-            or str(node.attrib.get("resource-id") or "") == element_id
-        ),
-        None,
-    )
-    if element is None:
-        return source_xml
-    current_label = ""
-    for attribute in ("text", "content-desc"):
-        current_label = " ".join(
-            str(element.attrib.get(attribute) or "").split()
-        )
-        if current_label:
-            if current_label.casefold() == description.casefold():
-                return source_xml
-            element.attrib[attribute] = description
-            return ET.tostring(root, encoding="unicode")
-    return source_xml
 
 
 def _recoverable_transfer_failure(

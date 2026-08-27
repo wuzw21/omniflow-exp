@@ -55,19 +55,17 @@ Canonical action constraints include:
 - Every RunLog and Function action passes through the same schema-driven
   canonical action converter before persistence.
 - The converter keeps only arguments whose schema entry does not set
-  `persisted: false`. `target_description` is persisted only for `click` and
-  `input_text` as parameterizable source-action semantics consumed by the one
-  canonical OmniTransfer mapper. Node ids, resource ids, screenshots, and
-  target evidence are never saved.
+  `persisted: false`. Node ids, resource ids, screenshots, target descriptions,
+  and target evidence are never saved.
 - There is no separate forbidden-field list or compiler cleanup list.
 - Unsupported tools, invalid persisted values, and missing required persisted
   arguments fail conversion; all other non-persisted input is omitted.
 
 The only saved arguments are:
 
-- `click`: `target_description`, `x`, `y`.
+- `click`: `x`, `y`.
 - `long_press`: `x`, `y`, optional `duration_ms`.
-- `input_text`: `target_description`, `text`.
+- `input_text`: `text`, `x`, `y`.
 - `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms`.
 - `open_app`: `package_name`.
 - `press_key`: `key`.

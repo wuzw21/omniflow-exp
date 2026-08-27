@@ -14,7 +14,6 @@ import tempfile
 import time
 from typing import Any, Sequence
 
-from src.experiment.appagent_source import convert_runlog_to_appagent_memory
 from src.experiment.function_v2 import compile_function_v2
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
@@ -29,9 +28,11 @@ from src.experiment.protocol import (
     MAX_STEPS,
     METHODS,
     SOURCE_DEVICE,
+    SOURCE_METHOD,
     SOURCE_SEED,
     TASK_DEADLINE_SEC,
     TASK_SEED,
+    require_formal_model,
 )
 from src.integrations.mobilegpt import convert_runlog_to_mobilegpt_bundle
 
@@ -40,7 +41,9 @@ def _methods(value: str) -> tuple[str, ...]:
     if not value or value == "all":
         return METHODS
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
-    unknown = tuple(item for item in selected if item not in METHODS)
+    unknown = tuple(
+        item for item in selected if item not in (*METHODS, SOURCE_METHOD)
+    )
     if unknown:
         raise ValueError("unknown_method:" + ",".join(unknown))
     return selected
@@ -49,22 +52,14 @@ def _methods(value: str) -> tuple[str, ...]:
 def _devices(value: str) -> tuple[tuple[str, str, int], ...]:
     if not value or value == "all":
         return DEVICES
-    catalog = {item[0]: item for item in (*DEVICES, SOURCE_DEVICE)}
+    configured_devices = {item[0]: item for item in (*DEVICES, SOURCE_DEVICE)}
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
     devices: list[tuple[str, str, int]] = []
     for item in selected:
-        configured = catalog.get(item)
-        if configured is not None:
-            devices.append(configured)
-            continue
-        parts = item.rsplit(":", 2)
-        if len(parts) != 3 or not parts[0] or not parts[1]:
-            raise ValueError(f"unknown_device:{item}")
-        try:
-            port = int(parts[2])
-        except ValueError as exc:
-            raise ValueError(f"unknown_device:{item}") from exc
-        devices.append((parts[0], parts[1], port))
+        configured = configured_devices.get(item)
+        if configured is None:
+            raise ValueError(f"unknown_configured_device:{item}")
+        devices.append(configured)
     return tuple(devices)
 
 
@@ -90,6 +85,25 @@ def _sdk_tool(name: str) -> str:
         if candidate.is_file():
             return str(candidate)
     raise RuntimeError(f"android_sdk_tool_missing:{name}")
+
+
+def _mobilegpt_server_port(console_port: int) -> int:
+    """Derive a deterministic local TCP port for one AVD.
+
+    MobileGPT's official Server is one process per device.  The upstream
+    checkout defaults to 12345, so parallel AVD runs would contend for the
+    same listener even though their Android serials are distinct.  Reuse the
+    configured emulator console port as the stable source for an isolated,
+    unprivileged server port.
+    """
+
+    # The original source5560 APK is the canonical MobileGPT collector and
+    # embeds the upstream server port 12345.  Keep that source-only contract;
+    # formal target AVDs use deterministic isolated ports derived from their
+    # own console ports below.
+    if int(console_port) == 5560:
+        return 12345
+    return 12000 + int(console_port) % 40000
 
 
 def _device_booted(adb: str, serial: str) -> bool:
@@ -122,6 +136,46 @@ def _wait_for_device(adb: str, serial: str, timeout: int) -> None:
             return
         time.sleep(1)
     raise RuntimeError(f"android_emulator_boot_timeout:{serial}")
+
+
+def _running_avd_name(adb: str, serial: str) -> str:
+    try:
+        completed = subprocess.run(
+            (adb, "-s", serial, "emu", "avd", "name"),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return next(
+        (
+            line.strip()
+            for line in completed.stdout.splitlines()
+            if line.strip() and line.strip().casefold() != "ok"
+        ),
+        "",
+    )
+
+
+def _validate_configured_avd_identity(
+    adb: str,
+    devices: tuple[tuple[str, str, int], ...],
+    avds: dict[str, str],
+) -> None:
+    for _label, serial, _port in devices:
+        expected = str(avds.get(serial) or "").strip()
+        if not expected:
+            continue
+        actual = _running_avd_name(adb, serial)
+        if actual != expected:
+            raise RuntimeError(
+                "android_emulator_avd_mismatch:"
+                f"{serial}:expected={expected}:actual={actual or 'unknown'}"
+            )
 
 
 def _ensure_devices_started(
@@ -170,6 +224,7 @@ def _ensure_devices_started(
                 devices,
             )
         )
+    _validate_configured_avd_identity(adb, devices, avds)
 
 
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
@@ -179,8 +234,8 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
         report = compile_function_v2(
             source,
             output,
-            enhance=bool(args.model),
-            model=args.model,
+            enhance=True,
+            model=FORMAL_MODEL,
             model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
             model_base_url=FORMAL_MODEL_BASE_URL,
         )
@@ -190,18 +245,10 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
             source_run_log=source,
             mobilegpt_root=args.mobilegpt_root,
             output_root=output,
-            model=args.model,
-            source_seed=args.source_seed,
+            model=FORMAL_MODEL,
+            source_seed=SOURCE_SEED,
         )
         memory = Path(str(report["memory_root"]))
-    elif args.method == "appagent":
-        convert_runlog_to_appagent_memory(
-            source_run_log=source,
-            appagent_root=args.appagent_root,
-            memory_root=output,
-            model=args.model,
-        )
-        memory = output
     else:
         memory = source
     return {
@@ -232,25 +279,23 @@ def _run_command(
         f"{label}:{serial}:{port}",
         "--output-path",
         str(temporary_root / method / label),
-        "--source-seed",
-        str(args.source_seed),
-        "--task-random-seed",
-        str(args.evaluation_seed),
-        "--max-steps",
-        str(args.max_steps),
-        "--max-fallback-steps",
-        str(args.max_fallback_steps),
-        "--timeout-sec",
-        str(args.deadline),
-        "--mobilegpt-wait-start-timeout-sec",
-        str(args.deadline),
-        "--model",
-        args.model,
     ]
     if args.mobilegpt_root:
         command.extend(("--mobilegpt-root", args.mobilegpt_root))
-    if args.appagent_root:
-        command.extend(("--appagent-root", args.appagent_root))
+    if method == "mobilegpt":
+        command.extend(
+            (
+                "--mobilegpt-port",
+                str(_mobilegpt_server_port(port)),
+                # The official Server imports its vision/memory stack before
+                # opening the per-device socket.  Five seconds is too short
+                # on a cold Python process and is reported as an environment
+                # failure before an episode starts; keep this startup wait
+                # outside the episode wall-clock measurement.
+                "--mobilegpt-server-warmup-sec",
+                "30",
+            )
+        )
     if args.source_run_log:
         command.extend(("--source-run-log", args.source_run_log))
     if args.memory:
@@ -269,6 +314,8 @@ def _run_command(
 def _run(args: argparse.Namespace) -> dict[str, Any]:
     methods = _methods(args.method)
     devices = _devices(args.device)
+    if SOURCE_METHOD in methods and devices != (SOURCE_DEVICE,):
+        raise ValueError("source_method_requires_device:source5560")
     if args.dry_run:
         return {
             "action": "run",
@@ -279,7 +326,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "source_run_log": args.source_run_log or None,
         }
 
-    _ensure_devices_started(devices, timeout=min(int(args.deadline), 180))
+    _ensure_devices_started(devices, timeout=min(TASK_DEADLINE_SEC, 180))
     started = time.monotonic()
     with tempfile.TemporaryDirectory(
         prefix="omniflow-androidworld-"
@@ -325,19 +372,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory", default="")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument("--output", default=str(repo / "data" / "androidworld"))
-    parser.add_argument("--source-seed", type=int, default=SOURCE_SEED)
-    parser.add_argument("--evaluation-seed", type=int, default=TASK_SEED)
-    parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
-    parser.add_argument("--max-fallback-steps", type=int, default=MAX_FALLBACK_STEPS)
-    parser.add_argument("--deadline", type=int, default=TASK_DEADLINE_SEC)
-    parser.add_argument("--model", default=FORMAL_MODEL)
     parser.add_argument(
         "--mobilegpt-root",
         default=os.environ.get("OMNIFLOW_MOBILEGPT_ROOT", ""),
-    )
-    parser.add_argument(
-        "--appagent-root",
-        default=os.environ.get("OMNIFLOW_APPAGENT_ROOT", ""),
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.set_defaults(repo=repo)
@@ -346,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    require_formal_model()
     if args.action == "convert-memory":
         if not args.source_run_log or not args.memory:
             raise ValueError("convert-memory requires --source-run-log and --memory")

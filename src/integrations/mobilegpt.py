@@ -49,6 +49,39 @@ CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 _DEFAULT_AUTHORING_MAX_CHAT_CALLS = 64
 _DEFAULT_AUTHORING_MAX_FINAL_CYCLES = 8
 
+
+def _apply_mobilegpt_conversion_compat(server_root: Path) -> None:
+    """Apply the same optional-field compatibility used by native runs.
+
+    ``convert-memory`` stages a disposable official checkout independently
+    from the native forwarder. Qwen may omit optional narration/progress
+    fields while still returning a valid action, so keep those fields
+    optional at the official MobileGPT boundaries.
+    """
+    mobilegpt_path = server_root / "mobilegpt.py"
+    if mobilegpt_path.is_file():
+        source = mobilegpt_path.read_text(encoding="utf-8")
+        source = source.replace(
+            "parse_completion_rate(next_subtask['parameters']['completion_rate'])",
+            "parse_completion_rate((next_subtask.get('parameters') or {}).get('completion_rate', 0))",
+            1,
+        )
+        source = source.replace(
+            "                if next_subtask['name'] != 'read_screen':\n"
+            "                    msg = response['speak']\n"
+            "                    self.__send_speak_action(msg)\n",
+            "                if next_subtask['name'] != 'read_screen':\n"
+            "                    msg = response.get('speak', '') if isinstance(response, dict) else ''\n"
+            "                    if msg:\n"
+            "                        self.__send_speak_action(msg)\n",
+            1,
+        )
+        mobilegpt_path.write_text(source, encoding="utf-8")
+    select_path = server_root / "agents" / "select_agent.py"
+    if select_path.is_file():
+        source = select_path.read_text(encoding="utf-8")
+        select_path.write_text(source.replace("del response['completion_rate']", "response.pop('completion_rate', None)", 1), encoding="utf-8")
+
 __all__ = [
     "MobileGPTConversionError",
     "convert_runlog_to_mobilegpt_memory",
@@ -2672,6 +2705,12 @@ def _run_official_mobilegpt_authoring(
         workspace = Path(temp)
         server_root = workspace / "Server"
         shutil.copytree(server_source, server_root)
+        # The native official forwarder applies the same Qwen compatibility
+        # patches to its disposable checkout.  Conversion uses a separate
+        # staged checkout, so apply the optional telemetry/action-shape
+        # repairs here as well; otherwise a valid Qwen response that omits
+        # ``completion_rate`` aborts the converter before Memory is written.
+        _apply_mobilegpt_conversion_compat(server_root)
         # Keep the upstream OpenAI helper on direct JSON content by disabling
         # the optional reasoning channel. This does not change any MobileGPT
         # prompt or agent logic.

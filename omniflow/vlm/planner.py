@@ -16,7 +16,10 @@ from omniflow.vlm.guidance import resolve_step_guidance
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 
-_MODEL_TOOL_CALL_ATTEMPTS = 1
+# A rejected action must be repaired against the same fresh observation.  One
+# attempt made a transient grounding/schema error terminal, which surfaced to
+# the user as a completely broken GUI run.
+_MODEL_TOOL_CALL_ATTEMPTS = 2
 ModelTurnTransport = Callable[[dict[str, Any]], dict[str, Any]]
 MetadataSink = Callable[[dict[str, Any]], None]
 
@@ -153,7 +156,13 @@ class VLMPlanner:
                 # Argument repair can be constrained to the rejected tool.  An
                 # empty or unknown tool name is a selection failure, so the model
                 # must retain the screenshot, projected UI, and complete tool set.
-                lightweight_retry = not tool_not_visible
+                grounding_retry = error.code.startswith(
+                    (
+                        "model_target_",
+                        "visual_target_",
+                    )
+                )
+                lightweight_retry = not tool_not_visible and not grounding_retry
         else:
             raise AssertionError("unreachable")
 
@@ -266,6 +275,7 @@ def planner_state(observation: Observation) -> dict[str, Any]:
             "execution_history",
             "function_execution",
             "user_input",
+            "transfer_candidates_hint",
         }
     }
     return {key: value for key, value in state.items() if value is not None}

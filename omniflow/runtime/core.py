@@ -20,7 +20,7 @@ from omniflow.core.model import (
     Observation,
     StepResult,
 )
-from omniflow.transfer.admission import assess_transfer
+from omniflow.transfer.admission import assess_transfer, requires_contextual_mapping
 
 _ACTION_SETTLE_SECONDS = 1.0
 
@@ -93,8 +93,7 @@ async def prepare_action(
 
     if (
         source_state is None
-        or action.tool in {"open_app", "press_key"}
-        or (action.tool == "swipe" and action.args.get("direction") is not None)
+        or not requires_contextual_mapping(action.tool, action.args)
     ):
         return ActionDecision("ready", action=action)
     if plugins.transfer is None:

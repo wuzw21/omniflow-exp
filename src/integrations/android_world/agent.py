@@ -25,6 +25,7 @@ from omniflow.transfer.runtime import (
     load_transfer_state_catalog,
     transfer_state_coverage,
 )
+from src.experiment.observation_evidence import canonicalize_run_log_observation
 from src.experiment.performance_metrics import PerformanceMetrics
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
@@ -59,7 +60,9 @@ class _TaskHost:
         ):
             raise ValueError("androidworld_state_snapshot_required")
         official_state = _json_copy(official_state)
-        official_state_id = state_id(official_state)
+        official_state_id = state_id(
+            canonicalize_run_log_observation(official_state)
+        )
         identified = Observation.from_value(
             {
                 **observation.to_dict(),
@@ -85,6 +88,7 @@ def build_agent(
     store_path: str | None = None,
     runtime: Any | None = None,
     planner: Any | None = None,
+    function_router: Any | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     adb_serial: str = "",
     adb_path: str = "",
@@ -166,6 +170,7 @@ def build_agent(
         resolved_store_path,
         host=host,
         planner=planner,
+        function_router=function_router,
         installed_apps=raw_host.installed_apps(),
         config=OmniFlowConfig(
             runtime=RuntimeSettings(

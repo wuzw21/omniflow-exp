@@ -25,6 +25,9 @@ from omniflow.runlog import (
 from omniflow.runlog import (
     project_androidworld_step_actions as _project_androidworld_step_actions,
 )
+from omniflow.runlog import (
+    project_run_log_step_actions as _project_run_log_step_actions,
+)
 
 _EXECUTION_TIMING_ARGS = {
     "post_action_wait_s",
@@ -556,11 +559,30 @@ def project_androidworld_step_actions(
     value: dict[str, Any],
     *,
     previous_step: dict[str, Any] | None = None,
+    next_observation: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Project one official RunLog step to OmniFlow Function action fields."""
     return _project_androidworld_step_actions(
         value,
         previous_step=previous_step,
+        next_observation=next_observation,
+    )
+
+
+def project_run_log_step_actions(
+    run_log: dict[str, Any],
+    source_step_index: int,
+    *,
+    previous_step: dict[str, Any] | None = None,
+    next_observation: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Project one canonical RunLog step using its execution evidence."""
+
+    return _project_run_log_step_actions(
+        run_log,
+        source_step_index,
+        previous_step=previous_step,
+        next_observation=next_observation,
     )
 
 
@@ -625,7 +647,13 @@ def _androidworld_action_to_omniflow(
             "args": _required_androidworld_action_point(action, observation),
         }
     elif action_type == "input_text":
-        projected = {"tool": "input_text", "args": {"text": action.get("text", "")}}
+        projected = {
+            "tool": "input_text",
+            "args": {
+                "text": action.get("text", ""),
+                **_required_androidworld_action_point(action, observation),
+            },
+        }
     elif action_type in {"scroll", "swipe"}:
         projected = {
             "tool": "swipe",
@@ -706,27 +734,42 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
         root = ET.fromstring(xml)
     except ET.ParseError:
         return None
-    node = next(
-        (
-            item
-            for item in root.iter("node")
-            if str(item.attrib.get("id") or "") == str(index)
-        ),
-        None,
-    )
-    if node is None:
+    elements: list[ET.Element] = []
+    windows = list(root.iter("window"))
+    for window in windows:
+        ordered_nodes: list[tuple[int, ET.Element]] = []
+        for element in window.iter("node"):
+            raw_id = str(element.attrib.get("id") or "")
+            try:
+                order = int(raw_id.rsplit(":", maxsplit=1)[1])
+            except (IndexError, ValueError):
+                return None
+            ordered_nodes.append((order, element))
+        for _, element in sorted(ordered_nodes, key=lambda item: item[0]):
+            child_nodes = [child for child in element if child.tag == "node"]
+            if (
+                not child_nodes
+                or str(element.attrib.get("content-desc") or "").strip()
+                or str(element.attrib.get("scrollable") or "").casefold() == "true"
+            ):
+                elements.append(element)
+    if not windows:
+        top_nodes = [child for child in root if child.tag == "node"]
+        if len(top_nodes) != 1:
+            return None
+        elements = list(top_nodes[0].iter("node"))[1:]
+    if not 0 <= index < len(elements):
         return None
+    bounds = elements[index].attrib.get("bounds")
     match = re.fullmatch(
         r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]"
         r"\[(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\]",
-        str(node.attrib.get("bounds") or ""),
+        str(bounds or ""),
     )
     if match is None:
         return None
     left, top, right, bottom = map(float, match.groups())
-    if right <= left or bottom <= top:
-        return None
-    return left, top, right, bottom
+    return (left, top, right, bottom) if right > left and bottom > top else None
 
 
 def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
@@ -1351,9 +1394,6 @@ def _legacy_action_target_evidence(value: Any) -> dict[str, Any]:
         or function.get("arguments")
     )
     evidence: dict[str, Any] = {}
-    target_description = str(args.get("target_description") or "").strip()
-    if target_description:
-        evidence["target_description"] = target_description
     source_context = _map(args.get("source_context"))
     element = _legacy_semantic_identity(source_context.get("element"))
     if element:

@@ -9,11 +9,15 @@ from pathlib import Path
 import re
 import sys
 from typing import Any
-import unicodedata
 import xml.etree.ElementTree as ET
 
 TRANSFER_STATE_CATALOG_FILENAME = "transfer_states.json"
 TRANSFER_STATE_CATALOG_VERSION = "omniflow.transfer-state-catalog.v1"
+V10_MATCHER_MODE = "omnitransfer_point_conditioned_sparse_graph_v10"
+V10_MATCHER_RELEASE = "omnitransfer-point-conditioned-sparse-graph-v10"
+V10_MATCHER_CHECKPOINT_SHA256 = (
+    "3b783ed113fc37397e2f092d133e970ec36bdbf0d26e262d9273389e4729d16f"
+)
 _TRANSFER_STATE_FIELDS = {
     "state_id",
     "xml",
@@ -26,12 +30,16 @@ _OMNITRANSFER_CANDIDATE_FIELDS = {
     "target_xml",
     "source_xml",
     "source_point",
-    "source_element_id",
-    "source_offset",
     "source_screenshot_path",
     "target_screenshot_path",
     "source_visual_rgb",
     "target_visual_rgb",
+    "source_package_name",
+    "target_package_name",
+    "source_activity_name",
+    "target_activity_name",
+    "source_coordinate_space",
+    "target_display_size",
     "action_type",
     "top_k",
 }
@@ -117,8 +125,45 @@ def load_transfer_state_catalog(path: str | Path) -> dict[str, dict[str, Any]]:
         state = _canonicalize_transfer_state(value)
         if str(state_id) != state["state_id"]:
             raise ValueError("transfer_state_catalog_key_mismatch")
+        screenshot_path = state.get("screenshot_path")
+        if isinstance(screenshot_path, str):
+            state["screenshot_path"] = _resolve_catalog_screenshot_path(
+                catalog_path,
+                screenshot_path,
+            )
         states[state["state_id"]] = state
     return states
+
+
+def _resolve_catalog_screenshot_path(
+    catalog_path: Path,
+    value: str,
+) -> str:
+    """Resolve evidence paths after a Memory bundle crosses hosts."""
+
+    raw = str(value).strip()
+    if not raw:
+        return raw
+    path = Path(raw).expanduser()
+    if path.is_file():
+        return str(path.resolve())
+    filename = path.name
+    if not filename:
+        return raw
+    bundle_root = catalog_path.parent
+    preferred = bundle_root / "screenshots" / filename
+    if preferred.is_file():
+        return str(preferred.resolve())
+    matches = sorted(
+        candidate.resolve()
+        for candidate in bundle_root.rglob(filename)
+        if candidate.is_file()
+    )
+    if len(matches) == 1:
+        return str(matches[0])
+    if not path.is_absolute():
+        return str((bundle_root / path).resolve())
+    return raw
 
 
 def _canonicalize_transfer_state(value: Any) -> dict[str, Any]:
@@ -279,10 +324,6 @@ def audit_transfer_action_sources(
                 step_index=step_index,
                 source_state_id=source_state_id,
             )
-            source_element_id = source_semantic_anchor(
-                source_xml,
-                source_point,
-            )
             transfer_request: dict[str, Any] = {
                 "source_xml": source_xml,
                 "target_xml": source_xml,
@@ -294,15 +335,6 @@ def audit_transfer_action_sources(
                 "action_type": str(getattr(action, "tool", "") or ""),
                 "top_k": 3,
             }
-            if source_element_id:
-                transfer_request["source_element_id"] = source_element_id
-                source_offset = source_semantic_offset(
-                    source_xml,
-                    source_point,
-                    source_element_id,
-                )
-                if source_offset is not None:
-                    transfer_request["source_offset"] = source_offset
             result = transfer_action(
                 **transfer_request,
             )
@@ -389,9 +421,7 @@ def _action_requires_transfer_state(action: Any) -> bool:
     if not isinstance(args, dict):
         return False
     if tool == "input_text":
-        return bool(str(args.get("target_description") or "").strip()) or all(
-            args.get(key) is not None for key in ("x", "y")
-        )
+        return all(args.get(key) is not None for key in ("x", "y"))
     if tool in {"click", "long_press"}:
         return all(args.get(key) is not None for key in ("x", "y"))
     if tool == "swipe":
@@ -405,9 +435,7 @@ def _action_requires_point_target(action: Any) -> bool:
     if not isinstance(args, dict):
         return False
     if tool == "input_text":
-        return bool(str(args.get("target_description") or "").strip()) or all(
-            args.get(key) is not None for key in ("x", "y")
-        )
+        return all(args.get(key) is not None for key in ("x", "y"))
     return tool in {"click", "long_press"} and all(
         args.get(key) is not None for key in ("x", "y")
     )
@@ -431,12 +459,7 @@ def _source_action_point(
             )
         except (TypeError, ValueError):
             return None
-    if str(getattr(action, "tool", "") or "") != "input_text":
-        return None
-    return source_semantic_point(
-        source_xml,
-        str(args.get("target_description") or ""),
-    )
+    return None
 
 
 def _xml_display_size(xml_text: str) -> tuple[float, float] | None:
@@ -560,281 +583,6 @@ def _require_raw_source_target(
     return "named_element" if named else "workflow_actionable_element"
 
 
-def source_semantic_anchor(
-    xml_text: str,
-    point: tuple[float, float],
-) -> str:
-    """Resolve source-side row semantics for OmniTransfer candidate ranking.
-
-    OOB observations may preserve accessibility nodes as an ordered, flat
-    forest.  In that representation the clickable row and its visible title
-    are siblings even though the title's bounds are inside the row.  Select
-    that source title as the matcher anchor; this never identifies a target
-    node and therefore cannot become a resource-id or coordinate replay path.
-    """
-
-    try:
-        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
-    except ET.ParseError:
-        return ""
-    indexed: list[tuple[ET.Element, str, int]] = []
-    parents: dict[ET.Element, ET.Element] = {}
-
-    def visit(element: ET.Element, path: str, depth: int) -> None:
-        indexed.append((element, path, depth))
-        for index, child in enumerate(list(element)):
-            parents[child] = element
-            visit(child, f"{path}.{index}", depth + 1)
-
-    visit(root, "0", 0)
-    source = _actionable_source_element(indexed, point)
-    if source is None:
-        return ""
-    source_element, source_path, _ = source
-    promoted = False
-    if _is_repeated_generic_affordance(source_element, indexed):
-        ancestor = parents.get(source_element)
-        while ancestor is not None:
-            label = str(
-                ancestor.attrib.get("text")
-                or ancestor.attrib.get("content-desc")
-                or ""
-            ).strip()
-            if (
-                _semantic_label(label)
-                and not _is_generic_affordance_label(label)
-                and _element_bounds(ancestor) is not None
-            ):
-                source_element = ancestor
-                source_path = next(
-                    path for element, path, _ in indexed if element is ancestor
-                )
-                promoted = True
-                break
-            ancestor = parents.get(ancestor)
-    source_bounds = _element_bounds(source_element)
-    source_area = _bounds_area(source_bounds)
-    descendants = set(source_element.iter())
-    semantic: list[tuple[tuple[Any, ...], ET.Element, str]] = []
-    for order, (element, path, depth) in enumerate(indexed):
-        label = str(
-            element.attrib.get("text")
-            or element.attrib.get("content-desc")
-            or ""
-        ).strip()
-        if not _semantic_label(label):
-            continue
-        bounds = _element_bounds(element)
-        if element is not source_element and not (
-            source_bounds is not None
-            and bounds is not None
-            and _bounds_contains(source_bounds, bounds)
-            and _bounds_area(bounds) < source_area
-        ):
-            continue
-        if bounds is not None and not _bounds_reaches_point(bounds, point):
-            continue
-        resource_tail = str(element.attrib.get("resource-id") or "").rsplit(
-            "/", 1
-        )[-1]
-        semantic.append(
-            (
-                (
-                    (
-                        0
-                        if (promoted and element is not source_element)
-                        or (not promoted and element is source_element)
-                        else 1
-                    ),
-                    0 if resource_tail == "title" else 1,
-                    0 if element in descendants else 1,
-                    -depth,
-                    order,
-                ),
-                element,
-                path,
-            )
-        )
-    if not semantic:
-        return ""
-    _, anchor, anchor_path = min(semantic, key=lambda item: item[0])
-    origin_id = str(anchor.attrib.get("id") or "").strip()
-    if origin_id:
-        return origin_id
-    resource_id = str(anchor.attrib.get("resource-id") or "").strip()
-    if resource_id and sum(
-        str(element.attrib.get("resource-id") or "").strip() == resource_id
-        for element, _, _ in indexed
-    ) == 1:
-        return resource_id
-    return anchor_path
-
-
-def source_semantic_point(
-    xml_text: str,
-    target_description: str,
-) -> tuple[float, float] | None:
-    """Resolve an input target only within its immutable source observation."""
-
-    description = " ".join(str(target_description or "").split()).casefold()
-    if not description:
-        return None
-    try:
-        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
-    except ET.ParseError:
-        return None
-    matches: list[ET.Element] = []
-    for element in root.iter():
-        labels = {
-            " ".join(str(element.attrib.get(attribute) or "").split()).casefold()
-            for attribute in ("text", "content-desc")
-        }
-        resource_id = str(element.attrib.get("resource-id") or "").strip()
-        if resource_id:
-            labels.add(resource_id.rsplit("/", 1)[-1].casefold())
-        if description in labels and _element_bounds(element) is not None:
-            matches.append(element)
-    if not matches and description == "editable text field":
-        editable = [
-            element
-            for element in root.iter()
-            if str(element.attrib.get("editable") or "").casefold() == "true"
-            and _element_bounds(element) is not None
-        ]
-        focused = [
-            element
-            for element in editable
-            if str(element.attrib.get("focused") or "").casefold() == "true"
-        ]
-        matches = focused if len(focused) == 1 else editable
-    if len(matches) != 1:
-        return None
-    left, top, right, bottom = _element_bounds(matches[0]) or (0.0, 0.0, 0.0, 0.0)
-    return (left + right) / 2.0, (top + bottom) / 2.0
-
-
-def source_semantic_offset(
-    xml_text: str,
-    point: tuple[float, float],
-    element_id: str,
-) -> tuple[float, float] | None:
-    try:
-        root = ET.fromstring(_normalize_legacy_flat_xml(xml_text))
-    except ET.ParseError:
-        return None
-    indexed: list[tuple[ET.Element, str]] = []
-
-    def visit(element: ET.Element, path: str) -> None:
-        indexed.append((element, path))
-        for index, child in enumerate(list(element)):
-            visit(child, f"{path}.{index}")
-
-    visit(root, "0")
-    matching = [
-        element
-        for element, path in indexed
-        if element_id
-        in {
-            str(element.attrib.get("id") or "").strip(),
-            str(element.attrib.get("resource-id") or "").strip(),
-            path,
-        }
-    ]
-    if len(matching) != 1:
-        return None
-    bounds = _element_bounds(matching[0])
-    if bounds is None:
-        return None
-    left, top, right, bottom = bounds
-    return (
-        (point[0] - left) / (right - left),
-        (point[1] - top) / (bottom - top),
-    )
-
-
-def _is_repeated_generic_affordance(
-    element: ET.Element,
-    indexed: list[tuple[ET.Element, str, int]],
-) -> bool:
-    label = str(
-        element.attrib.get("text")
-        or element.attrib.get("content-desc")
-        or ""
-    ).strip()
-    resource_id = str(element.attrib.get("resource-id") or "").strip()
-    resource_tail = resource_id.rsplit("/", 1)[-1].casefold()
-    generic = _is_generic_affordance_label(label) or resource_tail in {
-        "item_more",
-        "more",
-        "overflow",
-        "overflow_menu",
-    }
-    if not generic:
-        return False
-    signature = (
-        str(element.attrib.get("class") or "").strip(),
-        resource_id,
-        label.casefold(),
-    )
-    return sum(
-        (
-            str(candidate.attrib.get("class") or "").strip(),
-            str(candidate.attrib.get("resource-id") or "").strip(),
-            str(
-                candidate.attrib.get("text")
-                or candidate.attrib.get("content-desc")
-                or ""
-            ).strip().casefold(),
-        )
-        == signature
-        for candidate, _, _ in indexed
-    ) > 1
-
-
-def _is_generic_affordance_label(value: str) -> bool:
-    return value.strip().casefold() in {
-        "menu",
-        "more",
-        "more actions",
-        "more options",
-        "options",
-        "overflow",
-    }
-
-
-def _actionable_source_element(
-    indexed: list[tuple[ET.Element, str, int]],
-    point: tuple[float, float],
-) -> tuple[ET.Element, str, int] | None:
-    x, y = point
-    containing = [
-        item
-        for item in indexed
-        if (bounds := _element_bounds(item[0])) is not None
-        and bounds[0] <= x <= bounds[2]
-        and bounds[1] <= y <= bounds[3]
-    ]
-    actionable = [
-        item
-        for item in containing
-        if str(item[0].attrib.get("enabled") or "true").lower() != "false"
-        and any(
-            str(item[0].attrib.get(attribute) or "").lower() == "true"
-            for attribute in ("clickable", "editable", "scrollable")
-        )
-    ]
-    candidates = actionable or containing
-    return min(
-        candidates,
-        key=lambda item: (
-            _bounds_area(_element_bounds(item[0])),
-            -item[2],
-            item[1],
-        ),
-        default=None,
-    )
-
-
 def _element_bounds(
     element: ET.Element,
 ) -> tuple[float, float, float, float] | None:
@@ -865,27 +613,6 @@ def _bounds_contains(
         and outer[1] <= inner[1]
         and outer[2] >= inner[2]
         and outer[3] >= inner[3]
-    )
-
-
-def _bounds_reaches_point(
-    bounds: tuple[float, float, float, float],
-    point: tuple[float, float],
-) -> bool:
-    # OmniTransfer accepts semantic anchor offsets in [-1, 2].  A farther label
-    # cannot represent this click; let its containing actionable node anchor it.
-    width = bounds[2] - bounds[0]
-    height = bounds[3] - bounds[1]
-    return (
-        bounds[0] - width <= point[0] <= bounds[2] + width
-        and bounds[1] - height <= point[1] <= bounds[3] + height
-    )
-
-
-def _semantic_label(value: str) -> bool:
-    return bool(value) and any(
-        not character.isspace() and unicodedata.category(character) != "Co"
-        for character in value
     )
 
 
@@ -998,6 +725,7 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
         )
         if not isinstance(ranking, dict):
             raise RuntimeError("omnitransfer_result_invalid")
+        ranking = _enforce_v10_result(ranking)
         return _select_transfer_candidate(ranking, kwargs)
     action_transfer = getattr(module, "action_transfer", None)
     if not callable(action_transfer):
@@ -1005,7 +733,34 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
     result = action_transfer(**kwargs)
     if not isinstance(result, dict):
         raise RuntimeError("omnitransfer_result_invalid")
-    return result
+    return _enforce_v10_result(result)
+
+
+def _enforce_v10_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep every mapped action on the single canonical OmniTransfer V10."""
+
+    mode = str(result.get("mapping_mode") or "").strip()
+    release = str(result.get("matcher_release") or "").strip()
+    checkpoint = str(result.get("matcher_checkpoint_sha256") or "").strip()
+    if (
+        mode == V10_MATCHER_MODE
+        and release == V10_MATCHER_RELEASE
+        and checkpoint == V10_MATCHER_CHECKPOINT_SHA256
+    ):
+        return result
+    return {
+        **result,
+        "mapped": False,
+        "reason": "omnitransfer_v10_contract_mismatch",
+        "transfer_contract": {
+            "required_mode": V10_MATCHER_MODE,
+            "required_release": V10_MATCHER_RELEASE,
+            "required_checkpoint_sha256": V10_MATCHER_CHECKPOINT_SHA256,
+            "actual_mode": mode,
+            "actual_release": release,
+            "actual_checkpoint_sha256": checkpoint,
+        },
+    }
 
 
 def preflight_omnitransfer() -> dict[str, Any]:
@@ -1036,6 +791,11 @@ def preflight_omnitransfer() -> dict[str, Any]:
     )
     if not isinstance(result, dict):
         raise RuntimeError("omnitransfer_result_invalid")
+    result = _enforce_v10_result(result)
+    if result.get("mapped") is False and result.get("reason") == (
+        "omnitransfer_v10_contract_mismatch"
+    ):
+        raise RuntimeError("omnitransfer_v10_contract_mismatch")
     candidates = result.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         reason = str(result.get("reason") or "candidates_missing")

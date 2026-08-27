@@ -2,20 +2,31 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from typing import Any, Callable
 
 from omniflow.core.schemas import canonicalize_action
 from omniflow.functions.artifact import parse_function_artifact
 
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_PARAMETER_TARGET = re.compile(
+    r"^\$\.steps\[(?P<step_index>\d+)]\.action\.args\.(?P<arg_name>[A-Za-z_][A-Za-z0-9_]*)$"
+)
 _PARAMETERIZABLE_ACTION_ARGS = {
     # App launch is part of the public Function API.  The package is a
     # task-level input when a global startup Function is reused for another
     # app; keeping it out of this set silently freezes the source app.
     "open_app": frozenset({"package_name"}),
-    "click": frozenset({"target_description"}),
-    "input_text": frozenset({"target_description", "text"}),
+    "input_text": frozenset({"text"}),
 }
+_NON_SEMANTIC_TASK_PARAMETER_NAMES = frozenset(
+    {
+        "seed",
+        "source_seed",
+        "evaluation_seed",
+        "task_random_seed",
+    }
+)
 
 
 def edit_function(
@@ -93,12 +104,23 @@ def enhance_function(
         if replacement and replacement != updated[field]:
             updated[field] = replacement
             changes.append({"part": "function", "field": field})
-    if "parameters" in proposal and apply_parameters(
-        updated,
-        proposal["parameters"],
-        run_log,
-    ):
-        changes.append({"part": "function", "field": "parameters"})
+    if "parameters" in proposal:
+        parameters_changed = apply_parameters(
+            updated,
+            proposal["parameters"],
+            run_log,
+        )
+        if parameters_changed:
+            _generalize_bound_literals(updated, original)
+            changed_fields = {
+                str(change.get("field") or "")
+                for change in changes
+                if isinstance(change, dict)
+            }
+            for field in ("name", "description"):
+                if updated[field] != original[field] and field not in changed_fields:
+                    changes.append({"part": "function", "field": field})
+            changes.append({"part": "function", "field": "parameters"})
     canonical = parse_function_artifact(updated).to_dict()
     return canonical, changes, "enhanced" if changes else "unchanged"
 
@@ -113,13 +135,17 @@ def _enhancement_prompt(
         {
             "index": index,
             "tool": step["action"]["tool"],
-            "target": str(step["action"]["args"].get("target_description") or "")[:120],
         }
         for index, step in enumerate(function["steps"])
     ]
     run_log_facts = {
         "run_id": str(run_log.get("run_id") or ""),
         "goal": str(run_log.get("goal") or ""),
+        "task_parameters": (
+            dict(run_log.get("task_parameters") or {})
+            if isinstance(run_log.get("task_parameters"), dict)
+            else {}
+        ),
         "steps": [
             {
                 key: step.get(key)
@@ -141,7 +167,7 @@ def _enhancement_prompt(
         "name": function["name"],
         "description": function["description"],
         "steps": steps,
-        "parameter_candidates": parameter_candidates(function),
+        "parameter_candidates": _eligible_parameter_candidates(function, run_log),
         "run_log": run_log_facts,
         "user_instruction": str(instruction or "").strip()[:2000],
     }
@@ -157,10 +183,19 @@ the action immutability and RunLog evidence requirements above.
 
 parameters is an array of semantic input bindings. Each item has exactly:
 {{"name":"query","description":"Text to search for","step_index":1,"arg_name":"text"}}.
-Only select entries listed in parameter_candidates and copy step_index and arg_name exactly.
-Choose a stable identifier name and a concise user-facing description. Return parameters=[]
-when the recorded value is intentionally fixed. Do not return input_schema, bindings, or steps;
-the runtime derives them and verifies the original successful RunLog evidence.
+parameter_candidates already contains only compiler-approved, goal/task-backed values.
+Select only entries from that list; copy step_index and arg_name exactly and use
+suggested_name when present. Return parameters=[] when the list is empty. Stable UI
+labels, navigation labels, coordinates, repetition counts, and an app fixed by the
+Function's capability stay fixed.
+For open_app.package_name, use the name package_name and describe an installed Android
+package identifier; never use a friendly app label as its value. Choose stable parameter
+names and concise user-facing descriptions. When a value becomes a parameter, remove its
+recorded instance literal from name and description and describe the requested semantic
+value instead. Give distinct semantic values distinct parameter names. Reuse one name
+for multiple targets only when those targets intentionally consume the same recorded
+semantic value. Do not return input_schema, bindings, or steps; the compiler derives
+them and verifies the original successful RunLog evidence.
 
 Function:
 {json.dumps(brief, ensure_ascii=False, separators=(",", ":"))}
@@ -200,6 +235,30 @@ def parameter_candidates(function: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
+def _eligible_parameter_candidates(
+    function: dict[str, Any],
+    run_log: dict[str, Any],
+) -> list[dict[str, Any]]:
+    eligible: list[dict[str, Any]] = []
+    for candidate in parameter_candidates(function):
+        step_index = int(candidate["step_index"])
+        evidence = semantic_parameter_evidence(
+            function["steps"][step_index],
+            str(candidate["arg_name"]),
+            candidate["recorded_value"],
+            run_log,
+        )
+        if evidence is None or not _has_parameter_evidence(
+            function["steps"][step_index],
+            str(candidate["arg_name"]),
+            candidate["recorded_value"],
+            run_log,
+        ):
+            continue
+        eligible.append({**candidate, **evidence})
+    return eligible
+
+
 def apply_parameters(
     function: dict[str, Any],
     proposal: Any,
@@ -215,7 +274,7 @@ def apply_parameters(
     properties = schema["properties"]
     required = schema["required"]
     bindings = function["bindings"]
-    existing_names = set(properties)
+    proposed_values: dict[str, str] = {}
     changed = False
     for parameter in proposal:
         if not isinstance(parameter, dict) or set(parameter) - {
@@ -225,24 +284,47 @@ def apply_parameters(
             "arg_name",
         }:
             raise ValueError("function_enhancement_parameter_contract_invalid")
-        name = str(parameter.get("name") or "").strip()
+        proposed_name = str(parameter.get("name") or "").strip()
         description = str(parameter.get("description") or "").strip()[:240]
         step_index = _integer(parameter.get("step_index"), -1)
         arg_name = str(parameter.get("arg_name") or "").strip()
         candidate = candidates.get((step_index, arg_name))
         if candidate is None:
             raise ValueError("function_enhancement_parameter_target_invalid")
-        if _PARAMETER_NAME.fullmatch(name) is None or name in existing_names:
-            raise ValueError("function_enhancement_parameter_name_invalid")
         step = function["steps"][step_index]
         value = step["action"]["args"][arg_name]
         if not _has_parameter_evidence(step, arg_name, value, run_log):
             raise ValueError("function_enhancement_parameter_evidence_missing")
-        definition: dict[str, Any] = {"type": "string"}
-        if description:
-            definition["description"] = description
-        properties[name] = definition
-        required.append(name)
+        semantic_evidence = semantic_parameter_evidence(
+            step,
+            arg_name,
+            value,
+            run_log,
+        )
+        if semantic_evidence is None:
+            raise ValueError("function_enhancement_parameter_semantics_missing")
+        name = str(
+            semantic_evidence.get("suggested_name") or proposed_name
+        ).strip()
+        if _PARAMETER_NAME.fullmatch(name) is None:
+            raise ValueError("function_enhancement_parameter_name_invalid")
+        normalized_value = _normalize_parameter_value(value)
+        prior_value = proposed_values.get(name)
+        if prior_value is not None and prior_value != normalized_value:
+            raise ValueError("function_enhancement_parameter_name_ambiguous")
+        already_defined = name in properties
+        if already_defined and prior_value is None:
+            if semantic_evidence.get("suggested_name") != name:
+                raise ValueError("function_enhancement_parameter_name_invalid")
+            definition = properties.get(name)
+            if not isinstance(definition, dict) or definition.get("type") != "string":
+                raise ValueError("function_enhancement_parameter_name_invalid")
+        if not already_defined:
+            definition = {"type": "string"}
+            if description:
+                definition["description"] = description
+            properties[name] = definition
+            required.append(name)
         bindings.append(
             {
                 "source": f"$.arguments.{name}",
@@ -250,9 +332,196 @@ def apply_parameters(
             }
         )
         step["action"]["args"][arg_name] = ""
-        existing_names.add(name)
+        proposed_values[name] = normalized_value
         changed = True
     return changed
+
+
+def semantic_parameter_evidence(
+    function_step: dict[str, Any],
+    arg_name: str,
+    value: Any,
+    run_log: dict[str, Any],
+) -> dict[str, str] | None:
+    action = (
+        function_step.get("action")
+        if isinstance(function_step.get("action"), dict)
+        else {}
+    )
+    tool = str(action.get("tool") or "").strip()
+    normalized_value = _normalize_parameter_value(value)
+    if not normalized_value:
+        return None
+    if tool == "open_app" and arg_name == "package_name":
+        for evidence in run_log.get("parameter_evidence") or ():
+            if not isinstance(evidence, dict):
+                continue
+            if (
+                str(evidence.get("arg_name") or "") == "package_name"
+                and _normalize_parameter_value(evidence.get("recorded_value"))
+                == normalized_value
+                and evidence.get("task_parameter_name") == "app_name"
+                and evidence.get("value_contract") == "android_package_name"
+            ):
+                return {
+                    "evidence": "task_parameter_app_name",
+                    "suggested_name": "package_name",
+                }
+        return None
+
+    task_matches = _matching_task_parameter_names(
+        run_log,
+        normalized_value,
+        function_step=function_step,
+    )
+    if task_matches:
+        evidence = {"evidence": "task_parameter_exact_value"}
+        if len(task_matches) == 1:
+            evidence["suggested_name"] = task_matches[0]
+        return evidence
+
+    goal = " ".join(str(run_log.get("goal") or "").casefold().split())
+    if tool == "input_text" and arg_name == "text":
+        return {
+            "evidence": (
+                "goal_input_literal"
+                if _contains_parameter_literal(goal, normalized_value)
+                else "recorded_input_text"
+            )
+        }
+    return None
+
+
+def _matching_task_parameter_names(
+    run_log: dict[str, Any],
+    normalized_value: str,
+    *,
+    function_step: dict[str, Any] | None = None,
+) -> list[str]:
+    task_parameters = run_log.get("task_parameters")
+    if not isinstance(task_parameters, dict):
+        return []
+    names = [
+        name
+        for raw_name, raw_value in task_parameters.items()
+        if (name := str(raw_name or "").strip())
+        and name not in _NON_SEMANTIC_TASK_PARAMETER_NAMES
+        and _PARAMETER_NAME.fullmatch(name) is not None
+        and _normalize_parameter_value(raw_value) == normalized_value
+    ]
+    derived = _derived_task_parameter_name(
+        run_log,
+        normalized_value,
+        function_step=function_step,
+    )
+    if derived and derived not in names:
+        names.append(derived)
+    return names
+
+
+def _derived_task_parameter_name(
+    run_log: dict[str, Any],
+    normalized_value: str,
+    *,
+    function_step: dict[str, Any] | None,
+) -> str:
+    task_parameters = run_log.get("task_parameters")
+    if not isinstance(task_parameters, dict):
+        return ""
+    try:
+        day = int(task_parameters.get("day"))
+        month = int(task_parameters.get("month"))
+        year = int(task_parameters.get("year"))
+    except (TypeError, ValueError):
+        day = month = year = 0
+    try:
+        hour = int(task_parameters.get("hour"))
+    except (TypeError, ValueError):
+        hour = -1
+    try:
+        duration_mins = int(task_parameters.get("duration_mins"))
+    except (TypeError, ValueError):
+        duration_mins = -1
+
+    if day > 0 and month > 0 and year > 0:
+        try:
+            event_date = date(year, month, day)
+        except ValueError:
+            event_date = None
+        if event_date is not None:
+            full_date = f"{day} {event_date.strftime('%B')} {year}".casefold()
+            if normalized_value == full_date:
+                return "event_date"
+
+    if 0 <= hour <= 23:
+        if normalized_value == f"{hour:02d}:00".casefold():
+            return "event_start_time"
+        if normalized_value == f"{hour} hours".casefold():
+            return "event_start_hour"
+
+    if duration_mins >= 0 and 0 <= hour <= 23:
+        end_total = hour * 60 + duration_mins
+        end_hour = (end_total // 60) % 24
+        end_minute = end_total % 60
+        if normalized_value == f"{end_hour} hours".casefold():
+            return "event_end_hour"
+    return ""
+
+
+def _normalize_parameter_value(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _contains_parameter_literal(text: str, literal: str) -> bool:
+    if not literal:
+        return False
+    pattern = re.escape(literal)
+    if literal[0].isalnum():
+        pattern = rf"(?<!\w){pattern}"
+    if literal[-1].isalnum():
+        pattern = rf"{pattern}(?!\w)"
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+
+def _generalize_bound_literals(
+    function: dict[str, Any],
+    source_function: dict[str, Any],
+) -> None:
+    for binding in function.get("bindings") or ():
+        if not isinstance(binding, dict):
+            continue
+        source = str(binding.get("source") or "")
+        parameter_name = source.removeprefix("$.arguments.")
+        target = _PARAMETER_TARGET.fullmatch(str(binding.get("target") or ""))
+        if not parameter_name or parameter_name == source or target is None:
+            continue
+        step_index = int(target.group("step_index"))
+        arg_name = target.group("arg_name")
+        try:
+            recorded_value = source_function["steps"][step_index]["action"]["args"][
+                arg_name
+            ]
+        except (IndexError, KeyError, TypeError):
+            continue
+        value = str(recorded_value or "").strip()
+        if not value:
+            continue
+        replacement = f"requested {parameter_name.replace('_', ' ')}"
+        for field in ("name", "description"):
+            function[field] = _replace_parameter_literal(
+                str(function.get(field) or ""),
+                value,
+                replacement,
+            )
+
+
+def _replace_parameter_literal(text: str, value: str, replacement: str) -> str:
+    pattern = re.escape(value)
+    if value[0].isalnum():
+        pattern = rf"(?<!\w){pattern}"
+    if value[-1].isalnum():
+        pattern = rf"{pattern}(?!\w)"
+    return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
 
 def _has_parameter_evidence(

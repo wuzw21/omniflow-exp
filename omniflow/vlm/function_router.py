@@ -63,10 +63,7 @@ class VLMFunctionRouter:
                 "type": "function",
                 "function": {
                     "name": function.id,
-                    "description": (
-                        f"Semantic name: {function.name}\n"
-                        f"Description: {function.description}"
-                    ),
+                    "description": _router_function_description(function),
                     "strict": True,
                     "parameters": deepcopy(function.input_schema),
                 },
@@ -160,6 +157,11 @@ class VLMFunctionRouter:
         if self._base_url:
             options["base_url"] = self._base_url
         return OpenAI(**options)
+
+
+def _router_function_description(function: Function) -> str:
+    description = " ".join(str(function.description or "").split())
+    return f"{function.name}: {description}"
 
 
 __all__ = [

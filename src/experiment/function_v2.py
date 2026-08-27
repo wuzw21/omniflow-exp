@@ -29,14 +29,23 @@ def compile_function_v2(
     source_states: Path | dict[str, Any]
     if isinstance(run_log, (str, Path)):
         source_path = Path(run_log).expanduser().resolve()
-        source_catalog = source_path.with_name("transfer_states.json")
-        if source_catalog.is_file():
-            source_states = source_catalog
-        else:
-            raw = json.loads(source_path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                raise ValueError("source_runlog_must_be_object")
-            _, source_states = import_run_log_evidence(raw)
+        raw = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("source_runlog_must_be_object")
+        _, source_states = import_run_log_evidence(raw)
+        source_screenshots = source_path.parent / "screenshots"
+        source_observations = source_path.parent / "observations" / "objects"
+        evidence_screenshots = (
+            source_screenshots
+            if source_screenshots.is_dir()
+            else source_observations
+        )
+        if evidence_screenshots.is_dir():
+            for state in source_states["states"].values():
+                screenshot_path = str(state.get("screenshot_path") or "").strip()
+                screenshot_name = Path(screenshot_path).name
+                if screenshot_name and (evidence_screenshots / screenshot_name).is_file():
+                    state["screenshot_path"] = f"screenshots/{screenshot_name}"
     else:
         raw_states = run_log.get("transfer_states")
         if isinstance(raw_states, dict):
@@ -76,13 +85,8 @@ def compile_function_v2(
     if isinstance(run_log, (str, Path)):
         source_path = Path(run_log).expanduser().resolve()
         shutil.copy2(source_path, root / "run_log.json")
-        source_screenshots = source_path.parent / "screenshots"
-        if source_screenshots.is_dir():
-            shutil.copytree(source_screenshots, root / "screenshots")
-        else:
-            source_observations = source_path.parent / "observations" / "objects"
-            if source_observations.is_dir():
-                shutil.copytree(source_observations, root / "screenshots")
+        if evidence_screenshots.is_dir():
+            shutil.copytree(evidence_screenshots, root / "screenshots")
     report["enhanced"] = bool(enhance)
     if authoring_trace is not None:
         authoring_trace.append(

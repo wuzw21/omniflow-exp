@@ -22,13 +22,84 @@ import sys
 import tempfile
 import time
 from typing import Any, Iterator, Sequence
+
 from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
 )
-
+from src.experiment.protocol import (
+    MAX_STEPS,
+    TASK_DEADLINE_SEC,
+    TASK_SEED,
+    require_formal_model,
+)
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+# Count MobileGPT chat requests across the whole official-forward process.
+# Keeping this at module scope is essential: ``query`` may be called once per
+# planner step, and a function-local counter would reset on every call and
+# silently defeat MOBILEGPT_MAX_CHAT_CALLS.
+_MOBILEGPT_CHAT_CALLS = 0
+
+
+def _ensure_androidworld_ffmpeg() -> None:
+    """Expose the pinned imageio-ffmpeg binary to AndroidWorld/pydub.
+
+    AndroidWorld creates MP3 fixtures during task initialization.  pydub
+    resolves its encoder exclusively through ``PATH``; on 9207 no system
+    ffmpeg is installed, and the child environment can replace the launcher
+    PATH.  Install a process-local shim in /tmp so fixture generation is
+    deterministic without modifying the repository or emulator image.
+    """
+
+    try:
+        import imageio_ffmpeg
+
+        binary = Path(imageio_ffmpeg.get_ffmpeg_exe()).expanduser().resolve()
+    except Exception:
+        return
+    if not binary.is_file():
+        return
+    shim_dir = Path(tempfile.gettempdir()) / "omniflow-ffmpeg-bin"
+    try:
+        shim_dir.mkdir(parents=True, exist_ok=True)
+        shim = shim_dir / "ffmpeg"
+        if shim.is_symlink() or shim.exists():
+            if shim.resolve() != binary:
+                shim.unlink()
+        if not shim.exists():
+            shim.symlink_to(binary)
+        os.environ["PATH"] = os.pathsep.join(
+            (str(shim_dir), str(binary.parent), os.environ.get("PATH", ""))
+        )
+        os.environ.setdefault("FFMPEG_BINARY", str(binary))
+    except OSError:
+        return
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-compatible copy for result/provenance rows.
+
+    AndroidWorld task parameters can contain lightweight dataclass/model
+    objects (for example ``Recipe`` instances).  Those must not prevent the
+    final raw result row from being written after an otherwise valid episode.
+    Preserve object attributes when available and fall back to a string for
+    opaque values.
+    """
+
+    try:
+        return json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                default=lambda obj: vars(obj)
+                if hasattr(obj, "__dict__")
+                else str(obj),
+            )
+        )
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _mobilegpt_accessibility_service_bound(
@@ -173,6 +244,7 @@ def _androidworld_task_startup(
 ) -> Iterator[tuple[Any, Any]]:
     """Prepare one official task through the canonical AndroidWorld seam."""
 
+    _ensure_androidworld_ffmpeg()
     from android_world.env import adb_utils
 
     from src.integrations.android_world.run_episode import (
@@ -360,7 +432,7 @@ def _omniflow_resolution_agnostic_doc_path(docs_dir, uid):
             "traverse_tree = _omniflow_oob_traverse_tree\n"
         )
 
-    # GLM-compatible providers may place the useful answer in
+    # Qwen-compatible providers may place the useful answer in
     # ``reasoning_content`` or return one transient empty ``content`` frame.
     # The upstream AppAgent model wrapper only reads ``message.content`` and
     # therefore turns that provider response into a parser failure.  Patch
@@ -706,7 +778,7 @@ def prepare_mobilegpt_server(
             )
     # The official checkout hard-codes the OpenAI embedding default and some
     # legacy chat aliases.  Configure only the disposable staging copy so the
-    # whole MobileGPT path uses the experiment's GLM endpoint; the upstream
+    # whole MobileGPT chat path uses the experiment's Qwen endpoint; the upstream
     # checkout and its planner/action implementation remain untouched.
     _configure_mobilegpt_server(
         target,
@@ -716,10 +788,14 @@ def prepare_mobilegpt_server(
     _configure_mobilegpt_json_query(target)
     _configure_mobilegpt_response_compat(target)
     _configure_mobilegpt_optional_completion_rate(target)
+    _configure_mobilegpt_action_shape_compat(target)
     _configure_mobilegpt_selection_compat(target)
     _configure_mobilegpt_system_app_catalog(target)
+    _configure_mobilegpt_empty_memory_csv_compat(target)
     _configure_mobilegpt_target_package_fallback(target)
     _configure_mobilegpt_client_error_transport(target)
+    _configure_mobilegpt_empty_xml_transport(target)
+    _configure_mobilegpt_qa_transport(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -744,6 +820,10 @@ def prepare_mobilegpt_server(
                 shutil.copytree(entry, destination, symlinks=True, dirs_exist_ok=True)
             else:
                 shutil.copy2(entry, destination)
+        # The overlay may contain its own upstream Python memory package and
+        # therefore overwrite the compatibility edits above. Re-apply them
+        # after the learned CSV/Memory overlay is materialized in staging.
+        _configure_mobilegpt_empty_memory_csv_compat(target)
     return {
         "workspace": str(work),
         "server_root": str(target),
@@ -1132,7 +1212,11 @@ def _configure_mobilegpt_server(
         )
         source = source.replace(
             '    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))\n',
-            '    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), max_retries=0)\n'
+            '    client = OpenAI(\n'
+            '        api_key=os.getenv("MOBILEGPT_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY"),\n'
+            '        base_url=os.getenv("MOBILEGPT_EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL"),\n'
+            '        max_retries=0,\n'
+            '    )\n'
             '    embedding_timeout = max(1.0, float(os.getenv("MOBILEGPT_EMBEDDING_TIMEOUT_SEC", "15")))\n',
             1,
         )
@@ -1204,7 +1288,7 @@ def _configure_mobilegpt_chat_model(
 
 
 def _configure_mobilegpt_json_query(server_root: Path) -> None:
-    """Retry malformed GLM JSON in the disposable MobileGPT Server copy."""
+    """Retry malformed Qwen JSON in the disposable MobileGPT Server copy."""
 
     utils_path = server_root / "utils" / "utils.py"
     if not utils_path.is_file():
@@ -1226,7 +1310,7 @@ def _configure_mobilegpt_json_query(server_root: Path) -> None:
         "        try:\n"
         "            return json.loads(json_formatted_response)\n"
         "        except json.JSONDecodeError:\n"
-        "            log(\"MobileGPT GLM response was invalid JSON; retrying\", \"red\")\n"
+        "            log(\"MobileGPT Qwen response was invalid JSON; retrying\", \"red\")\n"
         "            for _ in range(2):\n"
         "                retry = client.chat.completions.create(\n"
         "                    model=model, messages=messages, temperature=0,\n"
@@ -1245,7 +1329,7 @@ def _configure_mobilegpt_json_query(server_root: Path) -> None:
     )
     if original in source and "mobilegpt_glm_json_response_invalid" not in source:
         source = source.replace(original, replacement, 1)
-    # GLM can explain the percentage in prose (for example, ``0% complete``)
+    # Qwen can explain the percentage in prose (for example, ``0% complete``)
     # even when the official prompt asks for a number.  The pinned upstream
     # implementation has comments between the ``else`` and ``float`` call,
     # so a narrow whole-function replacement is more reliable than matching a
@@ -1312,10 +1396,10 @@ def _configure_mobilegpt_json_query(server_root: Path) -> None:
 
 
 def _configure_mobilegpt_response_compat(server_root: Path) -> None:
-    """Make the staged MobileGPT query wrapper safe for GLM responses.
+    """Make the staged MobileGPT query wrapper safe for Qwen responses.
 
     The official utility assumes every provider response has non-empty
-    ``message.content`` and valid JSON.  GLM-compatible endpoints can return
+    ``message.content`` and valid JSON.  Qwen-compatible endpoints can return
     a list content block, reasoning-only content, or one transient empty
     response.  Normalize those shapes and retry before MobileGPT's planner
     sees an invalid/empty action.  This is a provider boundary patch in the
@@ -1349,8 +1433,18 @@ def _omniflow_message_text(message):
             return str(candidate)
     return ""
 
-def query(messages, model="gpt-4-turbo", is_list=False):
-    client = OpenAI(max_retries=0)
+# One counter per disposable MobileGPT Server process.  This declaration is
+# injected together with the replacement query function; without it the
+# staged Server copy raises NameError before handling its first instruction.
+_MOBILEGPT_CHAT_CALLS = 0
+
+def query(messages, model="Qwen3.6-Plus", is_list=False):
+    global _MOBILEGPT_CHAT_CALLS
+    client = OpenAI(
+        api_key=os.getenv("MOBILEGPT_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL"),
+        max_retries=0,
+    )
     request_timeout = max(1.0, float(os.getenv("MOBILEGPT_REQUEST_TIMEOUT_SEC", "20")))
     thinking_mode = os.getenv("MOBILEGPT_THINKING", "disabled").strip()
     request_extra_body = (
@@ -1358,26 +1452,50 @@ def query(messages, model="gpt-4-turbo", is_list=False):
         if thinking_mode
         else {}
     )
+    _omniflow_chat_limit = max(
+        1, int(os.getenv("MOBILEGPT_MAX_CHAT_CALLS", "64"))
+    )
     for message in messages:
         log(message["content"], "yellow")
-    attempts = max(1, int(os.getenv("MOBILEGPT_RESPONSE_RETRIES", "2")))
+    # Keep at least one recovery attempt for transient provider responses even
+    # when the legacy runtime env requested a single call.
+    attempts = max(1, int(os.getenv("MOBILEGPT_RESPONSE_RETRIES", "1")))
     last_result = ""
     for attempt in range(1, attempts + 1):
+        if _MOBILEGPT_CHAT_CALLS >= _omniflow_chat_limit:
+            try:
+                write_omniflow_mobilegpt_event({
+                    "event": "chat_call_limit_exceeded",
+                    "chat_calls": _MOBILEGPT_CHAT_CALLS,
+                    "max_chat_calls": _omniflow_chat_limit,
+                })
+            except NameError:
+                pass
+            raise RuntimeError("mobilegpt_model_call_limit_exceeded")
+        _MOBILEGPT_CHAT_CALLS += 1
         try:
-            response = client.with_options(timeout=request_timeout).chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-                max_tokens=int(
+            request_kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0,
+                "max_tokens": int(
                     os.getenv(
                         "MOBILEGPT_LIST_MAX_TOKENS" if is_list else "MOBILEGPT_MAX_TOKENS",
                         "512" if is_list else "2048",
                     )
                 ),
-                top_p=0,
-                frequency_penalty=0,
-                presence_penalty=0,
-                extra_body=request_extra_body,
+                "top_p": 0,
+                "extra_body": request_extra_body,
+            }
+            # OmniMind's GPT-5.4-compatible channel rejects the legacy
+            # frequency/presence penalty fields.  Keep them for other
+            # OpenAI-compatible providers, but omit them for OmniMind.
+            chat_base_url = os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
+            if "omnimind.com.cn" not in chat_base_url:
+                request_kwargs["frequency_penalty"] = 0
+                request_kwargs["presence_penalty"] = 0
+            response = client.with_options(timeout=request_timeout).chat.completions.create(
+                **request_kwargs
             )
         except Exception as error:
             try:
@@ -1389,7 +1507,7 @@ def query(messages, model="gpt-4-turbo", is_list=False):
                 })
             except NameError:
                 pass
-            log(f"MobileGPT GLM request failed; retry {attempt}/{attempts}: {error}", "red")
+            log(f"MobileGPT Qwen request failed; retry {attempt}/{attempts}: {error}", "red")
             if attempt == attempts:
                 raise RuntimeError("mobilegpt_glm_request_failed") from error
             continue
@@ -1411,7 +1529,7 @@ def query(messages, model="gpt-4-turbo", is_list=False):
         except NameError:
             pass
         if not result.strip():
-            log(f"MobileGPT GLM returned empty content; retry {attempt}/{attempts}", "red")
+            log(f"MobileGPT Qwen returned empty content; retry {attempt}/{attempts}", "red")
             continue
         log(result, "green")
         json_formatted_response = __parse_json(result, is_list=is_list)
@@ -1419,11 +1537,12 @@ def query(messages, model="gpt-4-turbo", is_list=False):
             try:
                 return json.loads(json_formatted_response)
             except json.JSONDecodeError:
-                log(f"MobileGPT GLM returned invalid JSON; retry {attempt}/{attempts}", "red")
+                log(f"MobileGPT Qwen returned invalid JSON; retry {attempt}/{attempts}", "red")
                 continue
-        if is_list:
-            continue
-        return result
+        # Non-list planner calls require an object with the official action
+        # schema.  Never pass a prose/string payload into the upstream agent;
+        # it would fail later with ``string indices must be integers``.
+        continue
     try:
         write_omniflow_mobilegpt_event({
             "event": "chat_empty_or_invalid",
@@ -1433,9 +1552,18 @@ def query(messages, model="gpt-4-turbo", is_list=False):
         })
     except NameError:
         pass
-    raise RuntimeError("mobilegpt_glm_response_empty_or_invalid")
+    # A provider may return an empty/invalid payload after retries.  Give the
+    # official planner a schema-valid no-op observation instead of terminating
+    # the socket handler; the next screen observation can then recover.
+    if is_list:
+        return []
+    return {
+        "action": {"name": "read_screen", "parameters": {}},
+        "speak": "",
+        "completion_rate": 0,
+    }
 '''
-    query_pattern = r"\ndef query\(messages, model=\"gpt-4-turbo\", is_list=False\):.*?(?=\n\ndef parse_completion_rate\()"
+    query_pattern = r"\ndef query\(messages, model=\"[^\"]+\", is_list=False\):.*?(?=\n\ndef parse_completion_rate\()"
     patched, count = re.subn(
         query_pattern,
         "\n" + replacement.rstrip("\n") + "\n",
@@ -1448,7 +1576,7 @@ def query(messages, model="gpt-4-turbo", is_list=False):
 
 
 def _configure_mobilegpt_optional_completion_rate(server_root: Path) -> None:
-    """Keep optional GLM completion telemetry from aborting an action."""
+    """Keep optional Qwen completion telemetry from aborting an action."""
 
     mobilegpt_path = server_root / "mobilegpt.py"
     if not mobilegpt_path.is_file():
@@ -1464,8 +1592,35 @@ def _configure_mobilegpt_optional_completion_rate(server_root: Path) -> None:
         mobilegpt_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
+def _configure_mobilegpt_action_shape_compat(server_root: Path) -> None:
+    """Treat the optional Qwen ``speak`` field as absent rather than fatal."""
+
+    mobilegpt_path = server_root / "mobilegpt.py"
+    if not mobilegpt_path.is_file():
+        return
+    source = mobilegpt_path.read_text(encoding="utf-8")
+    marker = "mobilegpt_qwen_action_shape_compat"
+    if marker in source:
+        return
+    original = (
+        "                if next_subtask['name'] != 'read_screen':\n"
+        "                    msg = response['speak']\n"
+        "                    self.__send_speak_action(msg)\n"
+    )
+    replacement = (
+        "                if next_subtask['name'] != 'read_screen':\n"
+        "                    # mobilegpt_qwen_action_shape_compat: Qwen may omit the\n"
+        "                    # optional narration field while returning a valid action.\n"
+        "                    msg = response.get('speak', '') if isinstance(response, dict) else ''\n"
+        "                    if msg:\n"
+        "                        self.__send_speak_action(msg)\n"
+    )
+    if original in source:
+        mobilegpt_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
 def _configure_mobilegpt_selection_compat(server_root: Path) -> None:
-    """Treat GLM's omitted optional completion telemetry as valid JSON."""
+    """Treat Qwen's omitted optional completion telemetry as valid JSON."""
 
     select_path = server_root / "agents" / "select_agent.py"
     if not select_path.is_file():
@@ -1545,6 +1700,58 @@ def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
     )
 
 
+def _configure_mobilegpt_empty_memory_csv_compat(server_root: Path) -> None:
+    """Keep a cold-start MobileGPT memory valid when CSV files are empty.
+
+    AndroidWorld system-app setup can create zero-byte page databases (for
+    example after the Clipper helper is freshly installed).  Upstream calls
+    ``pandas.read_csv`` unconditionally and aborts before the first planner
+    action.  Recreate the documented header-only frame in the disposable
+    staging copy; no learned memory or source RunLog is modified.
+    """
+
+    for name in ("memory_manager.py", "page_manager.py"):
+        path = server_root / "memory" / name
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
+        marker = "mobilegpt_empty_memory_csv_compat"
+        if marker in source:
+            continue
+        original = "        database = pd.read_csv(path)\n"
+        replacement = (
+            "        try:\n"
+            "            database = pd.read_csv(path)\n"
+            "        except pd.errors.EmptyDataError:\n"
+            f"            # {marker}: tolerate a zero-byte cold-start CSV.\n"
+            "            database = pd.DataFrame([], columns=headers)\n"
+        )
+        if original in source:
+            path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+    # A converted RunLog can contain a semantic subtask that is not present on
+    # the target page after AndroidWorld reinitializes dynamic app content.
+    # Upstream assumes the row always exists and crashes the server thread;
+    # returning control to its official selector lets the normal planner/VLM
+    # path choose the next action and records the mismatch as method evidence.
+    memory_manager = server_root / "memory" / "memory_manager.py"
+    if memory_manager.is_file():
+        source = memory_manager.read_text(encoding="utf-8")
+        marker = "mobilegpt_missing_subtask_row_compat"
+        original = (
+            "            next_subtask_data = self.page_manager.get_next_subtask_data(next_subtask_name)\n"
+        )
+        replacement = (
+            "            try:\n"
+            "                next_subtask_data = self.page_manager.get_next_subtask_data(next_subtask_name)\n"
+            "            except IndexError:\n"
+            f"                # {marker}: stale semantic memory must not crash the server.\n"
+            "                return None\n"
+        )
+        if marker not in source and original in source:
+            memory_manager.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
 def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:
     """Fill an unresolved official app launch with the setup-resolved package."""
 
@@ -1554,9 +1761,26 @@ def _configure_mobilegpt_target_package_fallback(server_root: Path) -> None:
     source = server_path.read_text(encoding="utf-8")
     if "mobilegpt_target_package_fallback" in source:
         return
-    original = "                target_package = app_agent.get_package_name(target_app)\n"
+    original = (
+        "                    target_app = app_agent.predict_app(instruction)\n"
+        "                    task['app'] = target_app\n"
+        "\n"
+        "                target_package = app_agent.get_package_name(target_app)\n"
+    )
     replacement = (
-        original
+        "                    target_app = app_agent.predict_app(instruction)\n"
+        "                    # mobilegpt_target_app_fallback: Qwen may return\n"
+        "                    # null when an AndroidWorld system app has no\n"
+        "                    # Play-store catalog candidate. Use the app key\n"
+        "                    # resolved during official task setup instead of\n"
+        "                    # allowing None to crash MobileGPT.init().\n"
+        "                    if not str(target_app or '').strip():\n"
+        "                        target_app = os.environ.get(\n"
+        "                            'MOBILEGPT_TARGET_APP', ''\n"
+        "                        ).strip()\n"
+        "                    task['app'] = target_app\n"
+        "\n"
+        "                target_package = app_agent.get_package_name(target_app)\n"
         + "                # mobilegpt_target_package_fallback: the official cold app\n"
         + "                # catalog initially has no description/name for AndroidWorld\n"
         + "                # system packages. Preserve official selection and only fill\n"
@@ -1616,6 +1840,83 @@ def _configure_mobilegpt_client_error_transport(server_root: Path) -> None:
         server_path.write_text(source.replace(anchor, branch + anchor, 1), encoding="utf-8")
 
 
+def _configure_mobilegpt_empty_xml_transport(server_root: Path) -> None:
+    """Recover an occasional empty Accessibility XML frame in the official server.
+
+    The pinned client can transiently deliver a zero-byte (or malformed) X
+    frame while the target activity is still settling.  Upstream parses the
+    frame unconditionally, killing the handler thread and turning a recoverable
+    observation into an environment failure.  Reply with the official
+    ``read_screen`` action so the client requests a fresh frame instead.
+    """
+
+    server_path = server_root / "server.py"
+    if not server_path.is_file():
+        return
+    source = server_path.read_text(encoding="utf-8")
+    marker = "mobilegpt_empty_xml_transport"
+    if marker in source:
+        return
+    original = (
+        "            elif message_type == 'X':\n"
+        "                raw_xml = self.__recv_xml(client_socket, screen_count, log_directory)\n"
+        "\n"
+        "                parsed_xml, hierarchy_xml, encoded_xml = screen_parser.encode(raw_xml, screen_count)\n"
+    )
+    replacement = (
+        "            elif message_type == 'X':\n"
+        "                raw_xml = self.__recv_xml(client_socket, screen_count, log_directory)\n"
+        "\n"
+        f"                # {marker}: transient empty/malformed frames are recoverable.\n"
+        "                if not str(raw_xml or '').strip():\n"
+        "                    log('Empty Accessibility XML frame; requesting a fresh screen', 'yellow')\n"
+        "                    client_socket.send(json.dumps({\n"
+        "                        'name': 'read_screen', 'parameters': {}\n"
+        "                    }).encode())\n"
+        "                    client_socket.send('\\r\\n'.encode())\n"
+        "                    continue\n"
+        "\n"
+        "                try:\n"
+        "                    parsed_xml, hierarchy_xml, encoded_xml = screen_parser.encode(raw_xml, screen_count)\n"
+        "                except Exception as error:\n"
+        f"                    log(f'Malformed Accessibility XML; retrying screen: {{error}}', 'yellow')\n"
+        "                    client_socket.send(json.dumps({\n"
+        "                        'name': 'read_screen', 'parameters': {}\n"
+        "                    }).encode())\n"
+        "                    client_socket.send('\\r\\n'.encode())\n"
+        "                    continue\n"
+    )
+    if original not in source:
+        raise RuntimeError("official_mobilegpt_empty_xml_anchor_missing")
+    server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
+def _configure_mobilegpt_qa_transport(server_root: Path) -> None:
+    """Ignore truncated QA frames instead of terminating the official handler."""
+
+    server_path = server_root / "server.py"
+    if not server_path.is_file():
+        return
+    source = server_path.read_text(encoding="utf-8")
+    marker = "mobilegpt_qa_transport"
+    if marker in source:
+        return
+    original = (
+        "                info_name, question, answer = qa_string.split(\"\\\\\", 2)\n"
+    )
+    replacement = (
+        f"                # {marker}: a truncated client QA frame is recoverable.\n"
+        "                qa_parts = qa_string.split(\"\\\\\", 2)\n"
+        "                if len(qa_parts) != 3:\n"
+        "                    log(f'Truncated QA frame ignored: {qa_string!r}', 'yellow')\n"
+        "                    continue\n"
+        "                info_name, question, answer = qa_parts\n"
+    )
+    if original not in source:
+        raise RuntimeError("official_mobilegpt_qa_anchor_missing")
+    server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+
 def _run_adb(
     adb_path: str,
     serial: str,
@@ -1665,7 +1966,7 @@ MOBILEGPT_STEP_TIMEOUT_RETURN_CODE = 126
 MOBILEGPT_HANDSHAKE_RETURN_CODE = 127
 MOBILEGPT_SERVER_ERROR_RETURN_CODE = 128
 # The official server may need one planner/derive round before its first
-# primitive action.  GLM-backed cold starts can exceed 20 seconds even when
+# primitive action.  Qwen-backed cold starts can exceed 20 seconds even when
 # the client and server are healthy, so the protocol window must cover that
 # normal response latency plus the client's screen-refresh grace period.
 MOBILEGPT_HANDSHAKE_TIMEOUT_SEC = 60.0
@@ -1680,6 +1981,14 @@ def _mobilegpt_environment_failure(
     """Keep transport/setup failures retryable and method limits terminal."""
 
     reason = str(failure_reason or "").strip()
+    # Hitting the explicit planner-call budget is a terminal method outcome,
+    # not a device/server environment fault.  Keep it visible as a method
+    # failure so schedulers do not spend another episode repeating it.
+    if (
+        "mobilegpt_model_call_limit_exceeded" in reason
+        or "mobilegpt_model_response_invalid" in reason
+    ):
+        return False
     if int(returncode) in {
         MOBILEGPT_HANDSHAKE_RETURN_CODE,
         MOBILEGPT_SERVER_ERROR_RETURN_CODE,
@@ -2036,6 +2345,8 @@ def _mobilegpt_protocol_probe(
             "missing credentials",
             "connectionrefusederror",
             "exception in thread",
+            "mobilegpt_model_call_limit_exceeded",
+            "keyerror: 'speak'",
         )
         if marker in server_diagnostics
     )
@@ -2427,7 +2738,15 @@ def _run_mobilegpt_client(
             return finish_with_probe(
                 MOBILEGPT_SERVER_ERROR_RETURN_CODE,
                 log,
-                "mobilegpt_server_handler_failed",
+                (
+                    "mobilegpt_model_call_limit_exceeded"
+                    "mobilegpt_model_call_limit_exceeded"
+                    if "mobilegpt_model_call_limit_exceeded"
+                    in probe["server_error_markers"]
+                    else "mobilegpt_model_response_invalid"
+                    if "keyerror: 'speak'" in probe["server_error_markers"]
+                    else "mobilegpt_server_handler_failed"
+                ),
             )
         if probe["server_error"] and probe["task_started"]:
             # A server-side model/protocol exception is terminal for this
@@ -2442,7 +2761,15 @@ def _run_mobilegpt_client(
             return finish_with_probe(
                 MOBILEGPT_SERVER_ERROR_RETURN_CODE,
                 log,
-                "mobilegpt_server_handler_failed",
+                (
+                    "mobilegpt_model_call_limit_exceeded"
+                    "mobilegpt_model_call_limit_exceeded"
+                    if "mobilegpt_model_call_limit_exceeded"
+                    in probe["server_error_markers"]
+                    else "mobilegpt_model_response_invalid"
+                    if "keyerror: 'speak'" in probe["server_error_markers"]
+                    else "mobilegpt_server_handler_failed"
+                ),
             )
         # Some pinned official MobileGPT Server versions do not emit the
         # optional ``task_started`` telemetry event. They can nevertheless
@@ -2506,8 +2833,12 @@ def _run_mobilegpt_client(
                 "mobilegpt_step_timeout",
             )
         time.sleep(1.0)
-    finish_with_probe(124, last_log, "mobilegpt_episode_timeout")
-    return 124
+    # Keep the return contract identical to every earlier exit path.  The
+    # AndroidWorld wrapper unpacks ``(returncode, episode_started)`` to compute
+    # episode duration; returning a bare integer here causes a secondary
+    # TypeError exactly when a long episode times out and prevents result/raw
+    # log persistence.
+    return finish_with_probe(124, last_log, "mobilegpt_episode_timeout")
 
 
 def run_mobilegpt_client(
@@ -2567,6 +2898,9 @@ def run_mobilegpt_client(
         grpc_port=grpc_port,
         adb_path=adb_path,
         perform_emulator_setup=perform_emulator_setup,
+        # MobileGPT temporarily owns the Accessibility service during the
+        # episode.  The validator uses AndroidWorld's forwarder, which is
+        # restored after the client exits below.
         use_uiautomator=False,
     ) as (env, task):
         task_params = dict(getattr(task, "params", {}) or {})
@@ -2587,6 +2921,50 @@ def run_mobilegpt_client(
             server_log_path=server_log_path,
         )
         episode_finished = time.monotonic()
+        # The MobileGPT client disables AndroidWorld's forwarder while it is
+        # connected.  Rebind that installed official service before the
+        # validator reads env.get_state(); otherwise UI-only validators see a
+        # stale/empty pre-action tree even when the client log proves the
+        # physical action succeeded.
+        target_package = str(
+            os.environ.get("MOBILEGPT_TARGET_PACKAGE") or ""
+        ).strip()
+        if target_package:
+            # The official client may finish by returning its accessibility
+            # service to the launcher.  Re-open the already-mutated target app
+            # solely to expose its post-action UI to AndroidWorld's validator;
+            # this does not execute a task action or reset app state.
+            _run_adb(
+                adb_path,
+                serial,
+                ["shell", "monkey", "-p", target_package, "1"],
+                check=False,
+            )
+            time.sleep(0.5)
+        controller = getattr(env, "controller", None)
+        restart_forwarder = getattr(
+            controller, "restart_accessibility_forwarder", None
+        )
+        if callable(restart_forwarder):
+            try:
+                restart_forwarder()
+                time.sleep(0.5)
+            except Exception:
+                # Preserve the real validator result and raw failure evidence;
+                # a missing forwarder is reported by the official result path.
+                pass
+        # OOB startup deliberately sets the controller's observation mode to
+        # NONE while MobileGPT owns Accessibility.  Switch only the validator
+        # read back to the official forest path after the client is finished.
+        if controller is not None:
+            try:
+                from android_world.env import android_world_controller
+
+                controller._a11y_method = (  # pylint: disable=protected-access
+                    android_world_controller.A11yMethod.A11Y_FORWARDER_APP
+                )
+            except Exception:
+                pass
         reward = float(task.is_successful(env))
         probe_path = output / "protocol_probe.json"
         try:
@@ -2611,7 +2989,7 @@ def run_mobilegpt_client(
             "goal": official_instruction,
             "requested_instruction": instruction,
             "official_task_instruction": official_instruction,
-            "task_params": task_params,
+            "task_params": _json_safe(task_params),
             "task_params_sha256": hashlib.sha256(
                 json.dumps(
                     task_params,
@@ -2872,9 +3250,10 @@ def run_appagent_executor(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward one task to an official baseline")
-    parser.add_argument(
-        "--baseline", choices=("mobilegpt", "appagent"), default="mobilegpt"
-    )
+    # AndroidWorld exposes MobileGPT as the only official external baseline.
+    # AppAgent remains historical code/evidence but is intentionally not a
+    # runnable experiment route.
+    parser.add_argument("--baseline", choices=("mobilegpt",), default="mobilegpt")
     parser.add_argument("--root")
     parser.add_argument("--serial", default="")
     parser.add_argument("--adb", default="adb")
@@ -2902,6 +3281,12 @@ def main() -> int:
     )
     parser.add_argument("--server-log", default="")
     args = parser.parse_args()
+    # Keep the external client boundary on the same formal protocol as the
+    # AndroidWorld runner; command-line variants are not experiment variants.
+    args.task_seed = TASK_SEED
+    args.max_steps = MAX_STEPS
+    args.timeout = float(TASK_DEADLINE_SEC)
+    os.environ["MOBILEGPT_CHAT_MODEL"] = require_formal_model()
     if args.baseline == "mobilegpt":
         required = {
             "root": args.root,
@@ -2933,37 +3318,6 @@ def main() -> int:
             handshake_timeout_sec=args.handshake_timeout_sec,
             server_log_path=args.server_log,
         )
-    required = {
-        "executor": args.executor,
-        "app-name": args.app_name,
-        "serial": args.serial,
-        "workspace": args.workspace,
-        "output": args.output,
-        "task": args.task,
-        "android-world-root": args.android_world_root,
-    }
-    missing = [name for name, value in required.items() if not str(value or "").strip()]
-    if missing:
-        parser.error("appagent arguments required: " + ",".join(missing))
-    return run_appagent_executor(
-        python_executable=sys.executable,
-        executor=args.executor,
-        app_name=args.app_name,
-        serial=args.serial,
-        workspace=args.workspace,
-        goal=args.goal,
-        timeout_sec=args.timeout,
-        android_world_root=args.android_world_root,
-        task_name=args.task,
-        task_params_json=args.task_params_json,
-        task_seed=args.task_seed,
-        console_port=args.console_port,
-        grpc_port=args.grpc_port,
-        adb_path=args.adb,
-        output_root=args.output,
-        perform_emulator_setup=not args.no_perform_emulator_setup,
-        max_steps=args.max_steps,
-    )
 
 
 if __name__ == "__main__":
