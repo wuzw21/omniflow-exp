@@ -12,7 +12,6 @@ from omniflow.vlm.gui import (
     build_model_turn_request,
     parse_model_turn_response,
 )
-from omniflow.vlm.guidance import resolve_step_guidance
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import LLMUsageTracker
 
@@ -38,7 +37,6 @@ class VLMPlanner:
         client: Any | None = None,
         transport: ModelTurnTransport | None = None,
         target_package_name: str = "",
-        step_skill_guidance: str = "",
         max_steps: int = DEFAULT_MAX_STEPS,
         metadata_sink: MetadataSink | None = None,
     ):
@@ -49,7 +47,6 @@ class VLMPlanner:
             raise ValueError("planner_model_required")
         self.timeout = float(timeout)
         self.target_package_name = str(target_package_name).strip()
-        self.step_skill_guidance = str(step_skill_guidance).strip()
         self.max_steps = max(1, int(max_steps))
         self._client = client
         self._transport = transport
@@ -73,37 +70,30 @@ class VLMPlanner:
         state = planner_state(observation)
         installed_app_catalog = dict(installed_apps or {})
         validation_error = ""
-        retry_tool_name = ""
         rejected_tool_call: dict[str, Any] | None = None
-        lightweight_retry = False
         self._metadata.clear()
         self._rejected_tool_calls.clear()
         metadata: dict[str, Any] = {}
 
         for attempt in range(_MODEL_TOOL_CALL_ATTEMPTS):
             self._turn_index += 1
-            guidance = resolve_step_guidance(goal, self.step_skill_guidance)
             request = build_model_turn_request(
                 goal=str(goal),
                 model=self.model,
                 state=state,
                 target_package_name=self.target_package_name,
-                step_skill_guidance=guidance,
                 installed_apps=installed_app_catalog,
                 functions=functions,
                 max_steps=self.max_steps,
                 turn_index=self._turn_index,
                 validation_error=validation_error,
-                retry_tool_name=retry_tool_name,
                 rejected_tool_call=rejected_tool_call,
-                lightweight_retry=lightweight_retry,
             )
             envelope = {
                 "goal": str(goal),
                 "model": self.model,
                 "state": state,
                 "target_package_name": self.target_package_name,
-                "step_skill_guidance": guidance,
                 "max_steps": self.max_steps,
                 "request": request,
             }
@@ -145,24 +135,10 @@ class VLMPlanner:
                     )
                     raise
                 validation_error = str(error)
-                tool_not_visible = error.code.startswith(
-                    "model_turn_tool_not_visible:"
-                )
-                retry_tool_name = "" if tool_not_visible else error.tool_name
                 rejected_tool_call = {
                     "tool": error.tool_name or None,
                     "arguments": error.arguments,
                 }
-                # Argument repair can be constrained to the rejected tool.  An
-                # empty or unknown tool name is a selection failure, so the model
-                # must retain the screenshot, projected UI, and complete tool set.
-                grounding_retry = error.code.startswith(
-                    (
-                        "model_target_",
-                        "visual_target_",
-                    )
-                )
-                lightweight_retry = not tool_not_visible and not grounding_retry
         else:
             raise AssertionError("unreachable")
 
@@ -269,6 +245,7 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         for key, value in observation.extra.items()
         if key
         in {
+            "planner_feedback",
             "previous_action_error",
             "recent_actions",
             "execution_history",

@@ -267,7 +267,6 @@ class JsonLineBridge:
             model=model,
             transport=model_turn_transport,
             target_package_name=str(body.get("target_package_name") or ""),
-            step_skill_guidance=str(body.get("step_skill_guidance") or ""),
             max_steps=max_steps,
             metadata_sink=publish_planner_metadata,
         )

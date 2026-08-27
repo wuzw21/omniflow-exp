@@ -23,6 +23,7 @@ from omniflow.vlm_coordinates import (
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
 _PLANNER_CONTEXT_KEYS = (
+    "planner_feedback",
     "previous_action_error",
     "recent_actions",
     "execution_history",
@@ -52,13 +53,10 @@ def build_model_turn_request(
     max_steps: int,
     turn_index: int,
     target_package_name: str = "",
-    step_skill_guidance: str = "",
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
     validation_error: str = "",
-    retry_tool_name: str = "",
     rejected_tool_call: dict[str, Any] | None = None,
-    lightweight_retry: bool = False,
 ) -> dict[str, Any]:
     text = _turn_text(
         goal=goal,
@@ -66,15 +64,12 @@ def build_model_turn_request(
         max_steps=max_steps,
         turn_index=turn_index,
         target_package_name=target_package_name,
-        step_skill_guidance=step_skill_guidance,
         validation_error=validation_error,
         rejected_tool_call=rejected_tool_call,
-        lightweight_retry=lightweight_retry,
         xml_text=str(state.get("xml") or ""),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    include_image = not lightweight_retry and _state_has_screenshot(state)
-    current_image = _state_image_data_uri(state) if include_image else ""
+    current_image = _state_image_data_uri(state) if _state_has_screenshot(state) else ""
     if current_image:
         content.append(
             {
@@ -91,14 +86,6 @@ def build_model_turn_request(
         display,
     )
     tools.extend(function_tools(functions, include_summary=True))
-    if retry_tool_name:
-        tools = [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("name") == retry_tool_name
-        ]
-        if len(tools) != 1:
-            raise ValueError(f"model_turn_retry_tool_not_visible:{retry_tool_name}")
     request: dict[str, Any] = {
         "model": str(model),
         "messages": [
@@ -373,10 +360,8 @@ def _turn_text(
     max_steps: int,
     turn_index: int,
     target_package_name: str,
-    step_skill_guidance: str,
     validation_error: str,
     rejected_tool_call: dict[str, Any] | None,
-    lightweight_retry: bool,
     xml_text: str,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
@@ -403,8 +388,6 @@ def _turn_text(
     ]
     if target_package_name:
         lines.append(f"Target package: {target_package_name}")
-    if step_skill_guidance.strip() and not lightweight_retry:
-        lines.extend(("Task guidance:", step_skill_guidance.strip()))
     if validation_error.strip():
         lines.extend(
             (
@@ -448,10 +431,12 @@ def _turn_text(
         else None
     )
     execution_history = ""
-    if not lightweight_retry and isinstance(extra, dict) and extra:
+    planner_feedback = ""
+    if isinstance(extra, dict) and extra:
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
+        planner_feedback = str(context.pop("planner_feedback", "") or "").strip()
         recent_actions = context.pop("recent_actions", None)
         if context.get("previous_action_error") or recent_actions:
             lines.append(
@@ -465,15 +450,15 @@ def _turn_text(
                     json.dumps(context, ensure_ascii=False, separators=(",", ":")),
                 )
             )
-    if not lightweight_retry:
-        lines.extend(("Past Actions:", execution_history or "0. No action yet."))
-    if not lightweight_retry:
-        lines.extend(
-            (
-                "Current accessibility observation:",
-                xml_text or "<none>",
-            )
+    lines.extend(("Past Actions:", execution_history or "0. No action yet."))
+    if planner_feedback:
+        lines.extend(("Planner feedback:", planner_feedback))
+    lines.extend(
+        (
+            "Current accessibility observation:",
+            xml_text or "<none>",
         )
+    )
     lines.append(
         "Review the complete Past Actions and current UI. If they indicate that "
         "the Goal has been completed, choose `finished`; otherwise choose exactly "

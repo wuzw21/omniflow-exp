@@ -602,22 +602,29 @@ class OmniFlow:
                             )
                         continue
             observation = await self._ensure_planner_screenshot(observation)
-            planner_goal = (
-                _direct_function_fallback_goal(
-                    goal,
+            planner_feedback = (
+                _function_fallback_feedback(
                     function_session.bound,
                     function_session.fallback_context,
                 )
                 if fallback_this_turn
                 and function_session.bound is not None
-                else goal
+                else ""
+            )
+            planner_observation = (
+                _with_observation_extra(
+                    observation,
+                    planner_feedback=planner_feedback,
+                )
+                if planner_feedback
+                else observation
             )
             try:
                 planned_call = ToolCall.from_value(
                     await _await(
                         self.planner.one_step_tool_call(
-                            planner_goal,
-                            observation,
+                            goal,
+                            planner_observation,
                             planner_functions,
                             dict(self.installed_apps),
                         )
@@ -1166,18 +1173,14 @@ def _with_observation_extra(
     )
 
 
-def _direct_function_fallback_goal(
-    goal: str,
+def _function_fallback_feedback(
     function: Function,
     context: dict[str, Any] | None,
 ) -> str:
-    base_goal = str(goal or "").strip() or function.description or function.name
     details = dict(context or {})
     lines = [
-        base_goal,
-        "",
-        "Function fallback:",
-        "The Function stopped at one blocked transition. From the current observation, choose exactly one next action that completes only this transition. The runtime checks whether the Function can resume after every action.",
+        f'Function "{function.name}" stopped at one transition.',
+        "Choose exactly one next action for that transition from the current screenshot and accessibility state. The runtime will then try to resume the Function.",
     ]
     expected_action = str(details.get("expected_action") or "").strip()
     if expected_action:
