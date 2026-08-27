@@ -151,11 +151,11 @@
       "kind": "decision",
       "ui_label": {"zh_cn": "完成", "en_us": "Finished"},
       "description": {"zh_cn": "仅当当前页面或上一轮工具结果直接证明用户目标已经完成时结束。", "en_us": "End only when the current page or previous tool result directly proves the user's goal is complete."},
-      "prompt_guide": {"zh_cn": "- finished(content?): 仅在当前页面或上一轮工具结果直接证明目标完成时调用；不确定就继续执行下一步。", "en_us": "- finished(content?): Call only when the current page or previous tool result directly proves completion; if uncertain, continue with the next action."},
+      "prompt_guide": {"zh_cn": "- finished(content): 仅在当前页面或上一轮工具结果直接证明目标完成时调用，并提供非空的完成说明；不确定就继续执行下一步。", "en_us": "- finished(content): Call only when the current page or previous tool result directly proves completion, and provide a non-empty completion note; if uncertain, continue with the next action."},
       "replayable": false,
       "args_template": {"content": "Done"},
       "args": [
-        {"name": "content", "type": "string", "description": {"zh_cn": "给用户的最终完成说明，可为空。", "en_us": "Final completion note for the user. May be empty."}}
+        {"name": "content", "type": "string", "required": true, "description": {"zh_cn": "给用户的非空最终完成说明。", "en_us": "Required non-empty final completion note for the user."}}
       ]
     },
     {

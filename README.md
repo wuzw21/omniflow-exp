@@ -97,4 +97,7 @@ OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`，页面�
 V10 `omnitransfer_point_conditioned_sparse_graph_v10` 模型的归一化 1024D
 page-attention readout；不维护第二套页面编码器或旧 64D/512D 表示。
 
+Online Planner 仅通过 canonical 工具 Schema 输出一个动作；`finished`
+必须带非空 `content`，作为已完成目标的最终说明。
+
 架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。
