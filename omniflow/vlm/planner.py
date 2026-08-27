@@ -270,12 +270,9 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         if key
         in {
             "previous_action_error",
-            "previous_action",
             "recent_actions",
             "execution_history",
-            "function_execution",
             "user_input",
-            "transfer_candidates_hint",
         }
     }
     return {key: value for key, value in state.items() if value is not None}

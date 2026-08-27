@@ -23,18 +23,11 @@ DEFAULT_MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
 DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 
 GUI_AGENT_RULES = (
-    "Accessibility XML is the authoritative evidence for visible controls, state, and bounds.",
-    "Choose exactly one provided tool call for the immediate next action on the latest observed screen; if the final target is absent, use a visible navigation control and never guess future layout.",
-    "For click and input_text, use the current screenshot and accessibility observation together, then return the visible target point as normalized 0..1000 coordinates.",
-    "Never reuse coordinates from an earlier screen. If the target is not visible in the current screenshot, choose wait or a visible navigation control instead of guessing.",
-    "After open_app, verify Current package and the latest observation before touching app controls. If a system permission, settings, launcher, or loading surface is visible, act only on its visible control or wait for the requested app; do not apply coordinates from the requested app to that surface.",
-    "Functions are verified multi-step action paths in the same action space as native GUI tools. When a Function matches the task, prefer it because it can complete several actions quickly; if it fails, inspect the result and continue with another Function or native GUI action.",
-    "Before every action, inspect the action history or RunLog for a repeated action or alternating action sequence; if it made no progress on the latest screen, do not repeat the loop—choose a different visible control or path, or stop if none remains.",
-    "Correct previous action errors from the latest screen; after OmniTransfer failure, choose a fresh action and never reuse source-device coordinates.",
-    "For switches and checkboxes, checked=false means off and checked=true means on; never toggle a control that already matches the goal.",
-    "Prefer direct search or text input over browsing long menus, history, suggestions, or repeated swipes when a visible search path exists.",
-    "When several visible controls mention the goal, prefer the direct control whose label or summary explicitly says it will cause the requested state change; avoid browse-only controls such as history, saved items, or See all unless the direct control is unavailable.",
-    "Read the complete action history and current accessibility observation before choosing the next action. If they indicate that the Goal has been completed, choose finished and briefly state the outcome; otherwise choose exactly one next action.",
+    "Observe the latest screenshot and accessibility state before every action.",
+    "Choose exactly one provided tool call for the immediate next action; never guess a control that is not visible in the current observation.",
+    "For click, input_text, long_press, and swipe, return current-screen normalized 0..1000 coordinates and never reuse source-device or earlier-screen coordinates.",
+    "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
+    "Use the action history to understand completed work. Choose finished only when the goal is complete; otherwise choose one next action.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (

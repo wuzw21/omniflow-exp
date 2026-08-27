@@ -14,10 +14,6 @@ from omniflow.core.model import Function, ToolCall
 from omniflow.core.schemas import canonicalize_action, vlm_action_tools
 from omniflow.functions.artifact import validate_arguments
 from omniflow.vlm.tool_arguments import load_tool_arguments
-from omniflow.vlm.ui_projection import (
-    UIProjection,
-    project_ui,
-)
 from omniflow.vlm_coordinates import (
     display_size,
     relative_args_to_canonical,
@@ -28,12 +24,9 @@ SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
 
 _PLANNER_CONTEXT_KEYS = (
     "previous_action_error",
-    "previous_action",
     "recent_actions",
     "execution_history",
-    "function_execution",
     "user_input",
-    "transfer_candidates_hint",
 )
 
 
@@ -67,11 +60,6 @@ def build_model_turn_request(
     rejected_tool_call: dict[str, Any] | None = None,
     lightweight_retry: bool = False,
 ) -> dict[str, Any]:
-    projection = (
-        UIProjection("<omitted>", 0, 0, 0)
-        if lightweight_retry
-        else project_ui(str(state.get("xml") or ""), goal)
-    )
     text = _turn_text(
         goal=goal,
         state=state,
@@ -82,7 +70,7 @@ def build_model_turn_request(
         validation_error=validation_error,
         rejected_tool_call=rejected_tool_call,
         lightweight_retry=lightweight_retry,
-        projection=projection,
+        xml_text=str(state.get("xml") or ""),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     include_image = not lightweight_retry and _state_has_screenshot(state)
@@ -267,7 +255,6 @@ def parse_model_turn_response(
     rejected_arguments = dict(arguments)
     summary = str(arguments.pop("summary", "") or "").strip()
     resolved_model = str(value.get("resolved_model") or requested_model).strip()
-    adapter_metadata = None
     coordinate_metadata = None
     try:
         if tool in function_catalog:
@@ -303,21 +290,6 @@ def parse_model_turn_response(
             # provider.  Do not reinterpret malformed coordinate shapes based on
             # a provider/model name; invalid arguments must be rejected and sent
             # back to the planner for correction.
-            adapter_metadata = None
-            if tool in {"click", "input_text"}:
-                projection = project_ui(
-                    str((state or {}).get("xml") or ""),
-                    goal,
-                )
-                adapter_metadata = {
-                    **dict(adapter_metadata or {}),
-                    "ui_projection": {
-                        "candidate_count": projection.candidate_count,
-                        "selected_count": projection.selected_count,
-                        "visual_context_required": projection.visual_context_required,
-                        "visual_candidate_count": projection.visual_candidate_count,
-                    },
-                }
             arguments, coordinate_metadata = relative_args_to_canonical(
                 tool=tool,
                 args=arguments,
@@ -340,8 +312,6 @@ def parse_model_turn_response(
             "name": "json_repair",
             "applied": True,
         }
-    if adapter_metadata is not None:
-        metadata["model_adapter"] = adapter_metadata
     if coordinate_metadata is not None:
         metadata["coordinate_conversion"] = coordinate_metadata
     thinking = str(value.get("reasoning") or "").strip()
@@ -407,7 +377,7 @@ def _turn_text(
     validation_error: str,
     rejected_tool_call: dict[str, Any] | None,
     lightweight_retry: bool,
-    projection: UIProjection,
+    xml_text: str,
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     width, height = display_size(display)
@@ -422,9 +392,10 @@ def _turn_text(
         f"Current activity: {state.get('activity_name') or ''}",
         f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
         (
-            "Click/input contract: select one exact A-reference from a v=Axx line. "
-            "Lines without v are evidence only. The runtime clicks the node center. Swipe coordinates "
-            "alone use device-independent 0..1000 values. Example: swipe "
+            "Coordinate contract: for click, input_text, and long_press, return the target point from "
+            "the current screenshot or current accessibility bounds as normalized x/y numbers from "
+            "0..1000. Swipe coordinates "
+            "use the same current-screen scale. Example: swipe "
             '{"summary":"Scroll up","direction":"up","x1":'
             f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
             "}."
@@ -481,17 +452,11 @@ def _turn_text(
         context = dict(extra)
         context.pop("installed_apps", None)
         execution_history = str(context.pop("execution_history", "") or "").strip()
-        context.pop("function_execution", None)
-        context.pop("previous_action", None)
         recent_actions = context.pop("recent_actions", None)
-        transfer_hint = context.pop("transfer_candidates_hint", None)
         if context.get("previous_action_error") or recent_actions:
             lines.append(
-                "Inspect the action history, observed results, and any previous "
-                "error before selecting again. The latest accessibility state is "
-                "authoritative. Do not repeat the same action or no-progress "
-                "sequence; choose a different visible control or path, finish, "
-                "or abort."
+                "Use the action history and any previous error as context, then "
+                "choose the next action from the latest screenshot and accessibility observation."
             )
         if context:
             lines.extend(
@@ -500,42 +465,15 @@ def _turn_text(
                     json.dumps(context, ensure_ascii=False, separators=(",", ":")),
                 )
             )
-        if transfer_hint:
-            lines.extend(
-                (
-                    "OmniTransfer candidate hint (ranked; verify against the current screenshot):",
-                    json.dumps(transfer_hint, ensure_ascii=False, separators=(",", ":")),
-                )
-            )
     if not lightweight_retry:
         lines.extend(("Past Actions:", execution_history or "0. No action yet."))
     if not lightweight_retry:
         lines.extend(
             (
-                f"Relevant UI elements ({projection.selected_count}/{projection.candidate_count}):",
-                projection.text,
+                "Current accessibility observation:",
+                xml_text or "<none>",
             )
         )
-        if projection.visual_context_required:
-            lines.extend(
-                (
-                    "This screen contains a repeated or unlabeled action surface. "
-                    "Use the current screenshot and accessibility bounds together, "
-                    "then return the visible target's current-screen relative x/y "
-                    "coordinates. Never reuse a point from an earlier screen.",
-                )
-            )
-        if any(
-            '"d":"Delete"' in line
-            or '"d":"Save"' in line
-            or '"d":"Send"' in line
-            for line in projection.text.splitlines()
-        ):
-            lines.append(
-                "When a labeled control directly performs the named goal effect "
-                "(for example Delete, Save, or Send), select it before generic "
-                "navigation such as More options."
-            )
     lines.append(
         "Review the complete Past Actions and current UI. If they indicate that "
         "the Goal has been completed, choose `finished`; otherwise choose exactly "

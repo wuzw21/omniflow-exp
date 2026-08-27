@@ -51,6 +51,7 @@ class _FunctionSession:
     bound: Function | None = None
     failed: bool = False
     failed_step_index: int | None = None
+    fallback_context: dict[str, Any] | None = None
     fallback_observations: list[Observation] = field(default_factory=list)
     completed: Function | None = None
     invocation_summary: str = ""
@@ -72,6 +73,7 @@ class _FunctionSession:
             self.excluded_ids.add(self.bound.id)
         self.failed = False
         self.failed_step_index = None
+        self.fallback_context = None
         self.fallback_observations.clear()
         self.resume_trigger = None
 
@@ -81,6 +83,11 @@ class _FunctionSession:
         self.failed = True
         self.failed_step_index = _optional_step_index(
             replay.detail.get("failed_step_index")
+        )
+        self.fallback_context = _function_fallback_context(
+            replay.detail.get("trace"),
+            function=self.bound,
+            failed_step_index=self.failed_step_index,
         )
         self.fallback_observations = (
             [observation] if self.failed_step_index is not None else []
@@ -226,7 +233,7 @@ class OmniFlow:
             if selected_function is None:
                 function_resolution["status"] = "unknown_selection"
             elif direct_tool_call is not None and not goal:
-                goal = _direct_function_fallback_goal(
+                goal = _direct_function_goal(
                     selected_function,
                     resolved_arguments,
                 )
@@ -277,16 +284,6 @@ class OmniFlow:
             if not replay.success:
                 last_error = replay.error or "function_replay_failed"
                 function_session.mark_failed(replay, observation)
-                transfer_hint = _transfer_candidates_hint(
-                    replay.detail.get("trace")
-                    if isinstance(replay.detail, dict)
-                    else None
-                )
-                if transfer_hint:
-                    observation = _with_observation_extra(
-                        observation,
-                        transfer_candidates_hint=transfer_hint,
-                    )
                 function_resolution["failed_step_index"] = (
                     function_session.failed_step_index
                 )
@@ -393,7 +390,6 @@ class OmniFlow:
         previous_action_error: str | None = (
             last_error if function_session.failed else None
         )
-        previous_action: Action | None = None
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
         while runtime_steps_used < self.config.runtime.max_steps:
@@ -429,26 +425,11 @@ class OmniFlow:
                 if trace
                 else None
             )
-            evidence_function = function_session.completed or (
-                function_session.bound if function_session.failed else None
-            )
-            function_execution = (
-                _function_execution_evidence(
-                    trace,
-                    function=evidence_function,
-                    final_observation=observation,
-                    succeeded=function_session.completed is not None,
-                    invocation_summary=function_session.invocation_summary,
-                )
-                if evidence_function is not None
-                else None
-            )
             if (
                 previous_action_error
                 or recent_actions
                 or pending_user_input
                 or execution_history
-                or function_execution
             ):
                 observation = Observation(
                     xml=observation.xml,
@@ -458,20 +439,12 @@ class OmniFlow:
                     extra={
                         **dict(observation.extra),
                         "previous_action_error": previous_action_error,
-                        "previous_action": previous_action.to_dict()
-                        if previous_action is not None
-                        else None,
                         **(
                             {"recent_actions": recent_actions} if recent_actions else {}
                         ),
                         **(
                             {"execution_history": execution_history}
                             if execution_history
-                            else {}
-                        ),
-                        **(
-                            {"function_execution": function_execution}
-                            if function_execution
                             else {}
                         ),
                         **(
@@ -624,30 +597,19 @@ class OmniFlow:
                                 replay.error or "function_replay_failed"
                             )
                             function_session.mark_failed(replay, observation)
-                            transfer_hint = _transfer_candidates_hint(
-                                replay.detail.get("trace")
-                                if isinstance(replay.detail, dict)
-                                else None
-                            )
-                            if transfer_hint:
-                                observation = _with_observation_extra(
-                                    observation,
-                                    transfer_candidates_hint=transfer_hint,
-                                )
                             previous_action_error = (
                                 replay.error or "function_replay_failed"
                             )
                         continue
             observation = await self._ensure_planner_screenshot(observation)
-            fallback_arguments = function_resolution.get("arguments")
             planner_goal = (
                 _direct_function_fallback_goal(
+                    goal,
                     function_session.bound,
-                    fallback_arguments,
+                    function_session.fallback_context,
                 )
                 if fallback_this_turn
                 and function_session.bound is not None
-                and isinstance(fallback_arguments, dict)
                 else goal
             )
             try:
@@ -742,16 +704,6 @@ class OmniFlow:
                     previous_action_error = None
                 else:
                     function_session.mark_failed(replay, observation)
-                    transfer_hint = _transfer_candidates_hint(
-                        replay.detail.get("trace")
-                        if isinstance(replay.detail, dict)
-                        else None
-                    )
-                    if transfer_hint:
-                        observation = _with_observation_extra(
-                            observation,
-                            transfer_candidates_hint=transfer_hint,
-                        )
                     previous_action_error = replay.error or "function_replay_failed"
                 continue
             try:
@@ -759,18 +711,9 @@ class OmniFlow:
             except ValueError as error:
                 previous_action_error = str(error)
                 continue
-            if _repeats_no_progress_action(
-                planned,
-                previous_action=previous_action,
-                previous_action_error=previous_action_error,
-            ):
-                previous_action = planned
-                previous_action_error = "repeated_no_progress_action_rejected"
-                continue
             if planned.tool == "finished":
                 finished_content = str(planned.args.get("content") or "").strip()
                 if not finished_content:
-                    previous_action = planned
                     previous_action_error = "finished_content_required"
                     continue
                 return finish(
@@ -809,7 +752,6 @@ class OmniFlow:
                 question = str(planned.args.get("value") or "").strip()
                 if not question:
                     previous_action_error = "info_question_required"
-                    previous_action = planned
                     continue
                 try:
                     pending_user_input = str(
@@ -848,12 +790,10 @@ class OmniFlow:
                         planner_diagnostics=planner_diagnostics,
                     )
                 previous_action_error = None
-                previous_action = None
                 continue
             if planned.tool == "get_state":
                 observation = await self._observe(screenshot=True)
                 previous_action_error = None
-                previous_action = None
                 continue
             step = await execute_robust_action(
                 planned,
@@ -873,7 +813,6 @@ class OmniFlow:
             actions_executed += step.actions_executed
             if not step.success:
                 previous_action_error = step.error or "fallback_action_failed"
-                previous_action = planned
                 continue
             observation = step.after or observation
             if (
@@ -931,7 +870,6 @@ class OmniFlow:
                         function_session.mark_completed()
                         last_error = "function_replay_completed_e2e_unverified"
                         previous_action_error = None
-                        previous_action = None
                     else:
                         resume_event["status"] = "failed"
                         resume_event["error"] = (
@@ -940,14 +878,8 @@ class OmniFlow:
                         last_error = replay.error or "function_replay_failed"
                         function_session.mark_failed(replay, observation)
                         previous_action_error = last_error
-                        previous_action = None
                     continue
-            if _same_observation(step.before, step.after):
-                previous_action_error = "action_completed_without_state_change"
-                previous_action = planned
-            else:
-                previous_action_error = None
-                previous_action = None
+            previous_action_error = None
 
         return finish(
             False,
@@ -986,7 +918,12 @@ class OmniFlow:
         refreshed = await self._observe(screenshot=True)
         preserved = {
             key: observation.extra[key]
-            for key in ("transfer_candidates_hint", "previous_action_error")
+            for key in (
+                "previous_action_error",
+                "recent_actions",
+                "execution_history",
+                "user_input",
+            )
             if observation.extra.get(key) is not None
         }
         if not preserved:
@@ -1205,14 +1142,12 @@ def _action_from_tool_call(tool_call: ToolCall) -> Action:
     )
 
 
-def _direct_function_fallback_goal(
+def _direct_function_goal(
     function: Function,
     arguments: dict[str, Any],
 ) -> str:
     return (
-        f'Continue Function "{function.name}" from the current screen after '
-        "offline replay could not map its next step. Do not repeat actions that "
-        "already succeeded. "
+        f'Complete Function "{function.name}". '
         f"Requested arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}. "
         f"{function.description}"
     ).strip()
@@ -1231,25 +1166,80 @@ def _with_observation_extra(
     )
 
 
-def _transfer_candidates_hint(
+def _direct_function_fallback_goal(
+    goal: str,
+    function: Function,
+    context: dict[str, Any] | None,
+) -> str:
+    base_goal = str(goal or "").strip() or function.description or function.name
+    details = dict(context or {})
+    lines = [
+        base_goal,
+        "",
+        "Function fallback:",
+        "The Function stopped at one blocked transition. From the current observation, choose exactly one next action that completes only this transition. The runtime checks whether the Function can resume after every action.",
+    ]
+    expected_action = str(details.get("expected_action") or "").strip()
+    if expected_action:
+        lines.append(f"Expected action: {expected_action}")
+    source_target = details.get("source_target")
+    if isinstance(source_target, dict) and source_target:
+        lines.append(
+            "Source target: "
+            + json.dumps(source_target, ensure_ascii=False, separators=(",", ":"))
+        )
+    candidates = details.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        lines.append(
+            "Likely current targets (ranked; verify against the current screenshot): "
+            + json.dumps(candidates, ensure_ascii=False, separators=(",", ":"))
+        )
+    return "\n".join(lines)
+
+
+def _function_fallback_context(
     trace: Any,
     *,
+    function: Function | None = None,
+    failed_step_index: int | None = None,
     limit: int = 5,
 ) -> dict[str, Any] | None:
+    expected_action = ""
+    if (
+        function is not None
+        and failed_step_index is not None
+        and 0 <= failed_step_index < len(function.steps)
+    ):
+        expected_action = function.steps[failed_step_index].action.tool
     if not isinstance(trace, list):
-        return None
+        return {"expected_action": expected_action} if expected_action else None
     for item in reversed(trace):
         if not isinstance(item, dict):
             continue
+        action = item.get("action")
+        if not expected_action and isinstance(action, dict):
+            expected_action = str(action.get("tool") or "").strip()
         metadata = item.get("metadata")
         transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
         if not isinstance(transfer, dict):
             continue
+        source = transfer.get("source")
+        source_target = (
+            {
+                key: source[key]
+                for key in ("text", "content_desc", "class", "resource_id")
+                if source.get(key) not in (None, "", [])
+            }
+            if isinstance(source, dict)
+            else {}
+        )
         candidates = transfer.get("candidates")
-        if not isinstance(candidates, list) or not candidates:
-            continue
         hint_candidates: list[dict[str, Any]] = []
-        for candidate in candidates[: max(1, int(limit))]:
+        for candidate in (
+            candidates[: max(1, int(limit))]
+            if isinstance(candidates, list)
+            else ()
+        ):
             if not isinstance(candidate, dict):
                 continue
             hint = {
@@ -1269,37 +1259,13 @@ def _transfer_candidates_hint(
                 if candidate.get(key) is not None
             }
             hint_candidates.append(hint)
-        if not hint_candidates:
-            return None
-        return {
-            "reason": "OmniTransfer candidate hint after a recoverable mapping rejection.",
-            "mapping_confidence": transfer.get("mapping_confidence"),
+        context = {
+            "expected_action": expected_action,
+            "source_target": source_target,
             "candidates": hint_candidates,
         }
-    return None
-
-
-def _repeats_no_progress_action(
-    action: Action,
-    *,
-    previous_action: Action | None,
-    previous_action_error: str | None,
-) -> bool:
-    if previous_action is None or action != previous_action:
-        return False
-    if action.tool not in {
-        "click",
-        "input_text",
-        "long_press",
-        "open_app",
-        "press_key",
-        "swipe",
-    }:
-        return False
-    return str(previous_action_error or "") in {
-        "action_completed_without_state_change",
-        "repeated_no_progress_action_rejected",
-    }
+        return {key: value for key, value in context.items() if value}
+    return {"expected_action": expected_action} if expected_action else None
 
 
 def _recent_actions(
