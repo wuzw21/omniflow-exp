@@ -246,6 +246,8 @@ def _compact_accessibility_observation(
             if normalized_bounds:
                 row["bounds_0_1000"] = normalized_bounds
             row["actions"] = actions
+            if attributes.get("enabled") == "false":
+                row["enabled"] = False
             for state_name in ("checked", "selected", "focused"):
                 if attributes.get(state_name) == "true":
                     row[state_name] = True
