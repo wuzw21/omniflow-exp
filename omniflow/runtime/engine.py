@@ -459,9 +459,7 @@ class OmniFlow:
                 exclude_function_ids=frozenset(function_session.excluded_ids),
             )
             recalled_functions = recall_result.functions
-            planner_functions = recalled_functions[
-                : max(0, int(self.config.runtime.max_function_tools))
-            ]
+            planner_functions = recalled_functions
             planner_function_catalog = {
                 function.id: function for function in planner_functions
             }
