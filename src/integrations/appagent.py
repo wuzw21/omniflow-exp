@@ -1332,7 +1332,7 @@ def seal_appagent_memory(
         if "thinking" in row and row.get("thinking") != {"type": FORMAL_THINKING}:
             raise ValueError("appagent_document_thinking_mismatch")
         endpoint_value = str(row.get("endpoint") or "").strip()
-        if endpoint_value and endpoint_value != _chat_completions_url(FORMAL_MODEL_BASE_URL):
+        if endpoint_value and endpoint_value != _appagent_chat_completions_url(FORMAL_MODEL_BASE_URL):
             raise ValueError("appagent_document_endpoint_mismatch")
     if set(usage["models"]) != {normalized_document_model}:
         raise ValueError(

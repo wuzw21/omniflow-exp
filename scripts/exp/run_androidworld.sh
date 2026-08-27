@@ -18,6 +18,10 @@ if [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
 fi
 
 export OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND="oob"
+# The experiment has one OOB release artifact.  Publish its repository-
+# relative location at the only process boundary so AndroidWorld lifecycle
+# code, baselines, and OmniFlow all install/use the same physical layer.
+export OMNIFLOW_OOB_APK="$repo/data/runtime/oob/OOB-Experiment.apk"
 export PYTHONPATH="$repo:$repo/src${PYTHONPATH:+:$PYTHONPATH}"
 # Keep runtime helper binaries (notably ffmpeg used by audio/Retro tasks)
 # discoverable alongside the canonical experiment Python environment.

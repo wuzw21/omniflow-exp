@@ -1195,6 +1195,8 @@ def _configure_mobilegpt_server(
             )
     if normalized_embedding and utils_path.is_file():
         source = utils_path.read_text(encoding="utf-8")
+        if "import httpx" not in source:
+            source = "import httpx\n" + source
         if "def write_omniflow_mobilegpt_event" not in source:
             source += (
                 "\n\nimport time\n\ndef write_omniflow_mobilegpt_event(event):\n"
@@ -1222,6 +1224,7 @@ def _configure_mobilegpt_server(
             '        api_key=os.getenv("MOBILEGPT_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY"),\n'
             '        base_url=os.getenv("MOBILEGPT_EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL"),\n'
             '        max_retries=0,\n'
+            '        http_client=httpx.Client(trust_env=False),\n'
             '    )\n'
             '    embedding_timeout = max(1.0, float(os.getenv("MOBILEGPT_EMBEDDING_TIMEOUT_SEC", "15")))\n',
             1,
@@ -1420,6 +1423,8 @@ def _configure_mobilegpt_response_compat(server_root: Path) -> None:
     marker = "# omniflow_mobilegpt_glm_response_compat"
     if marker in source:
         return
+    if "import httpx" not in source:
+        source = "import httpx\n" + source
     replacement = r'''# omniflow_mobilegpt_glm_response_compat
 def _omniflow_message_text(message):
     candidates = (
@@ -1453,6 +1458,7 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
         api_key=os.getenv("MOBILEGPT_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL"),
         max_retries=0,
+        http_client=httpx.Client(trust_env=False),
     )
     request_timeout = max(1.0, float(os.getenv("MOBILEGPT_REQUEST_TIMEOUT_SEC", "20")))
     thinking_mode = os.getenv("MOBILEGPT_THINKING", "disabled").strip()
@@ -1578,7 +1584,10 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
         "completion_rate": 0,
     }
 '''
-    query_pattern = r"\ndef query\(messages, model=\"[^\"]+\", is_list=False\):.*?(?=\n\ndef parse_completion_rate\()"
+    query_pattern = (
+        r"\ndef query\(messages, model=(?:\"[^\"]*\"|None), "
+        r"is_list=False\):.*?(?=\n\ndef parse_completion_rate\()"
+    )
     patched, count = re.subn(
         query_pattern,
         "\n" + replacement.rstrip("\n") + "\n",

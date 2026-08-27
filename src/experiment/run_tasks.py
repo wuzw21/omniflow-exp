@@ -351,70 +351,83 @@ def _ensure_devices_started(
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     source = resolve_path(args.source_run_log)
     output = resolve_path(args.memory)
+    output_preexisting = output.exists()
 
     methods = ("omniflow", "mobilegpt", "appagent") if args.method == "all" else (args.method,)
     if not source.is_file():
         raise FileNotFoundError(f"source_run_log_missing:{source}")
     reports: list[dict[str, Any]] = []
     memories: dict[str, str] = {}
-    for method in methods:
-        method_output = output / method if args.method == "all" else output
-        reused = _reuse_existing_memory(
-            method=method,
-            source=source,
-            memory_root=method_output,
-            task_name=args.task,
-        )
-        if reused is not None:
-            report, memory_path = reused
-            reports.append(report)
-            memories[method] = _relative_output(memory_path)
-            continue
-        if method == "omniflow":
-            report = compile_function_v2(
-                source,
-                method_output,
-                enhance=True,
-                model=FORMAL_MODEL,
-                model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
-                model_base_url=FORMAL_MODEL_BASE_URL,
-            )
-            memory = Path(str(report["store_path"]))
-        elif method == "mobilegpt":
-            if not str(args.mobilegpt_root or "").strip():
-                raise ValueError("conversion_requires_mobilegpt_root:mobilegpt")
-            mobilegpt_root = resolve_path(args.mobilegpt_root)
-            if not mobilegpt_root.is_dir():
-                raise FileNotFoundError(
-                    f"conversion_dependency_missing:mobilegpt:{args.mobilegpt_root}"
-                )
-            report = convert_runlog_to_mobilegpt_bundle(
-                source_run_log=source,
-                mobilegpt_root=mobilegpt_root,
-                output_root=method_output,
-                model=FORMAL_MODEL,
-                source_seed=SOURCE_SEED,
-            )
-            memory = Path(str(report["memory_root"]))
-        elif method == "appagent":
-            if not str(args.appagent_root or "").strip():
-                raise ValueError("conversion_requires_appagent_root:appagent")
-            appagent_root = resolve_path(args.appagent_root)
-            if not appagent_root.is_dir():
-                raise FileNotFoundError(
-                    f"conversion_dependency_missing:appagent:{args.appagent_root}"
-                )
-            report = convert_runlog_to_appagent_memory(
-                source_run_log=source,
-                appagent_root=appagent_root,
+    newly_created_outputs: list[Path] = []
+    try:
+        for method in methods:
+            method_output = output / method if args.method == "all" else output
+            output_was_present = method_output.exists()
+            reused = _reuse_existing_memory(
+                method=method,
+                source=source,
                 memory_root=method_output,
-                model=FORMAL_MODEL,
+                task_name=args.task,
             )
-            memory = Path(str(report["memory_root"]))
-        else:
-            raise ValueError(f"unknown_conversion_method:{method}")
-        reports.append(report)
-        memories[method] = _relative_output(memory)
+            if reused is not None:
+                report, memory_path = reused
+                reports.append(report)
+                memories[method] = _relative_output(memory_path)
+                continue
+            if not output_was_present:
+                newly_created_outputs.append(method_output)
+            if method == "omniflow":
+                report = compile_function_v2(
+                    source,
+                    method_output,
+                    enhance=True,
+                    model=FORMAL_MODEL,
+                    model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
+                    model_base_url=FORMAL_MODEL_BASE_URL,
+                )
+                memory = Path(str(report["store_path"]))
+            elif method == "mobilegpt":
+                if not str(args.mobilegpt_root or "").strip():
+                    raise ValueError("conversion_requires_mobilegpt_root:mobilegpt")
+                mobilegpt_root = resolve_path(args.mobilegpt_root)
+                if not mobilegpt_root.is_dir():
+                    raise FileNotFoundError(
+                        f"conversion_dependency_missing:mobilegpt:{args.mobilegpt_root}"
+                    )
+                report = convert_runlog_to_mobilegpt_bundle(
+                    source_run_log=source,
+                    mobilegpt_root=mobilegpt_root,
+                    output_root=method_output,
+                    model=FORMAL_MODEL,
+                    source_seed=SOURCE_SEED,
+                )
+                memory = Path(str(report["memory_root"]))
+            elif method == "appagent":
+                if not str(args.appagent_root or "").strip():
+                    raise ValueError("conversion_requires_appagent_root:appagent")
+                appagent_root = resolve_path(args.appagent_root)
+                if not appagent_root.is_dir():
+                    raise FileNotFoundError(
+                        f"conversion_dependency_missing:appagent:{args.appagent_root}"
+                    )
+                report = convert_runlog_to_appagent_memory(
+                    source_run_log=source,
+                    appagent_root=appagent_root,
+                    memory_root=method_output,
+                    model=FORMAL_MODEL,
+                )
+                memory = Path(str(report["memory_root"]))
+            else:
+                raise ValueError(f"unknown_conversion_method:{method}")
+            reports.append(report)
+            memories[method] = _relative_output(memory)
+    except BaseException:
+        for candidate in reversed(newly_created_outputs):
+            if candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate)
+        if not output_preexisting and output.is_dir() and not any(output.iterdir()):
+            output.rmdir()
+        raise
 
     if args.method == "all":
         return {

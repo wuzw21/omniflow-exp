@@ -32,6 +32,7 @@ def reuse_metrics(
     actions_executed: int = 0,
     canonical_run: dict[str, Any] | None = None,
     mobilegpt_stats: dict[str, Any] | None = None,
+    appagent_result: dict[str, Any] | None = None,
     source_action_hint: dict[str, Any] | None = None,
     uses_source_action_hints: bool = False,
 ) -> dict[str, Any]:
@@ -79,6 +80,21 @@ def reuse_metrics(
         )
         unit = "memory_lookup"
         evidence = "exact_native_memory_events" if denominator else "unavailable"
+        artifact_used = denominator > 0
+    elif normalized == "appagent":
+        # AppAgent's official protocol consumes the converted demonstration
+        # document, rather than replaying source coordinates or Function
+        # actions.  Keep this metric explicit and scalar so the common result
+        # writer can serialize it without inventing planner-side fields.
+        result = dict(appagent_result or {})
+        document_rounds = max(
+            0,
+            int(result.get("documentation_round_count") or 0),
+        )
+        denominator = 1 if document_rounds > 0 or actions > 0 else 0
+        numerator = denominator
+        unit = "official_demo_document"
+        evidence = "exact_official_demo_document" if denominator else "unavailable"
         artifact_used = denominator > 0
     elif normalized == "t3a_hint":
         hint = dict(source_action_hint or {})

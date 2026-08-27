@@ -2705,7 +2705,33 @@ def _run_official_mobilegpt_authoring(
         # preserving the formal Qwen reasoning mode.
         utils_path = server_root / "utils" / "utils.py"
         utils_source = utils_path.read_text(encoding="utf-8")
+        if "import httpx" not in utils_source:
+            utils_source = "import httpx\n" + utils_source
         utils_source_updated = utils_source.replace(
+            '    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))\n',
+            '    client = OpenAI(\n'
+            '        api_key=os.getenv("MOBILEGPT_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY"),\n'
+            '        base_url=os.getenv("MOBILEGPT_EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL"),\n'
+            '        max_retries=0,\n'
+            '        http_client=httpx.Client(trust_env=False),\n'
+            '    )\n',
+            1,
+        ).replace(
+            '    response = client.embeddings.create(input=[text], model=model, **kwargs)\n',
+            '    response = client.with_options(\n'
+            '        timeout=float(os.getenv("MOBILEGPT_EMBEDDING_TIMEOUT_SEC", "60"))\n'
+            '    ).embeddings.create(input=[text], model=model, **kwargs)\n',
+            1,
+        ).replace(
+            "    client = OpenAI()\n",
+            "    client = OpenAI(\n"
+            "        api_key=os.getenv(\"MOBILEGPT_CHAT_API_KEY\") or os.getenv(\"OPENAI_API_KEY\"),\n"
+            "        base_url=os.getenv(\"MOBILEGPT_CHAT_BASE_URL\") or os.getenv(\"OPENAI_BASE_URL\"),\n"
+            "        max_retries=0,\n"
+            "        http_client=httpx.Client(trust_env=False),\n"
+            "    )\n",
+            1,
+        ).replace(
             "        max_tokens=900,",
             "        max_tokens=int(os.getenv(\"MOBILEGPT_MAX_TOKENS\", \"1800\")),",
             1,
@@ -2729,6 +2755,7 @@ def _run_official_mobilegpt_authoring(
             "MOBILEGPT_THINKING": FORMAL_THINKING,
             "MOBILEGPT_MAX_TOKENS": "2048",
             "MOBILEGPT_REQUEST_TIMEOUT_SEC": "60",
+            "MOBILEGPT_EMBEDDING_TIMEOUT_SEC": "60",
             "MOBILEGPT_EMBEDDING_MODEL": embedding_model,
             "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
             "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
