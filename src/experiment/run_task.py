@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 import datetime
 import json
@@ -1588,7 +1589,7 @@ def seal_mobilegpt_converted_memory(
         "task_name": str(task_name),
         "source_seed": int(source_seed),
         "source_method": source_method,
-        "source_model": "",
+        "source_model": str(source_model or ""),
         "target_package": str(target_package),
         "target_app": str(target_app or target_package),
         "memory": {
@@ -1646,7 +1647,7 @@ def seal_mobilegpt_converted_memory(
         task_name=task_name,
         source_seed=source_seed,
         source_run_log=source_path,
-        expected_model="",
+        expected_model=str(source_model or ""),
         expected_source_method=source_method,
     )
 
@@ -3498,6 +3499,52 @@ def _mobilegpt_server_task_app(memory_app: str, target_package: str) -> str:
     return str(memory_app or "").strip() or str(target_package or "").strip()
 
 
+def _mobilegpt_memory_app_key(
+    memory_root: str | Path,
+    *,
+    memory_app: str,
+    target_package: str,
+    task_name: str,
+) -> str:
+    """Resolve the case-sensitive app directory owned by MobileGPT Memory."""
+
+    root = resolve_path(memory_root)
+    app_directories = sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_dir() and (path / "tasks.csv").is_file()
+        ),
+        key=lambda path: path.name,
+    )
+    requested_keys = tuple(
+        key
+        for key in (
+            str(memory_app or "").strip(),
+            str(target_package or "").strip(),
+            str(target_package or "").strip().rsplit(".", 1)[-1],
+        )
+        if key
+    )
+    for requested_key in requested_keys:
+        for app_directory in app_directories:
+            if app_directory.name.casefold() == requested_key.casefold():
+                return app_directory.name
+    for app_directory in app_directories:
+        try:
+            with (app_directory / "tasks.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                if any(
+                    str(row.get("name") or "").strip() == task_name
+                    for row in csv.DictReader(handle)
+                ):
+                    return app_directory.name
+        except (OSError, csv.Error):
+            continue
+    return _mobilegpt_server_task_app(memory_app, target_package)
+
+
 def _start_background_command(
     spec: CommandSpec,
     *,
@@ -4058,6 +4105,12 @@ def _run_result_mobilegpt(
             or ""
         ).strip()
     )
+    memory_app = _mobilegpt_memory_app_key(
+        source_memory_root,
+        memory_app=target_app,
+        target_package=target_package,
+        task_name=item.task,
+    )
     memory_condition = "empty_cold_start" if cold_start else "provided_memory"
     source_memory_digest, source_memory_file_count = mobilegpt_memory.mobilegpt_memory_digest(
         source_memory_root
@@ -4114,6 +4167,7 @@ def _run_result_mobilegpt(
             "source_runlog_target_inference": source_target,
             "target_package": target_package,
             "target_app": target_app,
+            "memory_app": memory_app,
             "target_source": target_source,
             "target_inputs_read": False,
             "target_observations_read": False,
@@ -4232,7 +4286,7 @@ def _run_result_mobilegpt(
                 # sealed RunLog task path instead of an empty package-named
                 # task database.
                 target_app=_mobilegpt_server_task_app(
-                    target_app,
+                    memory_app,
                     device_target_package,
                 ),
                 target_task_name=args.task,
