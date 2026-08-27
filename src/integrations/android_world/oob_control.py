@@ -29,6 +29,8 @@ OBSERVE_RECEIVER = (
     f"{CONTROL_PACKAGE}/cn.com.omnimind.bot.debug.DebugOmniFlowObserveReceiver"
 )
 OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
+OBSERVE_XML_ATTEMPTS = 4
+OBSERVE_XML_RETRY_DELAY_SECONDS = 0.25
 
 
 class OobControlClient:
@@ -52,10 +54,15 @@ class OobControlClient:
         self._run_command = run or subprocess.run
 
     def observe(self, *, wait_to_stabilize: bool = False) -> dict[str, Any]:
-        result = self._observe_request(wait_to_stabilize=wait_to_stabilize)
-        if not isinstance(result, dict):
-            raise RuntimeError("oob_control_observe_result_invalid")
-        return result
+        for attempt in range(OBSERVE_XML_ATTEMPTS):
+            result = self._observe_request(wait_to_stabilize=wait_to_stabilize)
+            if not isinstance(result, dict):
+                raise RuntimeError("oob_control_observe_result_invalid")
+            if str(result.get("xml") or "").strip():
+                return result
+            if attempt < OBSERVE_XML_ATTEMPTS - 1:
+                time.sleep(OBSERVE_XML_RETRY_DELAY_SECONDS)
+        raise RuntimeError("oob_control_observe_xml_missing")
 
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
         result = self._request(

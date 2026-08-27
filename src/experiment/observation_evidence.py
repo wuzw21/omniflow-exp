@@ -113,13 +113,8 @@ class AndroidWorldEpisodeRecorder:
 
     def record_host_observation(self, state: Any) -> None:
         if self._active:
-            # OOB observe is recorded outside the normal ``get_state`` path.
-            # It can therefore return the same transient empty accessibility
-            # snapshot that ``get_state`` already knows how to recover.  Use
-            # the same bounded retry/ADB XML fallback here so an OOB action is
-            # not reported as failed merely because its post-action evidence
-            # arrived one frame late.
-            self._latest_host_state = self._capture_state_with_retry(state, (), {})
+            self._latest_host_state = state
+            self._capture_state(state)
 
     def _capture_state_with_retry(
         self,
