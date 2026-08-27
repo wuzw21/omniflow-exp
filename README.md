@@ -52,6 +52,24 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory /path/to/output-memory
 ```
 
+如果需要从一份 source RunLog 一次性生成三个需要 Memory 的方法，可使用固定的
+目录布局；`fixed_replay` 和 `t3a_hint` 直接使用同一份 source RunLog：
+
+```bash
+bash scripts/exp/run_androidworld.sh convert-memory \
+  --task CameraTakePhoto --method all \
+  --source-run-log /path/to/run_log.json \
+  --memory /path/to/memories
+
+bash scripts/exp/run_androidworld.sh run \
+  --task CameraTakePhoto --method all --device all \
+  --source-run-log /path/to/run_log.json \
+  --memory /path/to/memories
+```
+
+该布局只包含 `omniflow/store.json`、`mobilegpt/memory/` 和 `appagent/` 三份派生
+Memory，不复制 source RunLog，也不扫描历史结果。
+
 OmniTransfer 使用 canonical checkout `~/Projects/Omni/OmniTransfer`，页面检索统一调用
 V10 `omnitransfer_point_conditioned_sparse_graph_v10` 模型的归一化 1024D
 page-attention readout；不维护第二套页面编码器或旧 64D/512D 表示。

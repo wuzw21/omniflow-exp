@@ -107,6 +107,24 @@ def _mobilegpt_server_port(console_port: int) -> int:
     return 12000 + int(console_port) % 40000
 
 
+def _method_memory_path(memory_root: str | Path, method: str) -> Path:
+    """Resolve the fixed output of the one-shot conversion layout.
+
+    This is a direct path convention, not a catalog or historical-result
+    lookup.  The source RunLog remains outside this directory and is passed
+    separately to every atomic run.
+    """
+
+    root = Path(memory_root).expanduser().resolve()
+    if method == "omniflow":
+        return root / "omniflow" / "store.json"
+    if method == "mobilegpt":
+        return root / "mobilegpt" / "memory"
+    if method == "appagent":
+        return root / "appagent"
+    raise ValueError(f"method_has_no_memory_input:{method}")
+
+
 def _device_booted(adb: str, serial: str) -> bool:
     try:
         state = subprocess.run(
@@ -231,40 +249,69 @@ def _ensure_devices_started(
 def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     source = Path(args.source_run_log).expanduser()
     output = Path(args.memory).expanduser()
-    if args.method == "omniflow":
-        report = compile_function_v2(
-            source,
-            output,
-            enhance=True,
-            model=FORMAL_MODEL,
-            model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
-            model_base_url=FORMAL_MODEL_BASE_URL,
-        )
-        memory = Path(str(report["store_path"]))
-    elif args.method == "mobilegpt":
-        report = convert_runlog_to_mobilegpt_bundle(
-            source_run_log=source,
-            mobilegpt_root=args.mobilegpt_root,
-            output_root=output,
-            model=FORMAL_MODEL,
-            source_seed=SOURCE_SEED,
-        )
-        memory = Path(str(report["memory_root"]))
-    elif args.method == "appagent":
-        report = convert_runlog_to_appagent_memory(
-            source_run_log=source,
-            appagent_root=args.appagent_root,
-            memory_root=output,
-            model=FORMAL_MODEL,
-        )
-        memory = Path(str(report["memory_root"]))
-    else:
-        memory = source
+
+    methods = ("omniflow", "mobilegpt", "appagent") if args.method == "all" else (args.method,)
+    if args.method == "all":
+        if not str(args.mobilegpt_root or "").strip():
+            raise ValueError("all_conversion_requires_mobilegpt_root")
+        for dependency, label in (
+            (args.mobilegpt_root, "mobilegpt"),
+            (args.appagent_root, "appagent"),
+        ):
+            if not Path(str(dependency)).expanduser().is_dir():
+                raise FileNotFoundError(
+                    f"all_conversion_dependency_missing:{label}:{dependency}"
+                )
+    reports: list[dict[str, Any]] = []
+    memories: dict[str, str] = {}
+    for method in methods:
+        method_output = output / method if args.method == "all" else output
+        if method == "omniflow":
+            report = compile_function_v2(
+                source,
+                method_output,
+                enhance=True,
+                model=FORMAL_MODEL,
+                model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
+                model_base_url=FORMAL_MODEL_BASE_URL,
+            )
+            memory = Path(str(report["store_path"]))
+        elif method == "mobilegpt":
+            report = convert_runlog_to_mobilegpt_bundle(
+                source_run_log=source,
+                mobilegpt_root=args.mobilegpt_root,
+                output_root=method_output,
+                model=FORMAL_MODEL,
+                source_seed=SOURCE_SEED,
+            )
+            memory = Path(str(report["memory_root"]))
+        elif method == "appagent":
+            report = convert_runlog_to_appagent_memory(
+                source_run_log=source,
+                appagent_root=args.appagent_root,
+                memory_root=method_output,
+                model=FORMAL_MODEL,
+            )
+            memory = Path(str(report["memory_root"]))
+        else:
+            raise ValueError(f"unknown_conversion_method:{method}")
+        reports.append(report)
+        memories[method] = str(memory)
+
+    if args.method == "all":
+        return {
+            "action": "convert-memory",
+            "task": args.task,
+            "methods": list(methods),
+            "source_run_log": str(source),
+            "memory_root": str(output.resolve()),
+            "memories": memories,
+        }
     return {
         "action": "convert-memory",
         "task": args.task,
         "method": args.method,
-        "memory": str(memory),
+        "memory": next(iter(memories.values())),
     }
 
 
@@ -310,7 +357,11 @@ def _run_command(
     if args.source_run_log:
         command.extend(("--source-run-log", args.source_run_log))
     if args.memory:
-        command.extend(("--memory", args.memory))
+        if args.method == "all":
+            if method in {"omniflow", "mobilegpt", "appagent"}:
+                command.extend(("--memory", str(_method_memory_path(args.memory, method))))
+        else:
+            command.extend(("--memory", args.memory))
     if args.dry_run:
         command.append("--dry-run")
     environment = dict(os.environ)
@@ -336,7 +387,20 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "memory": args.memory or None,
             "source_run_log": args.source_run_log or None,
         }
-
+    if len(methods) > 1:
+        if not args.source_run_log:
+            raise ValueError("multi_method_run_requires_one_source_run_log")
+        required_memory_methods = {
+            method for method in methods if method in {"omniflow", "mobilegpt", "appagent"}
+        }
+        if required_memory_methods and not args.memory:
+            raise ValueError("multi_method_run_requires_one_memory_root")
+        for method in required_memory_methods:
+            memory_path = _method_memory_path(args.memory, method)
+            if not memory_path.exists():
+                raise FileNotFoundError(
+                    f"multi_method_memory_missing:{method}:{memory_path}"
+                )
     _ensure_devices_started(devices, timeout=min(TASK_DEADLINE_SEC, 180))
     started = time.monotonic()
     with tempfile.TemporaryDirectory(
@@ -405,13 +469,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.action == "convert-memory":
         if not args.source_run_log or not args.memory:
             raise ValueError("convert-memory requires --source-run-log and --memory")
-        if args.method not in METHODS:
+        if args.method != "all" and args.method not in METHODS:
             raise ValueError(f"unknown_method:{args.method}")
         result = (
             {
                 "action": "convert-memory",
                 "task": args.task,
-                "method": args.method,
+                "methods": (
+                    ["omniflow", "mobilegpt", "appagent"]
+                    if args.method == "all"
+                    else [args.method]
+                ),
                 "source_run_log": args.source_run_log,
                 "memory": args.memory,
             }
