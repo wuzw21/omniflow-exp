@@ -26,7 +26,7 @@ GUI_AGENT_RULES = (
     "Observe the current screenshot and accessibility state before acting.",
     "Choose exactly one provided tool for the next action and use current-screen normalized 0..1000 coordinates.",
     "A Function is a normal multi-action tool; use it when it matches the goal and continue from the latest observation if it stops.",
-    "Do not repeat a successful action only because its control remains visible.",
+    "Treat successful past actions as already completed. When a completed Function's described result satisfies the goal and the current UI does not contradict it, choose finished immediately; do not repeat visible or disabled save, confirm, or navigation controls.",
     "Use the complete action history as memory. Choose finished with a short result only when the goal is complete; otherwise act.",
 )
 
