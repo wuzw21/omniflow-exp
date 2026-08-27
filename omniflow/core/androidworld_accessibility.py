@@ -199,9 +199,10 @@ def xml_has_complete_application_modal(
         for element in root.iter()
         if str(element.attrib.get("package") or "") == package_name
     ]
-    resource_ids = {
-        str(element.attrib.get("resource-id") or "")
+    resource_names = {
+        str(element.attrib.get("resource-id") or "").rsplit("/", 1)[-1]
         for element in package_nodes
+        if str(element.attrib.get("resource-id") or "")
     }
     has_action_button = any(
         str(element.attrib.get("class") or "").endswith("Button")
@@ -209,10 +210,10 @@ def xml_has_complete_application_modal(
         for element in package_nodes
     )
     return (
-        "android:id/parentPanel" in resource_ids
+        "parentPanel" in resource_names
         and (
-            "android:id/buttonPanel" in resource_ids
-            or "android:id/customPanel" in resource_ids
+            "buttonPanel" in resource_names
+            or "customPanel" in resource_names
         )
         and has_action_button
     )
