@@ -79,10 +79,9 @@ from src.integrations.official_forward import (
     resolve_mobilegpt_client_host,
 )
 
-DEFAULT_ANDROID_WORLD_ROOT = (
-    Path("..")
-    / "releases"
-    / f"android-world-{ANDROIDWORLD_REVISION}"
+DEFAULT_ANDROID_WORLD_ROOT = Path(
+    os.environ.get("OMNIFLOW_ANDROID_WORLD_ROOT")
+    or Path("..") / "releases" / f"android-world-{ANDROIDWORLD_REVISION}"
 )
 DEFAULT_OUTPUT_ROOT = (
     Path("data") / "androidworld"
