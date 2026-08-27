@@ -2266,6 +2266,21 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         for event in recall_events
         if isinstance((cache := event.get("function_cache")), dict)
     ]
+    registered_candidate_count = max(
+        [_coerce_int(resolution_value.get("candidate_count"))]
+        + [
+            len(
+                event.get("registered_candidate_function_ids")
+                or event.get("candidate_function_ids")
+                or ()
+            )
+            for event in recall_events
+        ]
+    )
+    planner_candidate_count = max(
+        [_coerce_int(resolution_value.get("planner_candidate_count"))]
+        + [len(event.get("planner_function_ids") or ()) for event in recall_events]
+    )
     if not selected_function_id:
         for event in recall_events:
             cache = event.get("function_cache")
@@ -2334,12 +2349,8 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "failures": failures,
         "resolution_failures": resolution_failures,
         "selected_function_id": selected_function_id,
-        "registered_candidate_count": _coerce_int(
-            resolution_value.get("candidate_count")
-        ),
-        "planner_candidate_count": _coerce_int(
-            resolution_value.get("planner_candidate_count")
-        ),
+        "registered_candidate_count": registered_candidate_count,
+        "planner_candidate_count": planner_candidate_count,
         "router_statuses": router_statuses,
         "resolution_status": resolution_status,
         "binding_status": binding_status,
