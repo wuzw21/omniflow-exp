@@ -26,10 +26,6 @@ from omniflow.functions.artifact import bind_function
 from omniflow.functions.recall import RecallResult, recall_functions
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.checker import CheckerLibrary
-from omniflow.runtime.function_hook import (
-    DefaultFunctionPlannerHook,
-    FunctionPlannerHook,
-)
 from omniflow.runtime.execution import (
     align_function_resume,
     execute_function,
@@ -100,7 +96,6 @@ class OmniFlow:
         host: Host | None = None,
         planner: Planner | None = None,
         function_router: FunctionRouter | None = None,
-        function_hook: FunctionPlannerHook | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
         catalog: CatalogSnapshot | None = None,
@@ -118,7 +113,6 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
-        self.function_hook = function_hook or DefaultFunctionPlannerHook()
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -283,14 +277,16 @@ class OmniFlow:
             if not replay.success:
                 last_error = replay.error or "function_replay_failed"
                 function_session.mark_failed(replay, observation)
-                observation = self.function_hook.on_replay_failure(
-                    observation=observation,
-                    trace=(
-                        replay.detail.get("trace")
-                        if isinstance(replay.detail, dict)
-                        else None
-                    ),
+                transfer_hint = _transfer_candidates_hint(
+                    replay.detail.get("trace")
+                    if isinstance(replay.detail, dict)
+                    else None
                 )
+                if transfer_hint:
+                    observation = _with_observation_extra(
+                        observation,
+                        transfer_candidates_hint=transfer_hint,
+                    )
                 function_resolution["failed_step_index"] = (
                     function_session.failed_step_index
                 )
@@ -492,11 +488,7 @@ class OmniFlow:
                 source_states=recall_source_states,
                 exclude_function_ids=frozenset(function_session.excluded_ids),
             )
-            planner_functions = self.function_hook.register_functions(
-                goal=goal,
-                observation=observation,
-                functions=recall_result.functions,
-            )
+            planner_functions = recall_result.functions
             planner_function_catalog = {
                 function.id: function for function in planner_functions
             }
@@ -628,14 +620,16 @@ class OmniFlow:
                                 replay.error or "function_replay_failed"
                             )
                             function_session.mark_failed(replay, observation)
-                            observation = self.function_hook.on_replay_failure(
-                                observation=observation,
-                                trace=(
-                                    replay.detail.get("trace")
-                                    if isinstance(replay.detail, dict)
-                                    else None
-                                ),
+                            transfer_hint = _transfer_candidates_hint(
+                                replay.detail.get("trace")
+                                if isinstance(replay.detail, dict)
+                                else None
                             )
+                            if transfer_hint:
+                                observation = _with_observation_extra(
+                                    observation,
+                                    transfer_candidates_hint=transfer_hint,
+                                )
                             previous_action_error = (
                                 replay.error or "function_replay_failed"
                             )
@@ -733,14 +727,16 @@ class OmniFlow:
                     previous_action_error = None
                 else:
                     function_session.mark_failed(replay, observation)
-                    observation = self.function_hook.on_replay_failure(
-                        observation=observation,
-                        trace=(
-                            replay.detail.get("trace")
-                            if isinstance(replay.detail, dict)
-                            else None
-                        ),
+                    transfer_hint = _transfer_candidates_hint(
+                        replay.detail.get("trace")
+                        if isinstance(replay.detail, dict)
+                        else None
                     )
+                    if transfer_hint:
+                        observation = _with_observation_extra(
+                            observation,
+                            transfer_candidates_hint=transfer_hint,
+                        )
                     previous_action_error = replay.error or "function_replay_failed"
                 continue
             try:
@@ -1218,6 +1214,54 @@ def _with_observation_extra(
         image_base64=observation.image_base64,
         extra={**dict(observation.extra), **updates},
     )
+
+
+def _transfer_candidates_hint(
+    trace: Any,
+    *,
+    limit: int = 5,
+) -> dict[str, Any] | None:
+    if not isinstance(trace, list):
+        return None
+    for item in reversed(trace):
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
+        if not isinstance(transfer, dict):
+            continue
+        candidates = transfer.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            continue
+        hint_candidates: list[dict[str, Any]] = []
+        for candidate in candidates[: max(1, int(limit))]:
+            if not isinstance(candidate, dict):
+                continue
+            hint = {
+                key: candidate[key]
+                for key in (
+                    "rank",
+                    "text",
+                    "content_desc",
+                    "class",
+                    "bounds",
+                    "execution_bounds",
+                    "resource_id",
+                    "execution_candidate_id",
+                    "executable",
+                    "score",
+                )
+                if candidate.get(key) is not None
+            }
+            hint_candidates.append(hint)
+        if not hint_candidates:
+            return None
+        return {
+            "reason": "OmniTransfer candidate hint after a recoverable mapping rejection.",
+            "mapping_confidence": transfer.get("mapping_confidence"),
+            "candidates": hint_candidates,
+        }
+    return None
 
 
 def _repeats_no_progress_action(
