@@ -21,7 +21,8 @@
       "console_port": 5560,
       "avd": "OmniFlowSourceSmall",
       "api_level": 33,
-      "profile": "small_phone"
+      "profile": "small_phone",
+      "resolution": "720x1280"
     },
     "source_seed": 111,
     "evaluation_seed": 113,

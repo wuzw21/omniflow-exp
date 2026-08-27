@@ -6,6 +6,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from PIL import Image
 
@@ -61,7 +62,7 @@ def build_model_turn_request(
         max_steps=max_steps,
         turn_index=turn_index,
         target_package_name=target_package_name,
-        xml_text=str(state.get("xml") or ""),
+        xml_text=_compact_accessibility_observation(str(state.get("xml") or "")),
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     current_image = _state_image_data_uri(state) if _state_has_screenshot(state) else ""
@@ -157,6 +158,61 @@ def _image_mime_type(payload: bytes) -> str:
     if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
         return "image/webp"
     return ""
+
+
+def _compact_accessibility_observation(xml_text: str) -> str:
+    source = str(xml_text or "").strip()
+    if not source:
+        return "<none>"
+    try:
+        root = ElementTree.fromstring(source)
+    except ElementTree.ParseError:
+        return source
+
+    rows: list[str] = []
+    for node in root.iter("node"):
+        attributes = node.attrib
+        if attributes.get("visible-to-user") == "false":
+            continue
+        text = str(attributes.get("text") or "").strip()
+        description = str(attributes.get("content-desc") or "").strip()
+        hint = str(attributes.get("hint-text") or "").strip()
+        resource_id = str(attributes.get("resource-id") or "").strip()
+        actions = [
+            name
+            for name, attribute in (
+                ("click", "clickable"),
+                ("long_click", "long-clickable"),
+                ("scroll", "scrollable"),
+                ("edit", "editable"),
+                ("check", "checkable"),
+            )
+            if attributes.get(attribute) == "true"
+        ]
+        if not any((text, description, hint, resource_id, actions)):
+            continue
+        row: dict[str, Any] = {
+            "id": str(attributes.get("id") or ""),
+            "class": str(attributes.get("class") or "").rsplit(".", 1)[-1],
+        }
+        if text:
+            row["text"] = text
+        if description:
+            row["description"] = description
+        if hint and hint != text:
+            row["hint"] = hint
+        if resource_id:
+            row["resource_id"] = resource_id.rsplit("/", 1)[-1]
+        bounds = str(attributes.get("bounds") or "").strip()
+        if bounds:
+            row["bounds"] = bounds
+        if actions:
+            row["actions"] = actions
+        for state_name in ("checked", "selected", "focused"):
+            if attributes.get(state_name) == "true":
+                row[state_name] = True
+        rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+    return "\n".join(rows) or "<none>"
 
 
 def parse_model_turn_response(
@@ -411,7 +467,7 @@ def _turn_text(
         lines.extend(("Feedback:", "\n".join(feedback)))
     lines.extend(
         (
-            "Current accessibility observation:",
+            "Current accessibility elements (all visible semantic or actionable nodes; empty layout nodes omitted):",
             xml_text or "<none>",
         )
     )

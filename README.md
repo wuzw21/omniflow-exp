@@ -24,6 +24,11 @@ bash scripts/exp/run_androidworld.sh run \
 全部三台设备时，入口会复用已在线的 AVD、启动缺失的 AVD，并保持每台设备一个并发
 worker：
 
+实验平台统一为：Source 是 Android 13、`720x1280` 的 small-phone emulator；
+Standard 是 Android 13、`1440x3120` 的 Pixel 6 Pro；Fold 是 Android 14、
+`1768x2208` 的 7.6-inch foldable；Tablet 是 Android 13、`1280x800` 的
+10.1-inch WXGA tablet。
+
 ```bash
 bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto \

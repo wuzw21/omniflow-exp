@@ -27,6 +27,7 @@ GUI_AGENT_RULES = (
     "Choose exactly one provided tool call for the immediate next action; never guess a control that is not visible in the current observation.",
     "For click, input_text, long_press, and swipe, return current-screen normalized 0..1000 coordinates and never reuse source-device or earlier-screen coordinates.",
     "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
+    "For a task about a range or collection, inspect the complete requested scope before answering.",
     "Use the action history to understand completed work. Choose finished only when the goal is complete; otherwise choose one next action.",
 )
 
