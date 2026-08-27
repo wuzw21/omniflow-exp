@@ -62,6 +62,7 @@ from src.integrations.android_world.methods import (
 )
 from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
+    CONTROL_PACKAGE as OOB_CONTROL_PACKAGE,
 )
 from src.integrations.runlog import import_run_log, project_androidworld_step_actions
 
@@ -91,7 +92,6 @@ ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
 ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
     "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
 )
-OOB_CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
 def _oob_control_accessibility_services(values: list[str]) -> list[str]:
     """Keep one deterministic accessibility stack for formal OOB execution."""
 
@@ -1724,6 +1724,21 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
             raise RuntimeError(
                 "oob_control_package_install_failed:"
                 f"{serial}:{str(installed.stdout or installed.stderr or '').strip()}"
+            )
+        package_path = subprocess.run(
+            [adb_bin, "-s", serial, "shell", "pm", "path", OOB_CONTROL_PACKAGE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if package_path.returncode != 0 or not any(
+            line.strip().startswith("package:")
+            for line in str(package_path.stdout or "").splitlines()
+        ):
+            raise RuntimeError(
+                "oob_control_apk_package_identity_mismatch:"
+                f"{serial}:expected={OOB_CONTROL_PACKAGE}"
             )
     enabled = subprocess.run(
         [adb_bin, "-s", serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"],

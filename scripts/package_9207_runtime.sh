@@ -28,13 +28,33 @@ verify_checksums() {
   fi
 }
 
+apk_application_id() {
+  local apk="$1" analyzer=""
+  if command -v apkanalyzer >/dev/null 2>&1; then
+    analyzer="$(command -v apkanalyzer)"
+  elif [[ -n "${ANDROID_HOME:-}" && -x "${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer" ]]; then
+    analyzer="${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer"
+  elif [[ -x "$HOME/Library/Android/sdk/cmdline-tools/latest/bin/apkanalyzer" ]]; then
+    analyzer="$HOME/Library/Android/sdk/cmdline-tools/latest/bin/apkanalyzer"
+  fi
+  [[ -n "$analyzer" ]] || {
+    echo "apkanalyzer is required to verify the OOB APK identity" >&2
+    return 1
+  }
+  "$analyzer" manifest application-id "$apk"
+}
+
 build_release() {
   local omni_root transfer_root checkpoint oob_apk
   local flow_commit transfer_commit release_id archive payload python_bin
   omni_root="${OMNI_ROOT:-$(cd "$repo/.." && pwd)}"
   transfer_root="${OMNITRANSFER_ROOT:-$omni_root/OmniTransfer}"
   checkpoint="${OMNITRANSFER_MATCHER_CHECKPOINT:-$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17/model.pt}"
-  oob_apk="${OMNIFLOW_OOB_APK:-$repo/data/runtime/oob/OpenOmniBot-foolproof-debug.apk}"
+  oob_apk="${OMNIFLOW_OOB_APK:-$repo/data/runtime/oob/OOB-Experiment.apk}"
+  [[ "$(apk_application_id "$oob_apk")" == "cn.com.omnimind.bot" ]] || {
+    echo "OOB APK application id must be cn.com.omnimind.bot: $oob_apk" >&2
+    return 1
+  }
   flow_commit="$(git -C "$repo" rev-parse HEAD)"
   transfer_commit="$(git -C "$transfer_root" rev-parse HEAD)"
   release_id="omniflow-9207-${flow_commit:0:12}-${transfer_commit:0:12}"
@@ -47,7 +67,7 @@ build_release() {
   git -C "$repo" bundle create "$payload/git/omniflow-exp.bundle" main
   git -C "$transfer_root" bundle create \
     "$payload/git/omnitransfer.bundle" codex/runtime-api
-  cp "$oob_apk" "$payload/assets/oob/OpenOmniBot-foolproof-debug.apk"
+  cp "$oob_apk" "$payload/assets/oob/OOB-Experiment.apk"
   cp "$checkpoint" "$payload/assets/omnitransfer/model.pt"
   cp "$repo/config/runtime.env.template" \
     "$payload/config/runtime.env.template"
@@ -68,6 +88,8 @@ manifest = {
     "omnitransfer_commit": os.environ["TRANSFER_COMMIT"],
     "omnitransfer_architecture": "omnitransfer_point_conditioned_sparse_graph_v10",
     "omnitransfer_checkpoint_sha256": os.environ["CHECKPOINT_SHA"],
+    "oob_apk_name": "OOB-Experiment.apk",
+    "oob_package": "cn.com.omnimind.bot",
     "oob_apk_sha256": os.environ["OOB_SHA"],
     "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef",
     "model": "Qwen3.6-Plus",
@@ -109,8 +131,8 @@ install_release() {
     codex/runtime-api:refs/remotes/runtime/release
   git -C "$transfer_root" merge --ff-only refs/remotes/runtime/release
 
-  install -D -m 0644 "$payload/assets/oob/OpenOmniBot-foolproof-debug.apk" \
-    "$flow_root/data/runtime/oob/OpenOmniBot-foolproof-debug.apk"
+  install -D -m 0644 "$payload/assets/oob/OOB-Experiment.apk" \
+    "$flow_root/data/runtime/oob/OOB-Experiment.apk"
   install -D -m 0644 "$payload/assets/omnitransfer/model.pt" \
     "$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17/model.pt"
   home_root="$(cd "$omni_root/../.." && pwd)"

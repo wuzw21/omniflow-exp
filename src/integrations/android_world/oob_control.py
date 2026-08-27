@@ -15,15 +15,19 @@ import numpy as np
 from PIL import Image
 
 CONTROL_ACTION = "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW"
-CONTROL_PACKAGE = "cn.com.omnimind.bot.debug"
+CONTROL_PACKAGE = "cn.com.omnimind.bot"
 CONTROL_ACCESSIBILITY_SERVICE = (
     f"{CONTROL_PACKAGE}/"
     "cn.com.omnimind.accessibility.service.AssistsService"
 )
-CONTROL_RECEIVER = ".DebugOmniFlowControlReceiver"
+CONTROL_RECEIVER = (
+    f"{CONTROL_PACKAGE}/cn.com.omnimind.bot.debug.DebugOmniFlowControlReceiver"
+)
 CONTROL_RESULT_PATH = "files/debug-omniflow-control-result.json"
 OBSERVE_ACTION = "cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW"
-OBSERVE_RECEIVER = ".DebugOmniFlowObserveReceiver"
+OBSERVE_RECEIVER = (
+    f"{CONTROL_PACKAGE}/cn.com.omnimind.bot.debug.DebugOmniFlowObserveReceiver"
+)
 OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
 
 

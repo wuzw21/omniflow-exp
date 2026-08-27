@@ -22,6 +22,10 @@ import sys
 import tempfile
 import time
 from typing import Any, Iterator, Sequence
+from src.integrations.android_world.oob_control import (
+    CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
+)
+
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -2259,7 +2263,7 @@ def _run_mobilegpt_client(
         check=False,
     ).stdout.strip()
     disabled_non_mobilegpt_services = {
-        "cn.com.omnimind.bot.debug/cn.com.omnimind.accessibility.service.AssistsService",
+        OOB_CONTROL_ACCESSIBILITY_SERVICE,
         "com.google.androidenv.accessibilityforwarder/"
         "com.google.androidenv.accessibilityforwarder.AccessibilityForwarder",
     }

@@ -30,6 +30,8 @@ from src.integrations.android_world.apps import (
     resolve_androidworld_package,
 )
 from src.integrations.android_world.oob_control import (
+    CONTROL_PACKAGE,
+    CONTROL_RECEIVER,
     OobControlClient,
     oob_state_from_payload,
 )
@@ -39,7 +41,7 @@ from src.integrations.android_world.state import snapshot_androidworld_state
 _ANDROID_SYSTEM_OPEN_APP_PACKAGES = frozenset({"com.android.settings"})
 _ANDROIDWORLD_NON_TASK_LAUNCHER_PACKAGES = frozenset(
     {
-        "cn.com.omnimind.bot.debug",
+        CONTROL_PACKAGE,
         "com.example.MobileGPT",
         "com.google.androidenv.accessibilityforwarder",
     }
@@ -284,11 +286,11 @@ class AndroidWorldHost:
                 adb_path=adb_path,
                 package_name=str(
                     os.environ.get("OMNIFLOW_OOB_PACKAGE", "")
-                    or "cn.com.omnimind.bot.debug"
+                    or CONTROL_PACKAGE
                 ),
                 receiver=str(
                     os.environ.get("OMNIFLOW_OOB_CONTROL_RECEIVER", "")
-                    or ".DebugOmniFlowControlReceiver"
+                    or CONTROL_RECEIVER
                 ),
             )
         elif normalized_backend in {"androidworld", "native"}:
