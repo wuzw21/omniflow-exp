@@ -66,6 +66,15 @@ APPAGENT_MODEL = FORMAL_MODEL
 # All online and authoring calls use the same bounded Qwen reasoning mode.
 # The value is part of the protocol, not a per-method runtime override.
 FORMAL_THINKING = "enabled"
+# Request controls are protocol constants as well.  Keeping these here makes
+# the launcher, the native planner, and the official baseline adapters agree
+# even when the parent shell contains stale experiment variables.
+FORMAL_MAX_TOKENS = 512
+FORMAL_REQUEST_TIMEOUT_SEC = 120.0
+FORMAL_RETRY_WAIT_SEC = 2.0
+FORMAL_APPAGENT_TIMEOUT_SEC = 180.0
+FORMAL_APPAGENT_EMPTY_RESPONSE_RETRIES = 3
+FORMAL_APPAGENT_RETRY_MAX_TOKENS = 512
 FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )

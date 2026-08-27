@@ -11,7 +11,11 @@ from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.paths import relative_reference, sha256_file
-from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
+from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_THINKING,
+    require_formal_model,
+)
 
 
 def compile_function_v2(
@@ -63,6 +67,7 @@ def compile_function_v2(
         selected_model = str(model or "").strip()
         if not selected_model:
             raise ValueError("function_author_model_required")
+        require_formal_model(selected_model)
         options["model"] = selected_model
         from openai import OpenAI
         import httpx

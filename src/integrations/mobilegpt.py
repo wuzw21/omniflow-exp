@@ -29,6 +29,11 @@ from src.experiment.mobilegpt_contract import (
     MOBILEGPT_PHYSICAL_BACKEND,
     MOBILEGPT_SOURCE_METHOD,
 )
+from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_THINKING,
+    require_formal_model,
+)
 from src.integrations.android_world.host import (
     androidworld_observation_package,
     androidworld_observation_xml,
@@ -2682,24 +2687,9 @@ def _run_official_mobilegpt_authoring(
         _official_xml_input(final_xml).encode("utf-8"),
     )
 
-    max_chat_calls = max(
-        1,
-        int(
-            os.getenv(
-                "MOBILEGPT_AUTHORING_MAX_CHAT_CALLS",
-                str(_DEFAULT_AUTHORING_MAX_CHAT_CALLS),
-            )
-        ),
-    )
-    max_final_cycles = max(
-        1,
-        int(
-            os.getenv(
-                "MOBILEGPT_AUTHORING_MAX_FINAL_CYCLES",
-                str(_DEFAULT_AUTHORING_MAX_FINAL_CYCLES),
-            )
-        ),
-    )
+    # Authoring limits are part of the formal protocol, not shell variables.
+    max_chat_calls = _DEFAULT_AUTHORING_MAX_CHAT_CALLS
+    max_final_cycles = _DEFAULT_AUTHORING_MAX_FINAL_CYCLES
 
     with tempfile.TemporaryDirectory(prefix="mobilegpt-official-authoring-") as temp:
         workspace = Path(temp)
@@ -2711,9 +2701,8 @@ def _run_official_mobilegpt_authoring(
         # repairs here as well; otherwise a valid Qwen response that omits
         # ``completion_rate`` aborts the converter before Memory is written.
         _apply_mobilegpt_conversion_compat(server_root)
-        # Keep the upstream OpenAI helper on direct JSON content by disabling
-        # the optional reasoning channel. This does not change any MobileGPT
-        # prompt or agent logic.
+        # Keep the upstream OpenAI helper on direct JSON content while
+        # preserving the formal Qwen reasoning mode.
         utils_path = server_root / "utils" / "utils.py"
         utils_source = utils_path.read_text(encoding="utf-8")
         utils_source_updated = utils_source.replace(
@@ -2724,7 +2713,7 @@ def _run_official_mobilegpt_authoring(
             "        presence_penalty=0\n    )",
             "        presence_penalty=0,\n"
             "        timeout=float(os.getenv(\"MOBILEGPT_REQUEST_TIMEOUT_SEC\", \"60\")),\n"
-            "        extra_body={\"thinking\": {\"type\": \"disabled\"}}\n"
+            f"        extra_body={{\"thinking\": {{\"type\": \"{FORMAL_THINKING}\"}}}}\n"
             "    )",
             1,
         )
@@ -2732,8 +2721,14 @@ def _run_official_mobilegpt_authoring(
             raise MobileGPTConversionError("official_provider_model_adapter_anchor_missing")
         utils_path.write_text(utils_source_updated, encoding="utf-8")
         environment: dict[str, str | None] = {
-            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-            "OPENAI_BASE_URL": os.getenv("OPENAI_BASE_URL"),
+            "OPENAI_API_KEY": os.getenv("LLMTHU_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            "OPENAI_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "MOBILEGPT_CHAT_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "MOBILEGPT_EMBEDDING_BASE_URL": FORMAL_MODEL_BASE_URL,
+            "MOBILEGPT_CHAT_MODEL": model,
+            "MOBILEGPT_THINKING": FORMAL_THINKING,
+            "MOBILEGPT_MAX_TOKENS": "2048",
+            "MOBILEGPT_REQUEST_TIMEOUT_SEC": "60",
             "MOBILEGPT_EMBEDDING_MODEL": embedding_model,
             "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
             "MOBILEGPT_TARGET_APP": str(trajectory["target_app"]),
@@ -2955,7 +2950,7 @@ def _run_official_mobilegpt_authoring(
             teacher_cursor = 0
             teacher_retry_limit = max(
                 0,
-                int(os.getenv("MOBILEGPT_AUTHORING_TEACHER_RETRIES", "2")),
+                2,
             )
 
             def call_once(
@@ -3046,7 +3041,7 @@ def _run_official_mobilegpt_authoring(
             ) -> Any:
                 nonlocal teacher_cursor
                 started = time.monotonic()
-                model_name = model or str(environment["TASK_AGENT_GPT_VERSION"])
+                model_name = str(environment["TASK_AGENT_GPT_VERSION"])
                 prompt_kind = str(kwargs.get("agent_name") or "").strip().lower()
                 if prompt_kind not in {
                     "task",
@@ -3480,6 +3475,11 @@ def convert_runlog_to_mobilegpt_memory(
 ) -> dict[str, Any]:
     """Compile one verified RunLog through MobileGPT's official memory APIs."""
 
+    normalized_model = require_formal_model(str(model or "").strip())
+    normalized_embedding_model = str(embedding_model or MOBILEGPT_EMBEDDING_MODEL).strip()
+    if normalized_embedding_model != MOBILEGPT_EMBEDDING_MODEL:
+        raise ValueError("mobilegpt_embedding_model_is_fixed")
+
     trajectory = _load_runlog_trajectory(
         source_run_log,
         target_package=target_package,
@@ -3491,8 +3491,8 @@ def convert_runlog_to_mobilegpt_memory(
         memory_root=Path(memory_root).expanduser().resolve(),
         stats=Path(stats_path).expanduser().resolve(),
         audit=Path(audit_path).expanduser().resolve(),
-        model=model,
-        embedding_model=str(embedding_model or MOBILEGPT_EMBEDDING_MODEL),
+        model=normalized_model,
+        embedding_model=MOBILEGPT_EMBEDDING_MODEL,
         embedding_provider=embedding_provider,
         semantic_query_provider=semantic_query_provider,
     )
@@ -3524,6 +3524,9 @@ def convert_runlog_to_mobilegpt_bundle(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("mobilegpt_model_required")
+    require_formal_model(normalized_model)
+    if str(embedding_model or MOBILEGPT_EMBEDDING_MODEL).strip() != MOBILEGPT_EMBEDDING_MODEL:
+        raise ValueError("mobilegpt_embedding_model_is_fixed")
     source_path = Path(source_run_log).expanduser().resolve()
     source = import_run_log(json.loads(source_path.read_text(encoding="utf-8")))
     effective_source_seed = int(

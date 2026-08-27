@@ -3300,6 +3300,15 @@ def main() -> int:
     args.task_seed = TASK_SEED
     args.max_steps = MAX_STEPS
     args.timeout = float(TASK_DEADLINE_SEC)
+    # This module is also callable directly for diagnostics.  Keep that
+    # boundary identical to the unified launcher instead of inheriting a
+    # stale provider endpoint from the caller's shell.
+    os.environ["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    os.environ["OPENAI_MODEL"] = require_formal_model()
+    if not str(os.environ.get("OPENAI_API_KEY") or "").strip() and str(
+        os.environ.get("LLMTHU_API_KEY") or ""
+    ).strip():
+        os.environ["OPENAI_API_KEY"] = str(os.environ["LLMTHU_API_KEY"])
     os.environ["MOBILEGPT_CHAT_MODEL"] = require_formal_model()
     if args.baseline == "mobilegpt":
         required = {

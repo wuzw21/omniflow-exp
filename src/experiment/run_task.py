@@ -53,6 +53,13 @@ from src.experiment.protocol import (
     DEVICES,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
+    FORMAL_MODEL_ENDPOINT_PROFILE,
+    FORMAL_MAX_TOKENS,
+    FORMAL_APPAGENT_EMPTY_RESPONSE_RETRIES,
+    FORMAL_APPAGENT_RETRY_MAX_TOKENS,
+    FORMAL_APPAGENT_TIMEOUT_SEC,
+    FORMAL_REQUEST_TIMEOUT_SEC,
+    FORMAL_RETRY_WAIT_SEC,
     MAX_FALLBACK_STEPS,
     MAX_STEPS,
     METHODS,
@@ -241,9 +248,29 @@ def _subprocess_env(
     # A stale shell endpoint is an experimental variable.  The formal
     # protocol owns the provider seam for every AndroidWorld method.
     env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+    env["OPENAI_MODEL"] = FORMAL_MODEL
     env["MOBILEGPT_CHAT_BASE_URL"] = FORMAL_MODEL_BASE_URL
     env["MOBILEGPT_EMBEDDING_BASE_URL"] = FORMAL_MODEL_BASE_URL
     env["MOBILEGPT_CHAT_MODEL"] = FORMAL_MODEL
+    env["MOBILEGPT_EMBEDDING_MODEL"] = MOBILEGPT_EMBEDDING_MODEL
+    env["MOBILEGPT_THINKING"] = FORMAL_THINKING
+    env["MOBILEGPT_MAX_TOKENS"] = "2048"
+    env["MOBILEGPT_LIST_MAX_TOKENS"] = "2048"
+    env["MOBILEGPT_MAX_CHAT_CALLS"] = "64"
+    env["MOBILEGPT_RESPONSE_RETRIES"] = "1"
+    env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
+    env["APPAGENT_THINKING"] = FORMAL_THINKING
+    env["APPAGENT_MODEL_TIMEOUT_SEC"] = str(FORMAL_APPAGENT_TIMEOUT_SEC)
+    env["APPAGENT_EMPTY_RESPONSE_RETRIES"] = str(
+        FORMAL_APPAGENT_EMPTY_RESPONSE_RETRIES
+    )
+    env["APPAGENT_RETRY_MAX_TOKENS"] = str(FORMAL_APPAGENT_RETRY_MAX_TOKENS)
+    env["OMNIFLOW_PLANNER_MODEL"] = FORMAL_MODEL
+    env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] = FORMAL_MODEL_ENDPOINT_PROFILE
+    env["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(PLANNER_TIMEOUT_SEC)
+    env["OMNIFLOW_ANDROIDWORLD_LLM_MAX_TOKENS"] = str(FORMAL_MAX_TOKENS)
+    env["OMNIFLOW_OPENAI_TIMEOUT_SEC"] = str(FORMAL_REQUEST_TIMEOUT_SEC)
+    env["OMNIFLOW_OPENAI_RETRY_WAIT_SECONDS"] = str(FORMAL_RETRY_WAIT_SEC)
     env.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
     return env
 
@@ -1891,27 +1918,12 @@ def _mobilegpt_memory_embedding_model(
     unique_models = sorted(
         {str(model).strip() for model in models or [] if str(model).strip()}
     )
-    dotenv_env = _local_dotenv_env()
-    configured = str(
-        dotenv_env.get("MOBILEGPT_EMBEDDING_MODEL")
-        or os.environ.get("MOBILEGPT_EMBEDDING_MODEL")
-        or ""
-    ).strip()
-    if configured:
-        if unique_models and configured not in unique_models:
-            raise ValueError(
-                "mobilegpt_embedding_model_mismatch:"
-                f"memory={','.join(unique_models)} configured={configured}"
-            )
-        return configured
-    if len(unique_models) == 1:
-        return unique_models[0]
-    if not unique_models:
-        return MOBILEGPT_EMBEDDING_MODEL
-    raise ValueError(
-        "mobilegpt_memory_has_multiple_embedding_models:"
-        + ",".join(unique_models)
-    )
+    if unique_models and unique_models != [MOBILEGPT_EMBEDDING_MODEL]:
+        raise ValueError(
+            "mobilegpt_embedding_model_mismatch:"
+            f"memory={','.join(unique_models)} expected={MOBILEGPT_EMBEDDING_MODEL}"
+        )
+    return MOBILEGPT_EMBEDDING_MODEL
 
 
 def build_mobilegpt_server_command(
@@ -1965,18 +1977,18 @@ def build_mobilegpt_server_command(
     if resolved_action == "server":
         if resolved_memory_root is None:
             raise ValueError("mobilegpt_server_memory_required")
-        resolved_embedding_model = str(embedding_model or "").strip()
-        if not resolved_embedding_model:
-            resolved_embedding_model = _mobilegpt_memory_embedding_model(
-                resolved_memory_root,
-                manifest_path=(
-                    resolve_path(mobilegpt_memory_manifest)
-                    if mobilegpt_memory_manifest
-                    else None
-                ),
-            )
-        runtime_env = _subprocess_env({})
-        chat_model = str(chat_model or FORMAL_MODEL).strip()
+        requested_embedding_model = str(embedding_model or "").strip()
+        if requested_embedding_model and requested_embedding_model != MOBILEGPT_EMBEDDING_MODEL:
+            raise ValueError("mobilegpt_embedding_model_is_fixed")
+        resolved_embedding_model = _mobilegpt_memory_embedding_model(
+            resolved_memory_root,
+            manifest_path=(
+                resolve_path(mobilegpt_memory_manifest)
+                if mobilegpt_memory_manifest
+                else None
+            ),
+        )
+        chat_model = require_formal_model(str(chat_model or FORMAL_MODEL).strip())
         from src.integrations.official_forward import prepare_mobilegpt_server
 
         staged = resolved_memory_root.parent / "official_server_workspace"
@@ -1990,28 +2002,19 @@ def build_mobilegpt_server_command(
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
-        # Require direct action/list JSON without a separate reasoning channel.
-        # Keep list discovery bounded, but leave enough
-        # completion room for the official selector/derive JSON not to be
-        # truncated on screens with many available actions.
+        # Keep the official action/list output as direct JSON while preserving
+        # the formal Qwen reasoning mode.  Leave enough completion room for
+        # selector/derive JSON on screens with many available actions.
         env["MOBILEGPT_THINKING"] = FORMAL_THINKING
-        env["MOBILEGPT_MAX_TOKENS"] = str(
-            runtime_env.get("MOBILEGPT_MAX_TOKENS") or "2048"
-        )
-        env["MOBILEGPT_LIST_MAX_TOKENS"] = str(
-            runtime_env.get("MOBILEGPT_LIST_MAX_TOKENS") or "2048"
-        )
+        env["MOBILEGPT_MAX_TOKENS"] = "2048"
+        env["MOBILEGPT_LIST_MAX_TOKENS"] = "2048"
         env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
         # Bound the total provider chat calls for one formal episode.  The
         # staged official server may issue several planner calls per device
         # action; without this cap a stalled episode can consume hundreds of
         # calls before the 600-second wall deadline.
-        env["MOBILEGPT_MAX_CHAT_CALLS"] = str(
-            runtime_env.get("MOBILEGPT_MAX_CHAT_CALLS") or "64"
-        )
-        env["MOBILEGPT_RESPONSE_RETRIES"] = str(
-            runtime_env.get("MOBILEGPT_RESPONSE_RETRIES") or "1"
-        )
+        env["MOBILEGPT_MAX_CHAT_CALLS"] = "64"
+        env["MOBILEGPT_RESPONSE_RETRIES"] = "1"
         env["MOBILEGPT_EMBEDDING_MODEL"] = resolved_embedding_model
         if chat_model:
             env["MOBILEGPT_CHAT_MODEL"] = chat_model

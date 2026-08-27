@@ -33,7 +33,11 @@ from src.integrations.appagent import (
     mark_appagent_teacher_target_interactive,
     seal_appagent_memory,
 )
-from src.experiment.protocol import FORMAL_MODEL_BASE_URL, FORMAL_THINKING
+from src.experiment.protocol import (
+    FORMAL_MODEL_BASE_URL,
+    FORMAL_THINKING,
+    require_formal_model,
+)
 from src.experiment.paths import relative_reference
 
 
@@ -192,6 +196,7 @@ def run_official_document_generation(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("appagent_document_model_required")
+    require_formal_model(normalized_model)
     if float(timeout_sec) <= 0:
         raise ValueError("appagent_document_timeout_must_be_positive")
 
@@ -495,6 +500,7 @@ def convert_runlog_to_appagent_memory(
     normalized_model = str(model or "").strip()
     if not normalized_model:
         raise ValueError("appagent_source_model_required")
+    require_formal_model(normalized_model)
     source_path = Path(source_run_log).expanduser().resolve()
     source = require_complete_source_run_log(
         json.loads(source_path.read_text(encoding="utf-8"))

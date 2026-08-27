@@ -894,7 +894,7 @@ def _validate_mobilegpt_converted_memory(
         )
     source_model = str(manifest.get("source_model") or "").strip()
     normalized_expected_model = str(expected_model or "").strip()
-    if normalized_expected_model and source_model != normalized_expected_model:
+    if normalized_expected_model and source_model and source_model != normalized_expected_model:
         raise ValueError(
             "mobilegpt_virtual_memory_model_mismatch:"
             f"expected={normalized_expected_model}:actual={source_model}"
@@ -1098,6 +1098,21 @@ def _validate_mobilegpt_converted_memory(
         label="source_stats",
     )
     stats_summary = summarize_mobilegpt_stats(source_stats_path)
+    inferred_model = source_model
+    if not inferred_model and normalized_expected_model:
+        observed_models = sorted(
+            {
+                str(value).strip()
+                for value in stats_summary.get("chat_models") or []
+                if str(value).strip()
+            }
+        )
+        if observed_models != [normalized_expected_model]:
+            raise ValueError(
+                "mobilegpt_virtual_memory_model_unproven:"
+                f"expected={normalized_expected_model}:observed={observed_models}"
+            )
+        inferred_model = normalized_expected_model
     if (
         int(stats_summary.get("task_started_count") or 0) != 1
         or int(stats_summary.get("task_finished_count") or 0) != 1
@@ -1125,6 +1140,8 @@ def _validate_mobilegpt_converted_memory(
         },
         "target_package": str(manifest.get("target_package") or ""),
         "target_app": str(manifest.get("target_app") or ""),
+        "model_verified": bool(inferred_model),
+        "verified_model": inferred_model,
     }
 
 

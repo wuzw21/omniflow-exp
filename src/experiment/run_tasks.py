@@ -184,6 +184,8 @@ def _reuse_existing_memory(
             expected_model=FORMAL_MODEL,
             expected_source_method=MOBILEGPT_SOURCE_METHOD,
         )
+        if validated.get("model_verified") is not True:
+            raise ValueError("mobilegpt_memory_model_unverified")
         manifest = validated.get("manifest") or {}
         recorded = ((manifest.get("source_run_log") or {}).get("sha256"))
         if recorded and str(recorded) != source_digest:
@@ -381,13 +383,14 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
         elif method == "mobilegpt":
             if not str(args.mobilegpt_root or "").strip():
                 raise ValueError("conversion_requires_mobilegpt_root:mobilegpt")
-            if not Path(str(args.mobilegpt_root)).expanduser().is_dir():
+            mobilegpt_root = resolve_path(args.mobilegpt_root)
+            if not mobilegpt_root.is_dir():
                 raise FileNotFoundError(
                     f"conversion_dependency_missing:mobilegpt:{args.mobilegpt_root}"
                 )
             report = convert_runlog_to_mobilegpt_bundle(
                 source_run_log=source,
-                mobilegpt_root=args.mobilegpt_root,
+                mobilegpt_root=mobilegpt_root,
                 output_root=method_output,
                 model=FORMAL_MODEL,
                 source_seed=SOURCE_SEED,
@@ -396,13 +399,14 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
         elif method == "appagent":
             if not str(args.appagent_root or "").strip():
                 raise ValueError("conversion_requires_appagent_root:appagent")
-            if not Path(str(args.appagent_root)).expanduser().is_dir():
+            appagent_root = resolve_path(args.appagent_root)
+            if not appagent_root.is_dir():
                 raise FileNotFoundError(
                     f"conversion_dependency_missing:appagent:{args.appagent_root}"
                 )
             report = convert_runlog_to_appagent_memory(
                 source_run_log=source,
-                appagent_root=args.appagent_root,
+                appagent_root=appagent_root,
                 memory_root=method_output,
                 model=FORMAL_MODEL,
             )

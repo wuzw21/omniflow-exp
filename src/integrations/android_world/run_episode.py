@@ -5678,6 +5678,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.model_endpoint_profile = FORMAL_MODEL_ENDPOINT_PROFILE
         args.planner_timeout_sec = PLANNER_TIMEOUT_SEC
         args.model = require_formal_model()
+        # Keep direct lifecycle invocation on the same provider seam as the
+        # unified launcher; otherwise the wrapper could fall back to a stale
+        # shell OPENAI_BASE_URL when this module is invoked directly.
+        os.environ["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+        os.environ["OPENAI_MODEL"] = FORMAL_MODEL
+        if not str(os.environ.get("OPENAI_API_KEY") or "").strip() and str(
+            os.environ.get("LLMTHU_API_KEY") or ""
+        ).strip():
+            os.environ["OPENAI_API_KEY"] = str(os.environ["LLMTHU_API_KEY"])
     selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
     if str(args.planner_provider or "").strip():
         os.environ["OMNIFLOW_PLANNER_PROVIDER"] = str(args.planner_provider).strip()
