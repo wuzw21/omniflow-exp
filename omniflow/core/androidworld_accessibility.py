@@ -219,6 +219,41 @@ def xml_has_complete_application_modal(
     )
 
 
+def xml_has_complete_application_popup(
+    xml_text: str,
+    *,
+    package_name: str,
+) -> bool:
+    """Recognize a self-contained application popup-menu subtree."""
+    if not xml_text or not package_name:
+        return False
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    package_nodes = [
+        element
+        for element in root.iter()
+        if str(element.attrib.get("package") or "") == package_name
+    ]
+    has_menu_container = any(
+        str(element.attrib.get("class") or "").endswith(
+            ("ListView", "RecyclerView")
+        )
+        for element in package_nodes
+    )
+    has_named_action = any(
+        str(element.attrib.get("clickable") or "").lower() == "true"
+        and any(
+            str(descendant.attrib.get(attribute) or "").strip()
+            for descendant in element.iter()
+            for attribute in ("text", "content-desc", "resource-id")
+        )
+        for element in package_nodes
+    )
+    return has_menu_container and has_named_action
+
+
 def forest_has_complete_active_application_window(
     forest: Any,
     *,
@@ -302,5 +337,6 @@ __all__ = [
     "forest_has_complete_active_application_window",
     "xml_covers_screen",
     "xml_has_complete_application_modal",
+    "xml_has_complete_application_popup",
     "xml_with_screen_size",
 ]

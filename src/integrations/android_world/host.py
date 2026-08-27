@@ -19,6 +19,7 @@ from omniflow.core.androidworld_accessibility import (
     forest_has_complete_active_application_window,
     xml_covers_screen,
     xml_has_complete_application_modal,
+    xml_has_complete_application_popup,
     xml_with_screen_size,
 )
 from src.experiment.performance_metrics import PerformanceMetrics
@@ -573,6 +574,10 @@ class AndroidWorldHost:
                     screen_size=(display_width, display_height),
                 )
                 or xml_has_complete_application_modal(
+                    xml_text,
+                    package_name=package,
+                )
+                or xml_has_complete_application_popup(
                     xml_text,
                     package_name=package,
                 )
