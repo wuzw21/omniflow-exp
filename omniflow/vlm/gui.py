@@ -189,28 +189,28 @@ def _compact_accessibility_observation(xml_text: str) -> str:
             )
             if attributes.get(attribute) == "true"
         ]
-        if not any((text, description, hint, resource_id, actions)):
+        if not any((text, description, hint, actions)):
             continue
-        row: dict[str, Any] = {
-            "id": str(attributes.get("id") or ""),
-            "class": str(attributes.get("class") or "").rsplit(".", 1)[-1],
-        }
+        row: dict[str, Any] = {}
+        if actions:
+            row["id"] = str(attributes.get("id") or "")
+            row["class"] = str(attributes.get("class") or "").rsplit(".", 1)[-1]
         if text:
             row["text"] = text
         if description:
             row["description"] = description
         if hint and hint != text:
             row["hint"] = hint
-        if resource_id:
-            row["resource_id"] = resource_id.rsplit("/", 1)[-1]
-        bounds = str(attributes.get("bounds") or "").strip()
-        if bounds:
-            row["bounds"] = bounds
         if actions:
+            if resource_id:
+                row["resource_id"] = resource_id.rsplit("/", 1)[-1]
+            bounds = str(attributes.get("bounds") or "").strip()
+            if bounds:
+                row["bounds"] = bounds
             row["actions"] = actions
-        for state_name in ("checked", "selected", "focused"):
-            if attributes.get(state_name) == "true":
-                row[state_name] = True
+            for state_name in ("checked", "selected", "focused"):
+                if attributes.get(state_name) == "true":
+                    row[state_name] = True
         rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
     return "\n".join(rows) or "<none>"
 
