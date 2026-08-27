@@ -23,13 +23,10 @@ DEFAULT_MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
 DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
 
 GUI_AGENT_RULES = (
-    "Observe the latest screenshot and accessibility state before every action.",
-    "Choose exactly one provided tool call for the immediate next action; never guess a control that is not visible in the current observation.",
-    "For click, input_text, long_press, and swipe, use current-screen bounds_0_1000 and return normalized 0..1000 coordinates; never reuse source-device or earlier-screen coordinates.",
-    "Only accessibility rows with actions are interactive; label-only rows are read-only screen evidence.",
-    "A Function is a normal tool that may execute several actions. Use it when it matches the goal; if it stops, continue from the latest observation.",
-    "Use the action history as cross-turn memory: carry forward concise goal-relevant facts already observed, and choose finished only when the goal is complete; otherwise choose one next action.",
-    "When choosing finished, always include a short non-empty content summary of the completed result.",
+    "Observe the current screenshot and accessibility state before acting.",
+    "Choose exactly one provided tool for the next action and use current-screen normalized 0..1000 coordinates.",
+    "A Function is a normal multi-action tool; use it when it matches the goal and continue from the latest observation if it stops.",
+    "Use the complete action history as memory. Choose finished with a short result only when the goal is complete; otherwise act.",
 )
 
 DEFAULT_PLANNER_SYSTEM_PROMPT = (

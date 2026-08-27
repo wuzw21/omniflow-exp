@@ -24,7 +24,7 @@ from omniflow.vlm_coordinates import (
 )
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
-_MAX_ACCESSIBILITY_ROWS = 24
+_MAX_ACCESSIBILITY_ROWS = 16
 
 _PLANNER_CONTEXT_KEYS = (
     "planner_feedback",
@@ -559,24 +559,13 @@ def _turn_text(
 ) -> str:
     display = state.get("display") if isinstance(state.get("display"), dict) else {}
     display_size(display)
-    center_x = 500
-    upper_y = 700
-    lower_y = 300
     lines = [
         f"Goal: {goal}",
         f"Progress: {turn_index}/{max_steps} model turns used",
         f"Current package: {state.get('package_name') or ''}",
         f"Current activity: {state.get('activity_name') or ''}",
         f"Display: {display.get('width') or ''}x{display.get('height') or ''}",
-        (
-            "Coordinate contract: bounds_0_1000 and Action coordinates use the same current-screen "
-            "0..1000 scale. Only rows with actions are interactive. Label-only rows are read-only "
-            "evidence. Swipe coordinates "
-            "use the same current-screen scale. Example: swipe "
-            '{"summary":"Scroll up","direction":"up","x1":'
-            f'{center_x},"y1":{upper_y},"x2":{center_x},"y2":{lower_y}'
-            "}."
-        ),
+        "Coordinates and bounds use the current-screen 0..1000 scale.",
     ]
     if target_package_name:
         lines.append(f"Target package: {target_package_name}")
@@ -611,15 +600,11 @@ def _turn_text(
         lines.extend(("Feedback:", "\n".join(feedback)))
     lines.extend(
         (
-            "Current accessibility elements (label-only rows are read-only; rows with actions are interactive):",
+            "Current UI:",
             xml_text or "<none>",
         )
     )
-    lines.append(
-        "Review the complete Past Actions and current UI. If they indicate that "
-        "the Goal has been completed, choose `finished`; otherwise choose exactly "
-        "one next Action."
-    )
+    lines.append("If the goal is complete choose `finished`; otherwise choose one Action.")
     return "\n".join(lines)
 
 

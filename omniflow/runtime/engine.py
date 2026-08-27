@@ -455,19 +455,33 @@ class OmniFlow:
                 goal,
                 observation=observation,
                 source_states=recall_source_states,
+                limit=len(self.store.functions),
                 exclude_function_ids=frozenset(function_session.excluded_ids),
             )
-            planner_functions = recall_result.functions
+            recalled_functions = recall_result.functions
+            planner_functions = recalled_functions[
+                : max(0, int(self.config.runtime.max_function_tools))
+            ]
             planner_function_catalog = {
                 function.id: function for function in planner_functions
             }
             recall_event = {
                 "planner_turn": runtime_steps_used,
                 **recall_result.audit,
+                "registered_candidate_function_ids": [
+                    function.id for function in recalled_functions
+                ],
+                "planner_function_ids": [
+                    function.id for function in planner_functions
+                ],
             }
             recall_events.append(recall_event)
-            function_resolution["candidate_count"] = len(planner_functions)
+            function_resolution["candidate_count"] = len(recalled_functions)
             function_resolution["candidate_function_ids"] = [
+                function.id for function in recalled_functions
+            ]
+            function_resolution["planner_candidate_count"] = len(planner_functions)
+            function_resolution["planner_candidate_function_ids"] = [
                 function.id for function in planner_functions
             ]
             cache_functions, cache_decisions = _function_cache_candidates(

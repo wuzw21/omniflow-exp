@@ -2122,6 +2122,7 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
     function_rows: list[dict[str, Any]] = []
     transfer_rows: list[dict[str, Any]] = []
     planner_actions: list[str] = []
+    planner_action_details: list[str] = []
     failures: list[str] = []
     for row in trace_rows:
         action = row.get("action")
@@ -2137,6 +2138,16 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
             function_rows.append(row)
         elif success:
             planner_actions.append(tool)
+            step_index = row.get("step_index")
+            try:
+                step_text = str(int(step_index) + 1)
+            except (TypeError, ValueError):
+                step_text = "unknown"
+            detail = f"step={step_text} tool={tool}"
+            summary = str(metadata_value.get("summary") or "").strip()
+            if summary:
+                detail += f" intent={summary}"
+            planner_action_details.append(detail)
         transfer = metadata_value.get("transfer")
         if isinstance(transfer, dict):
             transfer_rows.append(row)
@@ -2197,6 +2208,17 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
     planner = component_values.get("planner")
     router_value = router if isinstance(router, dict) else {}
     planner_value = planner if isinstance(planner, dict) else {}
+    planner_diagnostics = diagnostics.get("planner_diagnostics")
+    planner_diagnostics_value = (
+        planner_diagnostics if isinstance(planner_diagnostics, dict) else {}
+    )
+    planner_calls = planner_diagnostics_value.get("planner_calls")
+    planner_call_rows = (
+        [row for row in planner_calls if isinstance(row, dict)]
+        if isinstance(planner_calls, list)
+        else []
+    )
+    terminal_planner_call = dict(planner_call_rows[-1]) if planner_call_rows else {}
     function_resolution = diagnostics.get("function_resolution")
     resolution_value = (
         function_resolution if isinstance(function_resolution, dict) else {}
@@ -2239,6 +2261,11 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         if isinstance(events, list)
         else []
     )
+    router_statuses = [
+        str(cache.get("status") or "unknown").strip()
+        for event in recall_events
+        if isinstance((cache := event.get("function_cache")), dict)
+    ]
     if not selected_function_id:
         for event in recall_events:
             cache = event.get("function_cache")
@@ -2307,10 +2334,19 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "failures": failures,
         "resolution_failures": resolution_failures,
         "selected_function_id": selected_function_id,
+        "registered_candidate_count": _coerce_int(
+            resolution_value.get("candidate_count")
+        ),
+        "planner_candidate_count": _coerce_int(
+            resolution_value.get("planner_candidate_count")
+        ),
+        "router_statuses": router_statuses,
         "resolution_status": resolution_status,
         "binding_status": binding_status,
         "replay_status": replay_status,
         "planner_actions": planner_actions,
+        "planner_action_details": planner_action_details,
+        "terminal_planner_call": terminal_planner_call,
         "resume_attempts": _coerce_int(resume_value.get("attempt_count")),
         "resume_success": _coerce_int(resume_value.get("success_count")),
         "router_tokens": _coerce_int(router_value.get("total_tokens")),
@@ -2318,6 +2354,66 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "router_calls": _coerce_int(router_value.get("model_calls")),
         "planner_calls": _coerce_int(planner_value.get("model_calls")),
     }
+
+
+def _compact_report_value(value: Any, *, limit: int = 320) -> str:
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _task_failure_attribution(
+    *,
+    completed: bool,
+    official: bool,
+    success: bool,
+    execution_summary: dict[str, Any],
+    audit: dict[str, Any],
+    function_actions: int,
+    function_denominator: int,
+) -> str:
+    if not completed:
+        return "run_not_completed"
+    if official and success:
+        return "none"
+    runtime_error = str(execution_summary.get("failure_reason") or "").strip()
+    if runtime_error:
+        return f"runtime_failure:{runtime_error}"
+    function_failures = list(audit.get("failures") or ()) + list(
+        audit.get("resolution_failures") or ()
+    )
+    if function_failures:
+        return "function_or_transfer_failure:" + " | ".join(
+            str(value) for value in function_failures
+        )
+    terminal_call = audit.get("terminal_planner_call")
+    terminal_call_value = terminal_call if isinstance(terminal_call, dict) else {}
+    terminal_tool = str(terminal_call_value.get("tool") or "").strip()
+    terminal_arguments = terminal_call_value.get("arguments")
+    terminal_text = (
+        f"; Planner terminal={terminal_tool}"
+        f"({_compact_report_value(terminal_arguments)})"
+        if terminal_tool
+        else ""
+    )
+    if official and not success:
+        if audit.get("replay_status") == "succeeded":
+            planner_physical_actions = max(0, function_denominator - function_actions)
+            if planner_physical_actions:
+                return (
+                    "official_validator_rejected_planner_completion:Function replay "
+                    f"succeeded but covered {function_actions}/{function_denominator} "
+                    "physical actions; Planner supplied "
+                    f"{planner_physical_actions} remaining physical action(s)"
+                    f"{terminal_text}"
+                )
+            return (
+                "official_validator_rejected_function_result:Function supplied all "
+                f"{function_denominator} physical action(s){terminal_text}"
+            )
+        return "official_validator_rejected_planner_result" + terminal_text
+    return "non_official_or_unclassified_failure" + terminal_text
 
 
 def format_omniflow_result_block(
@@ -2418,6 +2514,15 @@ def format_omniflow_result_block(
     }
     action_note = "（含非物理 answer）" if "answer" in action_types else ""
     validator_count = f"{1 if official and success else 0}/1" if official else "未覆盖"
+    failure_attribution = _task_failure_attribution(
+        completed=completed,
+        official=official,
+        success=success,
+        execution_summary=execution_summary,
+        audit=audit,
+        function_actions=function_actions,
+        function_denominator=function_denominator,
+    )
     resolved_store = (
         str(store_path.expanduser().resolve()) if store_path is not None else "未提供"
     )
@@ -2464,6 +2569,14 @@ def format_omniflow_result_block(
             ),
             "",
             (
+                "Function registration："
+                f"recalled={audit['registered_candidate_count']}；"
+                f"planner_exposed={audit['planner_candidate_count']}；"
+                "Router="
+                + (" → ".join(audit["router_statuses"]) or "not_reached")
+            ),
+            "",
+            (
                 "Function failure reasons："
                 + (
                     " | ".join(
@@ -2478,10 +2591,22 @@ def format_omniflow_result_block(
                 )
             ),
             "",
+            f"Task failure attribution：{failure_attribution}",
+            "",
             (
                 "Planner physical actions="
                 + (", ".join(str(value) for value in audit["planner_actions"]) or "none")
                 + f"；Function resume={audit['resume_success']}/{audit['resume_attempts']}"
+            ),
+            "",
+            (
+                "Planner action evidence："
+                + (
+                    " | ".join(
+                        str(value) for value in audit["planner_action_details"]
+                    )
+                    or "none"
+                )
             ),
             "",
             (
