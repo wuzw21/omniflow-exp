@@ -26,6 +26,10 @@ from omniflow.functions.artifact import bind_function
 from omniflow.functions.recall import RecallResult, recall_functions
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.checker import CheckerLibrary
+from omniflow.runtime.function_hook import (
+    DefaultFunctionPlannerHook,
+    FunctionPlannerHook,
+)
 from omniflow.runtime.execution import (
     align_function_resume,
     execute_function,
@@ -34,6 +38,9 @@ from omniflow.runtime.execution import (
 )
 from omniflow.transfer.embedding import PageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
+
+
+_FUNCTION_CACHE_CONFIDENCE_THRESHOLD = 0.95
 
 
 class InputRequired(RuntimeError):
@@ -93,6 +100,7 @@ class OmniFlow:
         host: Host | None = None,
         planner: Planner | None = None,
         function_router: FunctionRouter | None = None,
+        function_hook: FunctionPlannerHook | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
         catalog: CatalogSnapshot | None = None,
@@ -110,6 +118,7 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
+        self.function_hook = function_hook or DefaultFunctionPlannerHook()
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -162,7 +171,11 @@ class OmniFlow:
         function_resolution: dict[str, Any] = {
             "candidate_count": 0,
             "candidate_function_ids": [],
+            "function_cache_threshold": _FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+            "router_configured": self.function_router is not None,
             "status": "direct" if direct_tool_call is not None else "planner_tool_space",
+            "binding_status": "not_attempted",
+            "replay_status": "not_started",
         }
 
         def finish(success: bool, **kwargs: Any) -> RunResult:
@@ -270,6 +283,14 @@ class OmniFlow:
             if not replay.success:
                 last_error = replay.error or "function_replay_failed"
                 function_session.mark_failed(replay, observation)
+                observation = self.function_hook.on_replay_failure(
+                    observation=observation,
+                    trace=(
+                        replay.detail.get("trace")
+                        if isinstance(replay.detail, dict)
+                        else None
+                    ),
+                )
                 function_resolution["failed_step_index"] = (
                     function_session.failed_step_index
                 )
@@ -380,13 +401,6 @@ class OmniFlow:
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
         while runtime_steps_used < self.config.runtime.max_steps:
-            # Some Android UIs expose large, unlabeled action surfaces (for
-            # example calendar grids).  XML alone cannot identify which cell
-            # is intended, so obtain a visual observation only when the shared
-            # projection marks the current surface as visually grounded.  This
-            # keeps ordinary turns screenshot-free while avoiding coordinate or
-            # node guesses on opaque controls.
-            observation = await self._ensure_visual_observation(goal, observation)
             max_fallback_steps = self.config.runtime.max_fallback_steps
             fallback_this_turn = function_session.failed
             if (
@@ -478,7 +492,11 @@ class OmniFlow:
                 source_states=recall_source_states,
                 exclude_function_ids=frozenset(function_session.excluded_ids),
             )
-            planner_functions = recall_result.functions
+            planner_functions = self.function_hook.register_functions(
+                goal=goal,
+                observation=observation,
+                functions=recall_result.functions,
+            )
             planner_function_catalog = {
                 function.id: function for function in planner_functions
             }
@@ -491,6 +509,138 @@ class OmniFlow:
             function_resolution["candidate_function_ids"] = [
                 function.id for function in planner_functions
             ]
+            cache_functions, cache_decisions = _function_cache_candidates(
+                recall_result,
+                threshold=_FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+            )
+            cache_audit: dict[str, Any] = {
+                "threshold": _FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+                "candidate_function_ids": [
+                    function.id for function in cache_functions
+                ],
+                "decisions": cache_decisions,
+                "status": "not_attempted",
+            }
+            recall_event["function_cache"] = cache_audit
+            routed_call: ToolCall | None = None
+            if not cache_functions:
+                cache_audit["status"] = "below_threshold"
+            elif self.function_router is None:
+                cache_audit["status"] = "router_unavailable"
+            else:
+                try:
+                    routed_value = await _await(
+                        self.function_router.route_function(goal, cache_functions)
+                    )
+                    routed_call = (
+                        ToolCall.from_value(routed_value)
+                        if routed_value is not None
+                        else None
+                    )
+                    cache_audit["status"] = (
+                        "selected" if routed_call is not None else "rejected"
+                    )
+                except Exception as error:  # noqa: BLE001
+                    cache_audit["status"] = "error"
+                    cache_audit["error"] = f"{type(error).__name__}:{error}"
+                router_usage = _take_llm_usage(self.function_router)
+                merge_usage(llm_usage, router_usage, component="function_router")
+                model_calls += _usage_model_calls(router_usage, fallback=1)
+            if routed_call is not None:
+                selected_function = {
+                    function.id: function for function in cache_functions
+                }.get(routed_call.name)
+                if selected_function is None:
+                    cache_audit["status"] = "unknown_selection"
+                    cache_audit["selected_function_id"] = routed_call.name
+                    previous_action_error = (
+                        f"function_router_tool_not_visible:{routed_call.name}"
+                    )
+                else:
+                    function_session.selected_id = selected_function.id
+                    cache_audit["selected_function_id"] = selected_function.id
+                    cache_audit["arguments"] = dict(routed_call.arguments)
+                    function_resolution["status"] = "cache_selected"
+                    function_resolution["selected_function_id"] = (
+                        selected_function.id
+                    )
+                    function_resolution["arguments"] = dict(
+                        routed_call.arguments
+                    )
+                    try:
+                        function_session.bound = bind_function(
+                            selected_function,
+                            routed_call.arguments,
+                        )
+                    except ValueError as error:
+                        cache_audit["status"] = "binding_failed"
+                        cache_audit["error"] = str(error)
+                        function_resolution["binding_status"] = "failed"
+                        function_resolution["binding_error"] = str(error)
+                        previous_action_error = str(error)
+                    else:
+                        function_resolution["binding_status"] = "succeeded"
+                        current_entry_observation = await self._observe(
+                            screenshot=True
+                        )
+                        if not _same_entry_observation(
+                            observation,
+                            current_entry_observation,
+                        ):
+                            observation = current_entry_observation
+                            cache_audit["status"] = "entry_state_changed"
+                            previous_action_error = (
+                                "function_entry_state_changed_after_mapping"
+                            )
+                            continue
+                        observation = current_entry_observation
+                        replay = await execute_function(
+                            function_session.bound,
+                            host=self.host,
+                            plugins=self.plugins,
+                            observation=observation,
+                            trace_start_index=len(trace),
+                            installed_packages=self.installed_packages,
+                            state_loader=(
+                                self.catalog.get_state
+                                if self.catalog is not None
+                                else None
+                            ),
+                            checker_rules=self.checker_library.rules,
+                            checker_trigger_counts=shared_checker_trigger_counts,
+                        )
+                        actions_executed += replay.actions_executed
+                        replay_trace = list(replay.detail.get("trace") or ())
+                        trace.extend(replay_trace)
+                        observation = replay.final_state or observation
+                        if replay.success:
+                            cache_audit["status"] = "executed"
+                            function_resolution["replay_status"] = "succeeded"
+                            function_session.mark_completed()
+                            previous_action_error = None
+                        else:
+                            cache_audit["status"] = "execution_failed"
+                            cache_audit["error"] = (
+                                replay.error or "function_replay_failed"
+                            )
+                            function_resolution["replay_status"] = "failed"
+                            function_resolution["replay_error"] = (
+                                replay.error or "function_replay_failed"
+                            )
+                            function_session.mark_failed(replay, observation)
+                            observation = self.function_hook.on_replay_failure(
+                                observation=observation,
+                                trace=(
+                                    replay.detail.get("trace")
+                                    if isinstance(replay.detail, dict)
+                                    else None
+                                ),
+                            )
+                            previous_action_error = (
+                                replay.error or "function_replay_failed"
+                            )
+                        continue
+            observation = await self._ensure_planner_screenshot(observation)
             try:
                 planned_call = ToolCall.from_value(
                     await _await(
@@ -583,6 +733,14 @@ class OmniFlow:
                     previous_action_error = None
                 else:
                     function_session.mark_failed(replay, observation)
+                    observation = self.function_hook.on_replay_failure(
+                        observation=observation,
+                        trace=(
+                            replay.detail.get("trace")
+                            if isinstance(replay.detail, dict)
+                            else None
+                        ),
+                    )
                     previous_action_error = replay.error or "function_replay_failed"
                 continue
             try:
@@ -805,44 +963,24 @@ class OmniFlow:
             )
         )
 
-    async def _ensure_visual_observation(
+    async def _ensure_planner_screenshot(
         self,
-        goal: str,
         observation: Observation,
     ) -> Observation:
-        """Refresh the current state with a screenshot for opaque action surfaces.
-
-        The planner already knows how to use visual coordinates when a
-        ``UIProjection`` requires them.  The runtime must make that image
-        available after an action, however; most physical observations are
-        intentionally XML-only to control token and capture overhead.
-        """
         if observation.image_base64:
             return observation
         screenshot_path = str(observation.extra.get("screenshot_path") or "").strip()
         if screenshot_path:
             return observation
-        from omniflow.vlm.ui_projection import project_ui
-
-        projection = project_ui(str(observation.xml or ""), goal)
-        if not projection.visual_context_required:
-            return observation
         refreshed = await self._observe(screenshot=True)
-        if refreshed.image_base64:
-            return Observation(
-                xml=refreshed.xml,
-                package_name=refreshed.package_name,
-                activity_name=refreshed.activity_name,
-                image_base64=refreshed.image_base64,
-                extra={
-                    **dict(refreshed.extra),
-                    "visual_reobserve": {
-                        "candidate_count": projection.candidate_count,
-                        "visual_candidate_count": projection.visual_candidate_count,
-                    },
-                },
-            )
-        return refreshed
+        preserved = {
+            key: observation.extra[key]
+            for key in ("transfer_candidates_hint", "previous_action_error")
+            if observation.extra.get(key) is not None
+        }
+        if not preserved:
+            return refreshed
+        return _with_observation_extra(refreshed, **preserved)
 
     async def acall_tool(
         self,
@@ -1067,6 +1205,19 @@ def _direct_function_fallback_goal(
         f"Requested arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}. "
         f"{function.description}"
     ).strip()
+
+
+def _with_observation_extra(
+    observation: Observation,
+    **updates: Any,
+) -> Observation:
+    return Observation(
+        xml=observation.xml,
+        package_name=observation.package_name,
+        activity_name=observation.activity_name,
+        image_base64=observation.image_base64,
+        extra={**dict(observation.extra), **updates},
+    )
 
 
 def _repeats_no_progress_action(
@@ -1487,6 +1638,48 @@ def _usage_model_calls(
         return max(0, int(usage.get("model_calls") or 0))
     except (TypeError, ValueError):
         return max(0, int(fallback))
+
+
+def _function_cache_candidates(
+    recall_result: RecallResult,
+    *,
+    threshold: float,
+) -> tuple[tuple[Function, ...], list[dict[str, Any]]]:
+    decisions_by_id = {
+        str(decision.get("function_id") or ""): decision
+        for decision in recall_result.audit.get("decisions") or ()
+        if isinstance(decision, dict)
+    }
+    candidates: list[Function] = []
+    audit: list[dict[str, Any]] = []
+    for function in recall_result.functions:
+        decision = decisions_by_id.get(function.id, {})
+        page_similarity = _bounded_confidence(decision.get("page_similarity"))
+        mapping_confidence = _bounded_confidence(
+            decision.get("mapping_confidence")
+        )
+        confidence = min(page_similarity, mapping_confidence)
+        admitted = confidence >= float(threshold)
+        audit.append(
+            {
+                "function_id": function.id,
+                "page_similarity": page_similarity,
+                "mapping_confidence": mapping_confidence,
+                "confidence": confidence,
+                "admitted": admitted,
+            }
+        )
+        if admitted:
+            candidates.append(function)
+    return tuple(candidates), audit
+
+
+def _bounded_confidence(value: Any) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(1.0, max(0.0, confidence))
 
 
 async def _request_input(host: Host, question: str) -> str:
