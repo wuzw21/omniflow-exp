@@ -233,6 +233,11 @@ def run_official_document_generation(
         original_post = official_model.requests.post
 
         def instrumented_post(*args: Any, **kwargs: Any) -> Any:
+            request_json = kwargs.get("json")
+            if isinstance(request_json, dict):
+                request_json = dict(request_json)
+                request_json["thinking"] = {"type": FORMAL_THINKING}
+                kwargs["json"] = request_json
             kwargs.setdefault("timeout", float(timeout_sec))
             response = original_post(*args, **kwargs)
             payload = response.json()
