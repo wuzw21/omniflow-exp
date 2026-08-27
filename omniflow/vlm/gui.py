@@ -180,7 +180,7 @@ def _compact_accessibility_observation(
         return source
 
     width, height = _accessibility_dimensions(root, display)
-    rows: list[str] = []
+    projected: list[tuple[dict[str, Any], tuple[str, tuple[str, ...]] | None]] = []
     for node in root.iter("node"):
         attributes = node.attrib
         if attributes.get("visible-to-user") == "false":
@@ -200,13 +200,17 @@ def _compact_accessibility_observation(
             )
             if attributes.get(attribute) == "true"
         ]
-        labels = list(
+        semantic_labels = list(
             dict.fromkeys(
                 value for value in (text, description, hint) if value
             )
         )
+        labels = list(semantic_labels)
+        visual_region_key: tuple[str, tuple[str, ...]] | None = None
         if actions and not labels and resource_id:
-            labels.append(resource_id.rsplit("/", 1)[-1])
+            fallback_label = resource_id.rsplit("/", 1)[-1]
+            labels.append(fallback_label)
+            visual_region_key = (fallback_label, tuple(actions))
         if not labels and not actions:
             continue
         row: dict[str, Any] = {"label": " | ".join(labels)} if labels else {}
@@ -223,7 +227,31 @@ def _compact_accessibility_observation(
             for state_name in ("checked", "selected", "focused"):
                 if attributes.get(state_name) == "true":
                     row[state_name] = True
-        rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+        projected.append((row, visual_region_key))
+
+    repeated_visual_regions: dict[tuple[str, tuple[str, ...]], int] = {}
+    for _row, key in projected:
+        if key is not None:
+            repeated_visual_regions[key] = repeated_visual_regions.get(key, 0) + 1
+
+    rows: list[str] = []
+    emitted_visual_groups: set[tuple[str, tuple[str, ...]]] = set()
+    emitted_rows: set[str] = set()
+    for row, key in projected:
+        if key is not None and repeated_visual_regions.get(key, 0) > 4:
+            if key in emitted_visual_groups:
+                continue
+            emitted_visual_groups.add(key)
+            row = {
+                "visual_region_group": key[0],
+                "count": repeated_visual_regions[key],
+                "grounding": "use current screenshot",
+            }
+        serialized = json.dumps(row, ensure_ascii=False, separators=(",", ":"))
+        if serialized in emitted_rows:
+            continue
+        emitted_rows.add(serialized)
+        rows.append(serialized)
     return "\n".join(rows) or "<none>"
 
 
