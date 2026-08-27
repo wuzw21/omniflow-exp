@@ -1956,6 +1956,30 @@ def _load_androidworld_env(
     install_a11y_forwarding_app: bool,
 ) -> Any:
     """Load the official environment without native A11y in OOB mode."""
+    def load_environment() -> Any:
+        # AndroidWorld revisions disagree on whether the forwarder-install
+        # switch is exposed by ``load_and_setup_env``.  Keep the selected
+        # AndroidWorld revision authoritative: pass the flag when that API
+        # supports it, and otherwise call the same official loader with its
+        # fixed signature.  This is API compatibility, not a second runtime
+        # or a fallback physical layer.
+        parameters = inspect.signature(env_launcher.load_and_setup_env).parameters
+        kwargs: dict[str, Any] = {
+            "console_port": console_port,
+            "emulator_setup": False,
+            "adb_path": adb_path,
+            "grpc_port": grpc_port,
+        }
+        if (
+            "install_a11y_forwarding_app" in parameters
+            or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+        ):
+            kwargs["install_a11y_forwarding_app"] = install_a11y_forwarding_app
+        return env_launcher.load_and_setup_env(**kwargs)
+
     # The official AndroidEnv wrapper downloads its forwarder APK on every
     # cold environment start.  Transient/incomplete HTTP responses are common
     # on the source-device network and otherwise abort a whole collection
@@ -1995,13 +2019,7 @@ def _load_androidworld_env(
     )
     if not _is_oob_control_backend():
         try:
-            return env_launcher.load_and_setup_env(
-                console_port=console_port,
-                emulator_setup=False,
-                adb_path=adb_path,
-                grpc_port=grpc_port,
-                install_a11y_forwarding_app=install_a11y_forwarding_app,
-            )
+            return load_environment()
         finally:
             a11y_grpc_wrapper._get_accessibility_forwarder_apk = (
                 original_forwarder_download
@@ -2014,13 +2032,7 @@ def _load_androidworld_env(
         lambda raw_env, _install: raw_env
     )
     try:
-        env = env_launcher.load_and_setup_env(
-            console_port=console_port,
-            emulator_setup=False,
-            adb_path=adb_path,
-            grpc_port=grpc_port,
-            install_a11y_forwarding_app=False,
-        )
+        env = load_environment()
     finally:
         android_world_controller.apply_a11y_forwarder_app_wrapper = original_wrapper
         a11y_grpc_wrapper._get_accessibility_forwarder_apk = (
