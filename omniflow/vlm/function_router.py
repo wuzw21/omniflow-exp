@@ -18,7 +18,9 @@ FUNCTION_ROUTER_SYSTEM_PROMPT = (
     "every parameter description as a hard applicability contract. Reject a "
     "Function when the goal conflicts with any fixed mode, type, format, category, "
     "or destination. Fill each argument in the exact form described by its schema "
-    "using only values explicit and unambiguous in the goal; never guess missing "
+    "using only values explicit and unambiguous in the goal. Apply any transformation "
+    "the parameter description requires, such as removing a suffix or returning only "
+    "a base name, instead of copying the goal text verbatim; never guess missing "
     "values. Otherwise call reject_recalled_function. "
     "Return exactly one provided native tool call."
 )
