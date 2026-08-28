@@ -218,7 +218,9 @@ task_parameter_name="app_name" and value_contract="android_package_name" evidenc
 In that case name the parameter package_name, describe it as the installed Android
 package for the requested app, and make the Function name and description generic to
 the requested app rather than the recorded source app. A model must never put a
-friendly app label such as "clock" into package_name.
+friendly app label such as "clock" into package_name. Once package_name is selected,
+the function_id, Function name, Function description, and parameter description must
+not contain the recorded app label or package; use only "requested app" wording.
 """
     selected_model = str(model or "").strip() or None
     usage = {
