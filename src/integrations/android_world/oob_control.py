@@ -104,7 +104,7 @@ class OobControlClient:
         component = OBSERVE_RECEIVER
         if component.startswith("."):
             component = f"{self.package_name}/{component}"
-        broadcast = self._run(
+        broadcast, broadcast_timed_out = self._run_broadcast(
             [
                 "shell",
                 "am",
@@ -126,7 +126,6 @@ class OobControlClient:
                 "resultFile",
                 result_path.removeprefix("files/"),
             ],
-            timeout=self.timeout_seconds,
         )
         broadcast_output = (broadcast.stderr or broadcast.stdout or "").strip()
         # ``am broadcast`` may report ``error: closed`` when the receiver has
@@ -134,7 +133,11 @@ class OobControlClient:
         # the receiver writes its result file.  The Android receiver logs a
         # successful completion in that case, so keep polling the result
         # rather than losing an otherwise valid Observe.
-        if broadcast.returncode != 0 and "error: closed" not in broadcast_output.lower():
+        if (
+            not broadcast_timed_out
+            and broadcast.returncode != 0
+            and "error: closed" not in broadcast_output.lower()
+        ):
             raise RuntimeError(
                 "oob_observe_broadcast_failed:"
                 + broadcast_output
@@ -204,7 +207,7 @@ class OobControlClient:
             component = f"{self.package_name}/{component}"
         elif "/" not in component:
             component = f"{self.package_name}/.{component}"
-        broadcast = self._run(
+        broadcast, broadcast_timed_out = self._run_broadcast(
             [
                 "shell",
                 "am",
@@ -226,12 +229,15 @@ class OobControlClient:
                 "resultFile",
                 result_path.removeprefix("files/"),
             ],
-            timeout=self.timeout_seconds,
         )
         broadcast_output = (broadcast.stderr or broadcast.stdout or "").strip()
         # See the matching observe path above.  A closed adb pipe is
         # recoverable as long as the receiver publishes the request result.
-        if broadcast.returncode != 0 and "error: closed" not in broadcast_output.lower():
+        if (
+            not broadcast_timed_out
+            and broadcast.returncode != 0
+            and "error: closed" not in broadcast_output.lower()
+        ):
             raise RuntimeError(
                 "oob_control_broadcast_failed:"
                 + broadcast_output
@@ -330,6 +336,39 @@ class OobControlClient:
             check=False,
             timeout=timeout,
         )
+
+    def _run_broadcast(
+        self, args: list[str]
+    ) -> tuple[subprocess.CompletedProcess[str], bool]:
+        """Run a broadcast while allowing the legacy receiver to finish asynchronously.
+
+        The old APK can write its fixed result file successfully while
+        ``am broadcast`` remains blocked on the shell-side reply.  The result
+        polling below is the authoritative completion signal in that mode.
+        """
+
+        command = [self.adb_path]
+        if self.adb_serial:
+            command.extend(["-s", self.adb_serial])
+        command.extend(args)
+        try:
+            return self._run(args, timeout=self.timeout_seconds), False
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout or ""
+            stderr = error.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            return (
+                subprocess.CompletedProcess(
+                    command,
+                    124,
+                    stdout=str(stdout),
+                    stderr=str(stderr),
+                ),
+                True,
+            )
 
     def _resolve_serial(self, value: str) -> str:
         serial = str(value or os.environ.get("ANDROID_SERIAL") or "").strip()
