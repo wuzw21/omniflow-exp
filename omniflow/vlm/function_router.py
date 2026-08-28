@@ -21,7 +21,10 @@ FUNCTION_ROUTER_SYSTEM_PROMPT = (
     "using only values explicit and unambiguous in the goal. Apply any transformation "
     "the parameter description requires, such as removing a suffix or returning only "
     "a base name, instead of copying the goal text verbatim; never guess missing "
-    "values. Otherwise call reject_recalled_function. "
+    "values. When a package_name argument is required, copy the exact package value "
+    "from installed_apps whose label matches the requested app; never use the friendly "
+    "label as the package name, and reject when no unambiguous mapping exists. "
+    "Otherwise call reject_recalled_function. "
     "Return exactly one provided native tool call."
 )
 
@@ -46,10 +49,18 @@ class VLMFunctionRouter:
         self._client = client
         self._api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        self._installed_apps: dict[str, str] = {}
         self._usage = LLMUsageTracker(
             component="function_router",
             model=self.model,
         )
+
+    def set_installed_apps(self, installed_apps: dict[str, str]) -> None:
+        self._installed_apps = {
+            str(label).strip(): str(package).strip()
+            for label, package in installed_apps.items()
+            if str(label).strip() and str(package).strip()
+        }
 
     async def route_function(
         self,
@@ -105,7 +116,10 @@ class VLMFunctionRouter:
                     {
                         "role": "user",
                         "content": json.dumps(
-                            {"goal": str(goal).strip()},
+                            {
+                                "goal": str(goal).strip(),
+                                "installed_apps": dict(self._installed_apps),
+                            },
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ),

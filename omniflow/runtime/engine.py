@@ -135,6 +135,13 @@ class OmniFlow:
             if installed_apps is not None
             else None
         )
+        set_router_installed_apps = getattr(
+            self.function_router,
+            "set_installed_apps",
+            None,
+        )
+        if callable(set_router_installed_apps):
+            set_router_installed_apps(dict(self.installed_apps))
         self.plugins = self.config.resolved_plugins()
         self._page_encoder: PageEncoder | None = None
 
