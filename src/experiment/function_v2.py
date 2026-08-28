@@ -9,6 +9,10 @@ from typing import Any
 
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
+from omniflow.runtime.checker import (
+    DEFAULT_CHECKER_LIBRARY_PATH,
+    CheckerLibrary,
+)
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.paths import relative_reference, sha256_file
 from src.experiment.protocol import (
@@ -43,12 +47,7 @@ def write_function_review(
     store_payload = json.loads((root / "store.json").read_text(encoding="utf-8"))
     functions = store_payload.get("functions") if isinstance(store_payload, dict) else {}
     functions = functions if isinstance(functions, dict) else {}
-    checker_payload = {}
-    checker_path = root / "checker_store.json"
-    if checker_path.is_file():
-        checker_payload = json.loads(checker_path.read_text(encoding="utf-8"))
-    checker_rules = checker_payload.get("checker_rules", [])
-    checker_rules = checker_rules if isinstance(checker_rules, list) else []
+    checker_rules = list(CheckerLibrary.load().rules)
     optional = compile_report.get("optional_checker_actions") or []
     optional = optional if isinstance(optional, list) else []
     steps = source_payload.get("steps") or []
@@ -131,7 +130,7 @@ def write_function_review(
             "",
             "- `store.json` — executable Function Store",
             "- `transfer_states.json` — sibling source observations for OmniTransfer",
-            "- `checker_store.json` — shared optional recovery rules",
+            f"- `{relative_reference(DEFAULT_CHECKER_LIBRARY_PATH, base=root)}` — one repository-wide shared Checker library",
             "- `compile_report.json` — compiler and provenance report",
             "- `run_log.json` — source evidence copied with the Function asset",
             "",
@@ -242,7 +241,7 @@ def compile_function_v2(
         persisted = dict(report)
         for key in (
             "store_path",
-            "checker_store_path",
+        "checker_store_path",
             "transfer_state_catalog",
             "run_log_path",
             "source_run_log",

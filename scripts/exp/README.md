@@ -66,6 +66,9 @@ root。转换输出固定为 `omniflow/store.json`、`mobilegpt/memory/`、`appa
 一次运行先写入私有工作区，只有官方 validator 通过且质量优于当前记录时才会晋升为
 current；失败或较差结果不会污染黄金资产。转换临时目录在任务结束后自动删除。
 
+所有 Function 共用仓库级 `omniflow/checkers/default.json`；Memory 目录只保存 Function
+Store、transfer states 和 source evidence，不再复制 `checker_store.json`。
+
 AppAgent 通过同一入口执行，但其官方 executor 位于 disposable workspace；OOB
 仍是唯一 observe/act 物理层，AndroidWorld 官方 validator 仍是唯一成功判据。
 

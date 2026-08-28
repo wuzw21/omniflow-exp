@@ -10,6 +10,7 @@ import time
 from types import SimpleNamespace
 from typing import Any, Callable
 import uuid
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from PIL import Image
@@ -23,12 +24,14 @@ CONTROL_ACCESSIBILITY_SERVICE = (
 CONTROL_RECEIVER = (
     f"{CONTROL_PACKAGE}/cn.com.omnimind.bot.debug.DebugOmniFlowControlReceiver"
 )
-CONTROL_RESULT_PATH = "files/debug-omniflow-control-result.json"
+CONTROL_RESULT_PREFIX = "files/debug-omniflow-control-result-"
+LEGACY_CONTROL_RESULT_PATH = "files/debug-omniflow-control-result.json"
 OBSERVE_ACTION = "cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW"
 OBSERVE_RECEIVER = (
     f"{CONTROL_PACKAGE}/cn.com.omnimind.bot.debug.DebugOmniFlowObserveReceiver"
 )
-OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
+OBSERVE_RESULT_PREFIX = "files/debug-omniflow-observe-result-"
+LEGACY_OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
 OBSERVE_XML_ATTEMPTS = 4
 OBSERVE_XML_RETRY_DELAY_SECONDS = 0.25
 
@@ -52,6 +55,13 @@ class OobControlClient:
         self.receiver = str(receiver or CONTROL_RECEIVER).strip()
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self._run_command = run or subprocess.run
+        # Keep the last complete OOB state on the host side.  The resident
+        # Android dispatcher normally retains this state too, but that state
+        # can be lost when an action crosses into another package (notably
+        # DocumentsUI).  Sending the observed state with the next action
+        # preserves the normal Observe -> Action contract without falling
+        # back to coordinates or native AndroidWorld actions.
+        self._last_state: dict[str, Any] | None = None
 
     def observe(self, *, wait_to_stabilize: bool = False) -> dict[str, Any]:
         for attempt in range(OBSERVE_XML_ATTEMPTS):
@@ -65,31 +75,32 @@ class OobControlClient:
         raise RuntimeError("oob_control_observe_xml_missing")
 
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
-        result = self._request(
-            "act",
+        # The accessibility tree can change between the caller's Observe and
+        # this request (for example, DocumentsUI updates its selection state
+        # after the first tap).  Refresh immediately before dispatch so the
+        # supplied state_id is the one held by the resident OOB dispatcher.
+        self._observe_request(wait_to_stabilize=True)
+        payload: dict[str, Any] = {
             # The resident OOB executor otherwise returns immediately after
             # dispatch.  That leaves the next Function step and the official
             # validator observing the pre-action UI state.  Stabilization is
             # part of the OOB act contract; wait actions remain cheap because
             # the Android side handles them as already completed.
-            {"action": action, "await_stabilization": True},
-        )
+            "action": action,
+            "await_stabilization": True,
+        }
+        result = self._request("act", payload)
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_act_result_invalid")
         return result
 
     def _observe_request(self, *, wait_to_stabilize: bool) -> dict[str, Any]:
-        self._run(
-            [
-                "shell",
-                "run-as",
-                self.package_name,
-                "rm",
-                "-f",
-                OBSERVE_RESULT_PATH,
-            ],
-            timeout=10.0,
-        )
+        request_id = uuid.uuid4().hex
+        result_path = f"{OBSERVE_RESULT_PREFIX}{request_id}.json"
+        for candidate_path in self._result_paths(
+            "observe", request_id, result_path
+        ):
+            self._remove_result(candidate_path)
         component = OBSERVE_RECEIVER
         if component.startswith("."):
             component = f"{self.package_name}/{component}"
@@ -108,40 +119,61 @@ class OobControlClient:
                 "--ez",
                 "waitToStabilize",
                 "true" if wait_to_stabilize else "false",
+                "--es",
+                "requestId",
+                request_id,
+                "--es",
+                "resultFile",
+                result_path.removeprefix("files/"),
             ],
             timeout=self.timeout_seconds,
         )
-        if broadcast.returncode != 0:
+        broadcast_output = (broadcast.stderr or broadcast.stdout or "").strip()
+        # ``am broadcast`` may report ``error: closed`` when the receiver has
+        # already accepted the request and the shell-side pipe closes before
+        # the receiver writes its result file.  The Android receiver logs a
+        # successful completion in that case, so keep polling the result
+        # rather than losing an otherwise valid Observe.
+        if broadcast.returncode != 0 and "error: closed" not in broadcast_output.lower():
             raise RuntimeError(
                 "oob_observe_broadcast_failed:"
-                + (broadcast.stderr or broadcast.stdout or "").strip()
+                + broadcast_output
             )
         deadline = time.monotonic() + self.timeout_seconds
         last_error = ""
         while time.monotonic() < deadline:
-            result = self._run(
-                [
-                    "shell",
-                    "run-as",
-                    self.package_name,
-                    "cat",
-                    OBSERVE_RESULT_PATH,
-                ],
-                timeout=10.0,
-            )
-            text = str(result.stdout or "").strip()
-            if result.returncode == 0 and text:
-                try:
-                    response = json.loads(text)
-                except json.JSONDecodeError as error:
-                    raise RuntimeError("oob_observe_result_invalid_json") from error
-                if not isinstance(response, dict):
-                    raise RuntimeError("oob_observe_result_not_object")
+            for candidate_path in self._result_paths(
+                "observe", request_id, result_path
+            ):
+                result = self._read_result(candidate_path)
+                text = str(result.stdout or "").strip()
+                if result.returncode != 0 or not text:
+                    last_error = (result.stderr or result.stdout or "").strip()
+                    continue
+                response = self._decode_result(text, "oob_observe")
+                response_request_id = str(response.get("request_id") or "").strip()
+                if response_request_id and response_request_id != request_id:
+                    last_error = "oob_observe_result_request_id_mismatch"
+                    continue
+                if not response_request_id and candidate_path != LEGACY_OBSERVE_RESULT_PATH:
+                    last_error = "oob_observe_result_request_id_missing"
+                    continue
                 if response.get("success") is not True:
                     raise RuntimeError(
                         "oob_observe_failed:" + str(response.get("error") or "unknown")
                     )
                 state = response.get("state")
+                if isinstance(state, dict):
+                    # ``includeScreenshot=true`` adds full PNG bytes to the
+                    # host map.  They are evidence for the collector, but
+                    # are not part of State.fromMap and make an intent extra
+                    # unnecessarily large.  Keep only the state contract
+                    # needed by the Android action dispatcher.
+                    self._last_state = {
+                        key: value
+                        for key, value in state.items()
+                        if key not in {"image_base64", "extra"}
+                    }
                 return {
                     **response,
                     **(state if isinstance(state, dict) else {}),
@@ -152,26 +184,21 @@ class OobControlClient:
         raise RuntimeError("oob_observe_result_timeout:" + last_error[-500:])
 
     def reset(self) -> None:
+        self._last_state = None
         self._request("reset", {})
 
     def _request(self, operation: str, payload: dict[str, Any]) -> Any:
         request_id = uuid.uuid4().hex
+        result_path = f"{CONTROL_RESULT_PREFIX}{request_id}.json"
         encoded = base64.b64encode(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
                 "utf-8"
             )
         ).decode("ascii")
-        self._run(
-            [
-                "shell",
-                "run-as",
-                self.package_name,
-                "rm",
-                "-f",
-                CONTROL_RESULT_PATH,
-            ],
-            timeout=10.0,
-        )
+        for candidate_path in self._result_paths(
+            "control", request_id, result_path
+        ):
+            self._remove_result(candidate_path)
         component = self.receiver
         if component.startswith("."):
             component = f"{self.package_name}/{component}"
@@ -195,47 +222,100 @@ class OobControlClient:
                 "--es",
                 "requestBase64",
                 encoded,
+                "--es",
+                "resultFile",
+                result_path.removeprefix("files/"),
             ],
             timeout=self.timeout_seconds,
         )
-        if broadcast.returncode != 0:
+        broadcast_output = (broadcast.stderr or broadcast.stdout or "").strip()
+        # See the matching observe path above.  A closed adb pipe is
+        # recoverable as long as the receiver publishes the request result.
+        if broadcast.returncode != 0 and "error: closed" not in broadcast_output.lower():
             raise RuntimeError(
                 "oob_control_broadcast_failed:"
-                + (broadcast.stderr or broadcast.stdout or "").strip()
+                + broadcast_output
             )
         deadline = time.monotonic() + self.timeout_seconds
         last_error = ""
         while time.monotonic() < deadline:
-            result = self._run(
-                [
-                    "shell",
-                    "run-as",
-                    self.package_name,
-                    "cat",
-                    CONTROL_RESULT_PATH,
-                ],
-                timeout=10.0,
-            )
-            text = str(result.stdout or "").strip()
-            if result.returncode == 0 and text:
-                try:
-                    response = json.loads(text)
-                except json.JSONDecodeError as error:
-                    raise RuntimeError("oob_control_result_invalid_json") from error
-                if not isinstance(response, dict):
-                    raise RuntimeError("oob_control_result_not_object")
-                if response.get("request_id") != request_id:
+            for candidate_path in self._result_paths(
+                "control", request_id, result_path
+            ):
+                result = self._read_result(candidate_path)
+                text = str(result.stdout or "").strip()
+                if result.returncode != 0 or not text:
+                    last_error = (result.stderr or result.stdout or "").strip()
+                    continue
+                response = self._decode_result(text, "oob_control")
+                response_request_id = str(response.get("request_id") or "").strip()
+                if response_request_id and response_request_id != request_id:
                     last_error = "oob_control_result_request_id_mismatch"
+                elif not response_request_id and candidate_path != LEGACY_CONTROL_RESULT_PATH:
+                    last_error = "oob_control_result_request_id_missing"
                 elif response.get("success") is not True:
                     raise RuntimeError(
                         "oob_control_failed:" + str(response.get("error") or "unknown")
                     )
                 else:
                     return response.get("result")
-            else:
-                last_error = (result.stderr or result.stdout or "").strip()
             time.sleep(0.05)
         raise RuntimeError("oob_control_result_timeout:" + last_error[-500:])
+
+    def _result_paths(
+        self, operation: str, request_id: str, request_path: str
+    ) -> tuple[str, ...]:
+        """Return the new request-scoped path and the old fixed path.
+
+        The old debug APK ignores ``resultFile`` and serializes one request per
+        device into a fixed file.  The host remains request-scoped by clearing
+        both paths before dispatching and accepting a fixed-file response only
+        while this client has one outstanding request.
+        """
+
+        legacy_path = (
+            LEGACY_OBSERVE_RESULT_PATH
+            if operation == "observe"
+            else LEGACY_CONTROL_RESULT_PATH
+        )
+        if request_path == legacy_path:
+            return (request_path,)
+        return (request_path, legacy_path)
+
+    def _remove_result(self, path: str) -> None:
+        self._run(
+            [
+                "shell",
+                "run-as",
+                self.package_name,
+                "rm",
+                "-f",
+                path,
+            ],
+            timeout=10.0,
+        )
+
+    def _read_result(self, path: str) -> subprocess.CompletedProcess[str]:
+        return self._run(
+            [
+                "shell",
+                "run-as",
+                self.package_name,
+                "cat",
+                path,
+            ],
+            timeout=10.0,
+        )
+
+    @staticmethod
+    def _decode_result(text: str, prefix: str) -> dict[str, Any]:
+        try:
+            response = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"{prefix}_result_invalid_json") from error
+        if not isinstance(response, dict):
+            raise RuntimeError(f"{prefix}_result_not_object")
+        return response
 
     def _run(self, args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
         command = [self.adb_path]
@@ -288,6 +368,7 @@ def oob_state_from_payload(
         fromlist=["xml_dump_to_ui_elements"],
     )
     ui_elements = representation_utils.xml_dump_to_ui_elements(xml)
+    forest = _xml_to_accessibility_forest(xml, width=width, height=height)
     package_name = str(payload.get("package_name") or "")
     activity_name = str(payload.get("activity_name") or "")
     auxiliaries = {
@@ -295,16 +376,97 @@ def oob_state_from_payload(
         "package_name": package_name,
         "activity_name": activity_name,
         "display": {"width": width, "height": height},
+        # Keep the exact OOB XML alongside the validator-compatible proto
+        # forest.  The XML is the evidence source; the proto is only the
+        # AndroidWorld validator compatibility representation.
+        "xml": xml,
     }
     stabilization = payload.get("stabilization")
     if isinstance(stabilization, dict):
         auxiliaries["stabilization"] = dict(stabilization)
     return SimpleNamespace(
         pixels=pixels,
-        forest=xml,
+        forest=forest,
         ui_elements=ui_elements,
         auxiliaries=auxiliaries,
     )
+
+
+def _xml_to_accessibility_forest(
+    xml: str,
+    *,
+    width: int,
+    height: int,
+) -> Any:
+    """Convert OOB's complete XML into AndroidWorld's validator forest type.
+
+    OOB owns the physical observation and returns the canonical XML.  Some
+    AndroidWorld validators, however, still call ``forest_to_ui_elements``
+    and require the protobuf forest object rather than XML.  Building this
+    compatibility view locally preserves the OOB XML while allowing those
+    official validators to inspect the same observed tree.
+    """
+
+    from android_env.proto.a11y import android_accessibility_forest_pb2
+
+    root = ET.fromstring(xml)
+    nodes = list(root.iter("node"))
+    forest = android_accessibility_forest_pb2.AndroidAccessibilityForest()
+    window = forest.windows.add()
+    window.id = 0
+    window.is_active = True
+    window.is_focused = True
+    window.bounds_in_screen.left = 0
+    window.bounds_in_screen.top = 0
+    window.bounds_in_screen.right = int(width)
+    window.bounds_in_screen.bottom = int(height)
+
+    node_ids = {id(node): index for index, node in enumerate(nodes)}
+    for index, element in enumerate(nodes):
+        node = window.tree.nodes.add()
+        attrs = element.attrib
+        node.unique_id = index
+        node.window_id = 0
+        node.depth = len(list(element.iterancestors())) if hasattr(element, "iterancestors") else 0
+        node.class_name = str(attrs.get("class") or "")
+        node.content_description = str(attrs.get("content-desc") or "")
+        node.hint_text = str(attrs.get("hint-text") or "")
+        node.package_name = str(attrs.get("package") or "")
+        node.text = str(attrs.get("text") or "")
+        node.view_id_resource_name = str(attrs.get("resource-id") or "")
+        bounds = str(attrs.get("bounds") or "").strip()
+        if bounds.startswith("[") and "][" in bounds and bounds.endswith("]"):
+            left_top, right_bottom = bounds[1:-1].split("][", 1)
+            left, top = (int(value) for value in left_top.split(",", 1))
+            right, bottom = (int(value) for value in right_bottom.split(",", 1))
+            node.bounds_in_screen.left = left
+            node.bounds_in_screen.top = top
+            node.bounds_in_screen.right = right
+            node.bounds_in_screen.bottom = bottom
+        for field in (
+            "is_checkable", "is_checked", "is_clickable", "is_editable",
+            "is_enabled", "is_focusable", "is_focused", "is_long_clickable",
+            "is_password", "is_scrollable", "is_selected", "is_visible_to_user",
+        ):
+            source = {
+                "is_checkable": "checkable",
+                "is_checked": "checked",
+                "is_clickable": "clickable",
+                "is_editable": "editable",
+                "is_enabled": "enabled",
+                "is_focusable": "focusable",
+                "is_focused": "focused",
+                "is_long_clickable": "long-clickable",
+                "is_password": "password",
+                "is_scrollable": "scrollable",
+                "is_selected": "selected",
+                "is_visible_to_user": "visible-to-user",
+            }[field]
+            setattr(node, field, str(attrs.get(source) or "false").lower() == "true")
+        node.child_ids.extend(
+            node_ids[id(child)] for child in list(element) if child.tag == "node"
+        )
+    return forest
 
 
 def _decode_pixels(value: Any, width: int, height: int) -> np.ndarray:

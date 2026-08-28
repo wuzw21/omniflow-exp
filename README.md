@@ -49,6 +49,8 @@ bash scripts/exp/run_androidworld.sh --help
 
 Memory 保存和实验执行是两个独立协议，但都使用同一个入口，不读取历史结果索引。
 仓库内配置和 Memory manifest 使用相对路径；外部依赖只在进程启动边界解析为本机路径。
+所有 Function 共用一个仓库级 Checker Store：`omniflow/checkers/default.json`。
+Function Memory 不再携带 `checker_store.json` 副本，运行时直接加载该共享库。
 `convert-memory` 只产生稳定的 Memory 地址；如果这个明确地址已经存在且校验通过，
 入口直接复用，不再次调用模型；如果地址不完整或 source/model 不匹配，则报错并停止，
 不会自动重跑或选择历史结果。

@@ -18,6 +18,7 @@ CHECKER_STORE_VERSION = "omniflow.checker_store.v1"
 DEFAULT_CHECKER_LIBRARY_PATH = (
     Path(__file__).resolve().parents[1] / "checkers" / "default.json"
 )
+SHARED_CHECKER_LIBRARY_REFERENCE = "omniflow/checkers/default.json"
 _LEGACY_RULE_FIELDS = {"schema_version", "trigger", "source_state_id", "action"}
 _TRIGGER_HELPERS = {
     "activity_is",
@@ -209,6 +210,8 @@ def checker_rule_matches(
         return False
     condition = normalized["condition"]
     kind = condition["type"]
+    if kind == "ui_unstable":
+        return _ui_is_unstable(current)
     if kind == "package_mismatch":
         source_package = _normalize(getattr(source, "package_name", ""))
         current_package = _normalize(getattr(current, "package_name", ""))
@@ -220,11 +223,31 @@ def checker_rule_matches(
             and not _is_transient_package(current_package)
         )
     if kind == "keyboard_obscuring":
+        # Text entry needs the keyboard.  The shared hide-keyboard recovery is
+        # only meaningful before a non-text action whose target may be covered.
+        if action.tool == "input_text":
+            return False
         extra = getattr(current, "extra", {}) or {}
         if extra.get("keyboard_visible") is True or extra.get("ime_visible") is True:
             return True
         package_name = _normalize(getattr(current, "package_name", ""))
-        return "inputmethod" in package_name
+        activity_name = _normalize(getattr(current, "activity_name", ""))
+        xml = _normalize(getattr(current, "xml", ""))
+        # The IME is often embedded in the app's accessibility hierarchy while
+        # the reported foreground package remains the app (for example Contacts
+        # with Gboard open).  Package-only detection therefore misses exactly
+        # the state in which a mapped form-field click can land on the keyboard.
+        return any(
+            marker in value
+            for value in (package_name, activity_name, xml)
+            for marker in (
+                "inputmethod",
+                "softinputwindow",
+                "com.google.android.inputmethod",
+                "com.android.inputmethod",
+                "key_pos_",
+            )
+        )
     xpath = str(condition.get("xpath") or "")
     return bool(_xpath_nodes(str(getattr(current, "xml", "") or ""), xpath))
 
@@ -290,9 +313,17 @@ def _normalize_library_condition(value: Any) -> dict[str, Any]:
         kind = "keyboard_obscuring"
     elif value.get("package_mismatch") is True:
         kind = "package_mismatch"
+    elif value.get("ui_unstable") is True:
+        kind = "ui_unstable"
     else:
         raise ValueError("checker_rule_condition_invalid")
-    if kind not in {"xpath_exists", "target_covered_by_xpath", "keyboard_obscuring", "package_mismatch"}:
+    if kind not in {
+        "xpath_exists",
+        "target_covered_by_xpath",
+        "keyboard_obscuring",
+        "package_mismatch",
+        "ui_unstable",
+    }:
         raise ValueError("checker_rule_condition_invalid")
     result = {"type": kind}
     if kind in {"xpath_exists", "target_covered_by_xpath"}:
@@ -306,6 +337,18 @@ def _normalize_library_condition(value: Any) -> dict[str, Any]:
             raise ValueError("checker_rule_xpath_required")
         result["xpath"] = xpath
     return result
+
+
+def _ui_is_unstable(observation: Any) -> bool:
+    """Read only explicit stabilization signals; never infer instability from XML."""
+    extra = getattr(observation, "extra", {}) or {}
+    if extra.get("ui_stable") is False or extra.get("state_stable") is False:
+        return True
+    stabilization = extra.get("stabilization")
+    if isinstance(stabilization, dict):
+        status = str(stabilization.get("status") or stabilization.get("state") or "")
+        return status.casefold() in {"pending", "unstable", "not_stable"}
+    return False
 
 
 def _normalize_library_action(value: Any) -> dict[str, Any]:

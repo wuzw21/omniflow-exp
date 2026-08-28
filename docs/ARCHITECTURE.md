@@ -23,6 +23,8 @@ AppAgent 通过 official forwarder 接入，但 observe/act 仍由同一个 Omni
 
 - source RunLog：为各方法生成 Memory。
 - 各方法 Memory：实际执行输入。
+- `omniflow/checkers/default.json`：所有 Function 共用的 Checker Store；它是运行时
+  唯一 Checker 来源，Memory 包不携带 `checker_store.json` 副本。
 - AndroidWorld 官方结果与 RunLog：论文实验输出。
 
 AppAgent 的 Memory 是其官方 demo 文档格式；它与 OmniFlow Store、MobileGPT
@@ -97,6 +99,10 @@ SaveMemory  ──> stable Memory addresses
 使用系统临时目录，任务结束自动删除。
 显式传入的已有 Memory 会先进行完整校验（source SHA-256、内部文件哈希、task、模型、
 协议字段）；校验通过即复用，校验失败不会触发隐式重转换。
+
+Checker 是跨 Function 的可选恢复策略。Compiler 只校验 authoring 结果引用的 Checker
+ID 是否存在于共享 Store，不会把规则写入 Memory；Engine 启动时始终加载仓库根目录的
+`omniflow/checkers/default.json`。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。
 

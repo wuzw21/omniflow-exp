@@ -14,7 +14,11 @@ from omniflow.functions.management import (
     semantic_parameter_evidence,
 )
 from omniflow.runlog import project_run_log_step_actions
-from omniflow.runtime.checker import CheckerLibrary, validate_checker_rule
+from omniflow.runtime.checker import (
+    DEFAULT_CHECKER_LIBRARY_PATH,
+    CheckerLibrary,
+    validate_checker_rule,
+)
 
 
 def compile_runlog_to_store(
@@ -57,6 +61,7 @@ def compile_runlog_to_store(
     steps: list[dict[str, Any]] = []
     parameter_evidence: list[dict[str, Any]] = []
     omitted_action_types: set[str] = set()
+    optional_checker_actions: list[dict[str, Any]] = []
     previous_successful_step: dict[str, Any] | None = None
     source_steps = payload["steps"]
     for source_step_index, step in enumerate(source_steps):
@@ -90,6 +95,19 @@ def compile_runlog_to_store(
         action_type = str(step.get("action", {}).get("action_type") or "")
         if action_type in {"answer", "status", "unknown"}:
             omitted_action_types.add(action_type)
+            continue
+        if _is_transient_system_action(step):
+            # Permission prompts are optional setup, not task progress. Keep
+            # them in the shared dismiss_permission_dialog checker instead of
+            # replaying a stale dialog click in the main Function.
+            omitted_action_types.add("checker")
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_step_index,
+                    "checker_id": "dismiss_permission_dialog",
+                    "reason": "permission_dialog_setup_is_optional",
+                }
+            )
             continue
         projected_actions = project_run_log_step_actions(
             payload,
@@ -159,6 +177,7 @@ def compile_runlog_to_store(
         "steps": steps,
         "parameter_evidence": parameter_evidence,
         "omitted_action_types": sorted(omitted_action_types),
+        "optional_checker_actions": optional_checker_actions,
     }
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Extract contiguous reusable Function segments from a successful GUI source flow.
@@ -174,9 +193,16 @@ Inspect source_run in source_step_index order. In functions, return zero or more
 strictly contiguous local segments. Never delete, reorder, or skip an action inside
 a selected segment. Then return exactly one complete_function whose
 source_step_indices exactly equal the entire successful source action sequence in
-order. The complete Function cannot omit, split, truncate, or rewrite any middle
-action. Actions already extracted as checker recovery are not part of source_run and
-must not be reconstructed in the main flow.
+order after optional checker actions have been removed. The complete Function cannot
+omit, split, truncate, or rewrite any remaining main-flow action. Actions already
+extracted as checker recovery are not part of source_run and must not be reconstructed
+in the main flow.
+
+The source_run includes optional_checker_actions when the compiler has identified
+setup such as a permission dialog. Treat those source steps as checker-owned setup:
+do not select them in any Function. The shared checker library already provides the
+corresponding recovery, and the main workflow must remain valid when those UI states
+are absent.
 
 Each source step's metadata.purpose explains what the action accomplishes. Use it
 only to name and describe the selected segment. The compiler copies every action,
@@ -339,6 +365,14 @@ not contain the recorded app label or package; use only "requested app" wording.
     checker_ids = [rule["id"] for rule in checker_rules]
     if len(checker_ids) != len(set(checker_ids)):
         raise ValueError("function_bundle_duplicate_checker_id")
+    shared_checker_rules = CheckerLibrary.load().rules
+    shared_checker_ids = {rule["id"] for rule in shared_checker_rules}
+    unknown_checker_ids = sorted(set(checker_ids) - shared_checker_ids)
+    if unknown_checker_ids:
+        raise ValueError(
+            "function_bundle_checker_not_in_shared_library:"
+            + ",".join(unknown_checker_ids)
+        )
     authored_function_ids = [function.id for function in functions]
     if len(authored_function_ids) != len(set(authored_function_ids)):
         raise ValueError("function_bundle_duplicate_function_id")
@@ -412,8 +446,6 @@ not contain the recorded app label or package; use only "requested app" wording.
     store = FunctionStore(store_path)
     for function in functions:
         store.put_function(function)
-    checker_store_path = root / "checker_store.json"
-    CheckerLibrary(tuple(checker_rules)).save(checker_store_path)
     transfer_state_catalog_path = root / TRANSFER_STATE_CATALOG_FILENAME
     transfer_state_catalog_path.write_text(
         json.dumps(
@@ -441,8 +473,9 @@ not contain the recorded app label or package; use only "requested app" wording.
             else None
         ),
         "store_path": str(store_path),
-        "checker_store_path": str(checker_store_path),
-        "checker_count": len(checker_rules),
+        "checker_store_path": str(DEFAULT_CHECKER_LIBRARY_PATH),
+        "checker_count": len(shared_checker_rules),
+        "optional_checker_actions": optional_checker_actions,
         "transfer_state_catalog": str(transfer_state_catalog_path),
         "transfer_state_count": len(frozen_states),
         "function_ids": function_ids,
@@ -674,6 +707,13 @@ def _materialize_authoring_plan(
     materialized_function_ids: set[str] = set()
     arguments: dict[str, dict[str, Any]] = {}
     materialization_notes: list[str] = []
+    from omniflow.core.schemas import load_canonical_action_schema
+
+    builtin_tool_names = {
+        str(tool.get("name") or "").strip()
+        for tool in load_canonical_action_schema().get("tools") or ()
+        if isinstance(tool, dict)
+    }
     if fallback_complete_function:
         materialization_notes.append(
             "Compiler supplied a complete Function from the successful source action sequence because authoring omitted complete_function."
@@ -713,7 +753,24 @@ def _materialize_authoring_plan(
     for raw_function, is_complete in planned_functions:
         if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
             raise ValueError("function_author_plan_function_contract_invalid")
-        function_id = str(raw_function.get("function_id") or "").strip()
+        requested_function_id = str(raw_function.get("function_id") or "").strip()
+        function_id = requested_function_id
+        if function_id in builtin_tool_names:
+            base_function_id = (
+                "complete_source_workflow"
+                if is_complete
+                else "reusable_source_segment"
+            )
+            function_id = base_function_id
+            suffix = 2
+            while function_id in materialized_function_ids:
+                function_id = f"{base_function_id}_{suffix}"
+                suffix += 1
+            materialization_notes.append(
+                "Compiler renamed the reserved Function id "
+                f"{requested_function_id} to {function_id}; the source Action "
+                "tool and arguments remain unchanged."
+            )
         name = str(raw_function.get("name") or "").strip()
         description = str(raw_function.get("description") or "").strip()
         raw_indices = raw_function.get("source_step_indices")
@@ -955,14 +1012,24 @@ def _is_transient_system_action(step: dict[str, Any]) -> bool:
         "permissioncontroller" in package or package == "android.permission"
         for package in packages
     )
-    crash_page = any(package == "android" for package in packages)
-    if not permission_page and not crash_page:
+    if not permission_page:
         return False
     try:
         x = float(action.get("x"))
         y = float(action.get("y"))
     except (TypeError, ValueError):
         return False
+    # Some AndroidWorld captures have a stale/misaligned click point for the
+    # permission dialog.  The dialog itself is still unambiguously identified
+    # by its package/resource, so any click inside that modal is setup-owned.
+    if any(
+        "grant_dialog" in str(node.get("resource-id") or "").casefold()
+        and (bounds := _parse_bounds(node.get("bounds"))) is not None
+        and bounds[0] <= x <= bounds[2]
+        and bounds[1] <= y <= bounds[3]
+        for node in root.iter("node")
+    ):
+        return True
     labels = {
         "allow",
         "allow all the time",
@@ -1394,6 +1461,7 @@ def _compile_runlog_to_store_mechanical(
 
     converted_steps: list[dict[str, Any]] = []
     terminal_count = 0
+    optional_checker_actions: list[dict[str, Any]] = []
     previous_step: dict[str, Any] | None = None
     for source_index, source_step in enumerate(source_steps):
         if not isinstance(source_step, dict):
@@ -1405,6 +1473,15 @@ def _compile_runlog_to_store_mechanical(
         action_type = str(action.get("action_type") or "") if isinstance(action, dict) else ""
         if action_type in {"answer", "status", "unknown"}:
             terminal_count += 1
+            continue
+        if _is_transient_system_action(source_step):
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_index,
+                    "checker_id": "dismiss_permission_dialog",
+                    "reason": "permission_dialog_setup_is_optional",
+                }
+            )
             continue
         observation = source_step.get("observation")
         if not isinstance(observation, dict):
@@ -1512,8 +1589,6 @@ def _compile_runlog_to_store_mechanical(
     store = FunctionStore(store_path)
     for item in functions:
         store.put_function(item)
-    checker_store_path = root / "checker_store.json"
-    CheckerLibrary(()).save(checker_store_path)
     transfer_state_path = root / TRANSFER_STATE_CATALOG_FILENAME
     transfer_state_path.write_text(
         json.dumps(
@@ -1537,8 +1612,8 @@ def _compile_runlog_to_store_mechanical(
         "model": None,
         "prompt_sha256": None,
         "store_path": str(store_path),
-        "checker_store_path": str(checker_store_path),
-        "checker_count": 0,
+        "checker_store_path": str(DEFAULT_CHECKER_LIBRARY_PATH),
+        "checker_count": len(CheckerLibrary.load().rules),
         "transfer_state_catalog": str(transfer_state_path),
         "transfer_state_count": len(referenced_state_ids),
         "function_ids": [item.id for item in functions],
@@ -1546,6 +1621,7 @@ def _compile_runlog_to_store_mechanical(
         "function_step_count": len(converted_steps),
         "source_successful_action_count": len(converted_steps),
         "source_terminal_output_count": terminal_count,
+        "optional_checker_actions": optional_checker_actions,
         "source_calls": [
             {"function_id": item.id, "arguments": normalized_arguments[item.id]}
             for item in functions

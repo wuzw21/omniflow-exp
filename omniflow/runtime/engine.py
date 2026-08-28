@@ -115,9 +115,10 @@ class OmniFlow:
             seed_functions=(catalog.functions.values() if catalog is not None else ()),
             replace_seeded=catalog is not None,
         )
-        self.checker_library = CheckerLibrary.load(
-            Path(store_path).expanduser().resolve().with_name("checker_store.json")
-        )
+        # Checkers are runtime-wide recovery policy, not Function-local data.
+        # Keep one shared library so every Function sees the same rules and
+        # trigger budgets; a Memory package must not carry a private copy.
+        self.checker_library = CheckerLibrary.load()
         self.host = host
         self.planner = planner
         self.function_router = function_router
@@ -189,6 +190,10 @@ class OmniFlow:
 
         def finish(success: bool, **kwargs: Any) -> RunResult:
             kwargs.setdefault("completion_review_calls", completion_review_calls)
+            kwargs.setdefault(
+                "checker_trigger_counts",
+                dict(shared_checker_trigger_counts),
+            )
             if recall_events:
                 function_resolution["recall"] = {
                     "schema_version": "omniflow.function-recall-events.v1",
@@ -952,7 +957,10 @@ class OmniFlow:
             key: observation.extra[key]
             for key in (
                 "previous_action_error",
+                "previous_action",
+                "recent_actions",
                 "execution_history",
+                "function_execution",
                 "user_input",
             )
             if observation.extra.get(key) is not None
@@ -1115,6 +1123,7 @@ class OmniFlow:
         planner_diagnostics: dict[str, Any] | None = None,
         function_resolution: dict[str, Any] | None = None,
         terminal_detail: dict[str, Any] | None = None,
+        checker_trigger_counts: dict[str, int] | None = None,
     ) -> RunResult:
         detail: dict[str, Any] = {
             "experiment": profile.name,
@@ -1136,6 +1145,12 @@ class OmniFlow:
         usage["token_usage_status"] = token_usage_status(usage)
         detail["llm_usage"] = usage
         detail["completion_review_calls"] = max(0, int(completion_review_calls))
+        detail["checker_trigger_counts"] = dict(checker_trigger_counts or {})
+        detail["checker_trigger_total"] = sum(
+            int(value)
+            for value in (checker_trigger_counts or {}).values()
+            if isinstance(value, (int, float))
+        )
         if planner_diagnostics:
             detail["planner_diagnostics"] = dict(planner_diagnostics)
         if function_resolution is not None:
