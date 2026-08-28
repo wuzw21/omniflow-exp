@@ -61,6 +61,7 @@ def build_model_turn_request(
     installed_apps: dict[str, str] | None = None,
     functions: list[Function] | tuple[Function, ...] = (),
     context_projector: PlannerContextProjector | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> dict[str, Any]:
     projected_context = (context_projector or project_planner_context)(dict(state))
     if not isinstance(projected_context, dict):
@@ -97,7 +98,7 @@ def build_model_turn_request(
     request: dict[str, Any] = {
         "model": str(model),
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": str(system_prompt).strip() or SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
         "max_tokens": 512,

@@ -5,7 +5,7 @@ import os
 from typing import Any
 from urllib.parse import urlsplit
 
-from omniflow.core.config import DEFAULT_MAX_STEPS
+from omniflow.core.config import DEFAULT_MAX_STEPS, DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.vlm.gui import (
     ModelToolCallError,
@@ -41,6 +41,7 @@ class VLMPlanner:
         max_steps: int = DEFAULT_MAX_STEPS,
         metadata_sink: MetadataSink | None = None,
         context_projector: PlannerContextProjector | None = None,
+        system_prompt: str = DEFAULT_PLANNER_SYSTEM_PROMPT,
     ):
         if provider not in {"openai", "openai_compatible"}:
             raise ValueError("VLMPlanner supports OpenAI-compatible providers only")
@@ -54,6 +55,9 @@ class VLMPlanner:
         self._transport = transport
         self._metadata_sink = metadata_sink
         self._context_projector = context_projector
+        self.system_prompt = (
+            str(system_prompt).strip() or DEFAULT_PLANNER_SYSTEM_PROMPT
+        )
         self._api_key, self._base_url = resolve_openai_compatible_config(
             api_key=api_key,
             base_url=base_url,
@@ -88,6 +92,7 @@ class VLMPlanner:
                 max_steps=self.max_steps,
                 turn_index=self._turn_index,
                 context_projector=self._context_projector,
+                system_prompt=self.system_prompt,
             )
             envelope = {
                 "goal": str(goal),

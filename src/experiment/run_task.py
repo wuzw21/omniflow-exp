@@ -2581,7 +2581,7 @@ def format_omniflow_result_block(
             "",
             (
                 "Function registration："
-                f"recalled={audit['registered_candidate_count']}；"
+                f"registered={audit['registered_candidate_count']}；"
                 f"planner_exposed={audit['planner_candidate_count']}；"
                 "Router="
                 + (" → ".join(audit["router_statuses"]) or "not_reached")

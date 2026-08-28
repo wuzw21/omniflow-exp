@@ -459,7 +459,14 @@ class OmniFlow:
                 exclude_function_ids=frozenset(function_session.excluded_ids),
             )
             recalled_functions = recall_result.functions
-            planner_functions = recalled_functions
+            planner_functions = tuple(
+                function
+                for function in self.store.list_functions(
+                    limit=max(1, len(self.store.functions)),
+                    include_hidden=False,
+                )
+                if function.id not in function_session.excluded_ids
+            )
             planner_function_catalog = {
                 function.id: function for function in planner_functions
             }
@@ -467,6 +474,9 @@ class OmniFlow:
                 "planner_turn": runtime_steps_used,
                 **recall_result.audit,
                 "registered_candidate_function_ids": [
+                    function.id for function in planner_functions
+                ],
+                "recalled_candidate_function_ids": [
                     function.id for function in recalled_functions
                 ],
                 "planner_function_ids": [

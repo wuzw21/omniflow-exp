@@ -97,3 +97,13 @@ SaveMemory  ──> stable Memory addresses
 协议字段）；校验通过即复用，校验失败不会触发隐式重转换。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。
+
+## OmniFlow Online Planner
+
+OmniFlow 的在线执行仍是通用 `Observe -> Act` 循环。每轮先对 Store 中的 Function
+执行 Recall 和首动作 Transfer；置信度达到 Cache 阈值时，轻量 Router 只根据 goal
+和 Function schema 选择完整 Function 并填写参数。Cache 未命中或 Function 中途失败
+时，原 Planner 接收当前 observation、完整 action history、全部可见 Function tools，
+以及失败转移的 Top-5 候选提示，然后只选择一个下一动作。Function 的 Recall 结果只
+控制 Cache 快路径，不再裁掉注册给 Planner 的 Function tools。VLM Planner 只暴露
+一个可选的 system-prompt 注入点；不为 task、设备或失败类型增加专用执行分支。
