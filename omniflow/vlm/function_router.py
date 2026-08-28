@@ -12,20 +12,16 @@ from omniflow.vlm.usage import LLMUsageTracker
 REJECT_FUNCTION_TOOL = "reject_recalled_function"
 
 FUNCTION_ROUTER_SYSTEM_PROMPT = (
-    "Decide whether one recalled GUI Function fully covers the user's complete "
-    "goal. Select a Function only when its semantic name and description match "
-    "the whole goal. Treat every fixed choice in the Function description and "
-    "every parameter description as a hard applicability contract. Reject a "
-    "Function when the goal conflicts with any fixed mode, type, format, category, "
-    "or destination. Fill each argument in the exact form described by its schema "
-    "using only values explicit and unambiguous in the goal. Apply any transformation "
-    "the parameter description requires, such as removing a suffix or returning only "
-    "a base name, instead of copying the goal text verbatim; never guess missing "
-    "values. When a package_name argument is required, copy the exact package value "
-    "from installed_apps whose label matches the requested app; never use the friendly "
-    "label as the package name, and reject when no unambiguous mapping exists. "
-    "Otherwise call reject_recalled_function. "
-    "Return exactly one provided native tool call."
+    "Choose one recalled GUI Function only when its name, description, fixed choices, "
+    "and parameter schema fully cover the user's complete goal. Fill arguments only "
+    "from explicit, unambiguous goal values and follow each parameter description "
+    "exactly. Otherwise call reject_recalled_function. Return exactly one native "
+    "tool call."
+)
+
+_PACKAGE_ARGUMENT_PROMPT = (
+    " When package_name is required, copy the exact package from installed_apps whose "
+    "label matches the requested app; reject if the mapping is ambiguous."
 )
 
 
@@ -106,20 +102,31 @@ class VLMFunctionRouter:
                 },
             }
         )
+        package_argument_required = any(
+            "package_name"
+            in (
+                function.input_schema.get("properties")
+                if isinstance(function.input_schema.get("properties"), dict)
+                else {}
+            )
+            for function in function_catalog.values()
+        )
+        user_context: dict[str, Any] = {"goal": str(goal).strip()}
+        system_prompt = FUNCTION_ROUTER_SYSTEM_PROMPT
+        if package_argument_required:
+            system_prompt += _PACKAGE_ARGUMENT_PROMPT
+            user_context["installed_apps"] = dict(self._installed_apps)
         client = self._client or self._build_client()
         self._usage.start_call()
         try:
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": FUNCTION_ROUTER_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {
                         "role": "user",
                         "content": json.dumps(
-                            {
-                                "goal": str(goal).strip(),
-                                "installed_apps": dict(self._installed_apps),
-                            },
+                            user_context,
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ),

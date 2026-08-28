@@ -1389,9 +1389,61 @@ def _execution_history(
         )
         if summary:
             description = f'{description} Planner intent: "{summary}".'
+        action_effect = (
+            metadata.get("action_effect") if isinstance(metadata, dict) else None
+        )
+        if isinstance(action_effect, dict):
+            compact_effect = _compact_history_effect(action_effect)
+            if compact_effect:
+                description = (
+                    f"{description} Observed UI facts: "
+                    f"{json.dumps(compact_effect, ensure_ascii=False, separators=(',', ':'))}."
+                )
         index = int(step.get("step_index") or fallback_index - 1) + 1
         lines.append(f"{index}. [{source}] {description}")
     return "\n".join(lines)
+
+
+def _compact_history_effect(value: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    if "state_changed" in value:
+        compact["state_changed"] = value.get("state_changed") is True
+
+    changed_values: list[dict[str, str]] = []
+    seen_changes: set[tuple[str, str]] = set()
+    changed = value.get("changed")
+    for item in changed if isinstance(changed, list) else ():
+        if not isinstance(item, dict):
+            continue
+        after = " ".join(str(item.get("after") or "").split())
+        if not after:
+            continue
+        target = str(item.get("target") or "").split("@", 1)[0].rsplit("/", 1)[-1]
+        key = (target, after)
+        if key in seen_changes:
+            continue
+        seen_changes.add(key)
+        changed_values.append(
+            {
+                **({"target": target} if target else {}),
+                "value": after,
+            }
+        )
+    if changed_values:
+        compact["changed"] = changed_values
+
+    appeared = value.get("appeared")
+    if isinstance(appeared, list):
+        appeared_values = list(
+            dict.fromkeys(
+                text
+                for item in appeared
+                if (text := " ".join(str(item or "").split()))
+            )
+        )
+        if appeared_values:
+            compact["appeared"] = appeared_values
+    return compact
 
 
 def _function_execution_evidence(
