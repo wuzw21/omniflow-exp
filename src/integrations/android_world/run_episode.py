@@ -5304,7 +5304,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--suite-family", default="android_world")
     parser.add_argument("--tasks", default="ContactsAddContact")
     parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
-    parser.add_argument("--task-random-seed", type=int, default=30)
+    parser.add_argument("--task-random-seed", type=int, default=None)
     parser.add_argument("--n-task-combinations", type=int, default=1)
     parser.add_argument("--console-port", type=int, default=5554)
     parser.add_argument("--adb-path", default=_default_adb_path())
@@ -5670,10 +5670,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.environment == "androidworld":
         # This module is an internal lifecycle owner.  It must not become a
         # second experiment protocol when called directly.
-        args.task_random_seed = TASK_SEED
+        # The public runner supplies 111 for source collection and 113 for
+        # target evaluation. Preserve that explicit protocol value; only
+        # direct lifecycle calls without a seed use the target default.
+        args.task_random_seed = (
+            TASK_SEED
+            if args.task_random_seed is None
+            else int(args.task_random_seed)
+        )
         args.max_steps = MAX_STEPS
         args.fixed_task_seed = True
-        args.perform_emulator_setup = False
+        # Preserve the explicit one-time official setup request.  The public
+        # task runner deliberately passes this flag off after device setup;
+        # direct source collection may pass it on to install the official
+        # AndroidWorld app snapshots before the first task.
+        args.perform_emulator_setup = bool(args.perform_emulator_setup)
         args.planner_provider = ""
         args.model_endpoint_profile = FORMAL_MODEL_ENDPOINT_PROFILE
         args.planner_timeout_sec = PLANNER_TIMEOUT_SEC
