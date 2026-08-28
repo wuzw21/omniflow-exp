@@ -4073,12 +4073,11 @@ _RESULT_METADATA_ROW_KEYS = (
 
 
 def _next_attempt(setting_root: Path, group: str) -> Path:
-    # One setting has one visible attempt.  A second run must be an explicit
-    # operator decision, rather than silently creating another result variant.
-    attempt_root = setting_root / group / "attempt_001"
-    if attempt_root.exists():
-        raise FileExistsError(f"immutable_attempt_exists:{attempt_root}")
-    return attempt_root
+    """Use one private-run slot; the public archive promotes it to ``current``."""
+
+    group_root = setting_root / group
+    group_root.mkdir(parents=True, exist_ok=True)
+    return group_root / "current"
 
 
 def build_mobilegpt_command(
@@ -4956,6 +4955,10 @@ def run_task(args: argparse.Namespace) -> int:
     targets = parse_device_targets(args.device)
     if len(targets) != 1:
         raise ValueError("result requires exactly one device")
+    if targets[0].serial == SOURCE_DEVICE[1]:
+        args.task_random_seed = SOURCE_SEED
+    else:
+        args.task_random_seed = TASK_SEED
     args.mobilegpt_port = _mobilegpt_server_port(targets[0].console_port)
     mobilegpt_source_run_log = item.source_run_log
     mobilegpt_source_run_log_sha256s: tuple[str, ...] = ()

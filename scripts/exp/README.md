@@ -41,8 +41,8 @@ Memory 与直接执行是两个协议：
 ```bash
 bash scripts/exp/run_androidworld.sh convert-memory \
   --task CameraTakePhoto --method omniflow \
-  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
-  --memory data/androidworld/_memories
+  --source-run-log data/androidworld/CameraTakePhoto/source/OmniFlowSourceSmall_seed111/runlog/current/run_log.json \
+  --memory data/androidworld/CameraTakePhoto/omniflow/OmniFlowSourceSmall_seed111/memory/current
 ```
 
 直接执行：
@@ -51,8 +51,8 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 bash scripts/exp/run_androidworld.sh run \
   --task CameraTakePhoto --method omniflow \
   --device standard45562 \
-  --source-run-log data/androidworld/CameraTakePhoto/source/runlog/attempt_001/run_log.json \
-  --memory data/androidworld/_memories/omniflow/store.json
+  --source-run-log data/androidworld/CameraTakePhoto/source/OmniFlowSourceSmall_seed111/runlog/current/run_log.json \
+  --memory data/androidworld/CameraTakePhoto/omniflow/OmniFlowSourceSmall_seed111/memory/current/store.json
 ```
 
 要用一份 source RunLog 生成并运行全部方法，使用 `--method all` 和同一个 Memory
@@ -62,8 +62,9 @@ root。转换输出固定为 `omniflow/store.json`、`mobilegpt/memory/`、`appa
 五个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory
 就绪后都进入同一条
 `run_task.py -> run_episode.py` task/validator 路径。Memory 与 AndroidWorld 官方
-结果是需要保留的实验产物；同一 setting 固定使用 `attempt_001`，不会自动创建新的
-attempt 或自动选择“最好”的 attempt；转换临时目录在任务结束后自动删除。
+结果是需要保留的实验产物；同一 setting 只保留 `runlog/current` 和 `memory/current`。
+一次运行先写入私有工作区，只有官方 validator 通过且质量优于当前记录时才会晋升为
+current；失败或较差结果不会污染黄金资产。转换临时目录在任务结束后自动删除。
 
 AppAgent 通过同一入口执行，但其官方 executor 位于 disposable workspace；OOB
 仍是唯一 observe/act 物理层，AndroidWorld 官方 validator 仍是唯一成功判据。

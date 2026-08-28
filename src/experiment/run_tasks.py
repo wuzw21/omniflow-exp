@@ -14,9 +14,13 @@ import tempfile
 import time
 from typing import Any, Sequence
 
-from src.experiment.function_v2 import compile_function_v2
+from src.experiment.function_v2 import compile_function_v2, write_function_review
 from src.experiment.appagent_source import convert_runlog_to_appagent_memory
 from src.experiment.paths import relative_reference, resolve_path, sha256_file
+from src.experiment.androidworld_paths import (
+    canonical_device_seed_name,
+    canonical_method_name,
+)
 from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
@@ -129,6 +133,88 @@ def _method_memory_path(memory_root: str | Path, method: str) -> Path:
     if method == "appagent":
         return root / "appagent"
     raise ValueError(f"method_has_no_memory_input:{method}")
+
+
+def _golden_run_root(
+    output_root: str | Path,
+    *,
+    task: str,
+    method: str,
+    device: tuple[str, str, int],
+) -> Path:
+    """Return the one stable result directory for a task setting.
+
+    Episode work is created in the runner's private temporary workspace.  Only
+    the selected successful result is promoted here, so the visible archive
+    never grows a sequence of attempt directories.
+    """
+
+    label, serial, console_port = device
+    return (
+        resolve_path(output_root)
+        / str(task)
+        / canonical_method_name(method)
+        / canonical_device_seed_name(
+            label=label,
+            serial=serial,
+            console_port=console_port,
+            source_seed=SOURCE_SEED,
+            evaluation_seed=TASK_SEED,
+        )
+        / "runlog"
+        / "current"
+    )
+
+
+def _run_quality(path: Path) -> tuple[int, int, int, int] | None:
+    """Score one sealed run without using history selection or a registry."""
+
+    run_log_path = path / "run_log.json"
+    if not run_log_path.is_file():
+        return None
+    try:
+        payload = json.loads(run_log_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    validator = payload.get("validator")
+    diagnostics = payload.get("diagnostics")
+    execution = diagnostics.get("execution_summary") if isinstance(diagnostics, dict) else {}
+    if not isinstance(execution, dict):
+        execution = {}
+    official = int(isinstance(validator, dict) and validator.get("official") is True)
+    succeeded = int(payload.get("status") == "succeeded" and payload.get("success") is True)
+    fallback_steps = int(execution.get("fallback_steps") or 0)
+    model_calls = int(execution.get("model_calls") or 0)
+    # Prefer official success, then fewer fallback/model calls.  This keeps a
+    # successful Function replay as the visible golden record without making
+    # any claim from an unsuccessful or incomplete candidate.
+    return official, succeeded, -fallback_steps, -model_calls
+
+
+def _promote_golden_run(
+    *,
+    candidate: Path,
+    destination: Path,
+) -> bool:
+    """Promote one successful candidate into the fixed ``runlog/current`` slot."""
+
+    candidate_quality = _run_quality(candidate)
+    if candidate_quality is None or candidate_quality[:2] != (1, 1):
+        return False
+    current_quality = _run_quality(destination) if destination.is_dir() else None
+    if current_quality is not None and candidate_quality <= current_quality:
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_name(".current.staging")
+    if staging.exists():
+        shutil.rmtree(staging)
+    shutil.copytree(candidate, staging)
+    if destination.exists():
+        shutil.rmtree(destination)
+    staging.replace(destination)
+    return True
 
 
 def _relative_output(value: str | Path) -> str:
@@ -356,6 +442,12 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     methods = ("omniflow", "mobilegpt", "appagent") if args.method == "all" else (args.method,)
     if not source.is_file():
         raise FileNotFoundError(f"source_run_log_missing:{source}")
+    source_payload = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(source_payload, dict):
+        raise ValueError("source_run_log_object_required")
+    task_name = str(source_payload.get("task_name") or args.task or "").strip()
+    if not task_name:
+        raise ValueError("source_run_log_task_name_required")
     reports: list[dict[str, Any]] = []
     memories: dict[str, str] = {}
     newly_created_outputs: list[Path] = []
@@ -367,10 +459,22 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
                 method=method,
                 source=source,
                 memory_root=method_output,
-                task_name=args.task,
+                task_name=task_name,
             )
             if reused is not None:
                 report, memory_path = reused
+                if method == "omniflow":
+                    compiler_report = json.loads(
+                        (method_output / "compile_report.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    review_path = write_function_review(
+                        source_run_log=source,
+                        memory_root=method_output,
+                        report=compiler_report,
+                    )
+                    report["review_path"] = _relative_output(review_path)
                 reports.append(report)
                 memories[method] = _relative_output(memory_path)
                 continue
@@ -432,7 +536,7 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     if args.method == "all":
         return {
             "action": "convert-memory",
-            "task": args.task,
+            "task": task_name,
             "methods": list(methods),
             "source_run_log": _relative_output(source),
             "memory_root": _relative_output(output),
@@ -440,7 +544,7 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
         }
     return {
         "action": "convert-memory",
-        "task": args.task,
+        "task": task_name,
         "method": args.method,
         "memory": next(iter(memories.values())),
     }
@@ -495,14 +599,33 @@ def _run_command(
             command.extend(("--memory", args.memory))
     if args.dry_run:
         command.append("--dry-run")
+    # Keep the episode itself in the temporary runner workspace.  A successful
+    # sealed result is promoted below to the one stable current slot; failures
+    # disappear with the private workspace and cannot become golden evidence.
     environment = dict(os.environ)
-    environment["OMNIFLOW_ANDROIDWORLD_ARCHIVE_ROOT"] = str(args.output)
-    return method, label, subprocess.run(
+    completed = subprocess.run(
         command,
         env=environment,
         cwd=REPO_ROOT,
         check=False,
-    ).returncode
+    )
+    if completed.returncode == 0:
+        candidate = temporary_root / method / label
+        # run_task nests the canonical task/method/device path below its
+        # caller-owned output root.  Locate only this command's own candidate,
+        # never scan previous results.
+        matches = list(candidate.rglob("runlog/current/run_log.json"))
+        if len(matches) == 1:
+            _promote_golden_run(
+                candidate=matches[0].parent,
+                destination=_golden_run_root(
+                    args.output,
+                    task=args.task,
+                    method=method,
+                    device=device,
+                ),
+            )
+    return method, label, completed.returncode
 
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:

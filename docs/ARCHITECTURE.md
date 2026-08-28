@@ -92,7 +92,9 @@ SaveMemory  ──> stable Memory addresses
 ```
 
 历史结果扫描、自动 attempt 选择、scheduler manifest、重复 registry/ledger、启动日志和
-转换缓存都不参与运行。Memory 转换中间文件使用系统临时目录，任务结束自动删除。
+转换缓存都不参与运行。每个 setting 的可见实验结果固定在 `runlog/current`；运行过程
+先放在私有工作区，只有成功的官方结果才会按质量晋升到 current。Memory 转换中间文件
+使用系统临时目录，任务结束自动删除。
 显式传入的已有 Memory 会先进行完整校验（source SHA-256、内部文件哈希、task、模型、
 协议字段）；校验通过即复用，校验失败不会触发隐式重转换。
 
