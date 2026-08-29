@@ -36,6 +36,30 @@
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
+      "id": "open_camera_mode_list_for_video",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "scope": {
+        "function_ids": ["take_video"],
+        "step_indexes": [1],
+        "package_names": ["com.android.camera2"]
+      },
+      "condition": {
+        "xpath_exists": "//node[@clickable='true' and contains(@resource-id,'accessibility_mode_toggle_button') and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
+      },
+      "action": {
+        "action": "click",
+        "target_xpath": "//node[@clickable='true' and contains(@resource-id,'accessibility_mode_toggle_button')][1]"
+      },
+      "budget": {
+        "max_triggers_per_run": 1,
+        "max_triggers_per_step": 1
+      },
+      "priority": 80,
+      "source": "function_augmentation"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
       "id": "restore_target_app",
       "enabled": true,
       "phase": "pre_transfer",
