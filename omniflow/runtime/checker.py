@@ -214,8 +214,8 @@ def checker_rule_matches(
     if kind == "ui_unstable":
         return _ui_is_unstable(current)
     if kind == "package_mismatch":
-        source_package = _normalize(getattr(source, "package_name", ""))
-        current_package = _normalize(getattr(current, "package_name", ""))
+        source_package = _observation_package(source)
+        current_package = _observation_package(current)
         return bool(
             source_package
             and current_package
@@ -747,3 +747,27 @@ def _area(bounds: tuple[float, float, float, float] | None) -> float:
 
 def _normalize(value: Any) -> str:
     return " ".join(str(value or "").casefold().split())
+
+
+def _observation_package(observation: Any | None) -> str:
+    """Return the reported package, falling back to the XML's main package."""
+
+    if observation is None:
+        return ""
+    reported = _normalize(getattr(observation, "package_name", ""))
+    if reported:
+        return reported
+    xml = str(getattr(observation, "xml", "") or "")
+    if not xml:
+        return ""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return ""
+    counts: dict[str, int] = {}
+    for node in root.iter():
+        package = _normalize(node.attrib.get("package"))
+        if not package or package == "com.android.systemui":
+            continue
+        counts[package] = counts.get(package, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
