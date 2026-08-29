@@ -48,10 +48,6 @@ def assess_transfer(
     confidence = _mapping_confidence(transfer.detail)
     if confidence is None:
         return TransferAdmission(False, "omnitransfer_confidence_missing", None)
-    if confidence < float(minimum_confidence):
-        if _exact_executable_identity_match(transfer.detail):
-            return TransferAdmission(True, None, confidence)
-        return TransferAdmission(False, "omnitransfer_low_confidence", confidence)
     if observation is not None and not _target_is_executable(
         transfer,
         observation,
@@ -61,7 +57,17 @@ def assess_transfer(
             "omnitransfer_target_not_executable",
             confidence,
         )
-    if not _target_semantics_match(transfer.detail):
+    semantics_match = _target_semantics_match(transfer.detail)
+    if confidence < float(minimum_confidence):
+        # The learned matcher can rank a non-semantic child (for example an
+        # icon) above its executable, semantically labelled wrapper.  That is
+        # still safe only when the wrapper occupies the exact mapped rectangle
+        # and the target remains executable.  Never use resource-id lookup or
+        # source-coordinate passthrough as a substitute for this check.
+        if _exact_executable_identity_match(transfer.detail) or semantics_match:
+            return TransferAdmission(True, None, confidence)
+        return TransferAdmission(False, "omnitransfer_low_confidence", confidence)
+    if not semantics_match:
         return TransferAdmission(
             False,
             "omnitransfer_target_semantics_mismatch",
