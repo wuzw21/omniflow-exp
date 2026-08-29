@@ -325,6 +325,37 @@ def _promote_mobilegpt_source_memory(
     return True
 
 
+def _candidate_run_directories(candidate: Path) -> list[Path]:
+    """Find this command's sealed run directories.
+
+    AndroidWorld may write either directly below ``runlog/current`` or below
+    its timestamped child (``runlog/current/run_<timestamp>``).  Both layouts
+    are command-local evidence; the runner must promote/archive either one
+    before its temporary workspace is removed.
+    """
+
+    directories: set[Path] = set()
+    for run_log in candidate.rglob("run_log.json"):
+        parts = run_log.relative_to(candidate).parts
+        if "runlog" not in parts or "current" not in parts:
+            continue
+        directories.add(run_log.parent)
+    return sorted(directories)
+
+
+def _candidate_evidence_directories(candidate: Path) -> list[Path]:
+    """Find command-local directories containing persisted result evidence."""
+
+    directories: set[Path] = set()
+    for filename in ("task_results.jsonl", "protocol_probe.json"):
+        for evidence in candidate.rglob(filename):
+            parts = evidence.relative_to(candidate).parts
+            if "runlog" not in parts or "current" not in parts:
+                continue
+            directories.add(evidence.parent)
+    return sorted(directories)
+
+
 def _relative_output(value: str | Path) -> str:
     """Return a repository-relative address for CLI/report output."""
 
@@ -777,10 +808,10 @@ def _run_command(
     # never scan previous results.  A failed command can still have produced
     # truthful protocol_probe/task_results evidence; preserve it instead of
     # deleting the only explanation with the temporary workspace.
-    matches = list(candidate.rglob("runlog/current/run_log.json"))
+    matches = _candidate_run_directories(candidate)
     if completed.returncode == 0 and len(matches) == 1:
         promoted = _promote_golden_run(
-            candidate=matches[0].parent,
+            candidate=matches[0],
             destination=_golden_run_root(
                 args.output,
                 task=args.task,
@@ -827,19 +858,21 @@ def _run_command(
         # official validator fails or the episode writer flushes only the
         # parent ``runlog`` layout.  Preserve that command-scoped evidence as
         # well; otherwise the failed run disappears from the experiment.
-        failed_evidence = list(
-            candidate.rglob("runlog/current/task_results.jsonl")
-        )
-        failed_evidence.extend(candidate.rglob("runlog/current/protocol_probe.json"))
+        failed_evidence = _candidate_evidence_directories(candidate)
         # Some AndroidWorld failure paths flush the sealed result one level
         # above ``runlog/current``.  It is still truthful command-scoped
         # evidence and must not disappear with the temporary workspace.
         if not failed_evidence:
-            failed_evidence.extend(candidate.rglob("runlog/task_results.jsonl"))
-            failed_evidence.extend(candidate.rglob("runlog/protocol_probe.json"))
+            fallback_dirs: set[Path] = set()
+            for filename in ("task_results.jsonl", "protocol_probe.json"):
+                fallback_dirs.update(
+                    path.parent for path in candidate.rglob(filename)
+                    if "runlog" in path.relative_to(candidate).parts
+                )
+            failed_evidence = sorted(fallback_dirs)
         if failed_evidence:
             _archive_failed_run(
-                candidate=failed_evidence[0].parent,
+                candidate=failed_evidence[0],
                 output_root=args.output,
                 task=args.task,
                 method=method,
