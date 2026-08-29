@@ -14,6 +14,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import time
@@ -608,21 +609,10 @@ def _mobilegpt_stats(stats_path: Path) -> dict[str, int]:
     }
     if not stats_path.is_file():
         return values
-    for line in stats_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict) or event.get("event") not in {
-            "chat_call",
-            "embedding_call",
-        }:
-            continue
-        values["model_calls"] += 1
-        values["prompt_tokens"] += int(event.get("prompt_tokens") or 0)
-        values["completion_tokens"] += int(event.get("completion_tokens") or 0)
-        values["total_tokens"] += int(event.get("total_tokens") or 0)
-    return values
+    from src.integrations.mobilegpt_memory import summarize_mobilegpt_stats
+
+    summary = summarize_mobilegpt_stats(stats_path)
+    return {**values, **summary}
 
 
 def run_mobilegpt_oob_client(
@@ -689,6 +679,14 @@ def run_mobilegpt_oob_client(
             stats = _mobilegpt_stats(
                 Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
             )
+            stats_source = Path(
+                os.environ.get("MOBILEGPT_STATS_JSONL", "")
+            ).expanduser()
+            stats_output = output / "mobilegpt_stats.jsonl"
+            if stats_source.is_file():
+                shutil.copy2(stats_source, stats_output)
+            else:
+                stats_output = stats_source
             execution_success = bool(result.get("task_finished")) and reward > 0.5
             result_row = {
                 "schema_version": "omniflow.androidworld.result.v1",
@@ -728,7 +726,7 @@ def run_mobilegpt_oob_client(
                 "token_usage_status": "tracked" if stats["model_calls"] else "unavailable",
                 "fallback_steps": 0,
                 "oob_action_index_protocol": MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL,
-                "mobilegpt_stats_jsonl": os.environ.get("MOBILEGPT_STATS_JSONL", ""),
+                "mobilegpt_stats_jsonl": str(stats_output),
                 "mobilegpt_protocol": {
                     "transport": "oob_control",
                     "action_index": MOBILEGPT_OOB_ACTION_INDEX_PROTOCOL,

@@ -170,7 +170,7 @@ def _golden_run_root(
     )
 
 
-def _run_quality(path: Path) -> tuple[int, int, int, int] | None:
+def _run_quality(path: Path) -> tuple[int, int, int, int, int, int] | None:
     """Score one sealed run without using history selection or a registry."""
 
     run_log_path = path / "run_log.json"
@@ -191,10 +191,32 @@ def _run_quality(path: Path) -> tuple[int, int, int, int] | None:
     succeeded = int(payload.get("status") == "succeeded" and payload.get("success") is True)
     fallback_steps = int(execution.get("fallback_steps") or 0)
     model_calls = int(execution.get("model_calls") or 0)
+    clean_execution = int(not str(execution.get("failure_reason") or "").strip())
+    mobilegpt_result = (
+        diagnostics.get("mobilegpt_result")
+        if isinstance(diagnostics, dict)
+        else {}
+    )
+    mobilegpt_protocol = (
+        mobilegpt_result.get("mobilegpt_protocol")
+        if isinstance(mobilegpt_result, dict)
+        else {}
+    )
+    protocol_finished = int(
+        isinstance(mobilegpt_protocol, dict)
+        and mobilegpt_protocol.get("task_finished") is True
+    )
     # Prefer official success, then fewer fallback/model calls.  This keeps a
     # successful Function replay as the visible golden record without making
     # any claim from an unsuccessful or incomplete candidate.
-    return official, succeeded, -fallback_steps, -model_calls
+    return (
+        official,
+        succeeded,
+        clean_execution,
+        protocol_finished,
+        -fallback_steps,
+        -model_calls,
+    )
 
 
 def _promote_golden_run(
