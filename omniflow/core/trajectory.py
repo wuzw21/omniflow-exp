@@ -103,7 +103,7 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
         _integer(action["index"], "androidworld_action_index_invalid")
         if "x" in action or "y" in action:
             raise ValueError("androidworld_action_index_or_coordinates_required")
-    for key in ("x", "y", "x1", "y1", "x2", "y2"):
+    for key in ("x", "y"):
         if key in action:
             _number(
                 action[key], f"androidworld_action_{key}_invalid"
