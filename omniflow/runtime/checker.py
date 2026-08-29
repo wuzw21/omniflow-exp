@@ -269,7 +269,7 @@ def checker_rule_action(
     if kind == "open_app":
         package_name = str(specification.get("package_name") or "").strip()
         if not package_name and source is not None:
-            package_name = str(getattr(source, "package_name", "") or "").strip()
+            package_name = _observation_package(source)
         return Action("open_app", {"package_name": package_name}) if package_name else None
     if kind == "hide_keyboard":
         return Action("press_key", {"key": "back"})
