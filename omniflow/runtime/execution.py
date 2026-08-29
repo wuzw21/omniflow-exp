@@ -27,6 +27,7 @@ from omniflow.runtime.checker import (
     checker_rule_action,
     checker_rule_matches,
     default_checker_trigger,
+    is_transient_package,
 )
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
@@ -515,6 +516,23 @@ async def _dispatch_prepared(
             observed_package = str(after.package_name or "").strip()
             attempts += 1
         if expected_package and observed_package != expected_package:
+            if is_transient_package(observed_package):
+                # Launching an app may expose a permission or installer layer
+                # before the requested package becomes foreground. The launch
+                # itself succeeded; leave this transient obstruction in the
+                # observation so the shared Checker phase on the next Function
+                # step can dismiss it. Do not treat an arbitrary package or
+                # stale launcher page as ready.
+                return replace(
+                    core_step,
+                    after=after,
+                    origin="action",
+                    detail={
+                        **dict(core_step.detail or {}),
+                        "open_app_ready": False,
+                        "transient_package": observed_package,
+                    },
+                )
             error = (
                 "open_app_target_not_ready:"
                 f"expected={expected_package}:"

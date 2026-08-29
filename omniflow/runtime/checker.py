@@ -220,8 +220,8 @@ def checker_rule_matches(
             source_package
             and current_package
             and source_package != current_package
-            and not _is_transient_package(source_package)
-            and not _is_transient_package(current_package)
+            and not is_transient_package(source_package)
+            and not is_transient_package(current_package)
         )
     if kind == "keyboard_obscuring":
         extra = getattr(current, "extra", {}) or {}
@@ -434,8 +434,8 @@ def default_checker(context: CheckerContext) -> Action | None:
         source_package
         and current_package
         and source_package != current_package
-        and not _is_transient_package(source_package)
-        and not _is_transient_package(current_package)
+        and not is_transient_package(source_package)
+        and not is_transient_package(current_package)
     ):
         return Action("open_app", {"package_name": source_package})
     return _advertisement_recovery(context.current, context.action)
@@ -624,8 +624,10 @@ def _transient_recovery(
     )
 
 
-def _is_transient_package(package_name: str) -> bool:
-    normalized = package_name.casefold()
+def is_transient_package(package_name: str) -> bool:
+    """Return whether a foreground package is a system obstruction layer."""
+
+    normalized = str(package_name or "").casefold()
     return normalized in _TRANSIENT_PACKAGES or any(
         part in normalized for part in _TRANSIENT_PACKAGE_PARTS
     )
