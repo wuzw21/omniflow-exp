@@ -27,7 +27,10 @@ Production writers, compilers, stores, and replay code accept only the
 `omniflow.run_log.v1` RunLog. Historical AndroidWorld data is
 converted once by the explicit offline converter, never inside the runtime.
 
-Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
+RunLog actions preserve the official AndroidWorld action vocabulary: a native
+`swipe`/`scroll` carries `direction` (and an optional `index`), not OOB endpoint
+coordinates. The OOB adapter expands that direction into its private executable
+representation only after the RunLog boundary. Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
 uses raw pixels in the current original device display frame so it matches XML
 bounds. `omniflow.vlm_coordinates` is the only VLM conversion owner: it converts
 canonical recent-action context to pixels before the call and converts validated
@@ -66,7 +69,8 @@ The only saved arguments are:
 - `click`: `x`, `y`.
 - `long_press`: `x`, `y`, optional `duration_ms`.
 - `input_text`: `text`, `x`, `y`.
-- `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms`.
+- `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms` (OOB
+  canonical action only; these fields are not AndroidWorld RunLog fields).
 - `open_app`: `package_name`.
 - `press_key`: `key`.
 - `wait`: `duration_ms`.

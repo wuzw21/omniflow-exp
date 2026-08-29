@@ -32,10 +32,6 @@ _ACTION_FIELDS = {
     "index",
     "x",
     "y",
-    "x1",
-    "y1",
-    "x2",
-    "y2",
     "duration_ms",
     "text",
     "direction",
@@ -112,13 +108,6 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
             _number(
                 action[key], f"androidworld_action_{key}_invalid"
             )
-    swipe_coordinates = {"x1", "y1", "x2", "y2"}
-    provided_swipe_coordinates = swipe_coordinates & set(action)
-    if provided_swipe_coordinates:
-        if action_type != "swipe":
-            raise ValueError("androidworld_action_swipe_coordinates_require_swipe")
-        if provided_swipe_coordinates != swipe_coordinates:
-            raise ValueError("androidworld_action_swipe_coordinates_incomplete")
     if "duration_ms" in action:
         _integer(action["duration_ms"], "androidworld_action_duration_ms_invalid")
         if action["duration_ms"] < 0:
