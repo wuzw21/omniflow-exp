@@ -5192,8 +5192,12 @@ def run_task(args: argparse.Namespace) -> int:
         raise ValueError("result requires exactly one selected --task entry")
     item = selected[0]
     if args.method != SOURCE_METHOD:
-        args.max_steps = _replay_step_budget(item.source_run_log)
-        args.max_fallback_steps = min(MAX_FALLBACK_STEPS, args.max_steps)
+        # Keep one protocol-wide episode budget.  Per-source trajectory
+        # clipping made the effective ``--max-steps`` vary by task and could
+        # terminate a valid cross-device recovery before the Planner had the
+        # configured budget.  The formal protocol is the single owner here.
+        args.max_steps = MAX_STEPS
+        args.max_fallback_steps = min(MAX_FALLBACK_STEPS, MAX_STEPS)
     methods = (args.method,)
     targets = parse_device_targets(args.device)
     if len(targets) != 1:
