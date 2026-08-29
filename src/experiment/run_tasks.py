@@ -347,7 +347,7 @@ def _candidate_evidence_directories(candidate: Path) -> list[Path]:
     """Find command-local directories containing persisted result evidence."""
 
     directories: set[Path] = set()
-    for filename in ("task_results.jsonl", "protocol_probe.json"):
+    for filename in ("run_log.json", "task_results.jsonl", "protocol_probe.json"):
         for evidence in candidate.rglob(filename):
             parts = evidence.relative_to(candidate).parts
             if "runlog" not in parts or "current" not in parts:
@@ -821,7 +821,7 @@ def _run_command(
         )
         if not promoted:
             _archive_failed_run(
-                candidate=matches[0].parent,
+                candidate=matches[0],
                 output_root=args.output,
                 task=args.task,
                 method=method,
