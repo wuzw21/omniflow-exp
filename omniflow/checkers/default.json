@@ -65,6 +65,54 @@
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
+      "id": "select_camera_video_mode",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "scope": {
+        "function_ids": ["take_video"],
+        "step_indexes": [1],
+        "package_names": ["com.android.camera2"]
+      },
+      "condition": {
+        "xpath_exists": "//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera']"
+      },
+      "action": {
+        "action": "click",
+        "target_xpath": "(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])[1]"
+      },
+      "budget": {
+        "max_triggers_per_run": 1,
+        "max_triggers_per_step": 1
+      },
+      "priority": 70,
+      "source": "function_augmentation"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "wait_camera_video_mode_transition",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "scope": {
+        "function_ids": ["take_video"],
+        "step_indexes": [1],
+        "package_names": ["com.android.camera2"]
+      },
+      "condition": {
+        "xpath_exists": "//node[contains(@resource-id,'shutter_button') and @clickable='true' and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
+      },
+      "action": {
+        "action": "wait",
+        "wait_ms": 1500
+      },
+      "budget": {
+        "max_triggers_per_run": 1,
+        "max_triggers_per_step": 1
+      },
+      "priority": 60,
+      "source": "function_augmentation"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
       "id": "restore_target_app",
       "enabled": true,
       "phase": "pre_transfer",
