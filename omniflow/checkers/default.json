@@ -49,11 +49,7 @@
       },
       "action": {
         "action": "swipe",
-        "direction": "right",
-        "x1": 100,
-        "y1": 500,
-        "x2": 800,
-        "y2": 500,
+        "direction": "left",
         "duration_ms": 500
       },
       "budget": {

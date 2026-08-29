@@ -24,7 +24,7 @@ _VLM_ACTION_ARGUMENT_NAMES = {
     "click": ("x", "y"),
     "long_press": ("x", "y"),
     "input_text": ("text", "x", "y"),
-    "swipe": ("direction", "x1", "y1", "x2", "y2"),
+    "swipe": ("direction",),
     "open_app": ("package_name",),
     "press_key": ("key",),
     "wait": ("duration_ms",),

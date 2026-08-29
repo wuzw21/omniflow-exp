@@ -73,8 +73,8 @@
       "ui_label": {"zh_cn": "滑动", "en_us": "Swipe"},
       "description": {"zh_cn": "在屏幕或可滚动区域内按方向滑动。", "en_us": "Swipe in a direction on the screen or inside a scrollable region."},
       "prompt_guide": {
-        "zh_cn": "- swipe(direction, x1, y1, x2, y2, duration_ms?): 在当前屏幕或可滚动区域内滑动；direction 和 x1/y1/x2/y2 必须提供。",
-        "en_us": "- swipe(direction, x1, y1, x2, y2, duration_ms?): Swipe on the current screen or inside a scrollable region; direction and x1/y1/x2/y2 are required."
+        "zh_cn": "- swipe(direction): 按 AndroidWorld 官方方向在当前屏幕或可滚动区域内滑动。",
+        "en_us": "- swipe(direction): Swipe in the official AndroidWorld direction on the current screen or inside a scrollable region."
       },
       "recordable": true,
       "coordinate_action": true,
@@ -83,10 +83,10 @@
         {"name": "x", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动锚点的 0..1000 相对 X 坐标；不提供时使用安全兜底区域。", "en_us": "Optional 0..1000 relative swipe anchor X coordinate; when omitted, the runtime uses a safe fallback region."}, "minimum": 0, "maximum": 1000},
         {"name": "y", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动锚点的 0..1000 相对 Y 坐标；不提供时使用安全兜底区域。", "en_us": "Optional 0..1000 relative swipe anchor Y coordinate; when omitted, the runtime uses a safe fallback region."}, "minimum": 0, "maximum": 1000},
         {"name": "distance", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动距离，使用 0..1000 相对坐标尺度。", "en_us": "Optional swipe distance using the 0..1000 relative coordinate scale."}, "minimum": 0, "maximum": 1000},
-        {"name": "x1", "type": "number", "required": true, "description": {"zh_cn": "滑动起点的 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Start 0..1000 relative X coordinate; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
-        {"name": "y1", "type": "number", "required": true, "description": {"zh_cn": "滑动起点的 0..1000 相对 Y 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Start 0..1000 relative Y coordinate; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
-        {"name": "x2", "type": "number", "required": true, "description": {"zh_cn": "滑动终点的 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "End 0..1000 relative X coordinate; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
-        {"name": "y2", "type": "number", "required": true, "description": {"zh_cn": "滑动终点的 0..1000 相对 Y 坐标；执行前会解码为屏幕绝对像素。", "en_us": "End 0..1000 relative Y coordinate; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
+        {"name": "x1", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
+        {"name": "y1", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
+        {"name": "x2", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
+        {"name": "y2", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
         {"name": "input_source", "type": "string", "description": {"zh_cn": "可选的 Android 输入源；仅在目标控件需要显式事件语义时使用。", "en_us": "Optional Android input source, used only when the target requires explicit event semantics."}, "enum_values": ["touchscreen", "mouse", "stylus", "touchpad", "trackball", "touchnavigation", "joystick"]},
         {"name": "duration_ms", "type": "integer", "description": {"zh_cn": "滑动时长，单位毫秒。", "en_us": "Swipe duration in milliseconds."}, "minimum": 0}
       ]

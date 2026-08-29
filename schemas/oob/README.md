@@ -44,8 +44,8 @@ be global or scoped by Function, step, action type, or package. Runtime evaluate
 the configured phase around every Function action and shares trigger budgets
 across all Function calls in one sequence. Checker recovery uses the same
 canonical action dispatcher as Function execution; configured `swipe` recovery
-therefore carries the canonical direction and endpoint arguments rather than a
-separate gesture implementation.
+therefore carries the official AndroidWorld direction; physical endpoints are
+derived only inside the backend adapter.
 
 Android writers persist the canonical five truth fields plus optional
 `metadata` directly. Kotlin storage validates the shared contract before every
@@ -72,8 +72,8 @@ The only saved arguments are:
 - `click`: `x`, `y`.
 - `long_press`: `x`, `y`, optional `duration_ms`.
 - `input_text`: `text`, `x`, `y`.
-- `swipe`: `direction`, `x1`, `y1`, `x2`, `y2`, optional `duration_ms` (OOB
-  canonical action only; these fields are not AndroidWorld RunLog fields).
+- `swipe`: `direction`, optional `duration_ms` (the official AndroidWorld
+  directional schema; physical endpoints are backend-private).
 - `open_app`: `package_name`.
 - `press_key`: `key`.
 - `wait`: `duration_ms`.

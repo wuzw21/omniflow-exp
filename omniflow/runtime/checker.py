@@ -389,14 +389,7 @@ def _normalize_library_action(value: Any) -> dict[str, Any]:
                 "tool": "swipe",
                 "args": {
                     key: value[key]
-                    for key in (
-                        "direction",
-                        "x1",
-                        "y1",
-                        "x2",
-                        "y2",
-                        "duration_ms",
-                    )
+                    for key in ("direction", "duration_ms")
                     if key in value
                 },
             },
