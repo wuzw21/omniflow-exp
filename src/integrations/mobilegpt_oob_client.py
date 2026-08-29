@@ -712,7 +712,14 @@ def run_mobilegpt_oob_client(
                     "success": execution_success,
                     "reward": reward,
                 },
-                "process_returncode": int(result.get("returncode") or 1),
+                # ``0`` is a valid successful process return code.  Do not
+                # collapse it to ``1`` through truthiness; the result row is
+                # consumed by the scheduler as liveness evidence.
+                "process_returncode": int(
+                    result.get("returncode")
+                    if result.get("returncode") is not None
+                    else 1
+                ),
                 "classification": (
                     "success"
                     if execution_success
