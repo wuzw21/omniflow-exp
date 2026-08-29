@@ -657,6 +657,7 @@ def run_mobilegpt_oob_client(
             task_name=task_name,
             task_params_json=task_params_json,
             task_seed=task_seed,
+            serial=serial,
             console_port=console_port,
             grpc_port=grpc_port,
             adb_path=adb_path,
