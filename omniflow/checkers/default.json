@@ -45,11 +45,16 @@
         "package_names": ["com.android.camera2"]
       },
       "condition": {
-        "xpath_exists": "//node[@clickable='true' and contains(@resource-id,'accessibility_mode_toggle_button') and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
+        "xpath_exists": "//node[contains(@resource-id,'shutter_button') and @clickable='true' and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
       },
       "action": {
-        "action": "click",
-        "target_xpath": "//node[@clickable='true' and contains(@resource-id,'accessibility_mode_toggle_button')][1]"
+        "action": "swipe",
+        "direction": "right",
+        "x1": 100,
+        "y1": 500,
+        "x2": 800,
+        "y2": 500,
+        "duration_ms": 500
       },
       "budget": {
         "max_triggers_per_run": 1,
