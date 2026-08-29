@@ -3250,12 +3250,18 @@ def run_mobilegpt_client(
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     server_log_path: str | Path = "",
 ) -> int:
-    """Run the pinned official MobileGPT client inside AndroidWorld.
+    """Reject the retired Accessibility client path.
 
-    MobileGPT owns all observation, target-app launch, action selection and
-    Accessibility execution.  This wrapper only supplies the canonical
-    AndroidWorld task lifecycle and records the official validator result.
+    Formal AndroidWorld runs invoke ``src.integrations.mobilegpt_oob_client``.
+    Keeping this legacy function as an explicit failure prevents a direct
+    ``official_forward`` invocation from silently bypassing the OOB physical
+    layer while preserving the upstream Server/Planner implementation.
     """
+
+    raise RuntimeError(
+        "mobilegpt_legacy_accessibility_disabled_use_oob:"
+        "scripts/exp/run_androidworld.sh"
+    )
 
     if not android_world_root or not task_name:
         return _run_mobilegpt_client(

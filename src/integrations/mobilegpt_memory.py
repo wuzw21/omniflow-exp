@@ -1249,7 +1249,7 @@ def _validate_mobilegpt_native_cold_memory(
         "function_conversion_enabled": False,
         "coordinate_replay": False,
         "source_emulator_used": True,
-        "physical_backend": "mobilegpt_official_accessibility",
+        "physical_backend": "oob_control",
     }
     if not isinstance(provenance, dict):
         raise ValueError("mobilegpt_cold_memory_provenance_missing")
