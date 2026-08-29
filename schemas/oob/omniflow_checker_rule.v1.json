@@ -48,11 +48,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "type": {"enum": ["click", "hide_keyboard", "open_app", "wait"]},
-        "action": {"enum": ["click", "hide_keyboard", "open_app", "wait"]},
+        "type": {"enum": ["click", "hide_keyboard", "open_app", "swipe", "wait"]},
+        "action": {"enum": ["click", "hide_keyboard", "open_app", "swipe", "wait"]},
         "target_xpath": {"type": "string", "minLength": 1},
         "package_name": {"type": "string", "minLength": 1},
-        "wait_ms": {"type": "integer", "minimum": 0}
+        "wait_ms": {"type": "integer", "minimum": 0},
+        "direction": {"enum": ["left", "right", "up", "down"]},
+        "x1": {"type": "number", "minimum": 0, "maximum": 1000},
+        "y1": {"type": "number", "minimum": 0, "maximum": 1000},
+        "x2": {"type": "number", "minimum": 0, "maximum": 1000},
+        "y2": {"type": "number", "minimum": 0, "maximum": 1000},
+        "duration_ms": {"type": "integer", "minimum": 0}
       }
     },
     "budget": {

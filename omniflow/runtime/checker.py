@@ -275,6 +275,15 @@ def checker_rule_action(
         return Action("press_key", {"key": "back"})
     if kind == "wait":
         return Action("wait", {"duration_ms": int(specification.get("wait_ms") or 0)})
+    if kind == "swipe":
+        return Action(
+            "swipe",
+            {
+                key: value
+                for key, value in specification.items()
+                if key != "type"
+            },
+        )
     if kind != "click":
         return None
     nodes = _xpath_nodes(
@@ -362,7 +371,7 @@ def _normalize_library_action(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("checker_rule_action_invalid")
     kind = str(value.get("type") or value.get("action") or "").strip()
-    if kind not in {"click", "hide_keyboard", "open_app", "wait"}:
+    if kind not in {"click", "hide_keyboard", "open_app", "swipe", "wait"}:
         raise ValueError("checker_rule_action_invalid")
     result: dict[str, Any] = {"type": kind}
     if kind == "click":
@@ -374,6 +383,26 @@ def _normalize_library_action(value: Any) -> dict[str, Any]:
         result["package_name"] = str(value["package_name"]).strip()
     if kind == "wait":
         result["wait_ms"] = int(value.get("wait_ms") or 0)
+    if kind == "swipe":
+        canonical = canonicalize_action(
+            {
+                "tool": "swipe",
+                "args": {
+                    key: value[key]
+                    for key in (
+                        "direction",
+                        "x1",
+                        "y1",
+                        "x2",
+                        "y2",
+                        "duration_ms",
+                    )
+                    if key in value
+                },
+            },
+            replayable_only=True,
+        )
+        result.update(canonical["args"])
     return result
 
 

@@ -42,7 +42,10 @@ frame.
 Checker rules live in an independent library, never inside a Function. They may
 be global or scoped by Function, step, action type, or package. Runtime evaluates
 the configured phase around every Function action and shares trigger budgets
-across all Function calls in one sequence.
+across all Function calls in one sequence. Checker recovery uses the same
+canonical action dispatcher as Function execution; configured `swipe` recovery
+therefore carries the canonical direction and endpoint arguments rather than a
+separate gesture implementation.
 
 Android writers persist the canonical five truth fields plus optional
 `metadata` directly. Kotlin storage validates the shared contract before every
