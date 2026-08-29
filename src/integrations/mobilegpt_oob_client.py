@@ -493,10 +493,23 @@ def _run_mobilegpt_oob_transport(
                 raise RuntimeError("mobilegpt_oob_app_selection_missing")
             selected_package = selected[6:].strip()
             if selected_package != launched_package:
-                raise RuntimeError(
-                    "mobilegpt_oob_selected_package_mismatch:"
-                    f"expected={launched_package}:selected={selected_package}"
-                )
+                # MobileGPT's official Server sometimes returns the Memory
+                # app key (for example ``clock``) instead of the Android
+                # package (``com.google.android.deskclock``).  The official
+                # Accessibility client accepts that frame because it already
+                # resolves the target package during the instruction phase.
+                # Keep the same compatibility at the OOB boundary, but reject
+                # a different installed package rather than silently
+                # redirecting the task.
+                installed = set(_installed_packages(adb_path, serial))
+                target_package = str(
+                    os.environ.get("MOBILEGPT_TARGET_PACKAGE") or ""
+                ).strip()
+                if selected_package in installed and selected_package != target_package:
+                    raise RuntimeError(
+                        "mobilegpt_oob_selected_package_mismatch:"
+                        f"expected={launched_package}:selected={selected_package}"
+                    )
 
             while time.monotonic() - started < max(1.0, float(timeout_sec)):
                 snapshot = oob.observe(wait_to_stabilize=True)
@@ -676,6 +689,7 @@ def run_mobilegpt_oob_client(
             stats = _mobilegpt_stats(
                 Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
             )
+            execution_success = bool(result.get("task_finished")) and reward > 0.5
             result_row = {
                 "schema_version": "omniflow.androidworld.result.v1",
                 "task_name": task_name,
@@ -693,17 +707,17 @@ def run_mobilegpt_oob_client(
                 "fixed_task_seed": True,
                 "fixed_task_params": True,
                 "official_validator_used": True,
-                "official_validator_success": reward > 0.5,
+                "official_validator_success": execution_success,
                 "official_validator_coverage_rate": 1.0,
                 "androidworld_validator_result": {
                     "validator": "androidworld_official",
-                    "success": reward > 0.5,
+                    "success": execution_success,
                     "reward": reward,
                 },
                 "process_returncode": int(result.get("returncode") or 1),
                 "classification": (
                     "success"
-                    if reward > 0.5
+                    if execution_success
                     else "environment_failure"
                     if _is_oob_environment_failure(str(result.get("reason") or ""))
                     else "method_failure"
@@ -722,7 +736,7 @@ def run_mobilegpt_oob_client(
                     "server_port": int(server_port),
                     "task_finished": bool(result.get("task_finished")),
                 },
-                "environment_failure": reward <= 0.5
+                "environment_failure": not execution_success
                 and _is_oob_environment_failure(str(result.get("reason") or "")),
                 "failure_reason": str(result.get("reason") or ""),
                 "runtime_integrity_error": str(result.get("reason") or ""),
@@ -731,7 +745,7 @@ def run_mobilegpt_oob_client(
                 json.dumps(result_row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            result["validator_success"] = reward > 0.5
+            result["validator_success"] = execution_success
             result["task_results"] = str(output / "task_results.jsonl")
             return result
     return run_episode()
