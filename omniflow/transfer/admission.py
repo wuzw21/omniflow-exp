@@ -75,12 +75,6 @@ def requires_contextual_mapping(
     args: dict[str, Any] | None = None,
 ) -> bool:
     normalized = str(tool).strip()
-    if (
-        normalized == "swipe"
-        and _is_semantic_scroll(args)
-        and not _has_swipe_coordinates(args)
-    ):
-        return False
     return normalized in _CONTEXTUAL_MAPPING_TOOLS
 
 
@@ -88,14 +82,6 @@ def _is_semantic_scroll(args: dict[str, Any] | None) -> bool:
     params = args if isinstance(args, dict) else {}
     direction = str(params.get("direction") or "").strip().lower()
     return direction in _SEMANTIC_SCROLL_GESTURES
-
-
-def _has_swipe_coordinates(args: dict[str, Any] | None) -> bool:
-    params = args if isinstance(args, dict) else {}
-    return all(
-        params.get(key) is not None
-        for key in ("x1", "y1", "x2", "y2")
-    )
 
 
 def _mapping_confidence(detail: dict[str, Any]) -> float | None:
