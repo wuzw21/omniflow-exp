@@ -273,6 +273,68 @@ def _package_from_xml(xml_text: str) -> str:
     return (non_system or packages or [""])[-1]
 
 
+def _oob_active_application_xml(
+    xml_text: str,
+    *,
+    package_name: str,
+) -> tuple[str, dict[str, Any]]:
+    """Keep the active app roots and transient input/permission roots.
+
+    Large-screen OOB forests can include stale Launcher taskbar and SystemUI
+    status-bar roots next to the foreground app.  AndroidWorld exposes the
+    active application window, so remove unrelated top-level roots before
+    Transfer while retaining IME and permission UI needed by shared Checkers.
+    """
+
+    diagnostics: dict[str, Any] = {
+        "removed_root_count": 0,
+        "removed_packages": [],
+    }
+    foreground_package = str(package_name or "").strip()
+    if not xml_text or not foreground_package:
+        return xml_text, diagnostics
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return xml_text, diagnostics
+
+    removed_packages: set[str] = set()
+    removed_count = 0
+
+    parents = list(root.findall(".//window"))
+    if root.tag != "window" and not parents:
+        parents = [root]
+    for parent in parents:
+        for candidate in list(parent):
+            if candidate.tag != "node":
+                continue
+            nodes = list(candidate.iter("node"))
+            packages = {
+                str(node.attrib.get("package") or "").strip()
+                for node in nodes
+                if str(node.attrib.get("package") or "").strip()
+            }
+            if not packages or foreground_package in packages:
+                continue
+            normalized_packages = {value.casefold() for value in packages}
+            if any(
+                "inputmethod" in value
+                or "permissioncontroller" in value
+                or "packageinstaller" in value
+                for value in normalized_packages
+            ):
+                continue
+            parent.remove(candidate)
+            removed_count += 1
+            removed_packages.update(packages)
+
+    if removed_count == 0:
+        return xml_text, diagnostics
+    diagnostics["removed_root_count"] = removed_count
+    diagnostics["removed_packages"] = sorted(removed_packages)
+    return ET.tostring(root, encoding="unicode"), diagnostics
+
+
 def _agent_result_class() -> Any | None:
     for module_name in (
         "android_world.agents.base_agent",
@@ -600,6 +662,12 @@ class AndroidWorldHost:
                 or _package_from_xml(forest_xml)
                 or _package_from_xml(elements_xml)
             )
+            oob_xml_filter: dict[str, Any] = {}
+            if self.control_client is not None and forest_xml:
+                forest_xml, oob_xml_filter = _oob_active_application_xml(
+                    forest_xml,
+                    package_name=graph_package,
+                )
             forest_complete = bool(forest_xml) and (
                 xml_covers_screen(
                     forest_xml,
@@ -700,6 +768,7 @@ class AndroidWorldHost:
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
                 "ui_graph_complete": bool(xml_text) and graph_complete,
+                "oob_xml_filter": oob_xml_filter,
                 "display": {
                     "width": int(display_width),
                     "height": int(display_height),
