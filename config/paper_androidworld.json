@@ -34,7 +34,7 @@
     "source_seed": 111,
     "evaluation_seed": 113,
     "source_max_steps": 30,
-    "max_steps": 30,
+    "max_steps": 20,
     "max_fallback_steps": 30,
     "max_function_tools": 8,
     "checker": {
