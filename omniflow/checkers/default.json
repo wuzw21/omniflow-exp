@@ -3,12 +3,23 @@
   "checker_rules": [
     {
       "schema_version": "omniflow.checker_rule.v1",
-      "id": "permission_allow",
+      "id": "grant_foreground_permission",
       "enabled": true,
       "phase": "pre_transfer",
-      "condition": {"xpath_exists": "//node[(contains(@package,'permissioncontroller') or contains(@resource-id,'permissioncontroller') or contains(@resource-id,'packageinstaller'))]"},
-      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'allow') or contains(@text,'允许') or contains(@text,'确定') or contains(@resource-id,'permission_allow_button') or contains(@resource-id,'allow_button') or contains(@resource-id,'button1'))]"},
-      "budget": {"max_triggers_per_run": 1},
+      "condition": {"xpath_exists": "//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')]"},
+      "action": {"action": "click", "target_xpath": "(//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')])[1]"},
+      "budget": {"max_triggers_per_run": 2},
+      "priority": 105,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "dismiss_permission_dialog",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "condition": {"xpath_exists": "//node[(contains(@package,'permissioncontroller') or contains(@resource-id,'permissioncontroller') or contains(@resource-id,'packageinstaller') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'open with') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'just once') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'always') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use a different app'))]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'allow') or contains(@text,'允许') or contains(@text,'确定') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'just once') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'always') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'while using the app') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'only this time') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'allow only while using') or contains(@text,'仅在使用该应用时') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use a different app') or contains(@resource-id,'permission_allow_button') or contains(@resource-id,'allow_button') or contains(@resource-id,'button1'))]"},
+      "budget": {"max_triggers_per_run": 2},
       "priority": 100,
       "source": "runtime_policy"
     },
@@ -17,15 +28,15 @@
       "id": "dismiss_transient_overlay",
       "enabled": true,
       "phase": "pre_transfer",
-      "condition": {"xpath_exists": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
-      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
+      "condition": {"xpath_exists": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
       "budget": {"max_triggers_per_run": 1},
       "priority": 90,
       "source": "runtime_policy"
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
-      "id": "package_mismatch_recovery",
+      "id": "restore_target_app",
       "enabled": true,
       "phase": "pre_transfer",
       "condition": {"package_mismatch": true},
@@ -36,13 +47,36 @@
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
-      "id": "hide_keyboard_if_obscuring",
+      "id": "restore_target_app_after_action",
+      "enabled": true,
+      "phase": "post_action",
+      "scope": {"action_types": ["click", "long_press", "input_text", "swipe"]},
+      "condition": {"package_mismatch": true},
+      "action": {"action": "open_app"},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 10,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "hide_keyboard",
       "enabled": true,
       "phase": "pre_action",
       "condition": {"keyboard_obscuring": true},
       "action": {"action": "hide_keyboard"},
-      "budget": {"max_triggers_per_run": 1},
+      "budget": {"max_triggers_per_run": 2, "max_triggers_per_step": 1},
       "priority": 100,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "wait_for_ui_stable",
+      "enabled": true,
+      "phase": "pre_transfer",
+      "condition": {"ui_unstable": true},
+      "action": {"action": "wait", "wait_ms": 500},
+      "budget": {"max_triggers_per_run": 1},
+      "priority": 110,
       "source": "runtime_policy"
     }
   ]

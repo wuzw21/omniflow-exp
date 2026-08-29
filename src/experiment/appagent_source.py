@@ -38,7 +38,7 @@ from src.experiment.protocol import (
     FORMAL_THINKING,
     require_formal_model,
 )
-from src.experiment.paths import relative_reference
+from src.experiment.paths import relative_reference, sha256_file
 
 
 def _appagent_observation_xml(observation: dict[str, Any]) -> str:
@@ -242,6 +242,7 @@ def run_official_document_generation(
             request_json = kwargs.get("json")
             if isinstance(request_json, dict):
                 request_json = dict(request_json)
+                request_json["enable_thinking"] = False
                 request_json["thinking"] = {"type": FORMAL_THINKING}
                 kwargs["json"] = request_json
             kwargs.setdefault("timeout", float(timeout_sec))
@@ -441,6 +442,20 @@ def _resolve_appagent_screenshot(
     )
     if remapped is not None:
         return remapped
+    # Some imported RunLogs retain an obsolete attempt directory in the
+    # screenshot path even though the evidence was promoted to the visible
+    # ``runlog/current`` bundle.  Recover only from this same RunLog's
+    # observation object directory, and verify the declared digest when one
+    # is available; never synthesize or borrow an image from another task.
+    local_candidates = (
+        source_run_log.parent / "observations" / "objects" / screenshot.name,
+        source_run_log.parent / "screenshots" / screenshot.name,
+        source_run_log.parent.parent / "screenshots" / screenshot.name,
+    )
+    for local_candidate in local_candidates:
+        if local_candidate.is_file():
+            if not expected_sha256 or sha256_file(local_candidate) == expected_sha256:
+                return local_candidate.resolve()
     source_object = source_run_log.expanduser().resolve()
     sha256_root = source_object.parent.parent
     suffix = {

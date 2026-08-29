@@ -41,6 +41,7 @@ from src.experiment.mobilegpt_contract import (
 )
 from src.experiment.paths import (
     resolve_path,
+    resolve_relative_reference,
     safe_component,
     safe_relative_path,
     sha256_file,
@@ -52,6 +53,7 @@ from src.experiment.protocol import (
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     DEVICES,
+    ENABLED_METHODS,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -107,6 +109,64 @@ def _mobilegpt_server_port(console_port: int) -> int:
     if int(console_port) == 5560:
         return 12345
     return 12000 + int(console_port) % 40000
+
+
+def _replay_step_budget(
+    source_run_log: str | Path,
+    *,
+    maximum: int = MAX_STEPS,
+) -> int:
+    """Bound online reasoning to the recorded trajectory plus a small margin.
+
+    The source RunLog is the only task-specific signal allowed to influence the
+    formal step budget.  Counting recorded action-bearing steps (including an
+    answer step, when present) gives the Planner enough room to recover from a
+    cross-device mismatch without falling back to the global 30-step budget.
+    Invalid or unavailable source evidence keeps the protocol's conservative
+    global maximum instead of inventing a smaller task budget.
+    """
+
+    try:
+        payload = json.loads(
+            Path(source_run_log).expanduser().read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return max(1, int(maximum))
+    steps = payload.get("steps") if isinstance(payload, dict) else None
+    if not isinstance(steps, list) or not steps:
+        return max(1, int(maximum))
+    recorded_steps = sum(
+        1
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("action"), dict)
+    )
+    if recorded_steps <= 0:
+        return max(1, int(maximum))
+    return min(max(1, int(maximum)), recorded_steps + 10)
+
+
+def _infer_source_run_log_from_memory(
+    memory: str | Path,
+) -> Path | None:
+    """Recover the sibling source RunLog for a Memory-only ``run`` call."""
+
+    supplied = Path(memory).expanduser()
+    candidates = [
+        supplied.parent / "run_log.json",
+        supplied.parent.parent / "run_log.json",
+        # Official MobileGPT bundles expose the source evidence beside the
+        # native ``memory/`` directory.  Treat that explicit provenance file
+        # as the same source-parameter authority used by OmniFlow; otherwise
+        # a Memory-only MobileGPT run silently regenerates task parameters
+        # from evaluation seed 113.
+        supplied.parent / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
+        supplied.parent.parent / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
+        supplied / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
 
 
 @dataclass(frozen=True)
@@ -1465,6 +1525,11 @@ def seal_mobilegpt_converted_memory(
     validated_count = int(audit.get("validated_transition_count") or 0)
     validation_rows = audit.get("validation_rows")
     official_reader = audit.get("official_reader_validation")
+    official_learning = (
+        semantic_learning
+        and audit.get("official_server_finished") is True
+        and audit.get("teacher_prompt_used") is False
+    )
     launch_only = (
         isinstance(official_reader, dict)
         and mobilegpt_memory.is_valid_mobilegpt_launch_only_memory(
@@ -1473,30 +1538,46 @@ def seal_mobilegpt_converted_memory(
             official_reader,
         )
     )
-    trajectory_complete = not (
-        transition_count <= 0
-        or validated_count != transition_count
-        or not isinstance(validation_rows, list)
-        or not validation_rows
-        or any(not isinstance(row, dict) or row.get("matched") is not True for row in validation_rows)
-        or (
-            not semantic_learning
-            and any(
-                not isinstance(row, dict)
-                or row.get("semantic_alignment") is not True
-                for row in validation_rows
+    if official_learning:
+        # A launch-only task has no replayable transition by design.  The
+        # official server still has to finish and produce a loadable one-page
+        # memory, but requiring transition_count > 0 would reject the valid
+        # open_app + terminal-answer case.
+        trajectory_complete = (
+            launch_only
+            or (
+                transition_count > 0
+                and audit.get("official_server_finished") is True
+                and audit.get("source_transitions_supplied") is True
+                and audit.get("source_success_boundary_supplied") is True
+                and audit.get("complete") is True
             )
         )
-        or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
-        != transition_count
-        or (
-            not semantic_learning
-            and audit.get("actions_supplied_to_mobilegpt") is not True
+    else:
+        trajectory_complete = not (
+            transition_count <= 0
+            or validated_count != transition_count
+            or not isinstance(validation_rows, list)
+            or not validation_rows
+            or any(not isinstance(row, dict) or row.get("matched") is not True for row in validation_rows)
+            or (
+                not semantic_learning
+                and any(
+                    not isinstance(row, dict)
+                    or row.get("semantic_alignment") is not True
+                    for row in validation_rows
+                )
+            )
+            or sum(int(row.get("consumed_transitions") or 0) for row in validation_rows)
+            != transition_count
+            or (
+                not semantic_learning
+                and audit.get("actions_supplied_to_mobilegpt") is not True
+            )
+            or audit.get("source_transitions_supplied") is not True
+            or audit.get("source_success_boundary_supplied") is not True
+            or audit.get("complete") is not True
         )
-        or audit.get("source_transitions_supplied") is not True
-        or audit.get("source_success_boundary_supplied") is not True
-        or audit.get("complete") is not True
-    )
     if not (trajectory_complete or launch_only):
         raise ValueError("mobilegpt_virtual_memory_trajectory_incomplete")
     if (
@@ -1504,7 +1585,17 @@ def seal_mobilegpt_converted_memory(
         or official_reader.get("loadable") is not True
         or int(official_reader.get("task_path_pages") or 0) <= 0
         or int(official_reader.get("page_count") or 0) <= 0
-        or int(official_reader.get("action_row_count") or 0) < transition_count
+        or (
+            (
+                not launch_only
+                and int(official_reader.get("action_row_count") or 0) <= 0
+            )
+            if official_learning
+            else (
+                not launch_only
+                and int(official_reader.get("action_row_count") or 0) < transition_count
+            )
+        )
     ):
         raise ValueError("mobilegpt_virtual_memory_official_reader_invalid")
     from src.integrations.mobilegpt import validate_mobilegpt_memory
@@ -1539,12 +1630,15 @@ def seal_mobilegpt_converted_memory(
         "explore_agent_used": True,
         "select_agent_used": True,
         "derive_agent_fallback_allowed": False,
-        "teacher_prompt_used": True,
-        "teacher_action_alignment_complete": True,
+        "teacher_prompt_used": not official_learning,
+        "teacher_action_alignment_complete": not official_learning,
         "actions_supplied_to_mobilegpt": False,
         "source_reader_coverage_validation": False,
         "direct_subtasks_from_runlog": False,
     }
+    if official_learning:
+        required_audit["official_server_finished"] = True
+        required_audit["official_prompt_extension"] = False
     for audit_field, expected in required_audit.items():
         if audit.get(audit_field) != expected:
             raise ValueError(
@@ -1586,7 +1680,7 @@ def seal_mobilegpt_converted_memory(
         "native_mobilegpt_learning": False,
         "task_local_memory": True,
         "learning_mode": learning_mode,
-        "teacher_forcing": semantic_learning,
+        "teacher_forcing": semantic_learning and not official_learning,
         "synthetic_subtasks": not semantic_learning,
         "semantic_subtasks": semantic_learning,
         "original_mobilegpt_prompts": semantic_learning,
@@ -1594,7 +1688,7 @@ def seal_mobilegpt_converted_memory(
         "source_transitions_supplied": True,
         "source_success_boundary_supplied": True,
         "runlog_transition_compilation": not semantic_learning,
-        "complete_transition_mapping": True,
+        "complete_transition_mapping": not official_learning,
         "official_reader_validation": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
@@ -1608,7 +1702,7 @@ def seal_mobilegpt_converted_memory(
         provenance.update(
             {
                 "official_authoring_session": True,
-                "teacher_action_alignment_complete": True,
+                "teacher_action_alignment_complete": not official_learning,
             }
         )
     manifest = {
@@ -1980,14 +2074,20 @@ def build_mobilegpt_server_command(
         requested_embedding_model = str(embedding_model or "").strip()
         if requested_embedding_model and requested_embedding_model != MOBILEGPT_EMBEDDING_MODEL:
             raise ValueError("mobilegpt_embedding_model_is_fixed")
-        resolved_embedding_model = _mobilegpt_memory_embedding_model(
-            resolved_memory_root,
-            manifest_path=(
-                resolve_path(mobilegpt_memory_manifest)
-                if mobilegpt_memory_manifest
-                else None
-            ),
-        )
+        if write_through_memory:
+            # A cold official episode intentionally starts with an empty
+            # Memory directory, so there is no manifest to validate yet.
+            # The protocol fixes the embedding model for this boundary.
+            resolved_embedding_model = MOBILEGPT_EMBEDDING_MODEL
+        else:
+            resolved_embedding_model = _mobilegpt_memory_embedding_model(
+                resolved_memory_root,
+                manifest_path=(
+                    resolve_path(mobilegpt_memory_manifest)
+                    if mobilegpt_memory_manifest
+                    else None
+                ),
+            )
         chat_model = require_formal_model(str(chat_model or FORMAL_MODEL).strip())
         from src.integrations.official_forward import prepare_mobilegpt_server
 
@@ -2089,6 +2189,80 @@ def _last_jsonl_object(path: Path) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _materialize_mobilegpt_canonical_run_log(
+    *,
+    output_path: Path,
+    item: CanonicalRunLog,
+    target: DeviceTarget,
+    task_seed: int | None,
+) -> Path:
+    """Wrap the official MobileGPT result in the shared RunLog contract.
+
+    MobileGPT's upstream client intentionally emits ``task_results.jsonl`` and
+    protocol telemetry, not OmniFlow's canonical RunLog.  The experiment
+    runner still needs one stable evidence envelope so successful results can
+    be promoted and failed results can be archived without changing the
+    upstream planner or action implementation.
+    """
+
+    result = _last_jsonl_object(output_path / "task_results.jsonl")
+    probe = _read_json(output_path / "protocol_probe.json") if (
+        output_path / "protocol_probe.json"
+    ).is_file() else {}
+    if not isinstance(probe, dict):
+        probe = {}
+    success = bool(result.get("official_validator_success") is True)
+    duration_ms = _coerce_float(result.get("duration_ms"))
+    execution_summary = {
+        "actions_executed": _coerce_int(result.get("actions_executed")),
+        "model_calls": _coerce_int(result.get("model_calls")),
+        "prompt_tokens": _coerce_int(result.get("prompt_tokens")),
+        "completion_tokens": _coerce_int(result.get("completion_tokens")),
+        "total_tokens": _coerce_int(result.get("total_tokens")),
+        "execution_duration_ms": duration_ms,
+        "duration_ms": duration_ms,
+        "fallback_steps": _coerce_int(result.get("fallback_steps")),
+        "token_usage_status": str(result.get("token_usage_status") or "unavailable"),
+        "failure_reason": str(result.get("failure_reason") or "").strip() or None,
+        "success": success,
+    }
+    payload = {
+        "schema_version": "oob.run_log.canonical.v1",
+        "run_id": "current",
+        "task_name": item.task,
+        "goal": str(result.get("official_task_instruction") or item.goal),
+        "task_parameters": dict(result.get("task_params") or item.params or {}),
+        "seed": int(task_seed if task_seed is not None else item.replay_seed),
+        "status": "succeeded" if success else "failed",
+        "success": success,
+        "validator": {
+            "official": bool(result.get("official_validator_used")),
+            "success": success,
+            "reward": result.get("androidworld_validator_result", {}).get("reward"),
+        },
+        "steps": [],
+        "diagnostics": {
+            "done_reason": "validator_success" if success else "mobilegpt_failure",
+            "execution_summary": execution_summary,
+            "mobilegpt_result": result,
+            "mobilegpt_protocol_probe": probe,
+        },
+        "provenance": {
+            "kind": "runtime",
+            "method": "mobilegpt",
+            "device": target.serial,
+            "execution_backend": "mobilegpt_official_accessibility",
+            "upstream_result": "task_results.jsonl",
+        },
+    }
+    run_log_path = output_path / "run_log.json"
+    run_log_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return run_log_path
 
 
 def _result_device_name(target: DeviceTarget) -> str:
@@ -2337,7 +2511,9 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
                 resolution_failures.append(
                     "recall_rejected:" + ", ".join(dict.fromkeys(rejection_rows))
                 )
-            elif not any(event.get("candidate_function_ids") for event in recall_events):
+            elif recall_events and not any(
+                event.get("candidate_function_ids") for event in recall_events
+            ):
                 resolution_failures.append("recall_returned_no_function_candidate")
     return {
         "function_attempts": len(function_rows),
@@ -2391,6 +2567,13 @@ def _task_failure_attribution(
     runtime_error = str(execution_summary.get("failure_reason") or "").strip()
     if runtime_error:
         return f"runtime_failure:{runtime_error}"
+    if (
+        not official
+        and not audit.get("function_attempts")
+        and not audit.get("planner_actions")
+        and not audit.get("router_statuses")
+    ):
+        return "initialization_or_environment_failure:official_validator_not_reached"
     function_failures = list(audit.get("failures") or ()) + list(
         audit.get("resolution_failures") or ()
     )
@@ -4451,12 +4634,30 @@ def _run_result_mobilegpt(
         source_prep_type = "empty_cold_start"
         adapted_memory: dict[str, Any] = {}
     else:
-        source_memory_root = resolve_path(source_memory_value)
-        if not source_memory_root.is_dir():
+        provided_memory_root = resolve_path(source_memory_value)
+        if not provided_memory_root.is_dir():
             raise FileNotFoundError(
-                f"mobilegpt_source_memory_missing:{source_memory_root}"
+                f"mobilegpt_source_memory_missing:{provided_memory_root}"
             )
-        source_manifest_path = None
+        # Accept both documented forms of the sealed asset:
+        #   bundle/                  (manifest + memory/ child)
+        #   bundle/memory/           (the native memory root)
+        # The public launcher passes the explicitly supplied path verbatim,
+        # so resolving this here keeps ``run --memory`` independent of which
+        # form the caller used.  The MobileGPT server and digest must always
+        # receive the actual native memory directory, never the bundle root.
+        bundle_manifest_path = provided_memory_root / MOBILEGPT_MEMORY_MANIFEST
+        nested_memory_root = provided_memory_root / "memory"
+        if bundle_manifest_path.is_file() and nested_memory_root.is_dir():
+            source_memory_root = nested_memory_root
+            source_manifest_path = bundle_manifest_path
+        else:
+            source_memory_root = provided_memory_root
+            source_manifest_path = source_memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
+        if not source_manifest_path.is_file():
+            raise FileNotFoundError(
+                f"mobilegpt_source_memory_manifest_missing:{source_manifest_path}"
+            )
         source_method = "mobilegpt_official_exploration"
         source_prep_type = "mobilegpt_official_exploration"
         adapted_memory = {}
@@ -4830,7 +5031,42 @@ def _run_result_mobilegpt(
                     summary_exclude=False,
                 )
                 records.append(episode_record)
-                failed += int(returncode != 0)
+                canonical_run_log: Path | None = None
+                if not args.dry_run and episode_spec.output_path is not None:
+                    canonical_run_log = _materialize_mobilegpt_canonical_run_log(
+                        output_path=episode_spec.output_path,
+                        item=item,
+                        target=target,
+                        task_seed=task_seed,
+                    )
+                # The official MobileGPT client can stop with its bounded
+                # step-budget code after the device has already reached the
+                # AndroidWorld goal.  Keep that process code in the raw
+                # result, but let the canonical official validator decide
+                # the experiment outcome used by the outer scheduler.
+                validator_success = False
+                if canonical_run_log is not None and canonical_run_log.is_file():
+                    try:
+                        canonical_payload = json.loads(
+                            canonical_run_log.read_text(encoding="utf-8")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        canonical_payload = {}
+                    validator = (
+                        canonical_payload.get("validator")
+                        if isinstance(canonical_payload, dict)
+                        else None
+                    )
+                    validator_success = bool(
+                        isinstance(validator, dict)
+                        and validator.get("official") is True
+                        and validator.get("success") is True
+                    )
+                failed += int(
+                    not validator_success
+                    if canonical_run_log is not None
+                    else returncode != 0
+                )
             finally:
                 _stop_background_command(server)
 
@@ -4911,6 +5147,8 @@ def _run_result_mobilegpt(
 
 
 def run_task(args: argparse.Namespace) -> int:
+    if args.method not in (*ENABLED_METHODS, SOURCE_METHOD):
+        raise ValueError(f"method_not_enabled:{args.method}")
     # The public runner is intentionally the only experiment control surface.
     # Keep this normalization here as a second boundary so a direct invocation
     # of the atomic runner cannot create a second protocol variant.
@@ -4947,10 +5185,28 @@ def run_task(args: argparse.Namespace) -> int:
             args.appagent_memory_root = memory
         elif args.method == "fixed_replay":
             args.source_run_log = memory
+    # An explicitly supplied OmniFlow Memory must fail at the launcher
+    # boundary when its Store is absent.  FunctionStore intentionally permits
+    # a missing path so source/no-memory runs can use an empty Store; that
+    # permissive behavior must not turn a typo in a formal Memory path into a
+    # long Planner fallback episode.
+    if args.method == "omniflow" and str(args.store_path or "").strip():
+        resolved_store_path = resolve_path(args.store_path)
+        if not resolved_store_path.is_file():
+            raise FileNotFoundError(
+                f"omniflow_memory_store_missing:{resolved_store_path}"
+            )
+    if not str(getattr(args, "source_run_log", "") or "").strip() and memory:
+        inferred_source = _infer_source_run_log_from_memory(memory)
+        if inferred_source is not None:
+            args.source_run_log = str(inferred_source)
     selected = _select_from_args(args)
     if len(selected) != 1:
         raise ValueError("result requires exactly one selected --task entry")
     item = selected[0]
+    if args.method != SOURCE_METHOD:
+        args.max_steps = _replay_step_budget(item.source_run_log)
+        args.max_fallback_steps = min(MAX_FALLBACK_STEPS, args.max_steps)
     methods = (args.method,)
     targets = parse_device_targets(args.device)
     if len(targets) != 1:
@@ -5031,8 +5287,9 @@ def run_task(args: argparse.Namespace) -> int:
             appagent_manifest = _read_object(
                 source_memory_root / "appagent_manifest.json"
             )
-            appagent_docs_root = Path(
-                str(appagent_manifest.get("demo_docs_root") or "")
+            appagent_docs_root = resolve_relative_reference(
+                appagent_manifest.get("demo_docs_root"),
+                base=source_memory_root,
             ).expanduser()
             if not appagent_docs_root.is_dir():
                 raise FileNotFoundError(
@@ -5334,6 +5591,12 @@ def build_parser() -> argparse.ArgumentParser:
             "same episode runner starts cold from empty memory; if supplied, "
             "it starts warm from an immutable snapshot."
         ),
+    )
+    result_parser.add_argument("--mobilegpt-port", type=int, default=12345)
+    result_parser.add_argument(
+        "--mobilegpt-server-warmup-sec",
+        type=float,
+        default=30.0,
     )
     result_parser.add_argument("--dry-run", action="store_true")
     result_parser.add_argument("--fail-fast", action="store_true")

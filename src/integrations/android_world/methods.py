@@ -399,6 +399,20 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
     if function_router is not None:
         build_kwargs["function_router"] = function_router
     built_agent = build_agent(**build_kwargs)
+    if context.selector == "omniflow" and str(context.store_path).strip():
+        # Function replay is only valid when the explicit launcher asset is
+        # the asset actually opened by OmniFlow.  Keep this as a hard runtime
+        # invariant: silently replacing it with an ambient/current Store
+        # produces plausible but irreproducible planner traces.
+        expected_store = Path(context.store_path).expanduser().resolve()
+        actual_store = Path(
+            getattr(getattr(built_agent, "store", None), "path", "")
+        ).expanduser().resolve()
+        if actual_store != expected_store:
+            raise RuntimeError(
+                "omniflow_function_store_routing_mismatch:"
+                f"expected={expected_store}:actual={actual_store}"
+            )
     if context.selector != "fixed_replay":
         return built_agent
     if not str(context.raw_replay_run_log or "").strip():

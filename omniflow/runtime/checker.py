@@ -198,6 +198,7 @@ def checker_rule_matches(
     function_id: str,
     step_index: int,
     action: Action,
+    transfer_failed: bool = False,
 ) -> bool:
     normalized = validate_checker_rule(rule)
     if not normalized["enabled"] or not _scope_matches(
@@ -223,31 +224,35 @@ def checker_rule_matches(
             and not _is_transient_package(current_package)
         )
     if kind == "keyboard_obscuring":
-        # Text entry needs the keyboard.  The shared hide-keyboard recovery is
-        # only meaningful before a non-text action whose target may be covered.
-        if action.tool == "input_text":
-            return False
         extra = getattr(current, "extra", {}) or {}
         if extra.get("keyboard_visible") is True or extra.get("ime_visible") is True:
-            return True
-        package_name = _normalize(getattr(current, "package_name", ""))
-        activity_name = _normalize(getattr(current, "activity_name", ""))
-        xml = _normalize(getattr(current, "xml", ""))
-        # The IME is often embedded in the app's accessibility hierarchy while
-        # the reported foreground package remains the app (for example Contacts
-        # with Gboard open).  Package-only detection therefore misses exactly
-        # the state in which a mapped form-field click can land on the keyboard.
-        return any(
-            marker in value
-            for value in (package_name, activity_name, xml)
-            for marker in (
-                "inputmethod",
-                "softinputwindow",
-                "com.google.android.inputmethod",
-                "com.android.inputmethod",
-                "key_pos_",
+            keyboard_visible = True
+        else:
+            package_name = _normalize(getattr(current, "package_name", ""))
+            activity_name = _normalize(getattr(current, "activity_name", ""))
+            xml = _normalize(getattr(current, "xml", ""))
+            # The IME is often embedded in the app's accessibility hierarchy while
+            # the reported foreground package remains the app (for example Contacts
+            # with Gboard open).  Package-only detection therefore misses exactly
+            # the state in which a mapped form-field click can land on the keyboard.
+            keyboard_visible = any(
+                marker in value
+                for value in (package_name, activity_name, xml)
+                for marker in (
+                    "inputmethod",
+                    "softinputwindow",
+                    "com.google.android.inputmethod",
+                    "com.android.inputmethod",
+                    "key_pos_",
+                )
             )
-        )
+        if not keyboard_visible:
+            return False
+        # Hiding the IME proactively can change the meaning of a later Back
+        # action.  The shared recovery is therefore admitted only after this
+        # exact action has failed Transfer; the action is then retried with
+        # the same semantics.
+        return bool(transfer_failed)
     xpath = str(condition.get("xpath") or "")
     return bool(_xpath_nodes(str(getattr(current, "xml", "") or ""), xpath))
 

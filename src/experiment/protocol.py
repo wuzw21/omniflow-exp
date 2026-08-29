@@ -7,6 +7,7 @@ import os
 from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
 
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
+ENABLED_METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["enabled_methods"])
 SOURCE_METHOD = "source"
 DEFAULT_TASK = str(ANDROIDWORLD_PROTOCOL["task"])
 DEVICES = tuple(
@@ -63,9 +64,9 @@ FOLD_SIZE = str(ANDROIDWORLD_PROTOCOL["fold_size"])
 FORMAL_MODEL = "Qwen3.6-Plus"
 OMNIFLOW_PLANNER_MODEL = FORMAL_MODEL
 APPAGENT_MODEL = FORMAL_MODEL
-# All online and authoring calls use the same bounded Qwen reasoning mode.
+# All online and authoring calls use the same non-thinking Qwen mode.
 # The value is part of the protocol, not a per-method runtime override.
-FORMAL_THINKING = "enabled"
+FORMAL_THINKING = "disabled"
 # Request controls are protocol constants as well.  Keeping these here makes
 # the launcher, the native planner, and the official baseline adapters agree
 # even when the parent shell contains stale experiment variables.

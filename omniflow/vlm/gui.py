@@ -24,11 +24,14 @@ from omniflow.vlm_coordinates import (
 )
 
 SYSTEM_PROMPT = DEFAULT_PLANNER_SYSTEM_PROMPT
-_MAX_ACCESSIBILITY_ROWS = 16
+_MAX_ACCESSIBILITY_ROWS = 50
 
 _PLANNER_CONTEXT_KEYS = (
     "planner_feedback",
+    "forbid_finished",
     "previous_action_error",
+    "previous_action",
+    "recent_actions",
     "execution_history",
     "user_input",
 )
@@ -89,12 +92,19 @@ def build_model_turn_request(
                     "detail": "low",
                 },
             }
-        )
-    tools = relative_coordinate_tools(
-        vlm_action_tools(include_summary=False),
-        display,
     )
-    tools.extend(function_tools(functions, include_summary=False))
+    native_tools = vlm_action_tools(include_summary=True)
+    projected_extra = projected_state.get("extra")
+    if isinstance(projected_extra, dict) and bool(
+        projected_extra.get("forbid_finished")
+    ):
+        native_tools = [
+            tool
+            for tool in native_tools
+            if tool.get("function", {}).get("name") != "finished"
+        ]
+    tools = relative_coordinate_tools(native_tools, display)
+    tools.extend(function_tools(functions, include_summary=True))
     request: dict[str, Any] = {
         "model": str(model),
         "messages": [
@@ -103,7 +113,8 @@ def build_model_turn_request(
         ],
         "max_tokens": 512,
         "temperature": 0,
-        "stream": False,
+        "stream": True,
+        "stream_options": {"include_usage": True},
         "tools": tools,
         "tool_choice": "required",
         "parallel_tool_calls": False,
@@ -216,7 +227,7 @@ def _compact_accessibility_observation(
             name
             for name, attribute in (
                 ("click", "clickable"),
-                ("long_click", "long-clickable"),
+                ("long_press", "long-clickable"),
                 ("scroll", "scrollable"),
                 ("edit", "editable"),
                 ("check", "checkable"),
@@ -520,6 +531,8 @@ def function_tools(
 ) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for function in functions:
+        if not function.agent_visible:
+            continue
         parameters = deepcopy(function.input_schema)
         properties = parameters.setdefault("properties", {})
         required = list(parameters.get("required") or ())
@@ -591,6 +604,7 @@ def _turn_text(
         previous_action_error = str(
             context.pop("previous_action_error", "") or ""
         ).strip()
+        context.pop("forbid_finished", None)
         user_input = str(context.pop("user_input", "") or "").strip()
         if planner_feedback:
             feedback.append(planner_feedback)
@@ -603,11 +617,13 @@ def _turn_text(
         lines.extend(("Feedback:", "\n".join(feedback)))
     lines.extend(
         (
-            "Current UI:",
+            "Current accessibility elements (label-only rows are read-only; rows with actions are interactive):",
             xml_text or "<none>",
         )
     )
-    lines.append("If the goal is complete choose `finished`; otherwise choose one Action.")
+    lines.append(
+        "Apply the decision policy from the system instructions to the current UI and Past Actions, then return exactly one provided tool call."
+    )
     return "\n".join(lines)
 
 

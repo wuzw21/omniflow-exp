@@ -39,7 +39,7 @@ bash scripts/exp/run_androidworld.sh run \
 
 正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
 其中 AppAgent 使用同一份 source RunLog 生成一次官方 demo Memory，再进入统一的
-AndroidWorld/OOB/validator 流程；`script_replay` 不属于 AndroidWorld 方法。
+AndroidWorld/OOB/validator 流程；当前执行批次只启动前三种方法，AutoDroid 保留为待运行 cell。
 设备和默认值来自 `config/paper_androidworld.json`。正式运行和 Memory 转换固定使用
 `Qwen3.6-Plus`；显式传入其他模型会在入口处拒绝。
 

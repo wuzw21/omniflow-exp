@@ -250,7 +250,10 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         if key
         in {
             "planner_feedback",
+            "forbid_finished",
             "previous_action_error",
+            "previous_action",
+            "recent_actions",
             "execution_history",
             "user_input",
         }

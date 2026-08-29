@@ -10,6 +10,13 @@
       "appagent",
       "t3a_hint"
     ],
+    "enabled_methods": [
+      "fixed_replay",
+      "omniflow",
+      "mobilegpt",
+      "appagent",
+      "t3a_hint"
+    ],
     "devices": [
       {"label": "standard45562", "serial": "emulator-45562", "console_port": 45562, "avd": "OmniFlowTargetPixel6Pro", "api_level": 33, "profile": "pixel_6_pro", "resolution": "1440x3120"},
       {"label": "fold45564", "serial": "emulator-45564", "console_port": 45564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold", "resolution": "1768x2208"},

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import copy
+import dataclasses
 from pathlib import Path
 import subprocess
 import time
@@ -626,7 +627,19 @@ def _enum_value(value: Any) -> Any:
 
 
 def _json_copy(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    def default(item: Any) -> Any:
+        if dataclasses.is_dataclass(item):
+            return dataclasses.asdict(item)
+        attributes = getattr(item, "__dict__", None)
+        if isinstance(attributes, dict):
+            return {
+                str(key): nested
+                for key, nested in attributes.items()
+                if not str(key).startswith("_")
+            }
+        return str(item)
+
+    return json.loads(json.dumps(value, ensure_ascii=False, default=default))
 
 
 def _stable_json_bytes(value: Any) -> bytes:

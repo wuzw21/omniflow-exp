@@ -17,7 +17,6 @@ from omniflow.core.model import (
     ActionResult,
     CheckerContext,
     Function,
-    FunctionStep,
     Host,
     Observation,
     RunResult,
@@ -35,10 +34,7 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
-from omniflow.transfer.admission import (
-    MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE,
-    assess_transfer,
-)
+from omniflow.transfer.admission import assess_transfer
 from omniflow.transfer.runtime import (
     transfer_action,
 )
@@ -50,12 +46,6 @@ _OBSERVATION_READY_MAX_ATTEMPTS = 20
 _CHECKER_RECOVERY_MAX_ATTEMPTS = 8
 _ACTION_EFFECT_MAX_ITEMS = 8
 _ACTION_EFFECT_VALUE_MAX_CHARS = 160
-# A Function action is executable only when OmniTransfer reports a high-confidence
-# contextual mapping.  The same floor also governs entry recall and resume
-# alignment so a candidate cannot be visible under a weaker policy than the one
-# used for execution.
-_ALIGNMENT_MIN_PROBABILITY = MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE
-_ALIGNMENT_SOURCE_SKIP_PENALTY = math.log(3.0)
 StateLoader = Callable[[str], Any]
 
 
@@ -139,6 +129,8 @@ async def execute_function(
             installed_packages=installed_packages,
             state_loader=state_loader,
         )
+
+        after_observation = step.after or step.before or current
         executed += step.actions_executed
         trace.extend(
             await record_execution(
@@ -154,7 +146,7 @@ async def execute_function(
             )
         )
         resume_metadata_pending.clear()
-        current = step.after or step.before or current
+        current = after_observation
         if not step.success:
             return RunResult(
                 False,
@@ -217,194 +209,6 @@ async def execute_function(
             ),
         },
     )
-
-
-async def align_function_resume(
-    function: Function,
-    *,
-    host: Host,
-    plugins: PluginSet,
-    observations: list[Observation],
-    start_step_index: int,
-    state_loader: StateLoader | None = None,
-) -> dict[str, Any] | None:
-    transfer_fn = plugins.transfer
-    observations = _distinct_alignment_observations(observations)
-    if transfer_fn is None or len(observations) < 2:
-        return None
-    remaining = [
-        step for step in function.steps if step.step_index >= int(start_step_index)
-    ]
-    candidate_steps = _alignment_candidate_steps(remaining)
-    if not candidate_steps:
-        return None
-
-    probabilities: list[list[float | None]] = []
-    for function_step in candidate_steps:
-        source_state = await _load_state(
-            host,
-            function_step.source_state_id,
-            state_loader=state_loader,
-        )
-        row: list[float | None] = []
-        for observation in observations:
-            if source_state is None:
-                row.append(None)
-                continue
-            try:
-                transfer = await _await(
-                    transfer_fn(function_step.action, observation, source_state)
-                )
-            except Exception:  # noqa: BLE001
-                row.append(None)
-                continue
-            probability = _alignment_probability(transfer.detail)
-            row.append(
-                probability
-                if transfer.action is not None
-                and probability is not None
-                and probability >= _ALIGNMENT_MIN_PROBABILITY
-                else None
-            )
-        probabilities.append(row)
-
-    source_count = len(candidate_steps)
-    target_count = len(observations)
-    negative_infinity = float("-inf")
-    scores = [
-        [negative_infinity for _ in range(target_count + 1)]
-        for _ in range(source_count + 1)
-    ]
-    back: list[list[str | None]] = [
-        [None for _ in range(target_count + 1)] for _ in range(source_count + 1)
-    ]
-    scores[0][0] = 0.0
-    for target_index in range(1, target_count + 1):
-        scores[0][target_index] = scores[0][target_index - 1]
-        back[0][target_index] = "target_gap"
-    for source_index in range(1, source_count + 1):
-        scores[source_index][0] = (
-            scores[source_index - 1][0] - _ALIGNMENT_SOURCE_SKIP_PENALTY
-        )
-        back[source_index][0] = "source_gap"
-
-    operation_priority = {"target_gap": 0, "source_gap": 1, "match": 2}
-    for source_index in range(1, source_count + 1):
-        for target_index in range(1, target_count + 1):
-            options = [
-                (scores[source_index][target_index - 1], "target_gap"),
-                (
-                    scores[source_index - 1][target_index]
-                    - _ALIGNMENT_SOURCE_SKIP_PENALTY,
-                    "source_gap",
-                ),
-            ]
-            probability = probabilities[source_index - 1][target_index - 1]
-            if probability is not None:
-                options.append(
-                    (
-                        scores[source_index - 1][target_index - 1]
-                        + _log_odds(probability),
-                        "match",
-                    )
-                )
-            score, operation = max(
-                options,
-                key=lambda item: (item[0], operation_priority[item[1]]),
-            )
-            scores[source_index][target_index] = score
-            back[source_index][target_index] = operation
-
-    candidates = [
-        source_index
-        for source_index in range(1, source_count + 1)
-        if back[source_index][target_count] == "match"
-        and scores[source_index][target_count] > 0.0
-    ]
-    if not candidates:
-        return None
-    best_source_index = max(
-        candidates,
-        key=lambda source_index: (scores[source_index][target_count], source_index),
-    )
-    matched_probability = probabilities[best_source_index - 1][target_count - 1]
-    if matched_probability is None:
-        return None
-
-    path: list[dict[str, Any]] = []
-    source_index = best_source_index
-    target_index = target_count
-    while source_index > 0 or target_index > 0:
-        operation = back[source_index][target_index]
-        if operation == "match":
-            probability = probabilities[source_index - 1][target_index - 1]
-            path.append(
-                {
-                    "function_step_index": candidate_steps[source_index - 1].step_index,
-                    "target_observation_index": target_index - 1,
-                    "probability": probability,
-                }
-            )
-            source_index -= 1
-            target_index -= 1
-        elif operation == "source_gap":
-            source_index -= 1
-        elif operation == "target_gap":
-            target_index -= 1
-        else:
-            break
-    path.reverse()
-    resume_step_index = candidate_steps[best_source_index - 1].step_index
-    return {
-        "protocol": "weighted_lcs_v1",
-        "start_step_index": int(start_step_index),
-        "resume_step_index": resume_step_index,
-        "probability": matched_probability,
-        "score": scores[best_source_index][target_count],
-        "minimum_probability": _ALIGNMENT_MIN_PROBABILITY,
-        "source_skip_penalty": _ALIGNMENT_SOURCE_SKIP_PENALTY,
-        "target_observation_count": target_count,
-        "path": path,
-    }
-
-
-def _distinct_alignment_observations(
-    observations: list[Observation],
-) -> list[Observation]:
-    distinct: list[Observation] = []
-    for observation in observations:
-        if distinct and _same_alignment_observation(distinct[-1], observation):
-            continue
-        distinct.append(observation)
-    return distinct
-
-
-def _same_alignment_observation(
-    left: Observation,
-    right: Observation,
-) -> bool:
-    if (left.package_name, left.activity_name) != (
-        right.package_name,
-        right.activity_name,
-    ):
-        return False
-    left_xml = str(left.xml or "")
-    right_xml = str(right.xml or "")
-    if left_xml or right_xml:
-        return left_xml == right_xml
-    return left.image_base64 == right.image_base64
-
-
-def _alignment_candidate_steps(
-    steps: list[FunctionStep],
-) -> list[FunctionStep]:
-    candidates: list[FunctionStep] = []
-    for step in steps:
-        if candidates and candidates[-1].source_state_id == step.source_state_id:
-            candidates[-1] = step
-        else:
-            candidates.append(step)
-    return candidates
 
 
 async def execute_robust_action(
@@ -505,6 +309,7 @@ async def execute_robust_action(
     decision = await prepare_action(
         action,
         observation=observation,
+        host=host,
         plugins=plugins,
         source_state=source_state,
     )
@@ -559,6 +364,7 @@ async def _run_shared_checker_phase(
     source_state: Observation | None,
     host: Host,
     installed_packages: frozenset[str] | None,
+    transfer_failed: bool = False,
 ) -> list[StepResult]:
     effects: list[StepResult] = []
     current = observation
@@ -585,6 +391,7 @@ async def _run_shared_checker_phase(
                 function_id=function.id,
                 step_index=function_step_index,
                 action=action,
+                transfer_failed=transfer_failed,
             ):
                 continue
             recovery_action = checker_rule_action(
@@ -626,12 +433,14 @@ async def prepare_action(
     action: Action,
     *,
     observation: Observation,
+    host: Host | None = None,
     plugins: PluginSet,
     source_state: Observation | None = None,
 ) -> ActionDecision:
     return await prepare_core_action(
         action,
         observation=observation,
+        host=host,
         plugins=plugins,
         source_state=source_state,
     )
@@ -792,10 +601,16 @@ def step_fact(step: StepResult) -> dict[str, Any]:
         metadata["function_id"] = step.function_id
     if step.checker_trigger:
         metadata["checker_trigger"] = step.checker_trigger
+        metadata["checker"] = {
+            "id": step.checker_trigger,
+            "phase": str(step.detail.get("checker_phase") or "")
+            if isinstance(step.detail, dict)
+            else "",
+        }
     action_result = step.result or ActionResult(step.success, step.error)
     if action_result.extra:
         metadata["action_result"] = dict(action_result.extra)
-    if step.detail:
+    if step.detail and not step.checker_trigger:
         metadata["transfer"] = dict(step.detail)
     metadata["action_effect"] = _action_effect(
         before_observation,
@@ -1535,28 +1350,6 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
                 target_execution_candidate_id
             )
     return detail
-
-
-def _alignment_probability(detail: dict[str, Any]) -> float | None:
-    raw = detail.get("score")
-    if raw is None:
-        candidates = detail.get("candidates")
-        if isinstance(candidates, list) and candidates:
-            candidate = candidates[0]
-            if isinstance(candidate, dict):
-                raw = candidate.get("score")
-    try:
-        probability = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(probability):
-        return None
-    return min(1.0, max(0.0, probability))
-
-
-def _log_odds(probability: float) -> float:
-    bounded = min(1.0 - 1e-9, max(1e-9, probability))
-    return math.log(bounded / (1.0 - bounded))
 
 
 def _element_detail(value: Any) -> dict[str, Any]:

@@ -27,6 +27,7 @@ from src.experiment.protocol import (
     DEFAULT_TASK,
     DEVICE_AVDS,
     DEVICES,
+    ENABLED_METHODS,
     FORMAL_MODEL,
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
@@ -50,13 +51,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _methods(value: str) -> tuple[str, ...]:
     if not value or value == "all":
-        return METHODS
+        return ENABLED_METHODS
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
     unknown = tuple(
         item for item in selected if item not in (*METHODS, SOURCE_METHOD)
     )
     if unknown:
         raise ValueError("unknown_method:" + ",".join(unknown))
+    disabled = tuple(item for item in selected if item not in (*ENABLED_METHODS, SOURCE_METHOD))
+    if disabled:
+        raise ValueError("method_not_enabled:" + ",".join(disabled))
     return selected
 
 
@@ -217,10 +221,105 @@ def _promote_golden_run(
     return True
 
 
+def _archive_failed_run(
+    *,
+    candidate: Path,
+    output_root: str | Path,
+    task: str,
+    method: str,
+    device: tuple[str, str, int],
+    archive_kind: str = "failure",
+) -> Path | None:
+    """Keep one sealed result as non-runtime evidence.
+
+    A successful candidate can lose promotion because the existing golden
+    result is equally good.  It must not be labelled as a failure: that would
+    corrupt the evidence trail and make later audits misclassify a real
+    successful execution.
+    """
+
+    if not candidate.is_dir():
+        return None
+    evidence_files = [
+        path
+        for name in (
+            "run_log.json",
+            "task_results.jsonl",
+            "protocol_probe.json",
+            "client_log.txt",
+        )
+        for path in candidate.rglob(name)
+    ]
+    if not evidence_files:
+        return None
+    label = device[0]
+    archive_root = (
+        resolve_path(output_root)
+        / ".archive"
+        / str(task)
+        / canonical_method_name(method)
+        / label
+    )
+    archive_root.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while True:
+        destination = archive_root / f"{archive_kind}_{index:03d}"
+        if not destination.exists():
+            shutil.copytree(candidate, destination)
+            return destination
+        index += 1
+
+
+def _promote_mobilegpt_source_memory(
+    *,
+    candidate: Path,
+    destination: Path,
+) -> bool:
+    """Preserve the Memory learned by one official cold source episode.
+
+    MobileGPT writes its learned graph into the isolated episode directory.
+    The public runner owns that temporary directory, so a successful source
+    run must promote the graph before the temporary workspace is removed.
+    This is an explicit path inside the current candidate, not a history scan.
+    """
+
+    learned = (
+        candidate
+        / "mobilegpt_memory"
+        / "_episodes"
+        / "source5560"
+        / "mobilegpt_memory"
+    )
+    if not learned.is_dir() or not (learned / "tasks.csv").is_file():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_name(".current.staging")
+    if staging.exists():
+        shutil.rmtree(staging)
+    shutil.copytree(learned, staging, symlinks=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    staging.replace(destination)
+    return True
+
+
 def _relative_output(value: str | Path) -> str:
     """Return a repository-relative address for CLI/report output."""
 
     return relative_reference(Path(value).expanduser().resolve(), base=REPO_ROOT)
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove one runner-owned staging tree, including read-only files."""
+
+    if not path.exists() or path.is_symlink():
+        return
+
+    def _make_writable(func: Any, filename: str, _error: Any) -> None:
+        os.chmod(filename, 0o700)
+        func(filename)
+
+    shutil.rmtree(path, onerror=_make_writable)
 
 
 def _reuse_existing_memory(
@@ -356,16 +455,32 @@ def _running_avd_name(adb: str, serial: str) -> str:
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    if completed.returncode != 0:
+    if completed.returncode == 0:
+        name = next(
+            (
+                line.strip()
+                for line in completed.stdout.splitlines()
+                if line.strip() and line.strip().casefold() != "ok"
+            ),
+            "",
+        )
+        if name:
+            return name
+    # ADB-over-SSH/proxy clients can successfully execute ``emu avd name``
+    # but lose the console response body.  The emulator publishes the same
+    # identity through the read-only boot property; use it only as a fallback
+    # so configured AVD validation remains enabled across transports.
+    try:
+        fallback = subprocess.run(
+            (adb, "-s", serial, "shell", "getprop", "ro.boot.qemu.avd_name"),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
         return ""
-    return next(
-        (
-            line.strip()
-            for line in completed.stdout.splitlines()
-            if line.strip() and line.strip().casefold() != "ok"
-        ),
-        "",
-    )
+    return fallback.stdout.strip() if fallback.returncode == 0 else ""
 
 
 def _validate_configured_avd_identity(
@@ -393,6 +508,21 @@ def _ensure_devices_started(
     """Reuse online configured AVDs and start only the missing ones."""
 
     adb = _sdk_tool("adb")
+    # Start the single host ADB server before probing or booting devices.
+    # Without this serialized bootstrap, the per-device startup workers can
+    # all observe a missing server and race to create it; adb then drops
+    # transports (or reports ``device offline``) even though the AVDs are
+    # otherwise healthy.  The device work itself remains parallel below.
+    try:
+        subprocess.run(
+            (adb, "start-server"),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"android_adb_server_start_failed:{exc}") from exc
     avds = dict(DEVICE_AVDS)
     missing = tuple(device for device in devices if not _device_booted(adb, device[1]))
     if missing:
@@ -439,7 +569,7 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     output = resolve_path(args.memory)
     output_preexisting = output.exists()
 
-    methods = ("omniflow", "mobilegpt", "appagent") if args.method == "all" else (args.method,)
+    methods = _methods(args.method)
     if not source.is_file():
         raise FileNotFoundError(f"source_run_log_missing:{source}")
     source_payload = json.loads(source.read_text(encoding="utf-8"))
@@ -528,7 +658,7 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     except BaseException:
         for candidate in reversed(newly_created_outputs):
             if candidate.is_dir() and not candidate.is_symlink():
-                shutil.rmtree(candidate)
+                _remove_tree(candidate)
         if not output_preexisting and output.is_dir() and not any(output.iterdir()):
             output.rmdir()
         raise
@@ -601,29 +731,97 @@ def _run_command(
         command.append("--dry-run")
     # Keep the episode itself in the temporary runner workspace.  A successful
     # sealed result is promoted below to the one stable current slot; failures
-    # disappear with the private workspace and cannot become golden evidence.
+    # are archived as explicit evidence before the private workspace ends.
     environment = dict(os.environ)
+    if method == "mobilegpt":
+        # The official client embeds its server port. Keep one immutable APK
+        # per AVD so parallel devices never share a client/server endpoint.
+        runtime_root = resolve_path(
+            os.environ.get("OMNIFLOW_MOBILEGPT_RUNTIME_ROOT")
+            or Path("data") / "runtime" / "mobilegpt"
+        )
+        per_device_apk = runtime_root / f"client_{label}.apk"
+        if per_device_apk.is_file():
+            environment["OMNIFLOW_MOBILEGPT_APK"] = str(per_device_apk)
     completed = subprocess.run(
         command,
         env=environment,
         cwd=REPO_ROOT,
         check=False,
     )
-    if completed.returncode == 0:
-        candidate = temporary_root / method / label
-        # run_task nests the canonical task/method/device path below its
-        # caller-owned output root.  Locate only this command's own candidate,
-        # never scan previous results.
-        matches = list(candidate.rglob("runlog/current/run_log.json"))
-        if len(matches) == 1:
-            _promote_golden_run(
+    candidate = temporary_root / method / label
+    # run_task nests the canonical task/method/device path below its
+    # caller-owned output root.  Locate only this command's own candidate,
+    # never scan previous results.  A failed command can still have produced
+    # truthful protocol_probe/task_results evidence; preserve it instead of
+    # deleting the only explanation with the temporary workspace.
+    matches = list(candidate.rglob("runlog/current/run_log.json"))
+    if completed.returncode == 0 and len(matches) == 1:
+        promoted = _promote_golden_run(
+            candidate=matches[0].parent,
+            destination=_golden_run_root(
+                args.output,
+                task=args.task,
+                method=method,
+                device=device,
+            ),
+        )
+        if not promoted:
+            _archive_failed_run(
                 candidate=matches[0].parent,
-                destination=_golden_run_root(
-                    args.output,
-                    task=args.task,
-                    method=method,
-                    device=device,
-                ),
+                output_root=args.output,
+                task=args.task,
+                method=method,
+                device=device,
+                archive_kind="superseded",
+            )
+        if method == "mobilegpt" and serial == SOURCE_DEVICE[1]:
+            source_memory = (
+                resolve_path(args.output)
+                / args.task
+                / "mobilegpt"
+                / canonical_device_seed_name(
+                    label=label,
+                    serial=serial,
+                    console_port=port,
+                    source_seed=SOURCE_SEED,
+                    evaluation_seed=TASK_SEED,
+                )
+                / "memory"
+                / "current"
+            )
+            if not _promote_mobilegpt_source_memory(
+                candidate=candidate,
+                destination=source_memory,
+            ):
+                completed = subprocess.CompletedProcess(
+                    completed.args,
+                    1,
+                    completed.stdout,
+                    completed.stderr,
+                )
+    else:
+        # A task can finish at the process level with return code 0 while the
+        # official validator fails or the episode writer flushes only the
+        # parent ``runlog`` layout.  Preserve that command-scoped evidence as
+        # well; otherwise the failed run disappears from the experiment.
+        failed_evidence = list(
+            candidate.rglob("runlog/current/task_results.jsonl")
+        )
+        failed_evidence.extend(candidate.rglob("runlog/current/protocol_probe.json"))
+        # Some AndroidWorld failure paths flush the sealed result one level
+        # above ``runlog/current``.  It is still truthful command-scoped
+        # evidence and must not disappear with the temporary workspace.
+        if not failed_evidence:
+            failed_evidence.extend(candidate.rglob("runlog/task_results.jsonl"))
+            failed_evidence.extend(candidate.rglob("runlog/protocol_probe.json"))
+        if failed_evidence:
+            _archive_failed_run(
+                candidate=failed_evidence[0].parent,
+                output_root=args.output,
+                task=args.task,
+                method=method,
+                device=device,
             )
     return method, label, completed.returncode
 
@@ -662,19 +860,23 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         prefix="omniflow-androidworld-"
     ) as temporary:
         root = Path(temporary)
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=max(1, len(devices))
-        ) as executor:
-            rows_by_device = list(
-                executor.map(
-                    lambda device: tuple(
-                        _run_command(args, method, device, root)
-                        for method in methods
-                    ),
-                    devices,
+        # Methods are the experimental groups: keep groups sequential so
+        # their wall time is comparable, while the three target devices in
+        # each group run concurrently.  Do not make the device the outer
+        # loop; that would serialize five methods on every emulator and make
+        # the reported "parallel" time misleading.
+        rows: list[tuple[str, str, int]] = []
+        for method in methods:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, len(devices))
+            ) as executor:
+                method_rows = list(
+                    executor.map(
+                        lambda device: _run_command(args, method, device, root),
+                        devices,
+                    )
                 )
-            )
-        rows = [row for device_rows in rows_by_device for row in device_rows]
+            rows.extend(method_rows)
     return {
         "action": "run",
         "task": args.task,
@@ -726,15 +928,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("convert-memory requires --source-run-log and --memory")
         if args.method != "all" and args.method not in METHODS:
             raise ValueError(f"unknown_method:{args.method}")
+        selected_methods = _methods(args.method)
         result = (
             {
                 "action": "convert-memory",
                 "task": args.task,
-                "methods": (
-                    ["omniflow", "mobilegpt", "appagent"]
-                    if args.method == "all"
-                    else [args.method]
-                ),
+                "methods": list(selected_methods),
                 "source_run_log": args.source_run_log,
                 "memory": args.memory,
             }

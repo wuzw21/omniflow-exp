@@ -91,6 +91,23 @@ def _run_log_execution_action(
     run_log: dict[str, Any],
     source_step_index: int,
 ) -> dict[str, Any] | None:
+    source_step = run_log["steps"][source_step_index]
+    step_metadata = source_step.get("metadata")
+    if isinstance(step_metadata, dict):
+        execution_action = step_metadata.get("execution_action")
+        if (
+            isinstance(execution_action, dict)
+            and str(execution_action.get("tool") or "").strip()
+            and isinstance(execution_action.get("args"), dict)
+        ):
+            # Interactive source collection records the exact action sent to
+            # OOB.  Keep it as execution provenance so replay can preserve
+            # real swipe/input geometry while the public AndroidWorld action
+            # schema remains unchanged.
+            return {
+                "tool": str(execution_action["tool"]),
+                "args": dict(execution_action["args"]),
+            }
     diagnostics = run_log.get("diagnostics")
     trace = diagnostics.get("execution_trace") if isinstance(diagnostics, dict) else None
     if not isinstance(trace, list):

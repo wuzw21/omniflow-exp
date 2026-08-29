@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from omniflow.core.model import Function, ToolCall
 from omniflow.functions.artifact import validate_arguments
@@ -183,7 +184,33 @@ class VLMFunctionRouter:
         }
         if self._base_url:
             options["base_url"] = self._base_url
+        # Do not let an ambient ALL_PROXY SOCKS URL make the Router fail before
+        # the OpenAI-compatible request is sent.  Match the Planner transport:
+        # use an explicitly configured HTTP(S) proxy when present and disable
+        # implicit proxy discovery otherwise.
+        try:
+            import httpx
+
+            http_client_options: dict[str, Any] = {"trust_env": False}
+            http_proxy = _configured_http_proxy()
+            if http_proxy:
+                http_client_options["proxy"] = http_proxy
+            options["http_client"] = httpx.Client(**http_client_options)
+        except ImportError:
+            pass
         return OpenAI(**options)
+
+
+def _configured_http_proxy() -> str | None:
+    """Return a usable HTTP(S) proxy without selecting an ambient SOCKS proxy."""
+
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = str(os.environ.get(key) or "").strip()
+        if not value:
+            continue
+        if urlsplit(value).scheme.lower() in {"http", "https"}:
+            return value
+    return None
 
 
 def _router_function_description(function: Function) -> str:

@@ -318,7 +318,19 @@ not contain the recorded app label or package; use only "requested app" wording.
         raw_author_response = str(response.choices[0].message.content or "")
         try:
             proposal = json.loads(raw_author_response)
-            authored = _materialize_authoring_plan(proposal, facts)
+            try:
+                authored = _materialize_authoring_plan(proposal, facts)
+            except ValueError as error:
+                # The authoring model may describe a valid local segment but
+                # omit or truncate the required complete source sequence. A
+                # successful source RunLog is already the immutable evidence;
+                # preserve it verbatim through the compiler's strict fallback
+                # instead of making collection depend on a second model retry.
+                if str(error) != "function_author_plan_complete_sequence_required":
+                    raise
+                authored = _materialize_authoring_plan(
+                    _complete_source_authoring_plan(facts), facts
+                )
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             _write_authoring_failure(
                 root,
@@ -1013,7 +1025,28 @@ def _is_transient_system_action(step: dict[str, Any]) -> bool:
         for package in packages
     )
     if not permission_page:
-        return False
+        # Android's intent resolver is also one-shot setup.  A source episode
+        # can capture an "Open with ... / Just once" chooser before the real
+        # app page; that click must be supplied by the shared checker when the
+        # chooser exists, not baked into every Function replay.
+        normalized_xml = " ".join(xml.casefold().split())
+        chooser_markers = (
+            "open with",
+            "just once",
+            "always",
+            "use a different app",
+        )
+        if not (
+            "com.android.systemui" in packages
+            and any(marker in normalized_xml for marker in chooser_markers)
+        ):
+            return False
+        try:
+            float(action.get("x"))
+            float(action.get("y"))
+        except (TypeError, ValueError):
+            return False
+        return True
     try:
         x = float(action.get("x"))
         y = float(action.get("y"))

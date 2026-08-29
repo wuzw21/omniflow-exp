@@ -12,6 +12,7 @@ OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
 VLM_ACTION_TOOL_NAMES = (
     "click",
+    "long_press",
     "input_text",
     "swipe",
     "open_app",
@@ -21,6 +22,7 @@ VLM_ACTION_TOOL_NAMES = (
 )
 _VLM_ACTION_ARGUMENT_NAMES = {
     "click": ("x", "y"),
+    "long_press": ("x", "y"),
     "input_text": ("text", "x", "y"),
     "swipe": ("direction", "x1", "y1", "x2", "y2"),
     "open_app": ("package_name",),

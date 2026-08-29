@@ -68,7 +68,10 @@ from src.integrations.android_world.methods import (
 )
 from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
+    EXPERIMENTAL_CONTROL_PACKAGES,
     CONTROL_PACKAGE as OOB_CONTROL_PACKAGE,
+    oob_control_accessibility_service,
+    oob_control_receiver,
 )
 from src.integrations.runlog import (
     import_run_log,
@@ -102,11 +105,13 @@ ANDROIDWORLD_A11Y_FORWARDER_PACKAGE = (
 ANDROIDWORLD_A11Y_FORWARDER_SHA256 = (
     "97a56a544e44d79f9b3181fc7dbdd72cffa908efd3d53c82afad1773061a350a"
 )
-def _oob_control_accessibility_services(values: list[str]) -> list[str]:
+def _oob_control_accessibility_services(
+    values: list[str], package_name: str = OOB_CONTROL_PACKAGE
+) -> list[str]:
     """Keep one deterministic accessibility stack for formal OOB execution."""
 
     del values
-    return [OOB_CONTROL_ACCESSIBILITY_SERVICE]
+    return [oob_control_accessibility_service(package_name)]
 ANDROID_PERMISSION_DENY_RESOURCE_IDS = (
     "com.android.permissioncontroller:id/permission_deny_button",
     "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button",
@@ -226,20 +231,48 @@ def _androidworld_runtime_permissions_granted(
         if env is None:
             return False
         for permission in permissions:
-            response = adb_utils.issue_generic_request(
-                [
-                    "shell",
-                    "pm",
-                    "check-permission",
+            try:
+                response = adb_utils.issue_generic_request(
+                    [
+                        "shell",
+                        "pm",
+                        "check-permission",
+                        package_name,
+                        permission,
+                    ],
+                    env,
+                )
+                output = getattr(getattr(response, "generic", None), "output", b"")
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", errors="replace")
+                normalized = str(output or "").strip().casefold()
+                if normalized == "granted":
+                    continue
+            except Exception as error:  # pragma: no cover - device-specific ADB shim
+                logger.info(
+                    "AndroidWorld permission probe is unsupported for %s: %s",
                     package_name,
-                    permission,
-                ],
+                    error,
+                )
+
+            # Android 13 emulator images commonly omit the legacy
+            # ``pm check-permission`` subcommand.  Keep the official probe as
+            # the first path, then use the read-only dumpsys package output as
+            # a compatibility adapter; never grant or mutate permissions here.
+            fallback = adb_utils.issue_generic_request(
+                ["shell", "dumpsys", "package", package_name],
                 env,
             )
-            output = getattr(getattr(response, "generic", None), "output", b"")
-            if isinstance(output, bytes):
-                output = output.decode("utf-8", errors="replace")
-            if str(output or "").strip().casefold() != "granted":
+            fallback_output = getattr(
+                getattr(fallback, "generic", None), "output", b""
+            )
+            if isinstance(fallback_output, bytes):
+                fallback_output = fallback_output.decode("utf-8", errors="replace")
+            permission_pattern = re.compile(
+                rf"^\s*{re.escape(permission)}:\s+granted=true\b",
+                flags=re.MULTILINE,
+            )
+            if permission_pattern.search(str(fallback_output or "")) is None:
                 return False
     except (AttributeError, ModuleNotFoundError, RuntimeError, TypeError, ValueError):
         return False
@@ -1065,11 +1098,10 @@ class _OpenAICompatibleMultimodalWrapper:
             "temperature": self.temperature,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
-            # Qwen's native reasoning must stay enabled for the AndroidWorld
-            # T3A/Hint path.  ``reasoning_effort=none`` and
-            # ``enable_thinking=false`` silently turned the requested Qwen
-            # reasoning mode off at the final OpenAI-compatible boundary.
-            "enable_thinking": True,
+            # Keep the formal protocol's Thinking decision explicit at the
+            # final OpenAI-compatible boundary.  The common protocol is now
+            # non-thinking, so this must never be hard-coded on here.
+            "enable_thinking": False,
             "thinking": {"type": FORMAL_THINKING},
         }
         headers = {
@@ -1578,10 +1610,7 @@ def _patch_androidworld_short_date_compat() -> tuple[Any, Any] | None:
                 r"(?:this |the )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: after next)?",
                 normalized,
             )
-            if weekday_match and (
-                normalized.startswith("this ")
-                or normalized.startswith("the ")
-            ):
+            if weekday_match:
                 target_weekday = (
                     "monday",
                     "tuesday",
@@ -1613,6 +1642,23 @@ def _rehydrate_task_params(
     """Restore AndroidWorld task params that were serialized through JSON."""
 
     hydrated = dict(params)
+    # JSON task-parameter transport cannot carry the PIL image used by
+    # ``SaveCopyOfReceiptTaskEval``; ``run_task`` serializes it as a stable
+    # descriptive string.  The official initializer only needs an image
+    # object to materialize the fixture (the validator checks the filename),
+    # so regenerate an equivalent receipt image at the lifecycle boundary.
+    # This keeps the formal task semantics intact while avoiding an
+    # environment-startup ``'str' object has no attribute save`` failure.
+    if isinstance(hydrated.get("receipt_image"), str):
+        try:
+            from android_world.task_evals.utils import receipt_generator
+
+            receipt_image, _ = receipt_generator.create_receipt()
+            hydrated["receipt_image"] = receipt_image
+        except Exception:
+            # Leave non-placeholder strings untouched; the task initializer
+            # will report the original parameter error with full evidence.
+            pass
     is_information_retrieval = task_type is not None and any(
         base.__name__ == "InformationRetrieval"
         for base in getattr(task_type, "__mro__", ())
@@ -1633,6 +1679,19 @@ def _rehydrate_task_params(
             serialized_value = hydrated[key]
             possible_values = list(task_param.possible_values)
             matches: list[str] = []
+            serialized_date = None
+            weekday_name = None
+            if isinstance(serialized_value, str):
+                try:
+                    serialized_date = datetime_utils.get_date(serialized_value)
+                except (TypeError, ValueError):
+                    serialized_date = None
+                weekday_match = re.fullmatch(
+                    r"(?:this |the )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: after next)?",
+                    serialized_value.strip().lower(),
+                )
+                if weekday_match and "after next" not in serialized_value.strip().lower():
+                    weekday_name = weekday_match.group(1)
             for possible_value in possible_values:
                 equivalent = serialized_value == possible_value
                 if not equivalent and isinstance(serialized_value, str):
@@ -1643,14 +1702,65 @@ def _rehydrate_task_params(
                     except (KeyError, ValueError):
                         equivalent = False
                     if not equivalent:
-                        try:
-                            equivalent = datetime_utils.get_date(
-                                possible_value
-                            ) == datetime_utils.get_date(serialized_value)
-                        except ValueError:
-                            equivalent = False
+                        # Prefer an exact interpretation of relative date
+                        # phrases (for example ``the Sunday after next``)
+                        # before falling back to weekday-only compatibility.
+                        # Comparing only weekdays would make every Sunday in
+                        # the candidate window match and incorrectly reject
+                        # an otherwise valid serialized task parameter.
+                        equivalent = (
+                            serialized_date is not None
+                            and datetime_utils.get_date(possible_value)
+                            == serialized_date
+                        )
+                    if not equivalent and serialized_date is None:
+                        # Older successful RunLogs sometimes store a bare
+                        # weekday (for example ``Monday``), while the
+                        # current task registry stores the corresponding
+                        # concrete date.  Resolve against the task's own
+                        # canonical candidates, rather than assuming the
+                        # next occurrence from the device clock.  This is
+                        # important for windows that contain the previous
+                        # week (Monday 9 Oct) but not the next day (Monday
+                        # 16 Oct).
+                        weekday_match = re.fullmatch(
+                            r"(?:this |the )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: after next)?",
+                            serialized_value.strip().lower(),
+                        )
+                        if weekday_name:
+                            try:
+                                candidate_date = datetime_utils.get_date(
+                                    possible_value
+                                )
+                            except (TypeError, ValueError):
+                                candidate_date = None
+                            if candidate_date is not None:
+                                equivalent = (
+                                    candidate_date.strftime("%A").lower()
+                                    == weekday_name
+                                )
+                    if not equivalent:
+                        # The exact relative-date comparison above is the
+                        # primary path.  At this point only the legacy
+                        # weekday-compatible fallback remains applicable.
+                        equivalent = False
                 if equivalent and possible_value not in matches:
                     matches.append(possible_value)
+            # If a bare weekday could not be parsed to an exact candidate,
+            # retain the legacy compatibility rule as a second pass.  This
+            # supports old traces from a previous calendar window without
+            # turning an exact relative phrase into an ambiguous match.
+            if not matches and weekday_name:
+                for possible_value in possible_values:
+                    try:
+                        candidate_date = datetime_utils.get_date(possible_value)
+                    except (TypeError, ValueError):
+                        candidate_date = None
+                    if (
+                        candidate_date is not None
+                        and candidate_date.strftime("%A").lower() == weekday_name
+                    ):
+                        matches.append(possible_value)
             if len(matches) != 1:
                 raise ValueError(
                     "InformationRetrieval task params do not match one canonical "
@@ -1847,18 +1957,29 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
 
     adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
     serial = f"emulator-{int(console_port)}"
-    package_path = subprocess.run(
-        [adb_bin, "-s", serial, "shell", "pm", "path", OOB_CONTROL_PACKAGE],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
+    def installed_package(package_name: str) -> bool:
+        result = subprocess.run(
+            [adb_bin, "-s", serial, "shell", "pm", "path", package_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0 and any(
+            line.strip().startswith("package:")
+            for line in str(result.stdout or "").splitlines()
+        )
+
+    package_name = next(
+        (
+            candidate
+            for candidate in EXPERIMENTAL_CONTROL_PACKAGES
+            if installed_package(candidate)
+        ),
+        "",
     )
     apk_path = Path(str(os.environ.get("OMNIFLOW_OOB_APK") or "")).expanduser()
-    if package_path.returncode != 0 or not any(
-        line.strip().startswith("package:")
-        for line in str(package_path.stdout or "").splitlines()
-    ):
+    if not package_name:
         if not apk_path.is_file():
             raise RuntimeError(
                 "oob_control_package_missing_after_androidworld_setup:"
@@ -1876,23 +1997,23 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
                 "oob_control_package_install_failed:"
                 f"{serial}:{str(installed.stdout or installed.stderr or '').strip()}"
             )
-        package_path = subprocess.run(
-            [adb_bin, "-s", serial, "shell", "pm", "path", OOB_CONTROL_PACKAGE],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
+        package_name = next(
+            (
+                candidate
+                for candidate in EXPERIMENTAL_CONTROL_PACKAGES
+                if installed_package(candidate)
+            ),
+            "",
         )
-        if package_path.returncode != 0 or not any(
-            line.strip().startswith("package:")
-            for line in str(package_path.stdout or "").splitlines()
-        ):
+        if not package_name:
             raise RuntimeError(
                 "oob_control_apk_package_identity_mismatch:"
-                f"{serial}:expected={OOB_CONTROL_PACKAGE}"
+                f"{serial}:expected_one_of={','.join(EXPERIMENTAL_CONTROL_PACKAGES)}"
             )
+    os.environ["OMNIFLOW_OOB_PACKAGE"] = package_name
+    os.environ["OMNIFLOW_OOB_CONTROL_RECEIVER"] = oob_control_receiver(package_name)
     enabled_package = subprocess.run(
-        [adb_bin, "-s", serial, "shell", "pm", "enable", OOB_CONTROL_PACKAGE],
+        [adb_bin, "-s", serial, "shell", "pm", "enable", package_name],
         capture_output=True,
         text=True,
         timeout=10,
@@ -1912,7 +2033,7 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
         for value in str(enabled.stdout or "").strip().split(":")
         if value and value != "null"
     ]
-    services = _oob_control_accessibility_services(current_services)
+    services = _oob_control_accessibility_services(current_services, package_name)
     if services != current_services:
         update = subprocess.run(
             [
@@ -2218,6 +2339,88 @@ def instantiate_androidworld_task(
     return task_type(params)
 
 
+def _run_androidworld_task_initialization(
+    task: Any,
+    env: Any,
+    *,
+    initialize_task: Callable[..., Any] | None = None,
+) -> Any:
+    """Run the official task initializer with its required UI read backend.
+
+    OOB owns all formal episode observations and physical actions, so the
+    shared environment is intentionally loaded with AndroidWorld's native
+    accessibility backend disabled.  A small set of official AndroidWorld
+    initializers (notably contact seeding for SMS tasks) still uses
+    ``contacts_utils``/``actuation`` to finish one-time fixture setup.  Those
+    helpers only need UIAutomator reads during initialization; they are not
+    agent actions and must not leak into the recorded episode.  Temporarily
+    enable the official UIAutomator read path for this lifecycle hook, then
+    restore the OOB-owned backend before the agent loop starts.
+    """
+
+    controller = getattr(env, "controller", None)
+    if controller is None:
+        initializer = initialize_task or getattr(task, "initialize_task")
+        return initializer(env)
+    # Some API-33 AVDs successfully launch the SMS intent, but the pinned
+    # AndroidWorld gRPC ``get_current_activity`` probe returns an empty
+    # activity string during initialization.  The upstream helper then
+    # raises ``Messaging app not supported: `` before clicking the already
+    # visible Simple SMS send control.  Install a process-local compatibility
+    # wrapper once; it only recovers that empty-package initialization case
+    # and leaves all normal/agent actions untouched.
+    _patch_androidworld_sms_init_compat()
+    controller_module = importlib.import_module(
+        "android_world.env.android_world_controller"
+    )
+    a11y_method = getattr(controller_module, "A11yMethod", None)
+    if a11y_method is None or not hasattr(a11y_method, "UIAUTOMATOR"):
+        initializer = initialize_task or getattr(task, "initialize_task")
+        return initializer(env)
+    previous_a11y_method = getattr(controller, "_a11y_method", None)
+    controller._a11y_method = a11y_method.UIAUTOMATOR
+    try:
+        initializer = initialize_task or getattr(task, "initialize_task")
+        return initializer(env)
+    finally:
+        controller._a11y_method = previous_a11y_method
+
+
+def _patch_androidworld_sms_init_compat() -> None:
+    """Recover SMS fixture setup when AndroidWorld reports no foreground app."""
+
+    try:
+        tools_module = importlib.import_module("android_world.env.tools")
+        controller_type = getattr(tools_module, "AndroidToolController", None)
+        original = getattr(controller_type, "send_sms", None)
+    except Exception:  # pragma: no cover - optional external dependency
+        return
+    if controller_type is None or not callable(original):
+        return
+    if getattr(controller_type, "_omniflow_sms_init_compat", False):
+        return
+
+    def send_sms_with_empty_activity_fallback(self: Any, phone_number: str, message: str):
+        try:
+            return original(self, phone_number, message)
+        except ValueError as exc:
+            if "Messaging app not supported: " not in str(exc):
+                raise
+            # The upstream helper has already issued SENDTO and waited.  On
+            # the affected AVDs Simple SMS is foreground despite the blank
+            # activity probe; click its official text-send control directly.
+            if not str(exc).rstrip().endswith("supported:"):
+                raise
+            send_control = getattr(tools_module, "SIMPLE_SMS_SEND_TEXT", None)
+            if send_control is None:
+                raise
+            self.click_element(send_control)
+            return None
+
+    controller_type.send_sms = send_sms_with_empty_activity_fallback
+    controller_type._omniflow_sms_init_compat = True
+
+
 def start_androidworld_task_session(
     *,
     android_world_root: str | Path,
@@ -2240,15 +2443,41 @@ def start_androidworld_task_session(
 
     root = Path(android_world_root).expanduser().resolve()
     _add_android_world_path(root)
+    # External baseline forwarders share this lifecycle entry point with
+    # OmniFlow.  Source RunLogs may contain AndroidWorld's natural-language
+    # date spelling (for example ``this Tuesday``), while the pinned task
+    # registry exposes the corresponding canonical date.  Apply the same
+    # compatibility layer here so every backend receives identical task
+    # parameters; do not mutate the RunLog on disk.
+    _patch_androidworld_short_date_compat()
     from android_world.env import env_launcher
     from android_world.env.setup_device import setup as setup_module
 
-    task = instantiate_androidworld_task(
-        android_world_root=root,
-        task_name=task_name,
-        task_params=task_params,
-        task_seed=task_seed,
-    )
+    # Parameterized AndroidWorld tasks can contain natural-language dates such
+    # as ``today``.  Their canonicalization depends on the benchmark device
+    # clock, which is installed only after the environment has started.  Use a
+    # raw provisional instance solely to discover ``app_names`` for setup; the
+    # task used for initialization is instantiated again after the official
+    # device time has been registered.  This keeps external baselines on the
+    # same task-parameter semantics as the main AndroidWorld lifecycle.
+    task = None
+    task_type = None
+    if task_params:
+        from android_world import registry
+
+        task_type = registry.TaskRegistry().get_registry(family="android_world").get(
+            str(task_name)
+        )
+        if task_type is None:
+            raise ValueError(f"unknown AndroidWorld task: {task_name}")
+        task = task_type(dict(task_params))
+    else:
+        task = instantiate_androidworld_task(
+            android_world_root=root,
+            task_name=task_name,
+            task_params=None,
+            task_seed=task_seed,
+        )
     app_names = {
         str(name).strip().lower()
         for name in getattr(task, "app_names", ())
@@ -2273,6 +2502,14 @@ def start_androidworld_task_session(
 
     _patch_androidworld_broadcast_compat(adb_utils)
     type(task).set_device_time(startup.env)
+    if task_params and task_type is not None:
+        task = instantiate_androidworld_task(
+            android_world_root=root,
+            task_name=task_name,
+            task_params=dict(task_params),
+            task_seed=task_seed,
+        )
+        type(task).set_device_time(startup.env)
     # VLC's task fixtures read its on-device app_db during initialization.
     # A freshly initialized emulator does not create that database until the
     # app has been launched once; perform this one-time official AndroidWorld
@@ -2297,7 +2534,7 @@ def start_androidworld_task_session(
             VlcApp.setup(startup.env)
         else:
             adb_utils.launch_app("vlc", startup.env.controller)
-    task.initialize_task(startup.env)
+    _run_androidworld_task_initialization(task, startup.env)
     return startup, task
 
 
@@ -2978,12 +3215,84 @@ def _patch_androidworld_app_launch(adb_utils: Any) -> Any:
         check_ok(response, "Failed to launch the AndroidWorld Camera2 capture intent.")
         return response
 
+    def launch_resolved_package_activity(
+        package_name: str, controller: Any, label: str
+    ) -> Any:
+        """Launch the installed package when the pinned registry is stale.
+
+        AndroidWorld's app registry is tied to a particular APK revision.  In
+        the experiment images the installed Tasks and OpenTracks APKs expose
+        different launcher components from that registry.  Resolve the
+        package-manager launcher at runtime so every backend uses the same
+        installed app, without adding a second action mapper or changing the
+        task semantics.
+        """
+        issue_generic_request = getattr(adb_utils, "issue_generic_request", None)
+        check_ok = getattr(adb_utils, "check_ok", None)
+        if not callable(issue_generic_request) or not callable(check_ok):
+            raise RuntimeError(f"androidworld_{label}_activity_resolution_unavailable")
+        resolved = issue_generic_request(
+            [
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                package_name,
+            ],
+            controller,
+        )
+        check_ok(resolved, f"Failed to resolve the installed {label} activity.")
+        output = resolved.generic.output.decode("utf-8", errors="replace")
+        activity = next(
+            (
+                line.strip()
+                for line in output.splitlines()
+                if line.strip().startswith(f"{package_name}/")
+            ),
+            "",
+        )
+        if not activity:
+            raise RuntimeError(f"androidworld_{label}_activity_not_resolved")
+        response = issue_generic_request(
+            ["shell", "am", "start", "-n", activity],
+            controller,
+        )
+        check_ok(response, f"Failed to launch the resolved {label} activity.")
+        return response
+
     def launch_app(app_name: str, controller: Any) -> Any:
         if adb_utils.get_adb_activity(app_name) is not None:
             adb_utils.close_app(app_name, controller)
         try:
             return original(app_name, controller)
         except Exception:
+            if str(app_name or "").strip().casefold() in {
+                "tasks",
+                "tasks app",
+                "tasks.org",
+            }:
+                logger.warning(
+                    "AndroidWorld Tasks component launch failed; resolving the "
+                    "installed launcher activity",
+                    exc_info=True,
+                )
+                return launch_resolved_package_activity(
+                    "org.tasks", controller, "tasks"
+                )
+            if str(app_name or "").strip().casefold() in {
+                "open tracks sports tracker",
+                "opentracks",
+                "open tracks",
+            }:
+                logger.warning(
+                    "AndroidWorld OpenTracks component launch failed; resolving the "
+                    "installed launcher activity",
+                    exc_info=True,
+                )
+                return launch_resolved_package_activity(
+                    "de.dennisguse.opentracks", controller, "opentracks"
+                )
             if str(app_name or "").strip().casefold() not in {"camera", "camera2"}:
                 raise
             logger.warning(
@@ -3420,17 +3729,22 @@ def _prepare_androidworld_episode_after_reset(
     adb_path: str,
 ) -> None:
     """Restore the OOB physical layer after AndroidWorld resets task state."""
-
+    # AndroidWorld calls agent.reset() *after* task.initialize_task().  The
+    # latter has already seeded the task-specific app state (for example the
+    # OpenTracks database).  Re-running app setup here can reopen an app and
+    # restore its snapshot, silently erasing that freshly seeded state.  OOB
+    # only needs its control service restored after reset; leave task apps
+    # untouched so the official initializer remains authoritative.
+    if _is_oob_control_backend():
+        _ensure_oob_control_app(
+            console_port=int(console_port),
+            adb_path=str(adb_path or ""),
+        )
+        return
     _prepare_androidworld_episode_apps(
         env,
         setup_module=setup_module,
         setup_apps=setup_apps,
-    )
-    if not _is_oob_control_backend():
-        return
-    _ensure_oob_control_app(
-        console_port=int(console_port),
-        adb_path=str(adb_path or ""),
     )
 
 
@@ -4940,12 +5254,27 @@ def _apply_fixed_replay(
         direct_actions = 0
         parameter_bound_actions = 0
         parameter_bindings_applied = 0
+        # Fixed replay invokes Host.act directly instead of entering the
+        # normal Planner loop, so it must establish the same initial OOB
+        # observation that a normal agent receives before its first action.
+        # Otherwise AndroidWorldEpisodeRecorder falls back to native
+        # env.get_state() for the pre-action evidence; on an initialized OOB
+        # device that snapshot may not contain XML and the first action fails
+        # before it is dispatched.
+        if source_actions:
+            try:
+                replay_observe(xml=True, screenshot=False, app_info=True)
+            except Exception as exc:  # noqa: BLE001
+                completed = False
+                error_text = str(exc) or type(exc).__name__
         goal_parameter_binding = _fixed_replay_goal_parameter_bindings(
             run_log_data,
             target_goal=goal_text,
         )
         goal_bindings = list(goal_parameter_binding.get("bindings") or ())
-        for index, original_source_action in enumerate(source_actions):
+        for index, original_source_action in enumerate(
+            source_actions if completed else ()
+        ):
             source_action, action_parameter_bindings = (
                 _fixed_replay_bind_action_parameters(
                     original_source_action,
@@ -5678,7 +6007,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.task_random_seed is None
             else int(args.task_random_seed)
         )
-        args.max_steps = MAX_STEPS
+        # The atomic runner derives this bound from source actions + 10.
+        # Preserve that stricter bound instead of resetting it to the ceiling.
+        args.max_steps = min(MAX_STEPS, max(1, int(args.max_steps or MAX_STEPS)))
         args.fixed_task_seed = True
         # Preserve the explicit one-time official setup request.  The public
         # task runner deliberately passes this flag off after device setup;
@@ -5888,6 +6219,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "the unified script owns task-major scheduling."
             )
         task = suite[selected_task_names[0]][0]
+        original_task_initialize = task.initialize_task
+
+        def initialize_task_with_official_ui(
+            initialization_env: Any,
+            *initialization_args: Any,
+            **initialization_kwargs: Any,
+        ) -> Any:
+            return _run_androidworld_task_initialization(
+                task,
+                initialization_env,
+                initialize_task=lambda _env: original_task_initialize(
+                    _env,
+                    *initialization_args,
+                    **initialization_kwargs,
+                ),
+            )
+
+        # suite_utils.run owns the official task lifecycle and calls this
+        # method immediately before the agent loop.  Patch only that task
+        # instance so official initialization can seed UI fixtures while all
+        # recorded episode observations/actions remain OOB-owned.
+        task.initialize_task = initialize_task_with_official_ui
         task_name = str(getattr(task, "name", "") or "human_task")
         goal_text = str(getattr(task, "goal", "") or task_name)
         task_context: dict[str, Any] = {}
@@ -5958,6 +6311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file_utils.clear_directory = original_clear_directory
             result = results[0] if results else None
         finally:
+            task.initialize_task = original_task_initialize
             lifecycle_finished_perf = perf_counter()
             lifecycle_duration_ms = max(
                 0.0,
@@ -6070,6 +6424,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                             detail_value = runtime_detail.get(detail_name)
                             if isinstance(detail_value, dict):
                                 diagnostics[detail_name] = dict(detail_value)
+                        checker_trigger_counts = runtime_detail.get(
+                            "checker_trigger_counts"
+                        )
+                        if isinstance(checker_trigger_counts, dict):
+                            diagnostics["checker_trigger_counts"] = {
+                                str(key): _coerce_int(value)
+                                for key, value in checker_trigger_counts.items()
+                            }
+                            diagnostics["checker_trigger_total"] = sum(
+                                diagnostics["checker_trigger_counts"].values()
+                            )
                         diagnostics["completion_review_calls"] = max(
                             0,
                             _coerce_int(

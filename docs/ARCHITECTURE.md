@@ -17,7 +17,7 @@ scripts/exp/run_androidworld.sh
 
 正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
 AppAgent 通过 official forwarder 接入，但 observe/act 仍由同一个 OmniFlow OOB
-物理层提供；`script_replay` 和旧设备别名不进入新的 AndroidWorld 运行路径。
+物理层提供；当前执行批次只启动前三种方法，AutoDroid 为预留方法。
 
 运行时仅需要：
 

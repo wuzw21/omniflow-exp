@@ -55,8 +55,8 @@ bash scripts/exp/run_androidworld.sh run \
   --memory data/androidworld/CameraTakePhoto/omniflow/OmniFlowSourceSmall_seed111/memory/current/store.json
 ```
 
-要用一份 source RunLog 生成并运行全部方法，使用 `--method all` 和同一个 Memory
-root。转换输出固定为 `omniflow/store.json`、`mobilegpt/memory/`、`appagent/`；
+要用一份 source RunLog 生成并运行需要 Memory 的三个方法，使用 `--method all` 和同一个
+Memory root。转换输出固定为 `omniflow/store.json`、`mobilegpt/memory/`、`appagent/`；
 `fixed_replay` 与 `t3a_hint` 仍直接读取单一 source RunLog。
 
 五个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory

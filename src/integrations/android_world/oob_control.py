@@ -17,6 +17,10 @@ from PIL import Image
 
 CONTROL_ACTION = "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW"
 CONTROL_PACKAGE = "cn.com.omnimind.bot"
+EXPERIMENTAL_CONTROL_PACKAGES = (
+    CONTROL_PACKAGE,
+    "cn.com.omnimind.bot.debug",
+)
 CONTROL_ACCESSIBILITY_SERVICE = (
     f"{CONTROL_PACKAGE}/"
     "cn.com.omnimind.accessibility.service.AssistsService"
@@ -34,6 +38,35 @@ OBSERVE_RESULT_PREFIX = "files/debug-omniflow-observe-result-"
 LEGACY_OBSERVE_RESULT_PATH = "files/debug-omniflow-observe-result.json"
 OBSERVE_XML_ATTEMPTS = 4
 OBSERVE_XML_RETRY_DELAY_SECONDS = 0.25
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def oob_control_accessibility_service(package_name: str = CONTROL_PACKAGE) -> str:
+    """Return the service component for the installed experimental APK."""
+
+    return (
+        f"{str(package_name or CONTROL_PACKAGE).strip()}/"
+        "cn.com.omnimind.accessibility.service.AssistsService"
+    )
+
+
+def oob_control_receiver(
+    package_name: str = CONTROL_PACKAGE, *, observe: bool = False
+) -> str:
+    """Return the receiver component for release or debug package identity."""
+
+    receiver_name = (
+        "cn.com.omnimind.bot.debug.DebugOmniFlowObserveReceiver"
+        if observe
+        else "cn.com.omnimind.bot.debug.DebugOmniFlowControlReceiver"
+    )
+    return f"{str(package_name or CONTROL_PACKAGE).strip()}/{receiver_name}"
 
 
 class OobControlClient:
@@ -75,11 +108,17 @@ class OobControlClient:
         raise RuntimeError("oob_control_observe_xml_missing")
 
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
-        # The accessibility tree can change between the caller's Observe and
-        # this request (for example, DocumentsUI updates its selection state
-        # after the first tap).  Refresh immediately before dispatch so the
-        # supplied state_id is the one held by the resident OOB dispatcher.
-        self._observe_request(wait_to_stabilize=True)
+        # The caller has just observed the state used for transfer.  The OOB
+        # control path keeps that state as its current state, and the Android
+        # side performs its own pre-dispatch fingerprint plus post-dispatch
+        # stabilization.  Re-observing here duplicated that wait on every
+        # action without changing the action or the transfer decision.  The
+        # default remains fail-safe; the controlled lightweight benchmark can
+        # disable the Android-side sampler and rely on the recorder's single
+        # fast after-observation plus the runtime's bounded admission retry.
+        await_stabilization = _env_bool(
+            "OMNIFLOW_ANDROIDWORLD_ACT_AWAIT_STABILIZATION", True
+        )
         payload: dict[str, Any] = {
             # The resident OOB executor otherwise returns immediately after
             # dispatch.  That leaves the next Function step and the official
@@ -87,8 +126,33 @@ class OobControlClient:
             # part of the OOB act contract; wait actions remain cheap because
             # the Android side handles them as already completed.
             "action": action,
-            "await_stabilization": True,
+            "await_stabilization": await_stabilization,
         }
+        # The resident Kotlin dispatcher normally keeps the last observed
+        # State, but a package transition (notably DocumentsUI) can recreate
+        # that dispatcher-side cache.  Send the identity/display portion of
+        # the exact observed State with the action.  The full XML is already
+        # recorded by Observe and is intentionally omitted here because an
+        # intent extra containing a large DocumentsUI tree can exceed Android's
+        # transaction limit.  State.fromMap only needs these fields to verify
+        # the Observe -> Action pair; physical execution remains OOB-only.
+        if self._last_state is not None:
+            state_id = str(self._last_state.get("state_id") or "").strip()
+            display = self._last_state.get("display")
+            if state_id and isinstance(display, dict):
+                payload["state"] = {
+                    "state_id": state_id,
+                    "package_name": str(
+                        self._last_state.get("package_name") or ""
+                    ),
+                    "activity_name": str(
+                        self._last_state.get("activity_name") or ""
+                    ),
+                    "display": {
+                        "width": display.get("width"),
+                        "height": display.get("height"),
+                    },
+                }
         result = self._request("act", payload)
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_act_result_invalid")
@@ -101,9 +165,11 @@ class OobControlClient:
             "observe", request_id, result_path
         ):
             self._remove_result(candidate_path)
-        component = OBSERVE_RECEIVER
-        if component.startswith("."):
-            component = f"{self.package_name}/{component}"
+        # The resident APK may be installed under the release package or the
+        # debug package identity.  OBSERVE_RECEIVER is kept for the release
+        # default, but it must not be used verbatim for a debug installation:
+        # Android resolves the receiver by package identity as well as class.
+        component = oob_control_receiver(self.package_name, observe=True)
         broadcast, broadcast_timed_out = self._run_broadcast(
             [
                 "shell",

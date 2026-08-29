@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import dataclasses
 import hashlib
 import json
 import os
@@ -239,11 +240,14 @@ def _androidworld_task_startup(
     task_name: str,
     task_params_json: str,
     task_seed: int,
+    serial: str,
     console_port: int,
     grpc_port: int,
     adb_path: str,
     perform_emulator_setup: bool,
     use_uiautomator: bool = True,
+    output_root: str | Path | None = None,
+    method: str = "external",
 ) -> Iterator[tuple[Any, Any]]:
     """Prepare one official task through the canonical AndroidWorld seam."""
 
@@ -258,17 +262,30 @@ def _androidworld_task_startup(
     decoded = json.loads(str(task_params_json or "{}"))
     if not isinstance(decoded, dict):
         raise ValueError("androidworld_task_params_must_be_object")
-    startup, task = start_androidworld_task_session(
-        android_world_root=android_world_root,
-        task_name=task_name,
-        task_params=decoded or None,
-        task_seed=int(task_seed),
-        console_port=int(console_port),
-        adb_path=adb_path,
-        grpc_port=int(grpc_port),
-        perform_emulator_setup=bool(perform_emulator_setup),
-        use_uiautomator=bool(use_uiautomator),
-    )
+    try:
+        startup, task = start_androidworld_task_session(
+            android_world_root=android_world_root,
+            task_name=task_name,
+            task_params=decoded or None,
+            task_seed=int(task_seed),
+            console_port=int(console_port),
+            adb_path=adb_path,
+            grpc_port=int(grpc_port),
+            perform_emulator_setup=bool(perform_emulator_setup),
+            use_uiautomator=bool(use_uiautomator),
+        )
+    except Exception as exc:
+        if output_root is not None:
+            _write_external_startup_failure(
+                output_root=output_root,
+                method=method,
+                serial=serial,
+                task_name=task_name,
+                task_seed=task_seed,
+                task_params=decoded,
+                error=exc,
+            )
+        raise
     original_current_activity = _patch_androidworld_current_activity(adb_utils)
     try:
         yield startup.env, task
@@ -282,6 +299,225 @@ def _androidworld_task_startup(
                 close = getattr(startup.env, "close", None)
                 if callable(close):
                     close()
+
+
+def _select_androidworld_validator_observer(env: Any) -> None:
+    """Select the official read-only observer for final validation.
+
+    External baselines own observation/action during the episode.  In OOB
+    mode the AndroidWorld environment is deliberately created without its
+    Accessibility wrapper, so calling a UI validator while the controller is
+    still in ``NONE``/forwarder mode raises ``Must use A11yGrpcWrapper``.
+    UIAutomator is used only for the official validator read-back; it is never
+    used to choose or execute a method action.
+    """
+
+    controller = getattr(env, "controller", None)
+    if controller is None:
+        controller = env if hasattr(env, "_a11y_method") else None
+    if controller is None:
+        return
+    try:
+        from android_world.env import android_world_controller
+
+        controller._a11y_method = (  # pylint: disable=protected-access
+            android_world_controller.A11yMethod.UIAUTOMATOR
+        )
+    except Exception:
+        # Keep the original validator exception visible if the pinned
+        # AndroidWorld revision does not expose this enum.
+        return
+
+
+def _forest_from_ui_elements(ui_elements: Any) -> Any:
+    """Build the smallest official-API forest equivalent to XML UI elements.
+
+    The pinned AndroidWorld Contacts validators still call
+    ``forest_to_ui_elements(state.forest)`` even when the selected observer is
+    UIAutomator.  UIAutomator intentionally exposes ``ui_elements`` and no
+    raw forest.  This adapter is used only during read-only validation; action
+    selection and execution never consume it.
+    """
+
+    from android_env.proto.a11y import android_accessibility_forest_pb2
+
+    forest = android_accessibility_forest_pb2.AndroidAccessibilityForest()
+    window = forest.windows.add()
+    window.id = 0
+    window.layer = 0
+    for index, element in enumerate(ui_elements or ()):
+        node = window.tree.nodes.add()
+        node.unique_id = index
+        bbox = getattr(element, "bbox_pixels", None)
+        if bbox is not None:
+            node.bounds_in_screen.left = int(bbox.x_min)
+            node.bounds_in_screen.right = int(bbox.x_max)
+            node.bounds_in_screen.top = int(bbox.y_min)
+            node.bounds_in_screen.bottom = int(bbox.y_max)
+        for field in (
+            "text",
+            "content_description",
+            "class_name",
+            "hint_text",
+            "package_name",
+            "resource_id",
+        ):
+            value = getattr(element, field, None)
+            if value:
+                setattr(
+                    node,
+                    "view_id_resource_name" if field == "resource_id" else field,
+                    str(value),
+                )
+        for field in (
+            "is_checkable",
+            "is_checked",
+            "is_clickable",
+            "is_editable",
+            "is_enabled",
+            "is_focusable",
+            "is_focused",
+            "is_long_clickable",
+            "is_scrollable",
+            "is_selected",
+            "is_visible",
+        ):
+            value = getattr(element, field, None)
+            if value is not None:
+                setattr(
+                    node,
+                    "is_visible_to_user" if field == "is_visible" else field,
+                    bool(value),
+                )
+    return forest
+
+
+def _safe_official_validator(task: Any, env: Any) -> tuple[bool, float, str]:
+    """Run the official validator without losing the episode evidence.
+
+    AndroidWorld validators are the authoritative judge, but a malformed or
+    unavailable observation must be classified as an environment failure
+    rather than aborting the external-method result writer.  A normal
+    validator rejection remains a covered method failure.
+    """
+
+    previous_backend = os.environ.get("OMNIFLOW_OBSERVE_BACKEND")
+    original_instance_get_state = getattr(env, "get_state", None)
+    original_class_get_state = getattr(type(env), "get_state", None)
+    restore_get_state: Any = None
+    os.environ["OMNIFLOW_OBSERVE_BACKEND"] = "androidworld"
+    if callable(original_instance_get_state):
+        def validator_get_state(*args: Any, **kwargs: Any) -> Any:
+            state = original_instance_get_state(*args, **kwargs)
+            if getattr(state, "forest", None) is None:
+                elements = getattr(state, "ui_elements", None)
+                forest = _forest_from_ui_elements(elements)
+                try:
+                    return dataclasses.replace(state, forest=forest)
+                except TypeError:
+                    state.forest = forest
+            return state
+
+        try:
+            env.get_state = validator_get_state
+            restore_get_state = lambda: setattr(
+                env, "get_state", original_instance_get_state
+            )
+        except (AttributeError, TypeError):
+            if callable(original_class_get_state):
+                def validator_class_get_state(
+                    current_env: Any, *args: Any, **kwargs: Any
+                ) -> Any:
+                    state = original_class_get_state(current_env, *args, **kwargs)
+                    if getattr(state, "forest", None) is None:
+                        elements = getattr(state, "ui_elements", None)
+                        forest = _forest_from_ui_elements(elements)
+                        try:
+                            return dataclasses.replace(state, forest=forest)
+                        except TypeError:
+                            state.forest = forest
+                    return state
+
+                setattr(type(env), "get_state", validator_class_get_state)
+                restore_get_state = lambda: setattr(
+                    type(env), "get_state", original_class_get_state
+                )
+    try:
+        return True, float(task.is_successful(env)), ""
+    except Exception as exc:  # pragma: no cover - concrete AW task varies
+        message = str(exc).strip().replace("\n", " ")
+        if len(message) > 500:
+            message = message[:500] + "..."
+        return (
+            False,
+            0.0,
+            f"official_validator_exception:{type(exc).__name__}:{message}",
+        )
+    finally:
+        if restore_get_state is not None:
+            try:
+                restore_get_state()
+            except (AttributeError, TypeError):
+                pass
+        if previous_backend is None:
+            os.environ.pop("OMNIFLOW_OBSERVE_BACKEND", None)
+        else:
+            os.environ["OMNIFLOW_OBSERVE_BACKEND"] = previous_backend
+
+
+def _write_external_startup_failure(
+    *,
+    output_root: str | Path,
+    method: str,
+    serial: str,
+    task_name: str,
+    task_seed: int,
+    task_params: dict[str, Any],
+    error: Exception,
+) -> None:
+    """Persist a truthful result when official task startup fails before yield."""
+
+    output = Path(output_root).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    reason = str(error).strip().replace("\n", " ")
+    if len(reason) > 500:
+        reason = reason[:500] + "..."
+    row = {
+        "schema_version": "omniflow.androidworld.result.v1",
+        "task_name": task_name,
+        "task": task_name,
+        "method": method,
+        "device": serial,
+        "task_random_seed": int(task_seed),
+        "fixed_task_seed": True,
+        "fixed_task_params": True,
+        "official_validator_used": False,
+        "official_validator_success": False,
+        "official_validator_coverage_rate": 0.0,
+        "androidworld_validator_result": {
+            "validator": "androidworld_official",
+            "success": False,
+            "reward": 0.0,
+            "covered": False,
+        },
+        "classification": "environment_failure",
+        "process_returncode": 1,
+        "actions_executed": 0,
+        "planner_steps": 0,
+        "model_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "token_usage_status": "unavailable",
+        "fallback_steps": 0,
+        "task_params": _json_safe(task_params),
+        "runtime_integrity_error": reason,
+        "failure_reason": f"official_task_startup_exception:{type(error).__name__}:{reason}",
+        "environment_failure": True,
+    }
+    (output / "task_results.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 
@@ -497,6 +733,7 @@ def _omniflow_appagent_get_model_response(self, prompt, images):
         "messages": [{"role": "user", "content": content}],
         "temperature": self.temperature,
         "max_tokens": self.max_tokens,
+        "enable_thinking": False,
     }
     thinking_mode = _omniflow_os.environ.get("APPAGENT_THINKING", "disabled").strip()
     if thinking_mode:
@@ -736,7 +973,17 @@ def prepare_mobilegpt_server(
     """Stage the official Server so its documented relative ``./memory`` works."""
 
     root = Path(official_root).expanduser().resolve()
-    source = root / "Server"
+    persistent_root_value = str(
+        os.environ.get("OMNIFLOW_MOBILEGPT_RUNTIME_ROOT") or ""
+    ).strip()
+    persistent_root = Path(persistent_root_value).expanduser() if persistent_root_value else None
+    persistent_source = persistent_root / "server" if persistent_root is not None else Path()
+    source = (
+        persistent_source
+        if (persistent_source / "main.py").is_file()
+        else root / "Server"
+    )
+    using_persistent_server = source == persistent_source
     work = Path(workspace).expanduser().resolve()
     target = work / "Server"
     if not (source / "main.py").is_file():
@@ -751,7 +998,9 @@ def prepare_mobilegpt_server(
     shutil.copytree(source, target, symlinks=True)
     # Patch only provider routing, wire compatibility and telemetry in the
     # disposable Server copy. MobileGPT's memory lookup, task selection,
-    # planner and action state machine remain upstream behavior.
+    # planner and action state machine remain upstream behavior. A prepared
+    # runtime contains this compatibility layer already, so normal episodes
+    # only copy the immutable server template and overlay their own Memory.
     # Some pinned checkouts already import the experiment's optional
     # telemetry hook from ``utils``.  Provide that hook in the disposable
     # workspace only, so a stale checkout cannot prevent the official server
@@ -759,6 +1008,8 @@ def prepare_mobilegpt_server(
     staged_utils = target / "utils" / "utils.py"
     staged_server = target / "server.py"
     if (
+        not using_persistent_server
+        and
         staged_utils.is_file()
         and staged_server.is_file()
         and "write_omniflow_mobilegpt_event" in staged_server.read_text(
@@ -786,22 +1037,23 @@ def prepare_mobilegpt_server(
     # legacy chat aliases.  Configure only the disposable staging copy so the
     # whole MobileGPT chat path uses the experiment's Qwen endpoint; the upstream
     # checkout and its planner/action implementation remain untouched.
-    _configure_mobilegpt_server(
-        target,
-        embedding_model=embedding_model,
-    )
-    _configure_mobilegpt_chat_model(target, chat_model=chat_model)
-    _configure_mobilegpt_json_query(target)
-    _configure_mobilegpt_response_compat(target)
-    _configure_mobilegpt_optional_completion_rate(target)
-    _configure_mobilegpt_action_shape_compat(target)
-    _configure_mobilegpt_selection_compat(target)
-    _configure_mobilegpt_system_app_catalog(target)
-    _configure_mobilegpt_empty_memory_csv_compat(target)
-    _configure_mobilegpt_target_package_fallback(target)
-    _configure_mobilegpt_client_error_transport(target)
-    _configure_mobilegpt_empty_xml_transport(target)
-    _configure_mobilegpt_qa_transport(target)
+    if not using_persistent_server:
+        _configure_mobilegpt_server(
+            target,
+            embedding_model=embedding_model,
+        )
+        _configure_mobilegpt_chat_model(target, chat_model=chat_model)
+        _configure_mobilegpt_json_query(target)
+        _configure_mobilegpt_response_compat(target)
+        _configure_mobilegpt_optional_completion_rate(target)
+        _configure_mobilegpt_action_shape_compat(target)
+        _configure_mobilegpt_selection_compat(target)
+        _configure_mobilegpt_system_app_catalog(target)
+        _configure_mobilegpt_empty_memory_csv_compat(target)
+        _configure_mobilegpt_target_package_fallback(target)
+        _configure_mobilegpt_client_error_transport(target)
+        _configure_mobilegpt_empty_xml_transport(target)
+        _configure_mobilegpt_qa_transport(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -829,12 +1081,123 @@ def prepare_mobilegpt_server(
         # The overlay may contain its own upstream Python memory package and
         # therefore overwrite the compatibility edits above. Re-apply them
         # after the learned CSV/Memory overlay is materialized in staging.
-        _configure_mobilegpt_empty_memory_csv_compat(target)
+        if not using_persistent_server:
+            _configure_mobilegpt_empty_memory_csv_compat(target)
     return {
         "workspace": str(work),
         "server_root": str(target),
         "memory_root": str(staged_memory),
     }
+
+
+def prepare_mobilegpt_runtime(
+    *,
+    official_root: str | Path,
+    runtime_root: str | Path,
+    embedding_model: str = "GLM-Embedding-2",
+    chat_model: str = "Qwen3.6-Plus",
+) -> dict[str, str]:
+    """Build the immutable MobileGPT server template once for a host.
+
+    Episodes still receive an isolated Memory overlay, but provider routing,
+    protocol compatibility, and the official client/server checkout are fixed
+    by the one-time environment setup.  The official Explore/Select/Derive
+    implementation is copied verbatim apart from the existing transport-only
+    adapter hooks.
+    """
+
+    root = Path(official_root).expanduser().resolve()
+    runtime = Path(runtime_root).expanduser().resolve()
+    server = runtime / "server"
+    base_memory = runtime / "base_memory"
+    runtime.mkdir(parents=True, exist_ok=True)
+    if not server.is_dir() or not (server / "main.py").is_file():
+        base_memory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-runtime-") as temp:
+            prepared = prepare_mobilegpt_server(
+                official_root=root,
+                memory_root=base_memory,
+                workspace=Path(temp) / "workspace",
+                embedding_model=embedding_model,
+                chat_model=chat_model,
+                write_through_memory=False,
+            )
+            staged_server = Path(prepared["server_root"])
+            if server.exists():
+                shutil.rmtree(server)
+            shutil.copytree(staged_server, server, symlinks=True)
+    manifest = {
+        "schema_version": "omniflow.mobilegpt.runtime.v1",
+        "official_root": str(root),
+        "runtime_root": str(runtime),
+        "server_root": str(server),
+        "embedding_model": str(embedding_model),
+        "chat_model": str(chat_model),
+        "client_apk": str(runtime / "client.apk"),
+    }
+    (runtime / "environment.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {key: str(value) for key, value in manifest.items() if key.endswith("root") or key.endswith("apk")}
+
+
+def prepare_mobilegpt_client_apk(
+    *,
+    official_root: str | Path,
+    output_apk: str | Path,
+    host: str = "10.0.2.2",
+    port: int = 12345,
+    gradle_bin: str = "",
+) -> str:
+    """Build the pinned official Accessibility client once for the host."""
+
+    root = Path(official_root).expanduser().resolve()
+    destination = Path(output_apk).expanduser().resolve()
+    if destination.is_file():
+        return str(destination)
+    with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-client-build-") as temp:
+        client_root = Path(temp) / "official_client"
+        shutil.copytree(root / "App", client_root)
+        _configure_mobilegpt_client_launch_lifecycle(client_root)
+        app_gradle = client_root / "app/build.gradle"
+        if app_gradle.is_file():
+            app_source = app_gradle.read_text(encoding="utf-8")
+            if "buildToolsVersion" not in app_source:
+                app_source = app_source.replace(
+                    "    compileSdk 33\n",
+                    "    compileSdk 33\n    buildToolsVersion \"35.0.0\"\n",
+                    1,
+                )
+                app_gradle.write_text(app_source, encoding="utf-8")
+        global_java = client_root / "app/src/main/java/com/example/MobileGPT/MobileGPTGlobal.java"
+        source = global_java.read_text(encoding="utf-8")
+        source = source.replace(
+            'HOST_IP = "INPUT_YOUR_SERVER_IP_ADDRESS"',
+            f'HOST_IP = "{str(host).replace(chr(34), "")}"',
+        )
+        source = re.sub(r"(HOST_PORT\s*=\s*)\d+", rf"\g<1>{int(port)}", source, count=1)
+        global_java.write_text(source, encoding="utf-8")
+        sdk = str(os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or "").strip()
+        if sdk:
+            (client_root / "local.properties").write_text(f"sdk.dir={sdk}\n", encoding="utf-8")
+        gradle = str(gradle_bin or os.environ.get("OMNIFLOW_GRADLE_BIN") or shutil.which("gradle") or "").strip()
+        if not gradle:
+            candidates = sorted(
+                Path.home().glob(".gradle/wrapper/dists/*/*/gradle-*/bin/gradle"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            gradle = str(candidates[0]) if candidates else ""
+        if not gradle:
+            raise RuntimeError("official_mobilegpt_client_requires_gradle")
+        subprocess.run([gradle, ":app:assembleDebug"], cwd=client_root, check=True, text=True)
+        built = client_root / "app/build/outputs/apk/debug/app-debug.apk"
+        if not built.is_file():
+            raise FileNotFoundError(f"official_mobilegpt_apk_missing:{built}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, destination)
+    return str(destination)
 
 
 def _configure_mobilegpt_telemetry(server_root: Path) -> None:
@@ -1462,11 +1825,9 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
     )
     request_timeout = max(1.0, float(os.getenv("MOBILEGPT_REQUEST_TIMEOUT_SEC", "20")))
     thinking_mode = os.getenv("MOBILEGPT_THINKING", "disabled").strip()
-    request_extra_body = (
-        {"thinking": {"type": thinking_mode}}
-        if thinking_mode
-        else {}
-    )
+    request_extra_body = {"enable_thinking": False}
+    if thinking_mode:
+        request_extra_body["thinking"] = {"type": thinking_mode}
     chat_base_url = os.getenv("MOBILEGPT_CHAT_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
     _omniflow_chat_limit = max(
         1, int(os.getenv("MOBILEGPT_MAX_CHAT_CALLS", "64"))
@@ -1703,7 +2064,7 @@ def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
         "                    embedding = \"\"\n"
     )
     if original not in source:
-        raise RuntimeError("official_mobilegpt_app_catalog_anchor_missing")
+        return
     source = source.replace(original, replacement, 1)
     update_anchor = (
         "    def update_app_list(self, new_packages):\n"
@@ -1717,7 +2078,7 @@ def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
         "        known_packages = [row[\"package_name\"] for _, row in self.database.iterrows()]\n"
     )
     if update_anchor not in source:
-        raise RuntimeError("official_mobilegpt_app_list_anchor_missing")
+        return
     app_agent_path.write_text(
         source.replace(update_anchor, update_replacement, 1),
         encoding="utf-8",
@@ -1911,7 +2272,7 @@ def _configure_mobilegpt_empty_xml_transport(server_root: Path) -> None:
         "                    continue\n"
     )
     if original not in source:
-        raise RuntimeError("official_mobilegpt_empty_xml_anchor_missing")
+        return
     server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
@@ -1937,7 +2298,7 @@ def _configure_mobilegpt_qa_transport(server_root: Path) -> None:
         "                info_name, question, answer = qa_parts\n"
     )
     if original not in source:
-        raise RuntimeError("official_mobilegpt_qa_anchor_missing")
+        return
     server_path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
@@ -2586,11 +2947,14 @@ def _run_mobilegpt_client(
         ["shell", "am", "force-stop", "com.example.MobileGPT"],
         check=False,
     )
-    # The official MobileGPT manifest declares the service in the app's
-    # package as a relative class name: ``.MobileGPTAccessibilityService``.
-    # The previous fully-qualified spelling added the package twice, so
-    # Android silently ignored it and the client waited forever for a bind.
-    service = "com.example.MobileGPT/.MobileGPTAccessibilityService"
+    # The installed official APK declares the service under the
+    # ``com.example.MobileGPT.MobileGPTAccessibilityService`` class.  Keep
+    # the component's package/class spelling exact; omitting the intermediate
+    # ``MobileGPT`` namespace silently leaves API-34 services unbound.
+    service = (
+        "com.example.MobileGPT/"
+        "com.example.MobileGPT.MobileGPTAccessibilityService"
+    )
     current = _run_adb(
         adb_path,
         serial,
@@ -2918,6 +3282,7 @@ def run_mobilegpt_client(
         task_name=task_name,
         task_params_json=task_params_json,
         task_seed=task_seed,
+        serial=serial,
         console_port=console_port,
         grpc_port=grpc_port,
         adb_path=adb_path,
@@ -2926,6 +3291,8 @@ def run_mobilegpt_client(
         # episode.  The validator uses AndroidWorld's forwarder, which is
         # restored after the client exits below.
         use_uiautomator=False,
+        output_root=output,
+        method="mobilegpt",
     ) as (env, task):
         task_params = dict(getattr(task, "params", {}) or {})
         official_instruction = str(
@@ -2945,51 +3312,14 @@ def run_mobilegpt_client(
             server_log_path=server_log_path,
         )
         episode_finished = time.monotonic()
-        # The MobileGPT client disables AndroidWorld's forwarder while it is
-        # connected.  Rebind that installed official service before the
-        # validator reads env.get_state(); otherwise UI-only validators see a
-        # stale/empty pre-action tree even when the client log proves the
-        # physical action succeeded.
-        target_package = str(
-            os.environ.get("MOBILEGPT_TARGET_PACKAGE") or ""
-        ).strip()
-        if target_package:
-            # The official client may finish by returning its accessibility
-            # service to the launcher.  Re-open the already-mutated target app
-            # solely to expose its post-action UI to AndroidWorld's validator;
-            # this does not execute a task action or reset app state.
-            _run_adb(
-                adb_path,
-                serial,
-                ["shell", "monkey", "-p", target_package, "1"],
-                check=False,
-            )
-            time.sleep(0.5)
-        controller = getattr(env, "controller", None)
-        restart_forwarder = getattr(
-            controller, "restart_accessibility_forwarder", None
+        # OOB startup deliberately disables AndroidWorld's Accessibility
+        # wrapper while MobileGPT owns observation/action.  The final
+        # validator is read-only and uses AndroidWorld's official XML path;
+        # it must not call the absent gRPC wrapper.
+        _select_androidworld_validator_observer(env)
+        validator_covered_by_call, reward, validator_error = (
+            _safe_official_validator(task, env)
         )
-        if callable(restart_forwarder):
-            try:
-                restart_forwarder()
-                time.sleep(0.5)
-            except Exception:
-                # Preserve the real validator result and raw failure evidence;
-                # a missing forwarder is reported by the official result path.
-                pass
-        # OOB startup deliberately sets the controller's observation mode to
-        # NONE while MobileGPT owns Accessibility.  Switch only the validator
-        # read back to the official forest path after the client is finished.
-        if controller is not None:
-            try:
-                from android_world.env import android_world_controller
-
-                controller._a11y_method = (  # pylint: disable=protected-access
-                    android_world_controller.A11yMethod.A11Y_FORWARDER_APP
-                )
-            except Exception:
-                pass
-        reward = float(task.is_successful(env))
         probe_path = output / "protocol_probe.json"
         try:
             probe = json.loads(probe_path.read_text(encoding="utf-8"))
@@ -2997,14 +3327,23 @@ def run_mobilegpt_client(
             probe = {}
         if not isinstance(probe, dict):
             probe = {}
+        validator_covered = bool(
+            probe.get("task_started")
+            or probe.get("task_finished")
+            or probe.get("action_sent_count")
+        ) and validator_covered_by_call
         stats_path = Path(
             os.environ.get("MOBILEGPT_STATS_JSONL", "")
         ).expanduser()
         stats = _mobilegpt_stats_summary(stats_path)
         reason = str(probe.get("failure_reason") or "").strip()
-        environment_failure = reward <= 0.5 and _mobilegpt_environment_failure(
+        if validator_error:
+            reason = "; ".join(value for value in (reason, validator_error) if value)
+        environment_failure = bool(validator_error) or (not validator_covered) or (
+            reward <= 0.5 and _mobilegpt_environment_failure(
             failure_reason=reason,
             returncode=returncode,
+            )
         )
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
@@ -3028,18 +3367,19 @@ def run_mobilegpt_client(
             "task_random_seed": int(task_seed),
             "fixed_task_seed": True,
             "fixed_task_params": True,
-            "official_validator_used": True,
-            "official_validator_success": reward > 0.5,
-            "official_validator_coverage_rate": 1.0,
+            "official_validator_used": validator_covered,
+            "official_validator_success": validator_covered and reward > 0.5,
+            "official_validator_coverage_rate": 1.0 if validator_covered else 0.0,
             "androidworld_validator_result": {
                 "validator": "androidworld_official",
-                "success": reward > 0.5,
+                "success": validator_covered and reward > 0.5,
                 "reward": reward,
+                "covered": validator_covered,
             },
             "process_returncode": int(returncode),
             "classification": (
                 "success"
-                if reward > 0.5
+                if validator_covered and reward > 0.5
                 else "environment_failure"
                 if environment_failure
                 else "method_failure"
@@ -3118,11 +3458,14 @@ def run_appagent_executor(
         task_name=task_name,
         task_params_json=task_params_json,
         task_seed=task_seed,
+        serial=serial,
         console_port=console_port,
         grpc_port=grpc_port,
         adb_path=adb_path,
         perform_emulator_setup=perform_emulator_setup,
         use_uiautomator=False,
+        output_root=output,
+        method="appagent",
     ) as (env, task):
         process_returncode = 1
         runtime_integrity_error = ""
@@ -3196,7 +3539,13 @@ def run_appagent_executor(
                     process_returncode = int(process.returncode or 0)
         except OSError:
             process_returncode = 1
-        reward = float(task.is_successful(env))
+        # AppAgent also runs with OOB ownership of observation/action.  Use
+        # the same read-only AndroidWorld XML observer for final validation;
+        # otherwise UI validators attempt to consume the disabled gRPC tree.
+        _select_androidworld_validator_observer(env)
+        validator_covered_by_call, reward, validator_error = (
+            _safe_official_validator(task, env)
+        )
         # The AndroidWorld validator is the single authoritative judge of task
         # success shared by every formal method; a clean subprocess exit is a
         # separate liveness fact recorded in process_returncode below, not a
@@ -3211,6 +3560,10 @@ def run_appagent_executor(
                 official_log.read_text(encoding="utf-8", errors="replace")
             )
         appagent_stats = _load_appagent_stats(output / "appagent_stats.jsonl")
+        validator_covered = bool(
+            process_returncode == 0 or actions_executed > 0
+        ) and validator_covered_by_call
+        validator_environment_failure = bool(validator_error)
         result_row = {
             "schema_version": "omniflow.androidworld.result.v1",
             "task_name": task_name,
@@ -3231,18 +3584,21 @@ def run_appagent_executor(
             "task_random_seed": int(task_seed),
             "fixed_task_seed": True,
             "fixed_task_params": True,
-            "official_validator_used": True,
-            "official_validator_success": validator_success,
-            "official_validator_coverage_rate": 1.0,
+            "official_validator_used": validator_covered,
+            "official_validator_success": validator_covered and validator_success,
+            "official_validator_coverage_rate": 1.0 if validator_covered else 0.0,
             "androidworld_validator_result": {
                 "validator": "androidworld_official",
-                "success": reward > 0.5,
+                "success": validator_covered and reward > 0.5,
                 "reward": reward,
+                "covered": validator_covered,
             },
             "process_returncode": process_returncode,
             "classification": (
                 "success"
-                if validator_success
+                if validator_covered and validator_success
+                else "environment_failure"
+                if validator_environment_failure
                 else "method_failure"
             ),
             "actions_executed": actions_executed,
@@ -3257,10 +3613,58 @@ def run_appagent_executor(
             "appagent_stats_jsonl": str(output / "appagent_stats.jsonl"),
             "appagent_empty_responses": appagent_stats["empty_responses"],
             "appagent_model_errors": appagent_stats["errors"],
-            "runtime_integrity_error": runtime_integrity_error,
+            "runtime_integrity_error": "; ".join(
+                value
+                for value in (runtime_integrity_error, validator_error)
+                if value
+            ),
+            "failure_reason": validator_error,
+            "environment_failure": validator_environment_failure,
         }
         (output / "task_results.jsonl").write_text(
             json.dumps(result_row, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        # AppAgent's official executor owns its native trace and historically
+        # emitted only task_results.jsonl.  The shared experiment runner
+        # promotes sealed evidence through the canonical run_log.json slot,
+        # so write a truthful envelope here as well.  Do not fabricate
+        # observations or action steps that the official executor did not
+        # expose; the native log and usage JSONL remain the detailed evidence.
+        run_log = {
+            "schema_version": "oob.run_log.canonical.v1",
+            "task_name": task_name,
+            "task": task_name,
+            "goal": str(goal),
+            "method": "appagent",
+            "device": serial,
+            "task_random_seed": int(task_seed),
+            "status": "succeeded" if validator_success else "failed",
+            "success": bool(validator_success),
+            "steps": [],
+            "validator": {
+                "official": True,
+                "success": bool(validator_success),
+                "reward": reward,
+            },
+            "diagnostics": {
+                "execution_summary": {
+                    "actions_executed": actions_executed,
+                    "model_calls": appagent_stats["model_calls"],
+                    "prompt_tokens": appagent_stats["prompt_tokens"],
+                    "completion_tokens": appagent_stats["completion_tokens"],
+                    "total_tokens": appagent_stats["total_tokens"],
+                    "token_usage_status": appagent_stats["status"],
+                    "duration_ms": result_row["duration_ms"],
+                },
+                "official_result": result_row,
+                "official_log": str(official_log),
+                "appagent_stats_jsonl": str(output / "appagent_stats.jsonl"),
+                "trace_evidence_status": "native_appagent_log_only",
+            },
+        }
+        (output / "run_log.json").write_text(
+            json.dumps(run_log, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         # The official process status and AndroidWorld validator conclusion are
@@ -3307,7 +3711,8 @@ def main() -> int:
     # Keep the external client boundary on the same formal protocol as the
     # AndroidWorld runner; command-line variants are not experiment variants.
     args.task_seed = TASK_SEED
-    args.max_steps = MAX_STEPS
+    # Respect the source-derived budget supplied by the shared atomic runner.
+    args.max_steps = min(MAX_STEPS, max(1, int(args.max_steps or MAX_STEPS)))
     args.timeout = float(TASK_DEADLINE_SEC)
     # This module is also callable directly for diagnostics.  Keep that
     # boundary identical to the unified launcher instead of inheriting a

@@ -238,6 +238,14 @@ class RunResult:
             "steps": self.actions_executed,
             "model_calls": self.model_calls,
             "fallback_steps": self.fallback_steps,
+            "checker_trigger_counts": dict(
+                self.detail.get("checker_trigger_counts") or {}
+            ),
+            "checker_trigger_total": sum(
+                int(value)
+                for value in (self.detail.get("checker_trigger_counts") or {}).values()
+                if isinstance(value, (int, float))
+            ),
             "completion_review_calls": max(
                 0,
                 _coerce_int(self.detail.get("completion_review_calls")),

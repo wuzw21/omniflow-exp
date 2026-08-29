@@ -42,6 +42,7 @@ _ANDROID_SYSTEM_OPEN_APP_PACKAGES = frozenset({"com.android.settings"})
 _ANDROIDWORLD_NON_TASK_LAUNCHER_PACKAGES = frozenset(
     {
         CONTROL_PACKAGE,
+        "cn.com.omnimind.bot.debug",
         "com.example.MobileGPT",
         "com.google.androidenv.accessibilityforwarder",
     }
@@ -52,6 +53,49 @@ def _read(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+_OOB_KEY_ALIASES = {
+    "back": "back",
+    "navigate_back": "back",
+    "press_back": "back",
+    "home": "home",
+    "navigate_home": "home",
+    "press_home": "home",
+    "enter": "enter",
+    "keyboard_enter": "enter",
+    "press_enter": "enter",
+    "keycode_back": "back",
+    "keycode_home": "home",
+    "keycode_enter": "enter",
+}
+
+
+def _adapt_action_for_oob(value: Action | dict[str, Any]) -> Action:
+    """Normalize legacy/runtime action spellings at the OOB boundary.
+
+    AndroidWorld and older collectors use names such as ``press_back`` and
+    ``navigate_back`` while the installed OOB dispatcher accepts the single
+    canonical ``press_key`` tool.  Keep the compatibility surface here so the
+    AndroidWorld task and the persisted canonical schema remain unchanged.
+    """
+
+    action = Action.from_value(value)
+    tool = action.tool.strip().lower()
+    args = dict(action.args)
+    if tool in _OOB_KEY_ALIASES:
+        return Action("press_key", {"key": _OOB_KEY_ALIASES[tool]})
+    if tool == "press_key":
+        raw_key = args.get("key") or args.get("keycode")
+        key = str(raw_key or "").strip().lower()
+        normalized = _OOB_KEY_ALIASES.get(key)
+        if normalized:
+            return Action("press_key", {"key": normalized})
+        return action
+    if tool == "swipe" and not str(args.get("direction") or "").strip():
+        args["direction"] = _official_swipe_direction(args)
+        return Action("swipe", args)
+    return action
 
 
 def _xml_escape(value: Any) -> str:
@@ -263,7 +307,7 @@ class AndroidWorldHost:
         open_app_ready_timeout_seconds: float | None = None,
         evidence_root: str | Path | None = None,
         performance_metrics: PerformanceMetrics | None = None,
-        control_backend: str = "androidworld",
+        control_backend: str = "oob",
     ):
         self.env = env
         self.adb_serial = str(
@@ -276,7 +320,7 @@ class AndroidWorldHost:
             if evidence_root is not None
             else None
         )
-        normalized_backend = str(control_backend or "androidworld").strip().lower()
+        normalized_backend = str(control_backend or "oob").strip().lower()
         if normalized_backend in {"oob", "omniflow", "oob_control"}:
             self.observe_backend = "oob_control"
             self.act_backend = "oob_control"
@@ -301,6 +345,7 @@ class AndroidWorldHost:
             raise ValueError(f"androidworld_control_backend_invalid:{control_backend}")
         self.performance_metrics = performance_metrics
         self._last_screen_size: tuple[float, float] | None = None
+        self._after_action_state: Any | None = None
         self.open_app_ready_timeout_seconds = max(
             0.0, float(open_app_ready_timeout_seconds or 0.0)
         )
@@ -408,6 +453,7 @@ class AndroidWorldHost:
         xml: bool = True,
         screenshot: bool = False,
         app_info: bool = True,
+        wait_to_stabilize: bool | None = None,
         **_: Any,
     ) -> Observation:
         if self.performance_metrics is None:
@@ -415,6 +461,7 @@ class AndroidWorldHost:
                 xml=xml,
                 screenshot=screenshot,
                 app_info=app_info,
+                wait_to_stabilize=wait_to_stabilize,
             )
         started_ns = time.perf_counter_ns()
         success = False
@@ -423,6 +470,7 @@ class AndroidWorldHost:
                 xml=xml,
                 screenshot=screenshot,
                 app_info=app_info,
+                wait_to_stabilize=wait_to_stabilize,
             )
             success = True
             return observation
@@ -433,24 +481,42 @@ class AndroidWorldHost:
                 success=success,
             )
 
+    def observe_stable(
+        self,
+        *,
+        xml: bool = True,
+        screenshot: bool = True,
+        app_info: bool = True,
+    ) -> Observation:
+        """Take the one explicit stable sample used for transfer recovery."""
+
+        return self.observe(
+            xml=xml,
+            screenshot=screenshot,
+            app_info=app_info,
+            wait_to_stabilize=True,
+        )
+
     def _observe_impl(
         self,
         *,
         xml: bool,
         screenshot: bool,
         app_info: bool,
+        wait_to_stabilize: bool | None = None,
     ) -> Observation:
         metrics = self.performance_metrics
-        wait_to_stabilize = (
-            str(
-                os.environ.get(
-                    "OMNIFLOW_ANDROIDWORLD_WAIT_TO_STABILIZE", "1"
+        if wait_to_stabilize is None:
+            wait_to_stabilize = (
+                str(
+                    os.environ.get(
+                        "OMNIFLOW_ANDROIDWORLD_WAIT_TO_STABILIZE", "1"
+                    )
                 )
+                .strip()
+                .lower()
+                not in {"0", "false", "no", "off"}
             )
-            .strip()
-            .lower()
-            not in {"0", "false", "no", "off"}
-        )
         with (
             metrics.timed("observe_get_state")
             if metrics is not None
@@ -514,7 +580,14 @@ class AndroidWorldHost:
             graph_source = ""
             forest = getattr(state, "forest", None)
             forest_xml = ""
-            if xml and isinstance(forest, str):
+            raw_oob_xml = (
+                auxiliaries.get("xml")
+                if isinstance(auxiliaries, dict)
+                else None
+            )
+            if xml and isinstance(raw_oob_xml, str) and raw_oob_xml.strip():
+                forest_xml = raw_oob_xml
+            elif xml and isinstance(forest, str):
                 forest_xml = forest
             elif xml and forest is not None:
                 forest_xml = androidworld_forest_xml(
@@ -589,6 +662,17 @@ class AndroidWorldHost:
                         forest,
                         package_name=package,
                     )
+                )
+                # OOB returns the complete ordered accessibility forest for
+                # the active app window.  That window intentionally excludes
+                # Android's status/navigation bars (for example, Pixel 6 Pro
+                # uses y=[145,3036] on a 1440x3120 display), so requiring its
+                # root to cover the physical screen incorrectly labels a
+                # complete OOB graph as partial and blocks Transfer.
+                or (
+                    self.control_client is not None
+                    and graph_source == "oob_control_forest"
+                    and bool(forest_xml)
                 )
             )
             if xml and xml_text and not graph_complete:
@@ -754,18 +838,83 @@ class AndroidWorldHost:
                 success=result is not None and result.success,
             )
 
+    def take_after_action_observation(self) -> Any | None:
+        """Return the recorder's post-action state once, if it captured one.
+
+        The recorder already captures the stabilized state needed for the
+        RunLog.  The execution loop can reuse that same state instead of
+        issuing a second OOB observe immediately after every action.
+        """
+
+        state = self._after_action_state
+        self._after_action_state = None
+        if state is None:
+            return None
+
+        # ``state`` is the AndroidWorld/OOB compatibility object used by the
+        # recorder.  Passing it directly through ``Observation.from_value``
+        # loses its XML because the canonical XML lives in ``auxiliaries``.
+        # That made Fast Pass hand the next Function step an observation with
+        # no target graph, so shared Checkers could not see onboarding or
+        # permission overlays and OmniTransfer failed before replay.  Reuse
+        # the recorder's already-materialized XML/screenshot record and add
+        # the OOB identity fields; this is an in-process normalization only,
+        # not another device observation.
+        recorded = self._latest_observation
+        auxiliaries = getattr(state, "auxiliaries", None)
+        if isinstance(recorded, dict) and isinstance(auxiliaries, dict):
+            payload = dict(recorded)
+            package_name = str(auxiliaries.get("package_name") or "").strip()
+            activity_name = str(auxiliaries.get("activity_name") or "").strip()
+            display = auxiliaries.get("display")
+            if package_name:
+                payload["package_name"] = package_name
+            if activity_name:
+                payload["activity_name"] = activity_name
+            if isinstance(display, dict):
+                payload["display"] = dict(display)
+            extra = dict(payload.get("extra") or {})
+            extra.update(
+                {
+                    "observe_backend": "oob_control",
+                    "ui_graph_source": "oob_control_forest",
+                    "ui_graph_complete": True,
+                }
+            )
+            payload["extra"] = extra
+            return Observation.from_value(payload)
+        return state
+
+    @staticmethod
+    def _fast_post_action_transition_seconds() -> float:
+        """Return the bounded transition window for the lightweight OOB path."""
+
+        # When OOB itself performs stabilization, adding another delay here
+        # only duplicates the wait.  In fast mode this small window lets the
+        # UI commit before the single post-action observation is captured.
+        await_stabilization = str(
+            os.environ.get("OMNIFLOW_ANDROIDWORLD_ACT_AWAIT_STABILIZATION", "1")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        if await_stabilization:
+            return 0.0
+        raw = os.environ.get("OMNIFLOW_ANDROIDWORLD_POST_ACTION_TRANSITION_MS", "500")
+        try:
+            milliseconds = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            milliseconds = 500.0
+        return min(milliseconds / 1000.0, 0.5)
+
     def _act_impl(self, value: Action | dict[str, Any]) -> ActionResult:
-        action = Action.from_value(value)
+        action = _adapt_action_for_oob(value)
+        self._after_action_state = None
         if action.tool == "finished":
             return ActionResult(True)
         try:
             if self.control_client is not None:
                 def execute() -> dict[str, Any]:
-                    if action.tool in {"press_key", "paste"}:
-                        # OOB's ENTER is an IME action for focused text fields;
-                        # AndroidWorld's native key event also handles system
-                        # dialogs. Keep global key semantics compatible across
-                        # the old and new collectors.
+                    if action.tool == "paste":
+                        # Paste has no OOB canonical equivalent, so retain the
+                        # existing clipboard operation for this hidden helper.
                         self.env.execute_action(self._json_action(action))
                         return {"success": True}
                     payload = action.to_dict()
@@ -779,6 +928,24 @@ class AndroidWorldHost:
                             args["package_name"] = resolved_package
                             args.pop("app_name", None)
                             payload["args"] = args
+                    if action.tool == "input_text":
+                        # The installed OOB dispatcher types into the current
+                        # focus but does not always focus the supplied point.
+                        # Keep the public action as one input_text while using
+                        # the same OOB channel to focus its live XML target.
+                        args = dict(payload.get("args") or {})
+                        if args.get("x") is not None and args.get("y") is not None:
+                            focus_result = self.control_client.act(
+                                {
+                                    "tool": "click",
+                                    "args": {
+                                        "x": args["x"],
+                                        "y": args["y"],
+                                    },
+                                }
+                            )
+                            if not bool(focus_result.get("success")):
+                                return focus_result
                     return self.control_client.act(payload)
 
                 execute_host_action = getattr(
@@ -795,13 +962,20 @@ class AndroidWorldHost:
                                 or action.args.get("app_name")
                                 or ""
                             ).strip()
-                            return self._observe_open_app_ready(identifier)
-                        return oob_state_from_payload(
-                            self.control_client.observe(wait_to_stabilize=True),
+                            state = self._observe_open_app_ready(identifier)
+                            self._after_action_state = state
+                            return state
+                        transition_seconds = self._fast_post_action_transition_seconds()
+                        if transition_seconds > 0.0:
+                            time.sleep(transition_seconds)
+                        state = oob_state_from_payload(
+                            self.control_client.observe(wait_to_stabilize=False),
                             fallback_screen_size=tuple(
                                 int(value) for value in self._screen_size()
                             ),
                         )
+                        self._after_action_state = state
+                        return state
 
                     return ActionResult.from_value(
                         execute_host_action(
@@ -834,7 +1008,7 @@ class AndroidWorldHost:
         last_state: Any = None
         while True:
             last_state = oob_state_from_payload(
-                self.control_client.observe(wait_to_stabilize=True),
+                self.control_client.observe(wait_to_stabilize=False),
                 fallback_screen_size=tuple(
                     int(value) for value in self._screen_size()
                 ),

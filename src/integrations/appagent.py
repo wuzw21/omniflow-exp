@@ -214,6 +214,21 @@ class OfficialAppAgentRuntime:
             raise FileNotFoundError(f"appagent_official_scripts_missing:{scripts_dir}")
         sys.path.insert(0, str(scripts_dir))
         previous_cwd = Path.cwd()
+        # MobileGPT and the official AppAgent both use short top-level module
+        # names (notably ``utils``).  They can be loaded in the same
+        # convert-memory process, so importing AppAgent without isolating
+        # these names may silently reuse MobileGPT's package and fail with a
+        # missing AppAgent symbol.  Keep the official modules in the runtime
+        # object, but restore the caller's module table after loading them.
+        shadowed_names = {
+            name
+            for name in sys.modules
+            if name in {"prompts", "model", "utils", "and_controller"}
+            or name.startswith("utils.")
+        }
+        shadowed_modules = {name: sys.modules[name] for name in shadowed_names}
+        for name in shadowed_names:
+            sys.modules.pop(name, None)
         try:
             os.chdir(self.root)
             self._prompts = importlib.import_module("prompts")
@@ -226,6 +241,10 @@ class OfficialAppAgentRuntime:
                 sys.path.remove(str(scripts_dir))
             except ValueError:
                 pass
+            for name in list(sys.modules):
+                if name in {"prompts", "model", "utils", "and_controller"} or name.startswith("utils."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(shadowed_modules)
         for module in (
             self._prompts,
             self._model,
@@ -2118,6 +2137,46 @@ def _source_semantic_params(
             identity = _source_node_identity(focused[0])
             if identity:
                 enriched["source_context"] = {"element": identity}
+                return enriched
+        # Some AndroidWorld source forests do not preserve the focused flag
+        # even though the action contains the canonical normalized point. Use
+        # that point only while authoring the demo to identify the editable
+        # node, then retain its semantic identity instead of its coordinates.
+        try:
+            x = float(enriched.get("x"))
+            y = float(enriched.get("y"))
+        except (TypeError, ValueError):
+            return enriched
+        display = observation_display(observation)
+        if display is not None:
+            point = (
+                int(round(x / 1000.0 * display[0])),
+                int(round(y / 1000.0 * display[1])),
+            )
+            root = ET.fromstring(xml_text)
+            point_nodes = [
+                node
+                for node in root.iter()
+                if (bbox := _element_bbox(node)) is not None
+                and _bbox_contains(bbox, point)
+                and (
+                    str(node.attrib.get("editable") or "").lower() == "true"
+                    or str(node.attrib.get("class") or "")
+                    == "android.widget.EditText"
+                )
+            ]
+            if point_nodes:
+                identity = _source_node_identity(min(point_nodes, key=_node_area))
+                if identity:
+                    enriched["source_context"] = {"element": identity}
+                    return enriched
+            source_appagent_tag = _source_appagent_tag_at_point(
+                xml_text,
+                x=point[0],
+                y=point[1],
+            )
+            if source_appagent_tag is not None:
+                enriched["source_appagent_tag"] = source_appagent_tag
         return enriched
     display = observation_display(observation)
     if display is None:

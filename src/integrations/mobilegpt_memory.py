@@ -215,7 +215,26 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
     prompt_tokens = sum(_coerce_int(row.get("prompt_tokens")) for row in rows)
     completion_tokens = sum(_coerce_int(row.get("completion_tokens")) for row in rows)
     total_tokens = sum(_coerce_int(row.get("total_tokens")) for row in rows)
+    reasoning_tokens = sum(_coerce_int(row.get("reasoning_tokens")) for row in rows)
     model_calls = len(chat_rows) + len(embedding_rows)
+    usage_rows = [*chat_rows, *embedding_rows]
+    priced_rows = [
+        row for row in usage_rows
+        if row.get("cost_usd") is not None
+    ]
+    observed_cost_usd = round(
+        sum(_coerce_float(row.get("cost_usd")) for row in priced_rows),
+        8,
+    )
+    if not usage_rows or len(priced_rows) == len(usage_rows):
+        cost_status = "tracked" if usage_rows else "not_applicable"
+        cost_usd: float | None = observed_cost_usd if usage_rows else None
+    elif priced_rows:
+        cost_status = "partial"
+        cost_usd = None
+    else:
+        cost_status = "unavailable"
+        cost_usd = None
     return {
         "schema_version": "omniflow.mobilegpt_stats_summary.v1",
         "stats_path": str(stats_path),
@@ -280,6 +299,7 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
         ),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "reasoning_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
         "token_usage_status": (
             "tracked"
@@ -290,6 +310,11 @@ def summarize_mobilegpt_stats(path: str | Path) -> dict[str, Any]:
             if model_calls > 0
             else "not_applicable"
         ),
+        "cost_usd": cost_usd,
+        "observed_cost_usd": observed_cost_usd,
+        "cost_status": cost_status,
+        "priced_model_calls": len(priced_rows),
+        "unpriced_model_calls": len(usage_rows) - len(priced_rows),
         "chat_latency_sec": round(
             sum(_coerce_float(row.get("latency_sec")) for row in chat_rows),
             6,
@@ -373,8 +398,14 @@ def mobilegpt_stats_row_fields(
         f"{prefix}_embedding_models": list(stats.get("embedding_models") or []),
         f"{prefix}_prompt_tokens": _coerce_int(stats.get("prompt_tokens")),
         f"{prefix}_completion_tokens": _coerce_int(stats.get("completion_tokens")),
+        f"{prefix}_reasoning_tokens": _coerce_int(stats.get("reasoning_tokens")),
         f"{prefix}_total_tokens": _coerce_int(stats.get("total_tokens")),
         f"{prefix}_token_usage_status": str(stats.get("token_usage_status") or ""),
+        f"{prefix}_cost_usd": stats.get("cost_usd"),
+        f"{prefix}_observed_cost_usd": _coerce_float(
+            stats.get("observed_cost_usd")
+        ),
+        f"{prefix}_cost_status": str(stats.get("cost_status") or ""),
         f"{prefix}_chat_latency_sec": _coerce_float(stats.get("chat_latency_sec")),
         f"{prefix}_embedding_latency_sec": _coerce_float(
             stats.get("embedding_latency_sec")
@@ -826,8 +857,14 @@ def is_valid_mobilegpt_launch_only_memory(
     for step in steps:
         if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
             return False
-        actions.append(step["action"])
-    if not all(
+        action = step["action"]
+        action_type = str(action.get("action_type") or "").strip().lower()
+        # RunLogs may append a terminal planner answer after the physical
+        # open_app.  It is evidence of completion, not another UI action.
+        if action_type in {"answer", "status", "wait"}:
+            continue
+        actions.append(action)
+    if not actions or not all(
         str(action.get("action_type") or "").strip().lower() == "open_app"
         and bool(
             str(
@@ -845,12 +882,26 @@ def is_valid_mobilegpt_launch_only_memory(
         and int(audit.get("transition_count") or 0) == 0
         and int(audit.get("validated_transition_count") or 0) == 0
         and audit.get("validation_rows") == []
-        and audit.get("actions_supplied_to_mobilegpt") is True
+        # The official-learning adapter intentionally supplies zero physical
+        # transition frames for a launch-only source.  Older direct adapters
+        # may record True here, so accept either explicit boolean mode while
+        # still rejecting a missing or malformed provenance field.
+        and isinstance(audit.get("actions_supplied_to_mobilegpt"), bool)
         and audit.get("source_transitions_supplied") is True
         and audit.get("source_success_boundary_supplied") is True
         and audit.get("complete") is True
         and official_reader.get("loadable") is True
-        and official_reader.get("launch_finish_validated") is True
+        and (
+            official_reader.get("launch_finish_validated") is True
+            or (
+                # Bundles produced before the explicit reader flag was added
+                # still carry the stronger server-finished + one-page shape.
+                audit.get("official_server_finished") is True
+                and int(official_reader.get("task_path_pages") or 0) == 1
+                and int(official_reader.get("page_count") or 0) == 1
+                and int(official_reader.get("action_row_count") or 0) == 0
+            )
+        )
         and int(official_reader.get("task_path_pages") or 0) == 1
         and int(official_reader.get("page_count") or 0) == 1
         and int(official_reader.get("action_row_count") or 0) == 0
@@ -915,11 +966,19 @@ def _validate_mobilegpt_converted_memory(
         raise ValueError("mobilegpt_virtual_memory_provenance_missing")
     native_learning = bool(provenance.get("native_mobilegpt_learning"))
     semantic_learning = schema_version == MOBILEGPT_MEMORY_SCHEMA
+    # The current schema can contain either the historical semantic bridge
+    # (which used teacher forcing) or a faithful official MobileGPT authoring
+    # session.  Keep these modes distinct at the validation boundary.
+    official_learning = (
+        semantic_learning
+        and provenance.get("teacher_forcing") is False
+        and provenance.get("official_authoring_session") is True
+    )
     required_provenance = {
         "native_mobilegpt_learning": native_learning,
         "task_local_memory": True,
         "learning_mode": schema_learning_mode,
-        "teacher_forcing": semantic_learning,
+        "teacher_forcing": semantic_learning and not official_learning,
         "synthetic_subtasks": not native_learning and not semantic_learning,
         "semantic_subtasks": native_learning or semantic_learning,
         "original_mobilegpt_prompts": native_learning or semantic_learning,
@@ -929,7 +988,9 @@ def _validate_mobilegpt_converted_memory(
         "runlog_transition_compilation": (
             False if semantic_learning else not native_learning
         ),
-        "complete_transition_mapping": not native_learning,
+        "complete_transition_mapping": (
+            not native_learning and not official_learning
+        ),
         "official_reader_validation": True,
         "function_store_used": False,
         "function_conversion_enabled": False,
@@ -943,7 +1004,7 @@ def _validate_mobilegpt_converted_memory(
         required_provenance.update(
             {
                 "official_authoring_session": True,
-                "teacher_action_alignment_complete": True,
+                "teacher_action_alignment_complete": not official_learning,
             }
         )
     for provenance_field, expected in required_provenance.items():
@@ -1064,7 +1125,8 @@ def _validate_mobilegpt_converted_memory(
         and audit.get("complete") is True
     )
     if (native_learning and not official_audit_valid) or (
-        semantic_learning and not semantic_audit_valid
+        semantic_learning
+        and not (semantic_audit_valid or official_audit_valid)
     ) or (
         not native_learning and not semantic_learning and not direct_audit_valid
     ):

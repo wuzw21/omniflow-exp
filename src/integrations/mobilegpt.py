@@ -31,6 +31,7 @@ from src.experiment.mobilegpt_contract import (
 )
 from src.experiment.protocol import (
     FORMAL_MODEL_BASE_URL,
+    FORMAL_REQUEST_TIMEOUT_SEC,
     FORMAL_THINKING,
     require_formal_model,
 )
@@ -97,7 +98,11 @@ __all__ = [
     "write_conversion_failure_audit",
 ]
 
-_SKIPPED_ACTION_TYPES = frozenset({"open_app", "status", "wait"})
+# ``answer`` is the planner's terminal verbal response, not a physical UI
+# transition.  Treat it like the other non-physical records so a launch-only
+# AndroidWorld RunLog (open_app followed by answer) remains a launch-only
+# MobileGPT Memory instead of inventing a replayable action row.
+_SKIPPED_ACTION_TYPES = frozenset({"answer", "open_app", "status", "wait"})
 _LAUNCHER_PACKAGES = frozenset(
     {
         "com.google.android.apps.nexuslauncher",
@@ -2344,6 +2349,87 @@ def _write_event(path: Path, event: dict[str, Any]) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def _usage_number(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_mobilegpt_usage(value: Any) -> dict[str, Any]:
+    """Normalize provider usage without changing the official response."""
+
+    if not isinstance(value, dict):
+        value = {}
+    prompt_tokens = _usage_number(value.get("prompt_tokens"))
+    completion_tokens = _usage_number(value.get("completion_tokens"))
+    total_tokens = _usage_number(value.get("total_tokens"))
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    normalized: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "reasoning_tokens": _usage_number(value.get("reasoning_tokens")),
+    }
+    for key in ("cost_usd", "cost"):
+        try:
+            if value.get(key) is not None:
+                normalized["provider_cost_usd"] = float(value[key])
+                break
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def _mobilegpt_cost_fields(
+    usage: dict[str, Any],
+    *,
+    kind: str,
+) -> dict[str, Any]:
+    """Return provider cost or an explicit config-based estimate.
+
+    The provider normally returns token usage but not billing.  Never present
+    a guessed dollar amount as actual cost: an estimate is produced only when
+    the corresponding per-1K rates are explicitly configured.
+    """
+
+    provider_cost = usage.get("provider_cost_usd")
+    if provider_cost is not None:
+        return {
+            "cost_usd": round(float(provider_cost), 8),
+            "cost_status": "provider_reported",
+            "cost_basis": "provider_usage",
+        }
+    prefix = "MOBILEGPT_CHAT" if kind == "chat" else "MOBILEGPT_EMBEDDING"
+    input_rate_raw = os.getenv(f"{prefix}_INPUT_USD_PER_1K")
+    output_rate_raw = os.getenv(f"{prefix}_OUTPUT_USD_PER_1K")
+    if not input_rate_raw and not output_rate_raw:
+        return {
+            "cost_usd": None,
+            "cost_status": "unavailable",
+            "cost_basis": "provider_did_not_report_cost_and_rates_unconfigured",
+        }
+    try:
+        input_rate = float(input_rate_raw or 0.0)
+        output_rate = float(output_rate_raw or 0.0)
+    except ValueError:
+        return {
+            "cost_usd": None,
+            "cost_status": "invalid_rate_config",
+            "cost_basis": "invalid_per_1k_rate",
+        }
+    cost = (
+        usage["prompt_tokens"] / 1000.0 * input_rate
+        + usage["completion_tokens"] / 1000.0 * output_rate
+    )
+    return {
+        "cost_usd": round(cost, 8),
+        "cost_status": "estimated",
+        "cost_basis": "configured_per_1k_rates",
+    }
+
+
 class _OfficialMobileGPTRunLogSocket:
     """Client-side transport for the upstream MobileGPT Server protocol."""
 
@@ -2644,10 +2730,6 @@ def _run_official_mobilegpt_authoring(
     audit.parent.mkdir(parents=True, exist_ok=True)
 
     transitions = list(trajectory.get("transitions") or [])
-    teacher_actions = _teacher_actions_for_trajectory(
-        trajectory,
-        mobilegpt_root=mobilegpt_root,
-    )
     final_observation = trajectory.get("terminal_observation") or {}
     final_xml = str(trajectory.get("terminal_forest") or "").strip()
     if not final_xml and transitions:
@@ -2707,6 +2789,50 @@ def _run_official_mobilegpt_authoring(
         utils_source = utils_path.read_text(encoding="utf-8")
         if "import httpx" not in utils_source:
             utils_source = "import httpx\n" + utils_source
+        usage_probe = '''
+# OmniFlow telemetry at the provider boundary.  The official query result
+# remains unchanged; these globals only preserve response.usage for the
+# adapter after the upstream function has parsed and returned its content.
+def _omniflow_usage_field(usage, name):
+    if usage is None:
+        return 0
+    if isinstance(usage, dict):
+        return usage.get(name, 0) or 0
+    return getattr(usage, name, 0) or 0
+
+def _omniflow_usage_detail(usage, container_name, name):
+    details = _omniflow_usage_field(usage, container_name)
+    return _omniflow_usage_field(details, name)
+
+def _omniflow_usage_dict(response):
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    return {
+        "prompt_tokens": _omniflow_usage_field(usage, "prompt_tokens"),
+        "completion_tokens": _omniflow_usage_field(usage, "completion_tokens"),
+        "total_tokens": _omniflow_usage_field(usage, "total_tokens"),
+        "reasoning_tokens": _omniflow_usage_detail(
+            usage, "completion_tokens_details", "reasoning_tokens"
+        ),
+        "cost_usd": _omniflow_usage_field(usage, "cost_usd") or _omniflow_usage_field(usage, "cost"),
+    }
+
+_omniflow_last_chat_usage = {}
+_omniflow_last_embedding_usage = {}
+'''
+        utils_source = usage_probe + utils_source
+        utils_source = utils_source.replace(
+            'def get_openai_embedding(text: str, model="text-embedding-3-small", **kwargs) -> List[float]:\n',
+            'def get_openai_embedding(text: str, model="text-embedding-3-small", **kwargs) -> List[float]:\n'
+            '    global _omniflow_last_embedding_usage\n',
+            1,
+        ).replace(
+            'def query(messages, model="gpt-4-turbo", is_list=False):\n',
+            'def query(messages, model="gpt-4-turbo", is_list=False):\n'
+            '    global _omniflow_last_chat_usage\n',
+            1,
+        )
         utils_source_updated = utils_source.replace(
             '    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))\n',
             '    client = OpenAI(\n'
@@ -2738,9 +2864,20 @@ def _run_official_mobilegpt_authoring(
         ).replace(
             "        presence_penalty=0\n    )",
             "        presence_penalty=0,\n"
-            "        timeout=float(os.getenv(\"MOBILEGPT_REQUEST_TIMEOUT_SEC\", \"60\")),\n"
-            f"        extra_body={{\"thinking\": {{\"type\": \"{FORMAL_THINKING}\"}}}}\n"
+            f"        timeout=float(os.getenv(\"MOBILEGPT_REQUEST_TIMEOUT_SEC\", \"{FORMAL_REQUEST_TIMEOUT_SEC}\")),\n"
+            f"        extra_body={{\"enable_thinking\": False, \"thinking\": {{\"type\": \"{FORMAL_THINKING}\"}}}}\n"
             "    )",
+            1,
+        )
+        utils_source_updated = utils_source_updated.replace(
+            "    result = response.choices[0].message.content\n",
+            "    _omniflow_last_chat_usage = _omniflow_usage_dict(response)\n"
+            "    result = response.choices[0].message.content\n",
+            1,
+        ).replace(
+            "    return response.data[0].embedding\n",
+            "    _omniflow_last_embedding_usage = _omniflow_usage_dict(response)\n"
+            "    return response.data[0].embedding\n",
             1,
         )
         if utils_source_updated == utils_source:
@@ -2754,7 +2891,7 @@ def _run_official_mobilegpt_authoring(
             "MOBILEGPT_CHAT_MODEL": model,
             "MOBILEGPT_THINKING": FORMAL_THINKING,
             "MOBILEGPT_MAX_TOKENS": "2048",
-            "MOBILEGPT_REQUEST_TIMEOUT_SEC": "60",
+            "MOBILEGPT_REQUEST_TIMEOUT_SEC": str(int(FORMAL_REQUEST_TIMEOUT_SEC)),
             "MOBILEGPT_EMBEDDING_TIMEOUT_SEC": "60",
             "MOBILEGPT_EMBEDDING_MODEL": embedding_model,
             "MOBILEGPT_TARGET_PACKAGE": str(trajectory["target_package"]),
@@ -2974,12 +3111,6 @@ def _run_official_mobilegpt_authoring(
                 return value
 
             chat_call_count = 0
-            teacher_cursor = 0
-            teacher_retry_limit = max(
-                0,
-                2,
-            )
-
             def call_once(
                 messages: Any,
                 *,
@@ -3032,41 +3163,12 @@ def _run_official_mobilegpt_authoring(
                         is_list=is_list,
                     )
 
-            def teacher_response_matches(
-                *,
-                prompt_kind: str,
-                result: Any,
-                teacher_action: dict[str, Any] | None,
-            ) -> bool:
-                if prompt_kind not in {"select", "derive"}:
-                    return True
-                response_action = result.get("action") if isinstance(result, dict) else None
-                actual = _mobilegpt_action_projection(response_action)
-                if teacher_action is None:
-                    return actual == {"name": "finish", "parameters": {}}
-                expected = _mobilegpt_action_projection(
-                    teacher_action.get("required_action")
-                )
-                if prompt_kind == "derive":
-                    return actual == expected
-                if expected.get("name") == "scroll":
-                    return actual.get("name") == "scroll_screen"
-                if expected.get("name") == "speak":
-                    return actual.get("name") == "speak"
-                return actual.get("name") not in {
-                    "",
-                    "finish",
-                    "scroll_screen",
-                    "speak",
-                }
-
             def query_with_stats(
                 messages: Any,
                 model: str | None = None,
                 is_list: bool = False,
                 **kwargs: Any,
             ) -> Any:
-                nonlocal teacher_cursor
                 started = time.monotonic()
                 model_name = str(environment["TASK_AGENT_GPT_VERSION"])
                 prompt_kind = str(kwargs.get("agent_name") or "").strip().lower()
@@ -3078,41 +3180,16 @@ def _run_official_mobilegpt_authoring(
                     "action_summarize",
                 }:
                     prompt_kind = _official_prompt_kind(messages)
-                teacher_action = (
-                    teacher_actions[teacher_cursor]
-                    if teacher_cursor < len(teacher_actions)
-                    else None
-                )
-                prompted_messages = (
-                    _append_official_teacher_prompt(
-                        messages,
-                        teacher_action=teacher_action,
-                    )
-                    if prompt_kind in {"explore", "select", "derive"}
-                    else messages
-                )
+                # Keep the official MobileGPT prompts untouched.  The adapter
+                # supplies the recorded screens through the published socket
+                # protocol; it must not turn the RunLog into action-level
+                # teacher forcing or require the official agent to reproduce
+                # source-device indices.
+                prompted_messages = messages
                 provider_kwargs = dict(kwargs)
                 if semantic_query_provider is not None and prompt_kind != "unknown":
                     provider_kwargs.setdefault("agent_name", prompt_kind)
-                if prompt_kind in {"explore", "select", "derive"}:
-                    _write_event(
-                        stats,
-                        {
-                            "event": "mobilegpt_teacher_prompt",
-                            "agent": prompt_kind,
-                            "source_step_index": (
-                                teacher_action.get("source_step_index")
-                                if teacher_action is not None
-                                else None
-                            ),
-                            "terminal": teacher_action is None,
-                            "required_action": (
-                                teacher_action.get("required_action")
-                                if teacher_action is not None
-                                else {"name": "finish", "parameters": {}}
-                            ),
-                        },
-                    )
+                utils_module.__dict__["_omniflow_last_chat_usage"] = {}
                 result = _official_schema_adapter(
                     call_once(
                         prompted_messages,
@@ -3122,54 +3199,9 @@ def _run_official_mobilegpt_authoring(
                     ),
                     list_items_require_name=is_list,
                 )
-                for retry in range(teacher_retry_limit):
-                    empty_response = result is None or (
-                        isinstance(result, str) and not result.strip()
-                    )
-                    if not empty_response and teacher_response_matches(
-                        prompt_kind=prompt_kind,
-                        result=result,
-                        teacher_action=teacher_action,
-                    ):
-                        break
-                    correction = {
-                        "role": "user",
-                        "content": (
-                            "The response was empty. Return the required official "
-                            "MobileGPT JSON now."
-                            if empty_response
-                            else
-                            "Your response does not preserve the authoritative "
-                            "RunLog action. Return the required action exactly; "
-                            "do not choose another UI or finish early."
-                        ),
-                    }
-                    result = _official_schema_adapter(
-                        call_once(
-                            [*prompted_messages, correction],
-                            model_name=model_name,
-                            is_list=is_list,
-                            kwargs=provider_kwargs,
-                        ),
-                        list_items_require_name=is_list,
-                    )
-                    _write_event(
-                        stats,
-                        {
-                            "event": (
-                                "empty_response_retry"
-                                if empty_response
-                                else "mobilegpt_teacher_prompt_retry"
-                            ),
-                            "agent": prompt_kind,
-                            "retry": retry + 1,
-                            "source_step_index": (
-                                teacher_action.get("source_step_index")
-                                if teacher_action is not None
-                                else None
-                            ),
-                        },
-                    )
+                usage = _normalize_mobilegpt_usage(
+                    utils_module.__dict__.pop("_omniflow_last_chat_usage", {})
+                )
                 if result is None or (
                     isinstance(result, str) and not result.strip()
                 ):
@@ -3178,59 +3210,18 @@ def _run_official_mobilegpt_authoring(
                         model=model_name,
                         agent=prompt_kind,
                     )
-                if not teacher_response_matches(
-                    prompt_kind=prompt_kind,
-                    result=result,
-                    teacher_action=teacher_action,
-                ):
-                    raise MobileGPTConversionError(
-                        "official_authoring_teacher_response_mismatch",
-                        agent=prompt_kind,
-                        source_step_index=(
-                            teacher_action.get("source_step_index")
-                            if teacher_action is not None
-                            else None
-                        ),
-                        expected_action=(
-                            teacher_action.get("required_action")
-                            if teacher_action is not None
-                            else {"name": "finish", "parameters": {}}
-                        ),
-                        actual_action=(
-                            result.get("action")
-                            if isinstance(result, dict)
-                            else None
-                        ),
-                    )
-                if teacher_action is not None:
-                    expected_name = _mobilegpt_action_projection(
-                        teacher_action.get("required_action")
-                    ).get("name")
-                    if prompt_kind == "derive" or (
-                        prompt_kind == "select"
-                        and expected_name in {"scroll", "speak"}
-                    ):
-                        _write_event(
-                            stats,
-                            {
-                                "event": "mobilegpt_teacher_action",
-                                "agent": prompt_kind,
-                                "source_step_index": teacher_action[
-                                    "source_step_index"
-                                ],
-                                "required_action": teacher_action[
-                                    "required_action"
-                                ],
-                            },
-                        )
-                        teacher_cursor += 1
                 _write_event(stats, {
                     "event": "chat_call",
                     "model": model_name,
                     "latency_sec": round(time.monotonic() - started, 6),
-                    "prompt_tokens": None,
-                    "completion_tokens": None,
-                    "total_tokens": None,
+                    **usage,
+                    **_mobilegpt_cost_fields(usage, kind="chat"),
+                    "thinking": {"type": FORMAL_THINKING},
+                    "agent": prompt_kind,
+                    "max_tokens": int(environment["MOBILEGPT_MAX_TOKENS"]),
+                    "request_timeout_sec": int(
+                        environment["MOBILEGPT_REQUEST_TIMEOUT_SEC"]
+                    ),
                 })
                 return result
 
@@ -3239,17 +3230,23 @@ def _run_official_mobilegpt_authoring(
                 if embedding_provider is not None:
                     result = [float(value) for value in embedding_provider(text)]
                 else:
+                    utils_module.__dict__["_omniflow_last_embedding_usage"] = {}
                     result = [
                         float(value)
                         for value in original_embedding(text, model=embedding_model, **kwargs)
                     ]
+                usage = _normalize_mobilegpt_usage(
+                    utils_module.__dict__.pop("_omniflow_last_embedding_usage", {})
+                )
                 _write_event(stats, {
                     "event": "embedding_call",
                     "model": embedding_model,
                     "latency_sec": round(time.monotonic() - started, 6),
-                    "prompt_tokens": None,
-                    "completion_tokens": None,
-                    "total_tokens": None,
+                    **usage,
+                    **_mobilegpt_cost_fields(usage, kind="embedding"),
+                    "request_timeout_sec": int(
+                        environment["MOBILEGPT_EMBEDDING_TIMEOUT_SEC"]
+                    ),
                 })
                 if not result:
                     raise MobileGPTConversionError("official_authoring_embedding_empty")
@@ -3308,25 +3305,15 @@ def _run_official_mobilegpt_authoring(
             # translated by this adapter.
             if not protocol_socket.task_finished:
                 raise MobileGPTConversionError("official_authoring_task_not_finished")
-            validation_rows = _align_official_actions_to_teacher(
-                teacher_actions,
-                protocol_socket.action_messages(),
+            official_actions = protocol_socket.action_messages()
+            _write_event(
+                stats,
+                {
+                    "event": "official_actions_observed",
+                    "action_count": len(official_actions),
+                    "actions": official_actions,
+                },
             )
-            for row in validation_rows:
-                _write_event(
-                    stats,
-                    {"event": "mobilegpt_conversion_action_mapped", **row},
-                )
-            if (
-                len(validation_rows) != len(teacher_actions)
-                or any(row.get("matched") is not True for row in validation_rows)
-            ):
-                raise MobileGPTConversionError(
-                    "official_authoring_teacher_alignment_failed",
-                    expected_action_count=len(teacher_actions),
-                    actual_actions=protocol_socket.action_messages(),
-                    validation_rows=validation_rows,
-                )
             shutil.copytree(official_memory_dir, memory_root, dirs_exist_ok=True)
             _write_event(stats, {
                 "event": "official_memory_tree_copied",
@@ -3354,9 +3341,10 @@ def _run_official_mobilegpt_authoring(
         # The upstream prompts remain intact; the successful RunLog action is
         # appended as authoring evidence at their user-message boundary.
         "original_mobilegpt_prompts": True,
-        "official_prompt_extension": True,
-        "teacher_prompt_used": True,
-        "teacher_action_alignment_complete": True,
+        "official_prompt_extension": False,
+        "teacher_prompt_used": False,
+        "teacher_action_alignment_complete": False,
+        "official_server_finished": True,
         "explore_agent_used": True,
         "select_agent_used": True,
         "derive_agent_fallback_allowed": False,
@@ -3364,6 +3352,7 @@ def _run_official_mobilegpt_authoring(
         "source_example_fallback_count": 0,
         "generalize_action_used": True,
         "direct_subtasks_from_runlog": False,
+        "launch_only": bool(trajectory.get("launch_only")),
         "source_reader_coverage_validation": False,
         "actions_supplied_to_mobilegpt": False,
         "source_transitions_supplied": True,
@@ -3371,14 +3360,15 @@ def _run_official_mobilegpt_authoring(
         "source_success_boundary": trajectory["source_success_boundary"],
         "transition_count": len(transitions),
         "validated_transition_count": len(transitions),
-        "validation_rows": validation_rows,
+        "validation_rows": [],
         "official_reader_validation": {
             "loadable": True,
             "task_path_pages": validation["page_count"],
             "page_count": validation["page_count"],
             "action_row_count": validation["action_count"],
+            "launch_finish_validated": bool(trajectory.get("launch_only")),
             "official_action_messages": len(protocol_socket.action_messages()),
-            "teacher_aligned_action_count": len(validation_rows),
+            "teacher_aligned_action_count": 0,
         },
         "complete": True,
     }

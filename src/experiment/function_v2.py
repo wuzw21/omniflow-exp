@@ -76,7 +76,19 @@ def write_function_review(
         for item in optional
         if isinstance(item, dict)
     ] or ["- None"]
-    task_root = root.parents[3] if len(root.parents) > 3 else root
+    # Derive the task root from the source evidence rather than from a fixed
+    # number of parents of ``memory_root``.  The latter is unsafe for absolute
+    # paths such as ``/private/tmp/...``: on macOS it can resolve to ``/`` and
+    # make review generation recursively scan the whole filesystem.
+    task_name = str(source_payload.get("task_name") or "").strip()
+    task_root = next(
+        (
+            candidate
+            for candidate in source.parents
+            if candidate.name == task_name
+        ),
+        root,
+    )
     execution_lines: list[str] = []
     for run_path in sorted(task_root.rglob("runlog/current/run_log.json")):
         try:

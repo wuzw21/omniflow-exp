@@ -34,13 +34,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "type": {"enum": ["xpath_exists", "target_covered_by_xpath", "keyboard_obscuring", "package_mismatch"]},
+        "type": {"enum": ["xpath_exists", "target_covered_by_xpath", "keyboard_obscuring", "package_mismatch", "ui_unstable"]},
         "xpath_exists": {"type": "string", "minLength": 1},
         "xpath": {"type": "string", "minLength": 1},
         "target_covered_by_xpath": {"type": "string", "minLength": 1},
         "keyboard_obscuring": {"type": "boolean"},
         "keyboard_obscures_target": {"type": "boolean"},
-        "package_mismatch": {"type": "boolean"}
+        "package_mismatch": {"type": "boolean"},
+        "ui_unstable": {"type": "boolean"}
       }
     },
     "action": {
