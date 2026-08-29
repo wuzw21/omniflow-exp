@@ -466,6 +466,7 @@ def _androidworld_action_to_omniflow(
                 _androidworld_standard_swipe(
                     action_type,
                     str(action.get("direction") or ""),
+                    observation=observation,
                 )
             )
         else:
@@ -478,6 +479,7 @@ def _androidworld_action_to_omniflow(
                 else _androidworld_standard_swipe(
                     action_type,
                     str(action.get("direction") or ""),
+                    observation=observation,
                 )
             )
         projected = {
@@ -649,7 +651,54 @@ def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
 def _androidworld_standard_swipe(
     action_type: str,
     direction: str,
+    *,
+    observation: dict[str, Any] | None = None,
 ) -> dict[str, float]:
+    scrollable_bounds = _androidworld_scrollable_bounds(observation)
+    if scrollable_bounds is not None:
+        left, top, right, bottom = scrollable_bounds
+        display = _observation_display(observation or {})
+        if display is not None:
+            width, height = display
+            # Keep the gesture strictly inside the source scrollable region.
+            # The inset avoids edge/system-bar interception while retaining
+            # the original direction and the canonical 0..1000 coordinates.
+            inset_x = min((right - left) * 0.15, (right - left) / 2.0 - 1.0)
+            inset_y = min((bottom - top) * 0.15, (bottom - top) / 2.0 - 1.0)
+            safe_left = left + max(1.0, inset_x)
+            safe_top = top + max(1.0, inset_y)
+            safe_right = right - max(1.0, inset_x)
+            safe_bottom = bottom - max(1.0, inset_y)
+            if safe_right > safe_left and safe_bottom > safe_top:
+                center_x = (safe_left + safe_right) / 2.0
+                center_y = (safe_top + safe_bottom) / 2.0
+                if action_type == "scroll":
+                    gestures = {
+                        "down": (center_x, center_y, center_x, safe_top),
+                        "up": (center_x, center_y, center_x, safe_bottom),
+                        "right": (center_x, center_y, safe_left, center_y),
+                        "left": (center_x, center_y, safe_right, center_y),
+                    }
+                else:
+                    gestures = {
+                        "down": (center_x, safe_top, center_x, safe_bottom),
+                        "up": (center_x, safe_bottom, center_x, safe_top),
+                        "left": (safe_left, center_y, safe_right, center_y),
+                        "right": (safe_right, center_y, safe_left, center_y),
+                    }
+                try:
+                    x1, y1, x2, y2 = gestures[direction]
+                except KeyError as error:
+                    raise ValueError(
+                        f"androidworld_action_direction_required:{action_type}"
+                    ) from error
+                return {
+                    "x1": x1 / width * 1000.0,
+                    "y1": y1 / height * 1000.0,
+                    "x2": x2 / width * 1000.0,
+                    "y2": y2 / height * 1000.0,
+                }
+
     gestures = {
         "scroll": {
             "down": (500.0, 500.0, 500.0, 0.0),
@@ -669,6 +718,36 @@ def _androidworld_standard_swipe(
     except KeyError as error:
         raise ValueError(f"androidworld_action_direction_required:{action_type}") from error
     return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def _androidworld_scrollable_bounds(
+    observation: dict[str, Any] | None,
+) -> tuple[float, float, float, float] | None:
+    """Return the largest enabled scrollable source region, if present."""
+
+    if not isinstance(observation, dict):
+        return None
+    xml = observation_xml(observation)
+    if not xml.strip():
+        return None
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    candidates: list[tuple[float, float, float, float]] = []
+    for element in root.iter():
+        if str(element.attrib.get("scrollable") or "").casefold() != "true":
+            continue
+        if str(element.attrib.get("enabled", "true")).casefold() == "false":
+            continue
+        bounds = _parse_xml_bounds(element.attrib.get("bounds"))
+        if bounds is not None:
+            candidates.append(bounds)
+    return max(
+        candidates,
+        key=lambda bounds: (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]),
+        default=None,
+    )
 
 
 def _execution_swipe(
