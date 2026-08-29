@@ -812,8 +812,14 @@ class AndroidWorldHost:
             payload["clear_text"] = True
         elif action_name == "swipe":
             payload["direction"] = _official_swipe_direction(params)
-            if all(params.get(key) is not None for key in ("x1", "y1", "x2", "y2")):
-                payload["action_type"] = "swipe"
+            # The OmniFlow action schema carries canonical endpoints for
+            # replay provenance, but a directional swipe is a scroll gesture
+            # at the AndroidWorld boundary.  Promoting those endpoints to the
+            # native ``swipe`` action changes the physical meaning to an
+            # edge-to-edge gesture; on gesture-navigation devices that can
+            # leave the app and open Launcher.  Keep the canonical endpoints
+            # in the OmniFlow action while using AndroidWorld's centered
+            # ``scroll`` semantics for the physical action.
         elif action_name == "open_app":
             package = str(params.get("package_name") or params.get("app_name") or "")
             controller = getattr(self.env, "controller", self.env)
