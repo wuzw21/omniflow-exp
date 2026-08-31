@@ -162,7 +162,12 @@ def _result_text(result: Any) -> str:
             "actions_executed": result.actions_executed,
             "error": result.error,
         }
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        prefix = "Completed" if result.success else "Failed"
+        return f"{prefix}: " + json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     if result is None:
         return "Done"
     if isinstance(result, (dict, list, tuple, bool, int, float)):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from omniflow.core.model import Function
+from omniflow.core.model import Function, RunResult
 from src.integrations.mobilerun_function_tools import (
     build_custom_tools,
     build_omniflow_custom_tools,
@@ -112,6 +112,25 @@ class MobilerunFunctionToolsTest(unittest.TestCase):
             ],
         )
         self.assertFalse(flow.store.include_hidden)
+
+    def test_failed_run_result_is_visible_as_tool_failure(self) -> None:
+        async def invoker(
+            function: Function,
+            arguments: dict,
+            ctx: object,
+        ) -> RunResult:
+            return RunResult(
+                False,
+                function_id=function.id,
+                error="transfer_failed",
+            )
+
+        tools = build_custom_tools([_function()], invoker=invoker)
+        registry_result = asyncio.run(
+            tools["search_records"]["function"](search_query="calendar")
+        )
+
+        self.assertTrue(registry_result.startswith("Failed:"))
 
 
 if __name__ == "__main__":
