@@ -2,6 +2,9 @@
 
 AndroidWorld 和 B-MoCA 实验仓库。AndroidWorld 只有一个公开入口：
 
+论文评测冻结边界、可变项、证据要求和失败归因见
+[`docs/PAPER_FREEZE.md`](docs/PAPER_FREEZE.md)。
+
 ```bash
 bash scripts/exp/run_androidworld.sh
 ```

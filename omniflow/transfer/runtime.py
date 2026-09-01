@@ -45,6 +45,18 @@ _OMNITRANSFER_CANDIDATE_FIELDS = {
 }
 _MIN_SOURCE_ANCHOR_OFFSET = -1.0
 _MAX_SOURCE_ANCHOR_OFFSET = 2.0
+_CONTEXTUAL_MAPPING_TOOLS = frozenset(
+    {"click", "long_press", "input_text", "swipe"}
+)
+
+
+def requires_contextual_mapping(
+    tool: str,
+    args: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether the canonical mapper must ground this action."""
+
+    return str(tool).strip() in _CONTEXTUAL_MAPPING_TOOLS
 
 
 def capture_transfer_state(observation: Any) -> dict[str, Any]:

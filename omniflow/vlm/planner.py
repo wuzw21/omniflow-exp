@@ -34,7 +34,7 @@ class VLMPlanner:
         provider: str = "openai",
         api_key: str | None = None,
         base_url: str | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
         client: Any | None = None,
         transport: ModelTurnTransport | None = None,
         target_package_name: str = "",
@@ -48,7 +48,7 @@ class VLMPlanner:
         self.model = str(model).strip()
         if not self.model:
             raise ValueError("planner_model_required")
-        self.timeout = float(timeout)
+        self.timeout = None if timeout is None else float(timeout)
         self.target_package_name = str(target_package_name).strip()
         self.max_steps = max(1, int(max_steps))
         self._client = client
@@ -156,6 +156,9 @@ class VLMPlanner:
         self._metadata.clear()
         return metadata
 
+    def set_max_steps(self, max_steps: int) -> None:
+        self.max_steps = max(1, int(max_steps))
+
     def take_usage(self) -> dict[str, Any]:
         return self._usage.take_usage()
 
@@ -175,12 +178,23 @@ class VLMPlanner:
         for field in ("enable_thinking", "thinking"):
             if field in request:
                 extra_body[field] = request.pop(field)
+        # The OmniMind OpenAI-compatible gateway has returned multiple
+        # tool-call fragments on its streaming Planner response even when the
+        # standard ``parallel_tool_calls=false`` contract is present.  The
+        # non-streaming response uses the same native tool schema and keeps
+        # the one-tool-per-turn contract intact.  This is scoped to the
+        # explicit experimental endpoint profile; the formal Qwen path keeps
+        # its existing streaming behavior.
+        if os.environ.get("OMNIFLOW_EXPERIMENTAL_ENDPOINT_PROFILE") == "omnimind":
+            request["stream"] = False
+            request.pop("stream_options", None)
+            # Keep the flag both at the OpenAI-compatible top level and in
+            # extra_body.  A few OmniMind gateway versions only forward the
+            # latter to the underlying model endpoint.
+            extra_body["parallel_tool_calls"] = False
         request["extra_body"] = extra_body
         client = self._client or self._build_client()
-        response = client.chat.completions.create(
-            **request,
-            timeout=self.timeout,
-        )
+        response = client.chat.completions.create(**request, timeout=self.timeout)
         return normalize_openai_model_turn_response(
             response,
             requested_model=self.model,

@@ -51,6 +51,7 @@ class FunctionStore:
         validate_function_artifact(function)
         self.functions[function.id] = function
         self.load_errors.clear()
+        self._normalize_visibility()
         self.save()
         return function
 
@@ -112,6 +113,7 @@ class FunctionStore:
             loaded[function.id] = function
         self.functions = loaded
         self.load_errors = load_errors
+        self._normalize_visibility()
 
     def _seed(
         self,
@@ -129,4 +131,17 @@ class FunctionStore:
             self.functions[function.id] = function
             changed = True
         if changed:
+            self._normalize_visibility()
             self.save()
+
+    def _normalize_visibility(self) -> None:
+        """Keep compiler-authored local and complete Functions agent-visible.
+
+        A local fragment may begin at an intermediate GUI state while the
+        complete Function begins at the source entry state.  Hiding fragments
+        merely because their steps are contained by the complete envelope
+        destroys the state-level reuse contract and forces Planner fallback.
+        Recall applies page/state matching, so visibility must not act as an
+        implicit ranking or admission policy.
+        """
+        return

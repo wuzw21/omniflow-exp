@@ -71,23 +71,18 @@
       "name": "swipe",
       "kind": "action",
       "ui_label": {"zh_cn": "滑动", "en_us": "Swipe"},
-      "description": {"zh_cn": "在屏幕或可滚动区域内按方向滑动。", "en_us": "Swipe in a direction on the screen or inside a scrollable region."},
+      "description": {"zh_cn": "在当前页面的可滚动或可拖动区域内执行带起点和终点的滑动，包括 SeekBar/Slider 等原生滑块。起点、终点和操作区域由 Transfer 在目标设备上重新映射。", "en_us": "Perform a coordinate-bearing swipe in the current page's scrollable or draggable region, including native SeekBar/Slider controls. Transfer remaps the start, end, and gesture region on the target device."},
       "prompt_guide": {
-        "zh_cn": "- swipe(direction): 按 AndroidWorld 官方方向在当前屏幕或可滚动区域内滑动。",
-        "en_us": "- swipe(direction): Swipe in the official AndroidWorld direction on the current screen or inside a scrollable region."
+        "zh_cn": "- swipe(x1, y1, x2, y2, duration_ms): 使用 0..1000 相对坐标在可滚动或可拖动区域内滑动；遇到 SeekBar/Slider 时沿滑轨从当前值拖向目标端点；所有坐标都必须提供。",
+        "en_us": "- swipe(x1, y1, x2, y2, duration_ms): Swipe inside a scrollable or draggable region using 0..1000 relative coordinates; for SeekBar/Slider controls, drag along the track toward the intended endpoint; all endpoints are required."
       },
       "recordable": true,
       "coordinate_action": true,
       "args": [
-        {"name": "direction", "type": "string", "required": true, "description": {"zh_cn": "滑动方向。", "en_us": "Swipe direction."}, "enum_values": ["up", "down", "left", "right"]},
-        {"name": "x", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动锚点的 0..1000 相对 X 坐标；不提供时使用安全兜底区域。", "en_us": "Optional 0..1000 relative swipe anchor X coordinate; when omitted, the runtime uses a safe fallback region."}, "minimum": 0, "maximum": 1000},
-        {"name": "y", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动锚点的 0..1000 相对 Y 坐标；不提供时使用安全兜底区域。", "en_us": "Optional 0..1000 relative swipe anchor Y coordinate; when omitted, the runtime uses a safe fallback region."}, "minimum": 0, "maximum": 1000},
-        {"name": "distance", "type": "number", "persisted": false, "description": {"zh_cn": "可选。滑动距离，使用 0..1000 相对坐标尺度。", "en_us": "Optional swipe distance using the 0..1000 relative coordinate scale."}, "minimum": 0, "maximum": 1000},
-        {"name": "x1", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
-        {"name": "y1", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
-        {"name": "x2", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
-        {"name": "y2", "type": "number", "persisted": false, "description": {"zh_cn": "仅供旧版 OOB 内部兼容；不得进入 RunLog、Function、Checker 或 Planner。", "en_us": "Legacy OOB compatibility only; never persisted to RunLog, Function, Checker, or Planner."}, "minimum": 0, "maximum": 1000},
-        {"name": "input_source", "type": "string", "description": {"zh_cn": "可选的 Android 输入源；仅在目标控件需要显式事件语义时使用。", "en_us": "Optional Android input source, used only when the target requires explicit event semantics."}, "enum_values": ["touchscreen", "mouse", "stylus", "touchpad", "trackball", "touchnavigation", "joystick"]},
+        {"name": "x1", "type": "number", "required": true, "description": {"zh_cn": "起点 0..1000 相对 X 坐标。", "en_us": "Start X coordinate in the 0..1000 relative frame."}, "minimum": 0, "maximum": 1000},
+        {"name": "y1", "type": "number", "required": true, "description": {"zh_cn": "起点 0..1000 相对 Y 坐标。", "en_us": "Start Y coordinate in the 0..1000 relative frame."}, "minimum": 0, "maximum": 1000},
+        {"name": "x2", "type": "number", "required": true, "description": {"zh_cn": "终点 0..1000 相对 X 坐标。", "en_us": "End X coordinate in the 0..1000 relative frame."}, "minimum": 0, "maximum": 1000},
+        {"name": "y2", "type": "number", "required": true, "description": {"zh_cn": "终点 0..1000 相对 Y 坐标。", "en_us": "End Y coordinate in the 0..1000 relative frame."}, "minimum": 0, "maximum": 1000},
         {"name": "duration_ms", "type": "integer", "description": {"zh_cn": "滑动时长，单位毫秒。", "en_us": "Swipe duration in milliseconds."}, "minimum": 0}
       ]
     },
@@ -107,10 +102,10 @@
       "kind": "action",
       "ui_label": {"zh_cn": "按系统键", "en_us": "Press key"},
       "description": {"zh_cn": "按一个系统键或键盘键。", "en_us": "Press one system or keyboard key."},
-      "prompt_guide": {"zh_cn": "- press_key(key): 按系统键或键盘键；key 可以是 back、home、enter、delete 或数字 0..9。", "en_us": "- press_key(key): Press a system or keyboard key; key may be back, home, enter, delete, or a digit from 0 through 9."},
+      "prompt_guide": {"zh_cn": "- press_key(key): 按系统键或键盘键；key 可以是 back、home、enter、delete、space 或数字 0..9。", "en_us": "- press_key(key): Press a system or keyboard key; key may be back, home, enter, delete, space, or a digit from 0 through 9."},
       "route_action": true,
       "args": [
-        {"name": "key", "type": "string", "required": true, "description": {"zh_cn": "系统键或键盘键名称。", "en_us": "System or keyboard key name."}, "enum_values": ["back", "home", "enter", "delete", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]}
+        {"name": "key", "type": "string", "required": true, "description": {"zh_cn": "系统键或键盘键名称。", "en_us": "System or keyboard key name."}, "enum_values": ["back", "home", "enter", "delete", "space", "slash", "move_end", "dpad_down", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]}
       ]
     },
     {

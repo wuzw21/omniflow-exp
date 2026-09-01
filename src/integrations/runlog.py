@@ -659,10 +659,6 @@ def _androidworld_action_to_omniflow(
             "tool": "swipe",
             "args": {
                 "direction": str(action.get("direction") or ""),
-                **_androidworld_standard_swipe(
-                    action_type,
-                    str(action.get("direction") or ""),
-                ),
             },
         }
     elif action_type == "open_app":
@@ -787,33 +783,6 @@ def _ui_element_bounds(value: Any) -> tuple[float, float, float, float] | None:
         if right > left and bottom > top:
             return left, top, right, bottom
     return None
-
-
-def _androidworld_standard_swipe(
-    action_type: str,
-    direction: str,
-) -> dict[str, float]:
-    gestures = {
-        "scroll": {
-            "down": (500.0, 500.0, 500.0, 0.0),
-            "up": (500.0, 500.0, 500.0, 1000.0),
-            "right": (500.0, 500.0, 0.0, 500.0),
-            "left": (500.0, 500.0, 1000.0, 500.0),
-        },
-        "swipe": {
-            "down": (500.0, 0.0, 500.0, 1000.0),
-            "up": (500.0, 1000.0, 500.0, 0.0),
-            "left": (0.0, 500.0, 1000.0, 500.0),
-            "right": (1000.0, 500.0, 0.0, 500.0),
-        },
-    }
-    try:
-        x1, y1, x2, y2 = gestures[action_type][direction]
-    except KeyError as error:
-        raise ValueError(
-            f"androidworld_action_direction_required:{action_type}"
-        ) from error
-    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
 
 def _legacy_action_to_androidworld(

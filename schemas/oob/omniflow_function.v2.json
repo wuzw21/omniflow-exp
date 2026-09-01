@@ -25,6 +25,10 @@
       "type": "array",
       "items": {"$ref": "#/$defs/binding"}
     },
+    "render_bindings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/render_binding"}
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
@@ -54,6 +58,18 @@
       "properties": {
         "source": {"type": "string", "pattern": "^\\$\\.arguments(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[[0-9]+\\])+$"},
         "target": {"type": "string", "pattern": "^\\$\\.steps\\[[0-9]+\\]\\.action\\.args(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[[0-9]+\\])+$"}
+      }
+    },
+    "render_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "step_index", "node_id", "attribute", "recorded_value"],
+      "properties": {
+        "source": {"type": "string", "pattern": "^\\$\\.arguments\\.[A-Za-z_][A-Za-z0-9_]*$"},
+        "step_index": {"type": "integer", "minimum": 0},
+        "node_id": {"type": "string", "minLength": 1},
+        "attribute": {"enum": ["text", "content-desc"]},
+        "recorded_value": {"type": "string", "minLength": 1}
       }
     },
     "step": {

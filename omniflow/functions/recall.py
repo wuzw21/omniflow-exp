@@ -8,8 +8,8 @@ from typing import Any, Mapping
 import numpy as np
 
 from omniflow.core.model import Action, Function, Observation, Transfer, TransferResult
-from omniflow.transfer.admission import assess_transfer, requires_contextual_mapping
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
+from omniflow.transfer.runtime import requires_contextual_mapping
 
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
 PAGE_SIMILARITY_WEIGHT = 0.30
@@ -34,7 +34,7 @@ async def recall_functions(
     transfer: Transfer | None = None,
     exclude_function_ids: frozenset[str] = frozenset(),
 ) -> RecallResult:
-    """Coarsely rank Functions, then expose only first-step transfer matches."""
+    """Rank Functions, admitting package recovery to run before entry Transfer."""
 
     encoder = page_encoder or PageEncoder()
     current_page = _embed_page(encoder, observation)
@@ -68,8 +68,26 @@ async def recall_functions(
         source_state_id = function.steps[0].source_state_id
         source_observation = source_states.get(source_state_id)
         entry_action = function.steps[0].action
-        if not requires_contextual_mapping(entry_action.tool, entry_action.args):
+        if _recoverable_package_mismatch(
+            current_observation=observation,
+            source_observation=source_observation,
+        ):
+            # The shared Checker owns expected-app recovery.  Do not attempt
+            # OmniTransfer against the wrong application: admit the Function
+            # so execute_function can run restore_target_app first, then map
+            # the real entry action on the restored page.
+            transfer_result = TransferResult(
+                None,
+                reason="checker_package_mismatch_preflight",
+            )
+            mapping_confidence = 1.0
+            mapping_reason = "checker_package_mismatch_preflight"
+            mapping_available = True
+        elif not requires_contextual_mapping(entry_action.tool, entry_action.args):
             transfer_result = TransferResult(entry_action)
+            mapping_confidence = 1.0
+            mapping_reason = None
+            mapping_available = True
         elif transfer is None:
             decision["rejection_reason"] = "function_transfer_unavailable"
             continue
@@ -92,22 +110,30 @@ async def recall_functions(
                     None,
                     reason=f"omnitransfer_error:{error}",
                 )
-        admission = assess_transfer(
-            transfer_result,
-            observation=observation,
-        )
-        decision["mapping_confidence"] = admission.confidence
-        decision["entry_mapping_reason"] = (
-            admission.reason or transfer_result.reason
-        )
+            mapping_confidence = next(
+                (
+                    float(transfer_result.detail[key])
+                    for key in (
+                        "absolute_contextual_confidence",
+                        "pair_confidence",
+                        "score",
+                    )
+                    if transfer_result.detail.get(key) is not None
+                ),
+                None,
+            )
+            mapping_reason = transfer_result.reason
+            mapping_available = transfer_result.action is not None
+        decision["mapping_confidence"] = mapping_confidence
+        decision["entry_mapping_reason"] = mapping_reason
         decision["entry_mapping_target"] = (
             transfer_result.action.to_dict()
             if transfer_result.action is not None
             else None
         )
-        if not admission.accepted:
+        if not mapping_available:
             decision["rejection_reason"] = (
-                admission.reason or "function_entry_mapping_rejected"
+                mapping_reason or "function_entry_mapping_unavailable"
             )
             continue
         decision["rejection_reason"] = None
@@ -235,18 +261,32 @@ def _entry_page_override(
 ) -> str | None:
     if action.tool == "open_app":
         return "open_app"
-    if requires_contextual_mapping(action.tool, action.args):
-        return None
-    if action.tool != "swipe":
-        return None
-    if not _is_directional_swipe(action):
-        return None
-    return "semantic_swipe"
+    if _recoverable_package_mismatch(
+        current_observation=current_observation,
+        source_observation=source_observation,
+    ):
+        return "package_mismatch_checker"
+    # Every canonical coordinate action, including Swipe, must enter through
+    # contextual Transfer.  There is no direction-only semantic admission.
+    return None
 
 
-def _is_directional_swipe(action: Action) -> bool:
-    direction = str(action.args.get("direction") or "").strip().lower()
-    return direction in {"down", "up", "left", "right"}
+def _recoverable_package_mismatch(
+    *,
+    current_observation: Observation | None,
+    source_observation: Observation | None,
+) -> bool:
+    """Return whether the shared expected-app Checker can run before mapping."""
+
+    source_package = _observation_package(source_observation)
+    current_package = _observation_package(current_observation)
+    if not source_package or not current_package or source_package == current_package:
+        return False
+    return not any(
+        marker in package.casefold()
+        for package in (source_package, current_package)
+        for marker in ("systemui", "permissioncontroller", "packageinstaller")
+    )
 
 
 async def _await(value: Any) -> Any:

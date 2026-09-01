@@ -207,6 +207,9 @@ def build_agent(
             flow.config,
             runtime=replace(flow.config.runtime, max_steps=resolved_budget),
         )
+        set_planner_max_steps = getattr(planner, "set_max_steps", None)
+        if callable(set_planner_max_steps):
+            set_planner_max_steps(resolved_budget)
 
     def set_current_task(
         task_name: str,
@@ -214,6 +217,9 @@ def build_agent(
         context: dict[str, Any] | None = None,
     ) -> None:
         task_context = dict(context or {})
+        completion_checker = task_context.get("completion_checker")
+        if callable(completion_checker):
+            flow.completion_checker = completion_checker
         task_parameters = task_context.get("task_parameters")
         if not isinstance(task_parameters, dict):
             task_parameters = {}
@@ -226,7 +232,10 @@ def build_agent(
     def update_current_task_context(task: Any) -> dict[str, Any]:
         raw_parameters = getattr(task, "params", {})
         parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
-        return {"task_parameters": _json_copy(parameters)}
+        return {
+            "task_parameters": _json_copy(parameters),
+            "completion_checker": lambda: float(task.is_successful(env)) > 0.5,
+        }
 
     def step(goal: str):
         goal_text = str(goal or "").strip()

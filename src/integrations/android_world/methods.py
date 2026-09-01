@@ -13,11 +13,12 @@ from src.experiment.protocol import (
     FORMAL_MODEL_BASE_URL,
     FORMAL_MODEL_ENDPOINT_PROFILE,
     MAX_STEPS,
+    omniflow_base_url,
 )
 
 _UNSUPPORTED_SELECTOR_ERROR = (
-    "Unsupported AndroidWorld agent selector. Use `omniflow`, `fixed_replay`, "
-    "or `official:t3a_gpt4`."
+    "Unsupported AndroidWorld agent selector. Use `autodroid`, `omniflow`, "
+    "`fixed_replay`, or `official:t3a_gpt4`."
 )
 
 REUSE_METRICS_SCHEMA = "omniflow.androidworld.reuse-metrics.v2"
@@ -35,6 +36,7 @@ def reuse_metrics(
     appagent_result: dict[str, Any] | None = None,
     source_action_hint: dict[str, Any] | None = None,
     uses_source_action_hints: bool = False,
+    autodroid_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return one evidence-backed reuse/utilization metric for a method result."""
 
@@ -107,6 +109,16 @@ def reuse_metrics(
         unit = "gui_action"
         evidence = "exact_goal_hint_injection" if denominator else "unavailable"
         artifact_used = hint_active and denominator > 0
+    elif normalized == "autodroid":
+        result = dict(autodroid_result or {})
+        denominator = max(0, int(result.get("memory_lookup_count") or 0))
+        numerator = min(
+            denominator,
+            max(0, int(result.get("memory_hit_count") or 0)),
+        )
+        unit = "native_memory_lookup"
+        evidence = "exact_native_memory_events" if denominator else "unavailable"
+        artifact_used = denominator > 0
 
     rate = (
         round(float(numerator) / float(denominator), 6)
@@ -271,6 +283,8 @@ class MethodAdapterContext:
     build_omniflow_agent: Callable[..., Any] | None = None
     apply_fixed_replay: Callable[..., Any] | None = None
     build_official_agent: Callable[..., Any] | None = None
+    autodroid_memory_root: str = ""
+    build_autodroid_agent: Callable[..., Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -318,7 +332,32 @@ def default_method_adapter_registry() -> MethodAdapterRegistry:
                 accepts=lambda selector: selector.startswith("official:"),
                 build=_build_official,
             ),
+            MethodAdapter(
+                name="autodroid_memory",
+                accepts=lambda selector: selector == "autodroid",
+                build=_build_autodroid,
+            ),
         )
+    )
+
+
+def _build_autodroid(context: MethodAdapterContext) -> Any:
+    build_agent = _required_dependency(
+        context.build_autodroid_agent,
+        "build_autodroid_agent",
+    )
+    memory_root = str(context.autodroid_memory_root or "").strip()
+    if not memory_root:
+        raise ValueError("autodroid_requires_memory_root")
+    return build_agent(
+        env=context.env,
+        memory_root=memory_root,
+        model_name=context.planner_model,
+        adb_serial=context.adb_serial,
+        adb_path=context.adb_path,
+        max_steps=context.max_steps,
+        evidence_root=context.evidence_root,
+        performance_metrics=context.performance_metrics,
     )
 
 
@@ -333,11 +372,15 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
     resolved_planner_provider = str(
         context.planner_provider or os.environ.get("OMNIFLOW_PLANNER_PROVIDER") or ""
     ).strip()
-    resolved_planner_timeout = float(
-        context.planner_timeout_sec
-        or os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
-        or 60.0
-    )
+    configured_planner_timeout = context.planner_timeout_sec
+    if configured_planner_timeout is None:
+        timeout_text = str(
+            os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC") or ""
+        ).strip()
+        configured_planner_timeout = (
+            float(timeout_text) if timeout_text else None
+        )
+    resolved_planner_timeout = configured_planner_timeout
     resolved_endpoint_profile = (
         str(context.model_endpoint_profile or FORMAL_MODEL_ENDPOINT_PROFILE).strip()
         or FORMAL_MODEL_ENDPOINT_PROFILE
@@ -357,9 +400,10 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         planner_api_key, planner_base_url = resolve_openai_compatible_config(
             profile=resolved_endpoint_profile,
             base_url=(
-                FORMAL_MODEL_BASE_URL
+                omniflow_base_url()
                 if resolved_endpoint_profile == FORMAL_MODEL_ENDPOINT_PROFILE
-                else None
+                else str(os.environ.get("OMNIFLOW_EXPERIMENTAL_BASE_URL") or "")
+                or None
             ),
         )
         planner = VLMPlanner(

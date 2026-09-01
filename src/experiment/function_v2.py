@@ -16,9 +16,9 @@ from omniflow.runtime.checker import (
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.paths import relative_reference, sha256_file
 from src.experiment.protocol import (
-    FORMAL_MODEL_BASE_URL,
     FORMAL_THINKING,
-    require_formal_model,
+    omniflow_base_url,
+    require_runtime_model,
 )
 
 
@@ -208,7 +208,7 @@ def compile_function_v2(
         selected_model = str(model or "").strip()
         if not selected_model:
             raise ValueError("function_author_model_required")
-        require_formal_model(selected_model)
+        require_runtime_model("omniflow", selected_model)
         options["model"] = selected_model
         from openai import OpenAI
         import httpx
@@ -244,7 +244,7 @@ def compile_function_v2(
         report["source_run_log_sha256"] = sha256_file(source_path)
     report["model_contract"] = {
         "model": str(model or "") if enhance else "",
-        "endpoint": FORMAL_MODEL_BASE_URL if enhance else None,
+        "endpoint": omniflow_base_url() if enhance else None,
         "thinking": {"type": FORMAL_THINKING} if enhance else None,
     }
     report["review_path"] = "REVIEW.md"

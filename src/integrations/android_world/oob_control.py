@@ -115,7 +115,7 @@ class OobControlClient:
         # action without changing the action or the transfer decision.  The
         # default remains fail-safe; the controlled lightweight benchmark can
         # disable the Android-side sampler and rely on the recorder's single
-        # fast after-observation plus the runtime's bounded admission retry.
+        # fast after-observation plus the runtime's bounded stable retry.
         await_stabilization = _env_bool(
             "OMNIFLOW_ANDROIDWORLD_ACT_AWAIT_STABILIZATION", True
         )

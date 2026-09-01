@@ -6,7 +6,7 @@ import inspect
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from omniflow.catalog import CatalogSnapshot
@@ -103,6 +103,7 @@ class OmniFlow:
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
         catalog: CatalogSnapshot | None = None,
+        completion_checker: Callable[[], Any] | None = None,
     ):
         self.config = config or OmniFlowConfig()
         self.catalog = catalog
@@ -118,6 +119,7 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
+        self.completion_checker = completion_checker
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -783,6 +785,10 @@ class OmniFlow:
                 if not finished_content:
                     previous_action_error = "finished_content_required"
                     continue
+                if not await self._completion_verified():
+                    completion_review_calls += 1
+                    previous_action_error = "finished_verification_failed"
+                    continue
                 return finish(
                     True,
                     profile=profile,
@@ -910,6 +916,15 @@ class OmniFlow:
                 )
             )
         )
+
+    async def _completion_verified(self) -> bool:
+        checker = self.completion_checker
+        if checker is None:
+            return True
+        try:
+            return bool(await _await(checker()))
+        except Exception:
+            return False
 
     async def _ensure_planner_screenshot(
         self,
@@ -1193,6 +1208,25 @@ def _function_fallback_feedback(
     expected_action = str(details.get("expected_action") or "").strip()
     if expected_action:
         lines.append(f"Expected action: {expected_action}")
+    transfer_error = str(details.get("transfer_error") or "").strip()
+    ambiguous_transfer = any(
+        marker in transfer_error
+        for marker in (
+            "target_semantics_mismatch",
+            "ambiguous_target_identity",
+        )
+    )
+    if ambiguous_transfer:
+        lines.append(
+            "The ranked Transfer candidates are not reliable for this step; "
+            "ignore them and choose the target from the current visible text "
+            "and action capability."
+        )
+        if expected_action == "click":
+            lines.append(
+                "For an ambiguous list row, click the visible row/text first; "
+                "do not click its inline delete icon before the row is selected."
+            )
     source_target = details.get("source_target")
     if isinstance(source_target, dict) and source_target:
         lines.append(
@@ -1200,7 +1234,7 @@ def _function_fallback_feedback(
             + json.dumps(source_target, ensure_ascii=False, separators=(",", ":"))
         )
     candidates = details.get("candidates")
-    if isinstance(candidates, list) and candidates:
+    if isinstance(candidates, list) and candidates and not ambiguous_transfer:
         lines.append(
             "Likely current targets (ranked; verify against the current screenshot): "
             + json.dumps(candidates, ensure_ascii=False, separators=(",", ":"))
@@ -1235,6 +1269,12 @@ def _function_fallback_context(
         transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
         if not isinstance(transfer, dict):
             continue
+        result = item.get("result")
+        transfer_error = (
+            str(result.get("error") or "").strip()
+            if isinstance(result, dict)
+            else ""
+        )
         source = transfer.get("source")
         source_target = (
             {
@@ -1291,6 +1331,7 @@ def _function_fallback_context(
             {
                 "source_target": source_target,
                 "candidates": hint_candidates,
+                "transfer_error": transfer_error,
             }
         )
         break
@@ -1355,7 +1396,8 @@ def _execution_history(
             f"Description: {description}; Actions: {action_list}. "
             + (
                 "These Function actions are already complete; judge the Task "
-                "from the current UI and do not repeat them."
+                "from the current UI. If it is consistent with the Function "
+                "description, return `finished`; do not repeat these actions."
                 if completed_function is not None
                 else "Only this prefix completed; the Task is not proven complete."
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 from pathlib import Path
 import sys
@@ -8,6 +9,10 @@ import sysconfig
 from typing import Any
 
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
+CANONICAL_ACTION_SCHEMA_VERSION = "oob.canonical_actions.v1"
+CANONICAL_ACTION_SCHEMA_SHA256 = (
+    "5769667a576d82621a5a1b013df16fde6c905871f4c2805bb93da34435ef62a2"
+)
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
 VLM_ACTION_TOOL_NAMES = (
@@ -24,7 +29,7 @@ _VLM_ACTION_ARGUMENT_NAMES = {
     "click": ("x", "y"),
     "long_press": ("x", "y"),
     "input_text": ("text", "x", "y"),
-    "swipe": ("direction",),
+    "swipe": ("x1", "y1", "x2", "y2", "duration_ms"),
     "open_app": ("package_name",),
     "press_key": ("key",),
     "wait": ("duration_ms",),
@@ -69,9 +74,15 @@ def load_checker_rule_schema() -> dict[str, Any]:
 
 
 def _load_schema(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("canonical_action_schema_must_be_object")
+    if path.name == CANONICAL_ACTION_SCHEMA_FILENAME:
+        if payload.get("schema_version") != CANONICAL_ACTION_SCHEMA_VERSION:
+            raise ValueError("unsupported_canonical_action_schema_version")
+        if hashlib.sha256(raw).hexdigest() != CANONICAL_ACTION_SCHEMA_SHA256:
+            raise ValueError("canonical_action_schema_hash_mismatch")
     return payload
 
 
@@ -259,6 +270,8 @@ def _canonical_arg(value: Any, spec: dict[str, Any]) -> Any:
 
 __all__ = [
     "CANONICAL_ACTION_SCHEMA_FILENAME",
+    "CANONICAL_ACTION_SCHEMA_SHA256",
+    "CANONICAL_ACTION_SCHEMA_VERSION",
     "OMNIFLOW_RUN_LOG_SCHEMA_FILENAME",
     "CHECKER_RULE_SCHEMA_FILENAME",
     "VLM_ACTION_TOOL_NAMES",

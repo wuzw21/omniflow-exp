@@ -37,7 +37,6 @@ from src.integrations.android_world.oob_control import (
 )
 from src.integrations.android_world.state import snapshot_androidworld_state
 
-
 _ANDROID_SYSTEM_OPEN_APP_PACKAGES = frozenset({"com.android.settings"})
 _ANDROIDWORLD_NON_TASK_LAUNCHER_PACKAGES = frozenset(
     {
@@ -92,9 +91,6 @@ def _adapt_action_for_oob(value: Action | dict[str, Any]) -> Action:
         if normalized:
             return Action("press_key", {"key": normalized})
         return action
-    if tool == "swipe" and not str(args.get("direction") or "").strip():
-        args["direction"] = _official_swipe_direction(args)
-        return Action("swipe", args)
     return action
 
 
@@ -855,6 +851,24 @@ class AndroidWorldHost:
                 "KEYCODE_ENTER",
             }:
                 action_type = "keyboard_enter"
+            elif key in {"SPACE", "KEYCODE_SPACE"}:
+                action_type = "press_keyboard"
+                payload["keycode"] = "KEYCODE_SPACE"
+            elif len(key) == 1 and key.isalpha():
+                action_type = "press_keyboard"
+                payload["keycode"] = f"KEYCODE_{key}"
+            elif len(key) == 1 and key.isdigit():
+                action_type = "press_keyboard"
+                payload["keycode"] = f"KEYCODE_{key}"
+            elif key in {"SLASH", "KEYCODE_SLASH"}:
+                action_type = "press_keyboard"
+                payload["keycode"] = "KEYCODE_SLASH"
+            elif key in {"MOVE_END", "KEYCODE_MOVE_END"}:
+                action_type = "press_keyboard"
+                payload["keycode"] = "KEYCODE_MOVE_END"
+            elif key in {"DPAD_DOWN", "KEYCODE_DPAD_DOWN"}:
+                action_type = "press_keyboard"
+                payload["keycode"] = "KEYCODE_DPAD_DOWN"
             elif key in {
                 "DEL",
                 "DELETE",
@@ -881,14 +895,6 @@ class AndroidWorldHost:
             payload["clear_text"] = True
         elif action_name == "swipe":
             payload["direction"] = _official_swipe_direction(params)
-            # The OmniFlow action schema carries canonical endpoints for
-            # replay provenance, but a directional swipe is a scroll gesture
-            # at the AndroidWorld boundary.  Promoting those endpoints to the
-            # native ``swipe`` action changes the physical meaning to an
-            # edge-to-edge gesture; on gesture-navigation devices that can
-            # leave the app and open Launcher.  Keep the canonical endpoints
-            # in the OmniFlow action while using AndroidWorld's centered
-            # ``scroll`` semantics for the physical action.
         elif action_name == "open_app":
             package = str(params.get("package_name") or params.get("app_name") or "")
             controller = getattr(self.env, "controller", self.env)
@@ -1095,7 +1101,13 @@ class AndroidWorldHost:
                 else ""
             ).strip()
             if expected_package and observed_package == expected_package:
-                return last_state
+                # Use one stable sample after the target package appears.
+                return oob_state_from_payload(
+                    self.control_client.observe(wait_to_stabilize=True),
+                    fallback_screen_size=tuple(
+                        int(value) for value in self._screen_size()
+                    ),
+                )
             if time.monotonic() >= deadline:
                 return last_state
             time.sleep(0.25)

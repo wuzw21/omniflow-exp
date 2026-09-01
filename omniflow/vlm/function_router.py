@@ -136,6 +136,7 @@ class VLMFunctionRouter:
                 tools=tools,
                 tool_choice="required",
                 parallel_tool_calls=False,
+                extra_body={"parallel_tool_calls": False},
                 temperature=0,
                 timeout=self.timeout,
             )
@@ -146,11 +147,24 @@ class VLMFunctionRouter:
 
         message = response.choices[0].message
         tool_calls = getattr(message, "tool_calls", None) or ()
-        if len(tool_calls) != 1:
-            raise ValueError(
-                "function_router_tool_call_contract_violation:"
-                f"expected_one:got_{len(tool_calls)}"
-            )
+        if not tool_calls:
+            raise ValueError("function_router_tool_call_contract_violation:expected_one:got_0")
+        if len(tool_calls) > 1:
+            # Treat a gateway's multi-call response as a sequential response:
+            # only the first visible routing decision is consumed.  The
+            # runtime will observe the result before any later decision.
+            visible_names = set(function_catalog) | {REJECT_FUNCTION_TOOL}
+            tool_calls = [
+                next(
+                    (
+                        candidate
+                        for candidate in tool_calls
+                        if str(candidate.function.name or "").strip()
+                        in visible_names
+                    ),
+                    tool_calls[0],
+                )
+            ]
         call = tool_calls[0].function
         tool_name = str(call.name or "").strip()
         try:

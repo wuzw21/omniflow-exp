@@ -60,10 +60,45 @@ def compile_runlog_to_store(
 
     steps: list[dict[str, Any]] = []
     parameter_evidence: list[dict[str, Any]] = []
+    node_parameter_evidence: list[dict[str, Any]] = []
     omitted_action_types: set[str] = set()
     optional_checker_actions: list[dict[str, Any]] = []
+    onboarding_active = False
+    entry_recovery_active = True
     previous_successful_step: dict[str, Any] | None = None
     source_steps = payload["steps"]
+    # Only the first successful open_app is environment recovery. An open_app
+    # later in a workflow can be real task progress (for example, enabling
+    # Wi-Fi and then opening a requested app) and must remain in the Function.
+    source_has_main_action = any(
+        isinstance(source_step, dict)
+        and str(
+            (source_step.get("action") or {}).get("action_type") or ""
+        ).strip()
+        not in {"answer", "status", "unknown", "open_app"}
+        and not _is_transient_system_action(source_step)
+        for source_step in source_steps
+    )
+    first_effective_step = next(
+        (
+            (source_step_index, source_step)
+            for source_step_index, source_step in enumerate(source_steps)
+            if isinstance(source_step, dict)
+            and isinstance(source_step.get("action"), dict)
+            and str(source_step["action"].get("action_type") or "").strip()
+            not in {"answer", "status", "unknown"}
+            and not _is_transient_system_action(source_step)
+        ),
+        None,
+    )
+    entry_open_app_index = (
+        first_effective_step[0]
+        if source_has_main_action
+        and first_effective_step is not None
+        and str(first_effective_step[1]["action"].get("action_type") or "").strip()
+        == "open_app"
+        else None
+    )
     for source_step_index, step in enumerate(source_steps):
         if not isinstance(step, dict):
             continue
@@ -96,6 +131,36 @@ def compile_runlog_to_store(
         if action_type in {"answer", "status", "unknown"}:
             omitted_action_types.add(action_type)
             continue
+        if action_type == "open_app":
+            omitted_action_types.add("open_app")
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_step_index,
+                    "checker_id": "restore_target_app",
+                    "reason": "recorded_app_entry_is_environment_recovery",
+                }
+            )
+            continue
+        if action_type in {"navigate_back", "navigate_home"} and entry_recovery_active:
+            omitted_action_types.add(action_type)
+            continue
+        entry_recovery_active = False
+        onboarding_checker_id = _optional_onboarding_checker_id(
+            step, onboarding_active=onboarding_active
+        )
+        if onboarding_checker_id is not None:
+            onboarding_active = True
+            omitted_action_types.add("checker")
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_step_index,
+                    "checker_id": onboarding_checker_id,
+                    "reason": "first_run_onboarding_setup_is_optional",
+                }
+            )
+            continue
+        if onboarding_active:
+            onboarding_active = False
         if _is_transient_system_action(step):
             # Permission prompts are optional setup, not task progress. Keep
             # them in the shared dismiss_permission_dialog checker instead of
@@ -115,15 +180,6 @@ def compile_runlog_to_store(
             previous_step=previous_successful_step,
             next_observation=next_observation,
         )
-        promoted_launcher_entry = False
-        if not steps and projected_actions:
-            original_entry_action = projected_actions[0]
-            projected_actions[0] = _promote_launcher_app_entry(
-                projected_actions[0],
-                observation=observation,
-                next_observation=next_observation,
-            )
-            promoted_launcher_entry = projected_actions[0] != original_entry_action
         previous_successful_step = step
         action_metadata = {
             key: metadata[key]
@@ -138,8 +194,6 @@ def compile_runlog_to_store(
         ).strip()
         if purpose:
             action_metadata["purpose"] = purpose
-        if promoted_launcher_entry:
-            action_metadata["fixed_open_app_package"] = True
         for action in projected_actions:
             action = _canonicalize_open_app_action(
                 action,
@@ -147,6 +201,14 @@ def compile_runlog_to_store(
             )
             parameter_evidence.extend(
                 _source_action_parameter_evidence(
+                    source_step=step,
+                    action=action,
+                    source_step_index=source_step_index,
+                    task_parameters=payload.get("task_parameters"),
+                )
+            )
+            node_parameter_evidence.extend(
+                _source_node_parameter_evidence(
                     source_step=step,
                     action=action,
                     source_step_index=source_step_index,
@@ -176,11 +238,13 @@ def compile_runlog_to_store(
         "success": True,
         "steps": steps,
         "parameter_evidence": parameter_evidence,
+        "node_parameter_evidence": node_parameter_evidence,
         "omitted_action_types": sorted(omitted_action_types),
         "optional_checker_actions": optional_checker_actions,
     }
     source_parameter_candidates = _source_parameter_candidates(facts)
     authoring_prompt = prompt or """Extract contiguous reusable Function segments from a successful GUI source flow.
+The response must be valid json and contain no text outside the JSON object.
 Return exactly one object with this shape:
 {"reason":"account for every source step and explain the composition","plan":{"functions":[{"function_id":"enter_requested_name","name":"Enter requested name","description":"Fill the requested name and submit it so the form reaches its completed state.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}],"complete_function":{"function_id":"complete_form","name":"Complete form","description":"Complete the form by entering the requested name and submitting it; the final submit action produces the requested completed form.","source_step_indices":[6,7],"parameters":[{"name":"name","description":"Name requested by the user","source_step_index":6,"arg_name":"text"}]}}}
 
@@ -199,7 +263,8 @@ extracted as checker recovery are not part of source_run and must not be reconst
 in the main flow.
 
 The source_run includes optional_checker_actions when the compiler has identified
-setup such as a permission dialog. Treat those source steps as checker-owned setup:
+setup such as a permission dialog or a contiguous first-run onboarding page.
+Treat those source steps as checker-owned setup:
 do not select them in any Function. The shared checker library already provides the
 corresponding recovery, and the main workflow must remain valid when those UI states
 are absent.
@@ -225,11 +290,13 @@ parameter_candidate has different recorded_value and task_parameter_value, descr
 the exact value accepted by the recorded input action and preserve any fixed prefix,
 suffix, type, or format in both the parameter and complete Function descriptions.
 Never claim that a Function covers goals outside those recorded fixed constraints.
-For a short linear workflow whose successful actions already form one stable
-end-to-end sequence, use functions=[] and author only the complete_function. Do not
-duplicate the complete workflow into local Functions by default. Author a local
-Function only when the evidence shows a separately reusable contiguous capability or
-an observation-dependent breakpoint that cannot safely stay in the complete flow.
+The Function Store must contain both reusable local Functions and exactly one
+complete Function for every multi-step source flow. Author at least one local
+Function for every remaining source transition/state entry; adjacent transitions
+may also be grouped into a larger contiguous local segment when independently
+reusable. A local Function must preserve its own entry state and action sequence.
+Never return functions=[] for a multi-step source: the complete Function is the
+whole-flow envelope, while local Functions are the state-level reusable operations.
 When a value is selected as a parameter, remove its recorded instance literal from
 the Function name and description. Describe the requested semantic value and let the
 generated input schema carry the concrete value at call time.
@@ -237,16 +304,12 @@ Use suggested_name exactly when a candidate provides it. Give distinct semantic
 values distinct parameter names. Reuse one parameter name across multiple targets
 only when those targets intentionally consume the same recorded semantic value.
 
-For a global Function whose first action is open_app, keep the canonical recorded
-package fixed when the goal identifies a concrete app such as Joplin or Settings.
-Only expose package_name when its parameter_candidate includes the compiler-backed
-task_parameter_name="app_name" and value_contract="android_package_name" evidence.
-In that case name the parameter package_name, describe it as the installed Android
-package for the requested app, and make the Function name and description generic to
-the requested app rather than the recorded source app. A model must never put a
-friendly app label such as "clock" into package_name. Once package_name is selected,
-the function_id, Function name, Function description, and parameter description must
-not contain the recorded app label or package; use only "requested app" wording.
+Treat every recorded open_app action as environment setup, never as Function
+business progress. The compiler removes it and records restore_target_app as
+the shared recovery; the checker opens the expected app only when the current
+package is wrong. Also omit leading navigate_back/navigate_home setup actions.
+Never add a synthetic open_app action, replace a Launcher gesture with open_app,
+or shift bindings to create app entry.
 """
     selected_model = str(model or "").strip() or None
     usage = {
@@ -256,7 +319,7 @@ not contain the recorded app label or package; use only "requested app" wording.
         "total_tokens": 0,
     }
     if function_bundle is not None:
-        if selected_model is not None or client is not None or prompt is not None:
+        if client is not None or prompt is not None:
             raise ValueError("function_bundle_cannot_use_author_model_options")
         authored = {
             "reason": "Registered the supplied Function Schema.",
@@ -287,8 +350,10 @@ not contain the recorded app label or package; use only "requested app" wording.
                     "role": "user",
                     "content": json.dumps(
                         {
+                            "output_format": "json",
                             "source_run": facts,
                             "parameter_candidates": source_parameter_candidates,
+                            "node_parameter_candidates": node_parameter_evidence,
                         },
                         ensure_ascii=False,
                     ),
@@ -322,12 +387,13 @@ not contain the recorded app label or package; use only "requested app" wording.
                 authored = _materialize_authoring_plan(proposal, facts)
             except ValueError as error:
                 # The authoring model may describe a valid local segment but
-                # omit or truncate the required complete source sequence. A
-                # successful source RunLog is already the immutable evidence;
-                # preserve it verbatim through the compiler's strict fallback
-                # instead of making collection depend on a second model retry.
-                if str(error) != "function_author_plan_complete_sequence_required":
-                    raise
+                # omit, truncate, or fail to bind the required complete source
+                # sequence. A successful source RunLog is already the
+                # immutable evidence; preserve it verbatim through the
+                # deterministic fallback instead of making collection depend
+                # on a second model retry. This also handles malformed
+                # parameter proposals: the compiler will re-derive the
+                # eligible input_text bindings from the source facts.
                 authored = _materialize_authoring_plan(
                     _complete_source_authoring_plan(facts), facts
                 )
@@ -372,6 +438,14 @@ not contain the recorded app label or package; use only "requested app" wording.
         raise ValueError("function_bundle_source_arguments_invalid")
     if not isinstance(raw_checker_rules, list):
         raise ValueError("function_bundle_checker_rules_invalid")
+    raw_functions = _remove_compiler_entry_actions(
+        raw_functions,
+        raw_payload=raw,
+    )
+    raw_functions = _remove_compiler_environment_actions(
+        raw_functions,
+        raw_payload=raw,
+    )
     functions = [parse_function_artifact(value) for value in raw_functions]
     checker_rules = [validate_checker_rule(rule) for rule in raw_checker_rules]
     checker_ids = [rule["id"] for rule in checker_rules]
@@ -516,6 +590,7 @@ def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
     fact_steps = [step for step in facts.get("steps") or () if isinstance(step, dict)]
     function_view = {
         "bindings": [],
+        "render_bindings": [],
         "steps": [
             {
                 "step_index": index,
@@ -573,7 +648,7 @@ def _source_parameter_candidates(facts: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _complete_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
-    """Build the minimal valid plan for the complete successful source flow."""
+    """Build a valid state-level plan when authoring needs deterministic fallback."""
 
     source_indices = [
         int(step["source_step_index"])
@@ -590,10 +665,14 @@ def _complete_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
         if goal_summary
         else "Execute the successful source workflow in order."
     )
+    local_functions = _state_level_local_authoring_functions(
+        facts,
+        source_indices=source_indices,
+    )
     return {
-        "reason": "Compiler fallback for a complete successful source workflow.",
+        "reason": "Compiler fallback preserving state-level local Functions and the complete successful source workflow.",
         "plan": {
-            "functions": [],
+            "functions": local_functions,
             "complete_function": {
                 "function_id": "complete_source_workflow",
                 "name": name,
@@ -603,6 +682,52 @@ def _complete_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
             },
         },
     }
+
+
+def _state_level_local_authoring_functions(
+    facts: dict[str, Any],
+    *,
+    source_indices: list[int],
+    reserved_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build executable one-transition Functions for uncovered source states."""
+
+    reserved = set(reserved_ids or ())
+    by_index = {
+        int(step.get("source_step_index")): step
+        for step in facts.get("steps") or ()
+        if isinstance(step, dict)
+        and isinstance(step.get("source_step_index"), int)
+    }
+    result: list[dict[str, Any]] = []
+    for source_index in source_indices:
+        step = by_index.get(int(source_index))
+        if step is None:
+            continue
+        action = step.get("action") if isinstance(step.get("action"), dict) else {}
+        tool = str(action.get("tool") or "transition").strip() or "transition"
+        function_id = f"state_transition_{int(source_index):03d}"
+        suffix = 2
+        while function_id in reserved:
+            function_id = f"state_transition_{int(source_index):03d}_{suffix}"
+            suffix += 1
+        reserved.add(function_id)
+        readable_tool = tool.replace("_", " ")
+        result.append(
+            {
+                "function_id": function_id,
+                "name": f"State transition {int(source_index) + 1}: {readable_tool}",
+                "description": (
+                    f"Perform the recorded {readable_tool} transition from its "
+                    "matching GUI state."
+                ),
+                "source_step_indices": [int(source_index)],
+                # The compiler derives eligible input_text bindings from the
+                # immutable facts, so synthesized Functions cannot lose args.
+                "parameters": [],
+            }
+        )
+    return result
 
 
 def _direct_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
@@ -632,6 +757,7 @@ def _direct_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
             "additionalProperties": False,
         },
         "bindings": [],
+        "render_bindings": [],
         "steps": [
             {
                 "step_index": index,
@@ -711,6 +837,7 @@ def _materialize_authoring_plan(
         for position, step in enumerate(source_steps)
         if isinstance(step, dict)
     }
+    materialization_notes: list[str] = []
     candidates = {
         (candidate["source_step_index"], candidate["arg_name"]): candidate
         for candidate in _source_parameter_candidates(facts)
@@ -718,7 +845,6 @@ def _materialize_authoring_plan(
     functions: list[dict[str, Any]] = []
     materialized_function_ids: set[str] = set()
     arguments: dict[str, dict[str, Any]] = {}
-    materialization_notes: list[str] = []
     from omniflow.core.schemas import load_canonical_action_schema
 
     builtin_tool_names = {
@@ -758,8 +884,46 @@ def _materialize_authoring_plan(
             )
             continue
         deduplicated_functions.append(raw_function)
+
+    # Deduplicate before measuring local coverage.  Otherwise an authoring
+    # response that repeats the complete source sequence as a "local" Function
+    # makes every transition appear covered; the duplicate is then removed and
+    # the Store silently loses all state-level local Functions.
+    covered_source_indices = {
+        int(index)
+        for raw_function in deduplicated_functions
+        if isinstance(raw_function, dict)
+        for index in (raw_function.get("source_step_indices") or [])
+        if isinstance(index, int) and not isinstance(index, bool)
+    }
+    missing_local_indices = [
+        int(step["source_step_index"])
+        for step in source_steps
+        if isinstance(step, dict)
+        and isinstance(step.get("source_step_index"), int)
+        and int(step["source_step_index"]) not in covered_source_indices
+    ]
+    if missing_local_indices and len(source_steps) > 1:
+        reserved_ids = {
+            str(item.get("function_id") or "").strip()
+            for item in deduplicated_functions
+            if isinstance(item, dict)
+        }
+        raw_functions = [
+            *deduplicated_functions,
+            *_state_level_local_authoring_functions(
+                facts,
+                source_indices=missing_local_indices,
+                reserved_ids=reserved_ids,
+            ),
+        ]
+        materialization_notes.append(
+            "Compiler synthesized missing state-level local Functions so every source transition remains reusable."
+        )
+    else:
+        raw_functions = deduplicated_functions
     planned_functions = [
-        *((raw_function, False) for raw_function in deduplicated_functions),
+        *((raw_function, False) for raw_function in raw_functions),
         (raw_complete_function, True),
     ]
     for raw_function, is_complete in planned_functions:
@@ -824,6 +988,7 @@ def _materialize_authoring_plan(
                 "additionalProperties": False,
             },
             "bindings": [],
+            "render_bindings": [],
             "steps": [
                 {
                     "step_index": local_index,
@@ -965,12 +1130,30 @@ def _materialize_authoring_plan(
                         "recorded_value"
                     ]
         _materialize_agent_parameters(function, parameter_proposals)
+        node_parameter_literals = _materialize_node_parameters(
+            function,
+            facts.get("node_parameter_evidence") or (),
+            source_indices=indices,
+            source_arguments=source_arguments,
+        )
+        parameter_literals = _parameter_literal_map(
+            parameter_proposals,
+            candidates=candidates,
+            source_indices=indices,
+        )
+        parameter_literals.update(node_parameter_literals)
+        function["name"] = _redact_parameter_literals(
+            function["name"],
+            function,
+            parameter_literals=parameter_literals,
+        )
         function["description"] = _description_with_action_plan(
             description,
             function=function,
             source_steps=source_steps,
             source_indices=indices,
             source_step_positions=source_step_positions,
+            parameter_literals=parameter_literals,
         )
         if function_id in materialized_function_ids:
             if not is_complete:
@@ -999,6 +1182,78 @@ def _materialize_authoring_plan(
             "functions": functions,
         },
     }
+
+
+def _optional_onboarding_checker_id(
+    step: dict[str, Any], *, onboarding_active: bool
+) -> str | None:
+    """Return the shared checker for a first-run setup action, if present.
+
+    First-run pages are device state, not task progress.  A source recording
+    can contain them while an initialized target does not.  Keep the
+    classification deliberately generic and limited to a contiguous prefix
+    with an introduction-like container and next control; ordinary task
+    actions are never removed from the Function.
+    """
+    action = step.get("action") if isinstance(step.get("action"), dict) else {}
+    if str(action.get("action_type") or "").strip() != "click":
+        return None
+    observation = step.get("observation")
+    if not isinstance(observation, dict):
+        return None
+    xml = str(observation.get("xml") or observation.get("forest") or "")
+    normalized = " ".join(xml.casefold().split())
+    if _is_first_run_onboarding_page(xml):
+        return "advance_first_run_onboarding"
+    if not onboarding_active and 'text="get started"' in normalized:
+        return "dismiss_transient_overlay"
+    if not onboarding_active:
+        return None
+    if 'text="setup"' in normalized:
+        return "dismiss_initial_setup"
+    if 'text="warning!"' in normalized and 'text="ok"' in normalized:
+        return "dismiss_informational_dialog"
+    return None
+
+
+def _is_first_run_onboarding_page(xml: str) -> bool:
+    """Recognize a generic, contiguous first-run introduction page.
+
+    Some AndroidWorld source recordings expose a ViewPager whose navigation
+    control is an icon-only ``next_button``.  It has no ``Get started`` label,
+    so label-only onboarding detection would incorrectly bake those clicks
+    into every Function.  Require both an introduction-like container and its
+    next control to avoid classifying ordinary task navigation as setup.
+    """
+    if not xml.strip():
+        return False
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    has_intro_container = False
+    for container in root.iter("node"):
+        container_id = str(container.get("resource-id") or "").casefold()
+        container_class = str(container.get("class") or "").casefold()
+        if not (
+            any(marker in container_id for marker in ("introduction", "onboarding", "welcome"))
+            or "viewpager" in container_class
+        ):
+            continue
+        has_intro_container = True
+    if not has_intro_container:
+        return False
+    for node in root.iter("node"):
+        if node.get("clickable") != "true":
+            continue
+        node_id = str(node.get("resource-id") or "").casefold()
+        label = " ".join(
+            " ".join(str(node.get(attribute) or "").casefold().split())
+            for attribute in ("text", "content-desc")
+        ).strip()
+        if "next_button" in node_id or label in {"next", "continue", "get started"}:
+            return True
+    return False
 
 
 def _is_transient_system_action(step: dict[str, Any]) -> bool:
@@ -1104,11 +1359,21 @@ def _description_with_action_plan(
     source_steps: list[dict[str, Any]],
     source_indices: list[int],
     source_step_positions: dict[int, int],
+    parameter_literals: dict[str, str] | None = None,
 ) -> str:
     parameter_by_target = {
         str(binding["target"]): str(binding["source"]).removeprefix("$.arguments.")
         for binding in function.get("bindings") or ()
         if isinstance(binding, dict)
+    }
+    parameter_by_render_step = {
+        int(binding["step_index"]): str(binding["source"]).removeprefix(
+            "$.arguments."
+        )
+        for binding in function.get("render_bindings") or ()
+        if isinstance(binding, dict)
+        and isinstance(binding.get("step_index"), int)
+        and str(binding.get("source") or "").startswith("$.arguments.")
     }
     plan: list[str] = []
     for local_index, step in enumerate(function.get("steps") or ()):
@@ -1127,6 +1392,9 @@ def _description_with_action_plan(
                     f"<{parameter_name}>" if parameter_name else arg_value
                 )
         tool = str(action.get("tool") or "")
+        render_parameter = parameter_by_render_step.get(local_index)
+        if render_parameter and tool in {"click", "long_press"}:
+            semantic_args["target"] = f"<{render_parameter}>"
         encoded_args = ",".join(
             f"{name}={json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
             for name, value in semantic_args.items()
@@ -1152,8 +1420,261 @@ def _description_with_action_plan(
             entry += f"[{purpose}]"
         plan.append(entry)
     semantic_description = str(description or "").split(" Action plan:", 1)[0].strip()
+    semantic_description = _redact_parameter_literals(
+        semantic_description,
+        function,
+        parameter_literals=parameter_literals,
+    )
     encoded_plan = ";".join(plan)
     return f"{semantic_description} Action plan: {encoded_plan}"
+
+
+def _redact_parameter_literals(
+    text: str,
+    function: dict[str, Any],
+    *,
+    parameter_literals: dict[str, str] | None = None,
+) -> str:
+    """Remove source-instance values from agent-facing Function metadata.
+
+    The authoring model is instructed to describe semantic values rather than
+    copy source-instance literals, but the compiler must enforce that contract:
+    source values remain in the private source arguments/bindings while the
+    Router sees the generated parameter names.  This is deliberately limited
+    to values proven by a Function binding and never touches coordinates or
+    unbound UI labels.
+    """
+
+    literals: dict[str, str] = {
+        str(literal): str(parameter_name)
+        for parameter_name, literal in (parameter_literals or {}).items()
+        if str(literal).strip() and str(parameter_name).strip()
+    }
+    steps = function.get("steps") or ()
+    for raw_binding in function.get("bindings") or ():
+        if not isinstance(raw_binding, dict):
+            continue
+        parameter_name = str(raw_binding.get("source") or "")
+        if not parameter_name.startswith("$.arguments."):
+            continue
+        parameter_name = parameter_name.removeprefix("$.arguments.").strip()
+        target = str(raw_binding.get("target") or "")
+        match = re.fullmatch(
+            r"\$\.steps\[(\d+)\]\.action\.args\.([A-Za-z_][A-Za-z0-9_]*)",
+            target,
+        )
+        if match is None:
+            continue
+        step_index = int(match.group(1))
+        argument_name = match.group(2)
+        if step_index < 0 or step_index >= len(steps):
+            continue
+        step = steps[step_index]
+        action = step.get("action") if isinstance(step, dict) else None
+        args = action.get("args") if isinstance(action, dict) else None
+        value = args.get(argument_name) if isinstance(args, dict) else None
+        if isinstance(value, str) and value.strip():
+            literals.setdefault(value, parameter_name)
+    for raw_binding in function.get("render_bindings") or ():
+        if not isinstance(raw_binding, dict):
+            continue
+        source = str(raw_binding.get("source") or "")
+        if not source.startswith("$.arguments."):
+            continue
+        literal = str(raw_binding.get("recorded_value") or "").strip()
+        parameter_name = source.removeprefix("$.arguments.").strip()
+        if literal and parameter_name:
+            literals.setdefault(literal, parameter_name)
+
+    redacted = str(text or "")
+    for literal, parameter_name in sorted(
+        literals.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        redacted = redacted.replace(literal, f"<{parameter_name}>")
+    return redacted
+
+
+def _parameter_literal_map(
+    parameters: list[dict[str, Any]],
+    *,
+    candidates: dict[tuple[int, str], dict[str, Any]],
+    source_indices: list[int],
+) -> dict[str, str]:
+    literals: dict[str, str] = {}
+    for parameter in parameters:
+        if not isinstance(parameter, dict):
+            continue
+        local_index = parameter.get("step_index")
+        if not isinstance(local_index, int) or not 0 <= local_index < len(source_indices):
+            continue
+        arg_name = str(parameter.get("arg_name") or "").strip()
+        candidate = candidates.get((source_indices[local_index], arg_name))
+        name = str(parameter.get("name") or "").strip()
+        if candidate is None or not name:
+            continue
+        literal = str(candidate.get("recorded_value") or "").strip()
+        if literal:
+            literals[name] = literal
+    return literals
+
+
+def _materialize_node_parameters(
+    function: dict[str, Any],
+    candidates: Any,
+    *,
+    source_indices: list[int],
+    source_arguments: dict[str, Any],
+) -> dict[str, str]:
+    """Bind task values into the source node rendered for point actions."""
+
+    literals: dict[str, str] = {}
+    selected: dict[int, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        source_index = candidate.get("source_step_index")
+        if (
+            not isinstance(source_index, int)
+            or source_index not in source_indices
+        ):
+            continue
+        selected.setdefault(int(source_index), []).append(candidate)
+    render_bindings = function.setdefault("render_bindings", [])
+    if not isinstance(render_bindings, list):
+        raise ValueError("function_render_bindings_invalid")
+    properties = function["input_schema"]["properties"]
+    required = function["input_schema"]["required"]
+    for local_index, source_index in enumerate(source_indices):
+        for candidate in selected.get(int(source_index), ()):
+            parameter_name = str(candidate.get("parameter_name") or "").strip()
+            task_value = str(candidate.get("task_parameter_value") or "")
+            recorded_value = str(candidate.get("recorded_value") or "")
+            if not parameter_name or not task_value or not recorded_value:
+                continue
+            prior = source_arguments.get(parameter_name)
+            if prior is not None and str(prior) != task_value:
+                raise ValueError("function_node_parameter_name_ambiguous")
+            if parameter_name not in properties:
+                properties[parameter_name] = {
+                    "type": "string",
+                    "description": (
+                        f"The requested {parameter_name.replace('_', ' ')} "
+                        "visible on the selected GUI item."
+                    ),
+                }
+                required.append(parameter_name)
+            source_arguments[parameter_name] = task_value
+            literals[parameter_name] = recorded_value
+            binding = {
+                "source": f"$.arguments.{parameter_name}",
+                "step_index": local_index,
+                "node_id": str(candidate.get("node_id") or "").strip(),
+                "attribute": str(candidate.get("attribute") or "").strip(),
+                "recorded_value": recorded_value,
+            }
+            if not binding["node_id"] or not binding["attribute"]:
+                raise ValueError("function_node_render_binding_evidence_invalid")
+            duplicate = any(
+                isinstance(existing, dict)
+                and all(existing.get(key) == binding[key] for key in binding)
+                for existing in render_bindings
+            )
+            if not duplicate:
+                render_bindings.append(binding)
+    return literals
+
+
+def _source_node_parameter_evidence(
+    *,
+    source_step: dict[str, Any],
+    action: dict[str, Any],
+    source_step_index: int,
+    task_parameters: Any,
+) -> list[dict[str, Any]]:
+    """Find task values embedded in the source node receiving a point action."""
+
+    tool = str(action.get("tool") or "").strip()
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    if tool not in {"click", "long_press"} or not all(
+        args.get(key) is not None for key in ("x", "y")
+    ):
+        return []
+    observation = source_step.get("observation")
+    xml = observation.get("xml") if isinstance(observation, dict) else None
+    if not isinstance(xml, str) or not xml.strip() or not isinstance(task_parameters, dict):
+        return []
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return []
+    try:
+        width = float(root.attrib.get("width") or 0)
+        height = float(root.attrib.get("height") or 0)
+        point = (float(args["x"]) / 1000.0 * width, float(args["y"]) / 1000.0 * height)
+    except (TypeError, ValueError):
+        return []
+    if width <= 0 or height <= 0:
+        return []
+    containing: list[tuple[float, ET.Element]] = []
+    for node in root.iter("node"):
+        node_id = str(node.attrib.get("id") or "").strip()
+        bounds = _compiler_parse_bounds(node.attrib.get("bounds"))
+        if not node_id or bounds is None:
+            continue
+        if bounds[0] <= point[0] <= bounds[2] and bounds[1] <= point[1] <= bounds[3]:
+            area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+            containing.append((area, node))
+    containing.sort(key=lambda item: item[0])
+    evidence: list[dict[str, Any]] = []
+    for parameter_name, task_value in task_parameters.items():
+        if parameter_name in {"seed", "source_seed", "evaluation_seed", "task_random_seed", "noise_candidates"}:
+            continue
+        if not isinstance(task_value, str) or not task_value.strip():
+            continue
+        normalized_task_value = task_value.casefold()
+        for _area, node in containing:
+            for attribute in ("text", "content-desc"):
+                label = str(node.attrib.get(attribute) or "")
+                start = label.casefold().find(normalized_task_value)
+                if start < 0:
+                    continue
+                recorded_value = label[start : start + len(task_value)]
+                evidence.append(
+                    {
+                        "source_step_index": int(source_step_index),
+                        "tool": tool,
+                        "parameter_name": str(parameter_name),
+                        "suggested_name": str(parameter_name),
+                        "task_parameter_value": task_value,
+                        "recorded_value": recorded_value,
+                        "node_id": str(node.attrib["id"]),
+                        "attribute": attribute,
+                        "node_label": label,
+                    }
+                )
+                break
+            if evidence and evidence[-1]["parameter_name"] == parameter_name:
+                break
+    return evidence
+
+
+def _compiler_parse_bounds(value: Any) -> tuple[float, float, float, float] | None:
+    match = re.fullmatch(
+        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
+        r"\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]",
+        str(value or "").strip(),
+    )
+    if match is None:
+        return None
+    values = match.groups()
+    return (
+        float(values[0]),
+        float(values[1]),
+        float(values[2]),
+        float(values[3]),
+    )
 
 
 def _materialize_agent_parameters(
@@ -1268,30 +1789,6 @@ def _source_action_parameter_evidence(
     ]
 
 
-def _promote_launcher_app_entry(
-    action: dict[str, Any],
-    *,
-    observation: dict[str, Any],
-    next_observation: Any,
-) -> dict[str, Any]:
-    """Turn a recorded launcher app-icon click into the global open_app entry."""
-
-    if str(action.get("tool") or "") != "click":
-        return action
-    before_package = _primary_observation_package(observation)
-    after_package = _primary_observation_package(next_observation)
-    if not before_package or not after_package:
-        return action
-    if "launcher" not in before_package.casefold():
-        return action
-    if after_package == before_package or "systemui" in after_package.casefold():
-        return action
-    return {
-        "tool": "open_app",
-        "args": {"package_name": after_package},
-    }
-
-
 def _canonicalize_open_app_action(
     action: dict[str, Any],
     *,
@@ -1323,6 +1820,188 @@ def _canonicalize_open_app_action(
     updated = json.loads(json.dumps(action, ensure_ascii=False))
     updated.setdefault("args", {})["package_name"] = after_package
     return updated
+
+
+def _remove_compiler_entry_actions(
+    raw_functions: list[Any],
+    *,
+    raw_payload: dict[str, Any],
+) -> list[Any]:
+    """Remove only the source app-entry action from pre-authored Functions.
+
+    Older compiler output may already contain an injected ``open_app`` at the
+    beginning of a complete Function.  The shared package-mismatch Checker is
+    the owner of that environment recovery.  Match the entry by its recorded
+    source state, so a later ``open_app`` that is actual task progress remains
+    intact.
+    """
+    source_steps = raw_payload.get("steps")
+    if not isinstance(source_steps, list):
+        return raw_functions
+    effective_steps = [
+        (index, step)
+        for index, step in enumerate(source_steps)
+        if isinstance(step, dict)
+        and isinstance(step.get("action"), dict)
+        and str(step["action"].get("action_type") or "").strip()
+        not in {"answer", "status", "unknown"}
+        and not _is_transient_system_action(step)
+    ]
+    if len(effective_steps) <= 1:
+        return raw_functions
+    _first_source_index, first_source_step = effective_steps[0]
+    entry_state_ids = {
+        state_id(step.get("observation"))
+        for _index, step in effective_steps[:2]
+    }
+    if str(first_source_step["action"].get("action_type") or "").strip() == "open_app":
+        entry_state_ids = {
+            state_id(step.get("observation"))
+            for _index, step in effective_steps
+            if str(step["action"].get("action_type") or "").strip() == "open_app"
+        }
+    if not entry_state_ids:
+        return raw_functions
+    result: list[Any] = []
+    for raw_function in raw_functions:
+        if not isinstance(raw_function, dict):
+            result.append(raw_function)
+            continue
+        steps = raw_function.get("steps")
+        if not isinstance(steps, list) or len(steps) <= 1:
+            result.append(raw_function)
+            continue
+        first = steps[0] if isinstance(steps[0], dict) else {}
+        first_action = first.get("action") if isinstance(first, dict) else {}
+        first_state_id = str(first.get("source_state_id") or "").strip()
+        if (
+            not isinstance(first_action, dict)
+            or str(first_action.get("tool") or "").strip() != "open_app"
+            or first_state_id not in entry_state_ids
+        ):
+            result.append(raw_function)
+            continue
+        updated = json.loads(json.dumps(raw_function, ensure_ascii=False))
+        updated_steps = []
+        removed_count = 0
+        for candidate in updated["steps"]:
+            action = candidate.get("action") if isinstance(candidate, dict) else None
+            source_id = str(candidate.get("source_state_id") or "").strip() if isinstance(candidate, dict) else ""
+            if (
+                isinstance(action, dict)
+                and str(action.get("tool") or "").strip() == "open_app"
+                and source_id in entry_state_ids
+                and any(
+                    isinstance(rest, dict)
+                    and str((rest.get("action") or {}).get("tool") or "").strip()
+                    != "open_app"
+                    for rest in updated["steps"][removed_count + 1 :]
+                )
+            ):
+                removed_count += 1
+                continue
+            break
+        for step_index, step in enumerate(updated["steps"][removed_count:]):
+            if not isinstance(step, dict):
+                raise ValueError("function_entry_action_step_invalid")
+            step["step_index"] = step_index
+            updated_steps.append(step)
+        if not updated_steps:
+            result.append(raw_function)
+            continue
+        updated["steps"] = updated_steps
+        updated_bindings: list[dict[str, Any]] = []
+        for binding in updated.get("bindings") or []:
+            if not isinstance(binding, dict):
+                raise ValueError("function_entry_action_binding_invalid")
+            target = str(binding.get("target") or "")
+            match = re.match(r"^\$\.steps\[(\d+)](.*)$", target)
+            if match is None:
+                updated_bindings.append(binding)
+                continue
+            target_index = int(match.group(1))
+            if target_index < removed_count:
+                raise ValueError("function_entry_action_binding_invalid")
+            binding["target"] = f"$.steps[{target_index - removed_count}]{match.group(2)}"
+            updated_bindings.append(binding)
+        updated["bindings"] = updated_bindings
+        result.append(updated)
+    return result
+
+
+def _remove_compiler_environment_actions(
+    raw_functions: list[Any],
+    *,
+    raw_payload: dict[str, Any],
+) -> list[Any]:
+    """Remove environment entry actions from every authored Function.
+
+    The authoring model receives only the compiler's business-flow facts, but
+    older or imperfect responses can still copy an app launch or leading
+    back-navigation into a Function.  Those actions belong to the shared
+    expected-app Checker, never to reusable business memory.  Reindex the
+    surviving steps and bindings without changing any other action.
+    """
+    source_steps = raw_payload.get("steps")
+    if not isinstance(source_steps, list):
+        return raw_functions
+    entry_state_ids: set[str] = set()
+    for step in source_steps:
+        if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
+            continue
+        action_type = str(step["action"].get("action_type") or "").strip()
+        if action_type not in {"navigate_back", "navigate_home", "open_app"}:
+            break
+        entry_state_ids.add(state_id(step.get("observation")))
+    result: list[Any] = []
+    for raw_function in raw_functions:
+        if not isinstance(raw_function, dict):
+            result.append(raw_function)
+            continue
+        steps = raw_function.get("steps")
+        if not isinstance(steps, list):
+            result.append(raw_function)
+            continue
+        updated = json.loads(json.dumps(raw_function, ensure_ascii=False))
+        kept_steps: list[dict[str, Any]] = []
+        removed_indices: set[int] = set()
+        for original_index, candidate in enumerate(steps):
+            if not isinstance(candidate, dict):
+                raise ValueError("function_environment_step_invalid")
+            action = candidate.get("action")
+            source_id = str(candidate.get("source_state_id") or "").strip()
+            tool = str(action.get("tool") or "").strip() if isinstance(action, dict) else ""
+            key = str(action.get("args", {}).get("key") or "").strip() if isinstance(action, dict) else ""
+            is_entry_navigation = (
+                source_id in entry_state_ids
+                and tool == "press_key"
+                and key in {"back", "home"}
+            )
+            if tool == "open_app" or is_entry_navigation:
+                removed_indices.add(original_index)
+                continue
+            candidate["step_index"] = len(kept_steps)
+            kept_steps.append(candidate)
+        if not kept_steps:
+            continue
+        updated["steps"] = kept_steps
+        updated_bindings: list[dict[str, Any]] = []
+        for binding in updated.get("bindings") or []:
+            if not isinstance(binding, dict):
+                raise ValueError("function_environment_binding_invalid")
+            match = re.match(r"^\$\.steps\[(\d+)\](.*)$", str(binding.get("target") or ""))
+            if match is None:
+                updated_bindings.append(binding)
+                continue
+            target_index = int(match.group(1))
+            if target_index in removed_indices:
+                continue
+            shift = sum(index < target_index for index in removed_indices)
+            binding["target"] = f"$.steps[{target_index - shift}]{match.group(2)}"
+            updated_bindings.append(binding)
+        updated["bindings"] = updated_bindings
+        result.append(updated)
+    return result
 
 
 def _primary_observation_package(observation: Any) -> str:
@@ -1495,6 +2174,7 @@ def _compile_runlog_to_store_mechanical(
     converted_steps: list[dict[str, Any]] = []
     terminal_count = 0
     optional_checker_actions: list[dict[str, Any]] = []
+    onboarding_active = False
     previous_step: dict[str, Any] | None = None
     for source_index, source_step in enumerate(source_steps):
         if not isinstance(source_step, dict):
@@ -1507,6 +2187,21 @@ def _compile_runlog_to_store_mechanical(
         if action_type in {"answer", "status", "unknown"}:
             terminal_count += 1
             continue
+        onboarding_checker_id = _optional_onboarding_checker_id(
+            source_step, onboarding_active=onboarding_active
+        )
+        if onboarding_checker_id is not None:
+            onboarding_active = True
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_index,
+                    "checker_id": onboarding_checker_id,
+                    "reason": "first_run_onboarding_setup_is_optional",
+                }
+            )
+            continue
+        if onboarding_active:
+            onboarding_active = False
         if _is_transient_system_action(source_step):
             optional_checker_actions.append(
                 {
@@ -1557,6 +2252,7 @@ def _compile_runlog_to_store_mechanical(
             "additionalProperties": False,
         },
         "bindings": [],
+        "render_bindings": [],
         "steps": [
             {
                 "step_index": index,

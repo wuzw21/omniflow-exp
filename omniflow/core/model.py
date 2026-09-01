@@ -162,6 +162,7 @@ class Function:
     schema_version: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
     bindings: tuple[dict[str, str], ...] = ()
+    render_bindings: tuple[dict[str, Any], ...] = ()
     agent_visible: bool = True
 
     @classmethod
@@ -189,11 +190,16 @@ class Function:
                 for binding in value.get("bindings") or ()
                 if isinstance(binding, dict)
             ),
+            render_bindings=tuple(
+                dict(binding)
+                for binding in value.get("render_bindings") or ()
+                if isinstance(binding, dict)
+            ),
             agent_visible=value.get("agent_visible") is True,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema_version": self.schema_version,
             "function_id": self.function_id,
             "name": self.name,
@@ -203,6 +209,16 @@ class Function:
             "steps": [step.to_dict() for step in self.steps],
             "agent_visible": self.agent_visible,
         }
+        if self.render_bindings:
+            result["render_bindings"] = [
+                {
+                    key: value
+                    for key, value in binding.items()
+                    if key != "replacement"
+                }
+                for binding in self.render_bindings
+            ]
+        return result
 
     @property
     def id(self) -> str:

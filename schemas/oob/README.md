@@ -3,14 +3,20 @@
 These files are the wire contracts shared by OpenOmniBot and OmniFlow. Copies
 in both repositories must remain byte-for-byte identical.
 
-- `oob_canonical_actions.v1.json`: executable actions as `{tool, args}`.
+- `oob_canonical_actions.v1.json`: executable actions as `{tool, args}`. This
+  is the pinned `oob.canonical_actions.v1` mirror used by this experiment;
+  its SHA-256 is
+  `5769667a576d82621a5a1b013df16fde6c905871f4c2805bb93da34435ef62a2`.
+  It is a fixed external wire contract, not a task-level design surface.
 - `omniflow_run_log.v1.json`: AndroidWorld `JSONAction` values plus any of the
   current compact `screenshot/xml`, legacy compact `pixels/xml/auxiliaries`,
   or native AndroidWorld State observations. Legacy screenshot SHA-256 is
   accepted on input and removed from the canonical current representation.
 - `omniflow_function.v2.json`: reusable Functions with `function_id`,
-  `input_schema`, `bindings`, and `steps`; each step references
-  `source_state_id`.
+  `input_schema`, `bindings`, optional node-level `render_bindings`, and `steps`;
+  each step references `source_state_id`. A render binding replaces a proven
+  source-node `text` or `content-desc` literal in an in-memory source view before
+  OmniTransfer; it never changes the Action Schema or target-side lookup.
 - `omniflow_checker_rule.v1.json`: one independently reusable shared checker
   rule with scope, phase, condition, action, budget, and priority.
 - `omniflow_checker_store.v1.json`: the checker library stored separately from
@@ -27,10 +33,18 @@ Production writers, compilers, stores, and replay code accept only the
 `omniflow.run_log.v1` RunLog. Historical AndroidWorld data is
 converted once by the explicit offline converter, never inside the runtime.
 
+The Action Schema is selected once for the paper comparison. Do not add,
+remove, rename, or reinterpret an action argument for a task, device, widget,
+or failed replay. If the external Android/OOB contract changes, record that as
+a new protocol version and experiment; do not silently edit this v1 mirror.
+
 RunLog actions preserve the official AndroidWorld action vocabulary: a native
-`swipe`/`scroll` carries `direction` (and an optional `index`), not OOB endpoint
-coordinates. The OOB adapter expands that direction into its private executable
-representation only after the RunLog boundary. Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
+`swipe`/`scroll` carries `direction` (and an optional `index`) as source evidence.
+The explicit converter projects that evidence into the canonical coordinate-bearing
+OmniFlow `swipe` Function action. Canonical Swipe actions require `x1`, `y1`, `x2`,
+and `y2`; the runtime never expands a direction-only action and never forwards
+source coordinates after a failed mapping. Swipe covers both scrollable regions
+and draggable controls such as native `SeekBar`/`Slider` widgets. Canonical Actions use `0..1000` relative coordinates, but the VLM wire boundary
 uses raw pixels in the current original device display frame so it matches XML
 bounds. `omniflow.vlm_coordinates` is the only VLM conversion owner: it converts
 canonical recent-action context to pixels before the call and converts validated
@@ -44,8 +58,8 @@ be global or scoped by Function, step, action type, or package. Runtime evaluate
 the configured phase around every Function action and shares trigger budgets
 across all Function calls in one sequence. Checker recovery uses the same
 canonical action dispatcher as Function execution; configured `swipe` recovery
-therefore carries the official AndroidWorld direction; physical endpoints are
-derived only inside the backend adapter.
+therefore also carries coordinate endpoints and is subject to the same Transfer
+admission and post-action observation.
 
 Android writers persist the canonical five truth fields plus optional
 `metadata` directly. Kotlin storage validates the shared contract before every
@@ -72,8 +86,9 @@ The only saved arguments are:
 - `click`: `x`, `y`.
 - `long_press`: `x`, `y`, optional `duration_ms`.
 - `input_text`: `text`, `x`, `y`.
-- `swipe`: `direction`, optional `duration_ms` (the official AndroidWorld
-  directional schema; physical endpoints are backend-private).
+- `swipe`: required `x1`, `y1`, `x2`, `y2`, optional `duration_ms`; Transfer maps
+  both endpoints and the scrollable or draggable container before execution,
+  including native `SeekBar`/`Slider` controls.
 - `open_app`: `package_name`.
 - `press_key`: `key`.
 - `wait`: `duration_ms`.

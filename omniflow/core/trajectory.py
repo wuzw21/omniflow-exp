@@ -32,6 +32,10 @@ _ACTION_FIELDS = {
     "index",
     "x",
     "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
     "duration_ms",
     "text",
     "direction",
@@ -108,6 +112,9 @@ def canonicalize_androidworld_action(value: Any) -> dict[str, Any]:
             _number(
                 action[key], f"androidworld_action_{key}_invalid"
             )
+    for key in ("x1", "y1", "x2", "y2"):
+        if key in action:
+            _number(action[key], f"androidworld_action_{key}_invalid")
     if "duration_ms" in action:
         _integer(action["duration_ms"], "androidworld_action_duration_ms_invalid")
         if action["duration_ms"] < 0:

@@ -25,44 +25,67 @@
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
-      "id": "dismiss_transient_overlay",
-      "enabled": true,
+      "id": "dismiss_initial_setup",
+      "enabled": false,
       "phase": "pre_transfer",
-      "condition": {"xpath_exists": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
-      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
+      "condition": {
+        "xpath_exists": "//node[.//node[normalize-space(@text)='Setup'] and .//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')]]"
+      },
+      "action": {
+        "action": "click",
+        "target_xpath": "(//node[.//node[normalize-space(@text)='Setup'] and .//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')]]//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')])[1]"
+      },
+      "budget": {"max_triggers_per_run": 1, "max_triggers_per_step": 1},
+      "priority": 118,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "dismiss_informational_dialog",
+      "enabled": false,
+      "phase": "pre_transfer",
+      "condition": {
+        "xpath_exists": "//node[@resource-id='android:id/content' and .//node[normalize-space(@text)='Warning!'] and .//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')]]"
+      },
+      "action": {
+        "action": "click",
+        "target_xpath": "(//node[@resource-id='android:id/content' and .//node[normalize-space(@text)='Warning!'] and .//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')]]//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')])[1]"
+      },
+      "budget": {"max_triggers_per_run": 2, "max_triggers_per_step": 1},
+      "priority": 115,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "advance_first_run_onboarding",
+      "enabled": false,
+      "phase": "pre_transfer",
+      "condition": {
+        "xpath_exists": "//node[contains(@resource-id,'introduction') or contains(@resource-id,'onboarding') or contains(@resource-id,'welcome') or contains(@class,'ViewPager')]"
+      },
+      "action": {
+        "action": "click",
+        "target_xpath": "(//node[@clickable='true' and (contains(@resource-id,'next_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='continue' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='continue' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started')])[1]"
+      },
+      "budget": {"max_triggers_per_run": 4, "max_triggers_per_step": 1},
+      "priority": 115,
+      "source": "runtime_policy"
+    },
+    {
+      "schema_version": "omniflow.checker_rule.v1",
+      "id": "dismiss_transient_overlay",
+      "enabled": false,
+      "phase": "pre_transfer",
+      "condition": {"xpath_exists": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or @text='Get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or @text='Get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
       "budget": {"max_triggers_per_run": 1},
       "priority": 90,
       "source": "runtime_policy"
     },
     {
       "schema_version": "omniflow.checker_rule.v1",
-      "id": "open_camera_mode_list_for_video",
-      "enabled": true,
-      "phase": "pre_transfer",
-      "scope": {
-        "function_ids": ["take_video"],
-        "step_indexes": [1],
-        "package_names": ["com.android.camera2"]
-      },
-      "condition": {
-        "xpath_exists": "//node[contains(@resource-id,'shutter_button') and @clickable='true' and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
-      },
-      "action": {
-        "action": "swipe",
-        "direction": "left",
-        "duration_ms": 500
-      },
-      "budget": {
-        "max_triggers_per_run": 1,
-        "max_triggers_per_step": 1
-      },
-      "priority": 80,
-      "source": "function_augmentation"
-    },
-    {
-      "schema_version": "omniflow.checker_rule.v1",
       "id": "select_camera_video_mode",
-      "enabled": true,
+      "enabled": false,
       "phase": "pre_transfer",
       "scope": {
         "function_ids": ["take_video"],
@@ -81,30 +104,6 @@
         "max_triggers_per_step": 1
       },
       "priority": 70,
-      "source": "function_augmentation"
-    },
-    {
-      "schema_version": "omniflow.checker_rule.v1",
-      "id": "wait_camera_video_mode_transition",
-      "enabled": true,
-      "phase": "pre_transfer",
-      "scope": {
-        "function_ids": ["take_video"],
-        "step_indexes": [1],
-        "package_names": ["com.android.camera2"]
-      },
-      "condition": {
-        "xpath_exists": "//node[contains(@resource-id,'shutter_button') and @clickable='true' and not(//node[@clickable='true' and translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='switch to video camera'])]"
-      },
-      "action": {
-        "action": "wait",
-        "wait_ms": 1500
-      },
-      "budget": {
-        "max_triggers_per_run": 1,
-        "max_triggers_per_step": 1
-      },
-      "priority": 60,
       "source": "function_augmentation"
     },
     {
@@ -135,6 +134,7 @@
       "id": "hide_keyboard",
       "enabled": true,
       "phase": "pre_action",
+      "scope": {"action_types": ["click", "long_press", "input_text", "swipe"]},
       "condition": {"keyboard_obscuring": true},
       "action": {"action": "hide_keyboard"},
       "budget": {"max_triggers_per_run": 2, "max_triggers_per_step": 1},
@@ -144,7 +144,7 @@
     {
       "schema_version": "omniflow.checker_rule.v1",
       "id": "wait_for_ui_stable",
-      "enabled": true,
+      "enabled": false,
       "phase": "pre_transfer",
       "condition": {"ui_unstable": true},
       "action": {"action": "wait", "wait_ms": 500},

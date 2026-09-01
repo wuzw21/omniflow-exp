@@ -17,10 +17,20 @@ def resolve_openai_compatible_config(
     resolved_profile = str(
         profile or env.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE") or "auto"
     ).strip().lower()
-    if resolved_profile not in {"auto", "openai", "llmthu"}:
+    if resolved_profile not in {"auto", "openai", "llmthu", "omnimind"}:
         raise ValueError(f"model_endpoint_profile_invalid:{resolved_profile}")
 
-    if resolved_profile == "llmthu":
+    if resolved_profile == "omnimind":
+        key_candidates = (
+            api_key,
+            env.get("OMNIMIND_API_KEY"),
+        )
+        base_url_candidates = (
+            base_url,
+            env.get("OMNIMIND_BASE_URL"),
+            env.get("OMNIFLOW_MODEL_BASE_URL"),
+        )
+    elif resolved_profile == "llmthu":
         key_candidates = (
             api_key,
             env.get("LLMTHU_API_KEY"),

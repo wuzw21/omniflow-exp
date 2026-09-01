@@ -9,6 +9,7 @@ from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
 ENABLED_METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["enabled_methods"])
 SOURCE_METHOD = "source"
+AUTODROID_MEMORY_METHOD = "autodroid"
 DEFAULT_TASK = str(ANDROIDWORLD_PROTOCOL["task"])
 DEVICES = tuple(
     (
@@ -80,6 +81,53 @@ FORMAL_MODEL_ENDPOINT_PROFILE = str(
     ANDROIDWORLD_PROTOCOL["model_endpoint_profile"]
 )
 FORMAL_MODEL_BASE_URL = str(ANDROIDWORLD_PROTOCOL["model_base_url"])
+# The paper protocol remains pinned to Qwen.  An explicit experimental model
+# is allowed only for the OmniFlow adapter, so OmniMind/GPT-5.5 comparisons can
+# use the same public launcher and Function/Planner owners without changing
+# the formal five-method matrix implicitly.
+EXPERIMENTAL_OMNIFLOW_MODEL_ENV = "OMNIFLOW_EXPERIMENTAL_MODEL"
+
+
+def _experimental_omniflow_model() -> str:
+    return str(os.environ.get(EXPERIMENTAL_OMNIFLOW_MODEL_ENV) or "").strip()
+
+
+def omniflow_model() -> str:
+    return _experimental_omniflow_model() or FORMAL_MODEL
+
+
+def omniflow_endpoint_profile() -> str:
+    return (
+        str(os.environ.get("OMNIFLOW_EXPERIMENTAL_ENDPOINT_PROFILE") or "").strip()
+        or FORMAL_MODEL_ENDPOINT_PROFILE
+    )
+
+
+def omniflow_base_url() -> str:
+    return (
+        str(os.environ.get("OMNIFLOW_EXPERIMENTAL_BASE_URL") or "").strip()
+        or FORMAL_MODEL_BASE_URL
+    )
+
+
+def require_runtime_model(method: str, value: str | None = None) -> str:
+    """Validate the model at the public runtime boundary.
+
+    Formal methods retain the fixed paper model.  OmniFlow may opt into one
+    explicitly named experimental model through the environment; the value
+    is still checked against the same resolved model before execution.
+    """
+
+    normalized_method = str(method or "").strip()
+    selected = str(value or "").strip()
+    if normalized_method == "omniflow" and _experimental_omniflow_model():
+        expected = omniflow_model()
+        if selected and selected != expected:
+            raise ValueError(
+                f"omniflow_experimental_model_mismatch:expected={expected}:received={selected}"
+            )
+        return expected
+    return require_formal_model(selected)
 ANDROIDWORLD_REVISION = str(
     os.environ.get("OMNIFLOW_ANDROIDWORLD_REVISION")
     or ANDROIDWORLD_PROTOCOL["androidworld_revision"]
@@ -112,8 +160,7 @@ def require_formal_model(value: str | None = None) -> str:
         )
     return FORMAL_MODEL
 
-# Active result vocabulary. The registry reads the old one_task names only for
-# immutable historical attempts and never writes them again.
+# Active result vocabulary for immutable historical attempts.
 RESULT_SUMMARY_FILE = "result_summary.json"
 RESULT_COMMANDS_FILE = "result_commands.jsonl"
 RESULT_MARKDOWN_FILE = "result_summary.md"

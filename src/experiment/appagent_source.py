@@ -383,6 +383,8 @@ def _write_appagent_state(
     screenshot = _resolve_appagent_screenshot(
         pixels,
         source_run_log=source_run_log,
+        source_step_index=source_step_index,
+        after=phase == "after",
     )
     xml_text = _appagent_observation_xml(observation)
     if not xml_text:
@@ -422,6 +424,8 @@ def _require_appagent_observation_evidence(
     screenshot = _resolve_appagent_screenshot(
         pixels,
         source_run_log=source_run_log,
+        source_step_index=source_step_index,
+        after=phase == "after",
     )
     if not _appagent_observation_xml(observation):
         raise ValueError(f"appagent_source_xml_missing:{source_step_index}:{phase}")
@@ -431,6 +435,8 @@ def _resolve_appagent_screenshot(
     pixels: dict[str, Any],
     *,
     source_run_log: Path,
+    source_step_index: int | None = None,
+    after: bool = False,
 ) -> Path:
     screenshot = Path(str(pixels.get("path") or "")).expanduser().resolve()
     expected_sha256 = str(pixels.get("sha256") or "").strip().lower()
@@ -442,6 +448,14 @@ def _resolve_appagent_screenshot(
     )
     if remapped is not None:
         return remapped
+    aligned = _resolve_aligned_sibling_screenshot(
+        pixels,
+        source_run_log=source_run_log,
+        source_step_index=source_step_index,
+        after=after,
+    )
+    if aligned is not None:
+        return aligned
     # Some imported RunLogs retain an obsolete attempt directory in the
     # screenshot path even though the evidence was promoted to the visible
     # ``runlog/current`` bundle.  Recover only from this same RunLog's
@@ -451,6 +465,15 @@ def _resolve_appagent_screenshot(
         source_run_log.parent / "observations" / "objects" / screenshot.name,
         source_run_log.parent / "screenshots" / screenshot.name,
         source_run_log.parent.parent / "screenshots" / screenshot.name,
+    )
+    runlog_root = source_run_log.parent.parent
+    local_candidates += tuple(
+        candidate
+        for attempt_root in sorted(runlog_root.glob("attempt_*"))
+        for candidate in (
+            attempt_root / "observations" / "objects" / screenshot.name,
+            attempt_root / "screenshots" / screenshot.name,
+        )
     )
     for local_candidate in local_candidates:
         if local_candidate.is_file():
@@ -467,6 +490,112 @@ def _resolve_appagent_screenshot(
         return screenshot
     candidate = sha256_root / expected_sha256[:2] / f"{expected_sha256}{suffix}"
     return candidate.resolve() if candidate.is_file() else screenshot
+
+
+def _appagent_action_signature(action: Any) -> tuple[Any, ...] | None:
+    if not isinstance(action, dict):
+        return None
+    action_type = str(action.get("action_type") or action.get("type") or "").strip()
+    if not action_type:
+        return None
+    signature: list[Any] = [action_type]
+    for key in ("app_name", "package_name", "text", "text_to_input", "keycode"):
+        if key in action:
+            signature.append((key, str(action.get(key) or "")))
+    params = action.get("params")
+    if isinstance(params, dict):
+        for key in ("app_name", "package_name", "text", "text_to_input", "keycode"):
+            if key in params:
+                signature.append((key, str(params.get(key) or "")))
+    for key in ("x", "y", "x1", "y1", "x2", "y2", "start_x", "start_y", "end_x", "end_y"):
+        if key in action:
+            value = action.get(key)
+            try:
+                value = round(float(value), 3)
+            except (TypeError, ValueError):
+                value = str(value or "")
+            signature.append((key, value))
+    return tuple(signature)
+
+
+def _resolve_aligned_sibling_screenshot(
+    pixels: dict[str, Any],
+    *,
+    source_run_log: Path,
+    source_step_index: int | None,
+    after: bool,
+) -> Path | None:
+    """Recover renamed screenshots by matching the same source action.
+
+    Some imported current RunLogs retain object-style screenshot paths while
+    the sibling attempt stores the identical evidence as sequential files.
+    Only an unambiguous action match inside this task's own RunLog is allowed.
+    """
+    if source_step_index is None:
+        return None
+    try:
+        source_payload = json.loads(source_run_log.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    source_steps = source_payload.get("steps")
+    if not isinstance(source_steps, list) or not (0 <= source_step_index < len(source_steps)):
+        return None
+    source_signature = _appagent_action_signature(
+        (source_steps[source_step_index] or {}).get("action")
+    )
+    if source_signature is None:
+        return None
+    runlog_root = source_run_log.parent.parent
+    expected_sha256 = str(pixels.get("sha256") or "").strip().lower()
+    matches: list[Path] = []
+    for candidate_log in sorted(runlog_root.glob("attempt_*/run_log.json")):
+        try:
+            candidate_payload = json.loads(candidate_log.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidate_steps = candidate_payload.get("steps")
+        if not isinstance(candidate_steps, list):
+            continue
+        candidate_matches = [
+            index
+            for index, candidate_step in enumerate(candidate_steps)
+            if _appagent_action_signature(
+                (candidate_step or {}).get("action")
+            ) == source_signature
+        ]
+        if len(candidate_matches) != 1:
+            continue
+        candidate_index = candidate_matches[0]
+        candidate_step = candidate_steps[candidate_index] or {}
+        if after:
+            observation = candidate_step.get("next_observation")
+            if not isinstance(observation, dict) and candidate_index + 1 < len(candidate_steps):
+                observation = (candidate_steps[candidate_index + 1] or {}).get("observation")
+        else:
+            observation = candidate_step.get("observation")
+        candidate_pixels = None
+        if isinstance(observation, dict):
+            candidate_pixels = observation.get("screenshot")
+            if candidate_pixels is None:
+                candidate_pixels = observation.get("pixels")
+        candidate_path = (
+            Path(str(candidate_pixels.get("path") or "")).expanduser().resolve()
+            if isinstance(candidate_pixels, dict) and candidate_pixels.get("path")
+            else None
+        )
+        if candidate_path is None:
+            continue
+        resolved = candidate_path if candidate_path.is_file() else _remap_appagent_data_path(
+            candidate_path,
+            source_run_log=source_run_log,
+        )
+        if resolved is None or not resolved.is_file():
+            continue
+        if expected_sha256 and sha256_file(resolved) != expected_sha256:
+            continue
+        matches.append(resolved.resolve())
+    unique_matches = list(dict.fromkeys(matches))
+    return unique_matches[0] if len(unique_matches) == 1 else None
 
 
 def _remap_appagent_data_path(

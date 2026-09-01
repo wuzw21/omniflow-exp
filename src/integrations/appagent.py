@@ -26,6 +26,12 @@ from src.experiment.protocol import (
     FORMAL_THINKING,
     MAX_STEPS,
 )
+
+
+def _looks_like_android_package(value: Any) -> bool:
+    normalized = str(value or "").strip()
+    parts = normalized.split(".")
+    return len(parts) >= 2 and all(part.isidentifier() for part in parts)
 from src.experiment.paths import (
     relative_reference,
     resolve_relative_reference,
@@ -1133,7 +1139,7 @@ def build_appagent_teacher_source(
                 package_name = str(
                     params.get("package_name") or params.get("app_name") or ""
                 ).strip()
-                if package_name:
+                if _looks_like_android_package(package_name):
                     source_app_packages.add(package_name)
             if action_type in _NON_PRIMITIVE_SOURCE_TYPES:
                 continue
@@ -2100,11 +2106,37 @@ def _source_semantic_params(
     )
     if isinstance(source_context, dict):
         enriched["source_context"] = dict(source_context)
-    if _adapter_params("click", enriched):
+    if action_type == "swipe":
+        observation = step.get("observation_before_act")
+        if not isinstance(observation, dict):
+            observation = step.get("observation")
+        xml_text = (
+            observation_xml(observation).strip()
+            if isinstance(observation, dict)
+            else ""
+        )
+        if not xml_text and isinstance(observation, dict):
+            elements = observation.get("ui_elements")
+            if isinstance(elements, list) and elements:
+                xml_text = androidworld_elements_xml(elements).strip()
+        display = observation_display(observation) if isinstance(observation, dict) else None
+        if xml_text and display is not None:
+            try:
+                start_x = float(enriched["x1"]) / 1000.0 * display[0]
+                start_y = float(enriched["y1"]) / 1000.0 * display[1]
+            except (KeyError, TypeError, ValueError):
+                return enriched
+            source_appagent_tag = _source_appagent_tag_at_point(
+                xml_text,
+                x=start_x,
+                y=start_y,
+            )
+            if source_appagent_tag is not None:
+                enriched["source_appagent_tag"] = source_appagent_tag
         return enriched
     try:
-        x = float(enriched.get("x"))
-        y = float(enriched.get("y"))
+        normalized_x = float(enriched.get("x"))
+        normalized_y = float(enriched.get("y"))
     except (TypeError, ValueError):
         return enriched
     observation = step.get("observation_before_act")
@@ -2121,6 +2153,18 @@ def _source_semantic_params(
             xml_text = androidworld_elements_xml(elements).strip()
     if not xml_text:
         return enriched
+    display = observation_display(observation)
+    if display is None:
+        return enriched
+    pixel_x = normalized_x / 1000.0 * display[0]
+    pixel_y = normalized_y / 1000.0 * display[1]
+    source_appagent_tag = _source_appagent_tag_at_point(
+        xml_text,
+        x=pixel_x,
+        y=pixel_y,
+    )
+    if source_appagent_tag is not None:
+        enriched["source_appagent_tag"] = source_appagent_tag
     if action_type == "input_text":
         root = ET.fromstring(xml_text)
         focused = [
@@ -2147,7 +2191,6 @@ def _source_semantic_params(
             y = float(enriched.get("y"))
         except (TypeError, ValueError):
             return enriched
-        display = observation_display(observation)
         if display is not None:
             point = (
                 int(round(x / 1000.0 * display[0])),
@@ -2178,12 +2221,7 @@ def _source_semantic_params(
             if source_appagent_tag is not None:
                 enriched["source_appagent_tag"] = source_appagent_tag
         return enriched
-    display = observation_display(observation)
-    if display is None:
-        return enriched
-    x = x / 1000.0 * display[0]
-    y = y / 1000.0 * display[1]
-    identity = _source_identity_at_point(xml_text, x=x, y=y)
+    identity = _source_identity_at_point(xml_text, x=pixel_x, y=pixel_y)
     if identity:
         target_description = str(
             identity.get("text") or identity.get("content_desc") or ""
@@ -2194,8 +2232,8 @@ def _source_semantic_params(
         return enriched
     source_appagent_tag = _source_appagent_tag_at_point(
         xml_text,
-        x=x,
-        y=y,
+        x=pixel_x,
+        y=pixel_y,
     )
     if source_appagent_tag is not None:
         enriched["source_appagent_tag"] = source_appagent_tag

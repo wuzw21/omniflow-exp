@@ -223,6 +223,7 @@ def _compact_accessibility_observation(
         description = str(attributes.get("content-desc") or "").strip()
         hint = str(attributes.get("hint-text") or "").strip()
         resource_id = str(attributes.get("resource-id") or "").strip()
+        draggable_control = _is_draggable_control(attributes)
         actions = [
             name
             for name, attribute in (
@@ -234,6 +235,8 @@ def _compact_accessibility_observation(
             )
             if attributes.get(attribute) == "true"
         ]
+        if draggable_control:
+            actions.append("swipe")
         semantic_labels = list(
             dict.fromkeys(
                 value for value in (text, description, hint) if value
@@ -335,6 +338,14 @@ def _compact_accessibility_observation(
     return "\n".join(rows) or "<none>"
 
 
+def _is_draggable_control(attributes: dict[str, str]) -> bool:
+    class_name = str(attributes.get("class") or "").rsplit(".", 1)[-1].casefold()
+    resource_id = str(attributes.get("resource-id") or "").rsplit("/", 1)[-1].casefold()
+    return class_name in {"seekbar", "slider"} or any(
+        token in resource_id for token in ("seekbar", "slider")
+    )
+
+
 def _accessibility_dimensions(
     root: ElementTree.Element,
     display: dict[str, Any] | None,
@@ -391,10 +402,37 @@ def parse_model_turn_response(
     tool_calls = value.get("tool_calls")
     if not isinstance(tool_calls, list):
         raise ModelToolCallError("model_turn_tool_calls_invalid")
-    if len(tool_calls) != 1:
-        raise ModelToolCallError(
-            f"provider_tool_call_contract_violation:expected_one_native_tool_call:got_{len(tool_calls)}"
+    model_visible_tools = {
+        str(item.get("function", {}).get("name") or "")
+        for item in vlm_action_tools()
+        if isinstance(item, dict) and isinstance(item.get("function"), dict)
+    }
+    function_catalog = {function.id: function for function in functions}
+    if not tool_calls:
+        raise ModelToolCallError("model_turn_tool_calls_empty")
+    if len(tool_calls) > 1:
+        # Some OpenAI-compatible gateways ignore parallel_tool_calls=false and
+        # return several actions in one response.  A GUI turn is deliberately
+        # sequential: consume one valid next action and let the next fresh
+        # observation ground the following action.  Never replay the extra
+        # calls or source coordinates from the same response.
+        visible_names = model_visible_tools | set(function_catalog)
+        selected_index = next(
+            (
+                index
+                for index, candidate in enumerate(tool_calls)
+                if isinstance(candidate, dict)
+                and isinstance(candidate.get("function"), dict)
+                and str(candidate["function"].get("name") or "").strip()
+                in visible_names
+            ),
+            0,
         )
+        discarded = len(tool_calls) - 1
+        selected = tool_calls[selected_index]
+        tool_calls = [selected]
+    else:
+        discarded = 0
     tool_call = tool_calls[0]
     if not isinstance(tool_call, dict):
         raise ModelToolCallError("model_turn_tool_call_invalid")
@@ -402,12 +440,6 @@ def parse_model_turn_response(
     if not isinstance(function, dict):
         raise ModelToolCallError("model_turn_tool_call_function_invalid")
     tool = str(function.get("name") or "").strip()
-    model_visible_tools = {
-        str(item.get("function", {}).get("name") or "")
-        for item in vlm_action_tools()
-        if isinstance(item, dict) and isinstance(item.get("function"), dict)
-    }
-    function_catalog = {function.id: function for function in functions}
     if not tool and len(function_catalog) == 1:
         only_function = next(iter(function_catalog.values()))
         if (
@@ -503,6 +535,8 @@ def parse_model_turn_response(
             arguments=rejected_arguments,
         ) from error
     metadata: dict[str, Any] = {"summary": summary}
+    if discarded:
+        metadata["discarded_extra_tool_calls"] = discarded
     if arguments_repaired:
         metadata["json_repair"] = {
             "name": "json_repair",

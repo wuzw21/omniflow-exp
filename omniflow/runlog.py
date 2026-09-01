@@ -47,6 +47,8 @@ def project_androidworld_step_actions(
 ) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or not isinstance(value.get("observation"), dict):
         raise ValueError("androidworld_run_log_step_required")
+    if next_observation is None and isinstance(value.get("next_observation"), dict):
+        next_observation = value["next_observation"]
     action = dict(value.get("action") or {})
     observation = value["observation"]
     projected_action = _androidworld_action_to_omniflow(
@@ -458,9 +460,7 @@ def _androidworld_action_to_omniflow(
             args.update(point)
         projected = {"tool": "input_text", "args": args}
     elif action_type in {"scroll", "swipe"}:
-        swipe_args: dict[str, Any] = {
-            "direction": str(action.get("direction") or ""),
-        }
+        swipe_args: dict[str, Any] = {}
         if action_type == "scroll":
             swipe_args.update(
                 _androidworld_standard_swipe(
@@ -526,7 +526,13 @@ def _androidworld_action_to_omniflow(
             "BACK": "back",
             "HOME": "home",
             "ENTER": "enter",
+            "SPACE": "space",
+            "SLASH": "slash",
+            "MOVE_END": "move_end",
+            "DPAD_DOWN": "dpad_down",
         }.get(keycode, keycode if keycode in set("0123456789") else "")
+        if not key and len(keycode) == 1 and keycode.isalpha():
+            key = keycode.casefold()
         if not key:
             raise ValueError(f"androidworld_press_keyboard_unsupported:{keycode}")
         projected = {"tool": "press_key", "args": {"key": key}}
@@ -592,6 +598,7 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
     except ET.ParseError:
         return None
     elements: list[ET.Element] = []
+    parents: dict[int, ET.Element] = {}
     windows = list(root.iter("window"))
     for window in windows:
         ordered_nodes: list[tuple[int, ET.Element]] = []
@@ -602,6 +609,9 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
             except (IndexError, ValueError):
                 return None
             ordered_nodes.append((order, element))
+            for child in element:
+                if child.tag == "node":
+                    parents[id(child)] = element
         for _, element in sorted(ordered_nodes, key=lambda item: item[0]):
             child_nodes = [child for child in element if child.tag == "node"]
             if (
@@ -617,7 +627,19 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
         elements = list(top_nodes[0].iter("node"))[1:]
     if not 0 <= index < len(elements):
         return None
-    return _parse_xml_bounds(elements[index].attrib.get("bounds"))
+    element = elements[index]
+    # AndroidWorld's index can identify a non-clickable label inside the
+    # executable row/card that owns it.  Project to that nearest clickable
+    # ancestor so OmniTransfer receives the same semantic target on a device
+    # with different typography and layout.  This remains source-state
+    # geometry; it is not a target-side resource-id lookup or coordinate
+    # passthrough.
+    while (
+        str(element.attrib.get("clickable") or "").casefold() != "true"
+        and id(element) in parents
+    ):
+        element = parents[id(element)]
+    return _parse_xml_bounds(element.attrib.get("bounds"))
 
 
 def _parse_xml_bounds(value: Any) -> tuple[float, float, float, float] | None:
@@ -660,9 +682,6 @@ def _androidworld_standard_swipe(
         display = _observation_display(observation or {})
         if display is not None:
             width, height = display
-            # Keep the gesture strictly inside the source scrollable region.
-            # The inset avoids edge/system-bar interception while retaining
-            # the original direction and the canonical 0..1000 coordinates.
             inset_x = min((right - left) * 0.15, (right - left) / 2.0 - 1.0)
             inset_y = min((bottom - top) * 0.15, (bottom - top) / 2.0 - 1.0)
             safe_left = left + max(1.0, inset_x)
@@ -698,7 +717,6 @@ def _androidworld_standard_swipe(
                     "x2": x2 / width * 1000.0,
                     "y2": y2 / height * 1000.0,
                 }
-
     gestures = {
         "scroll": {
             "down": (500.0, 500.0, 500.0, 0.0),
@@ -723,8 +741,6 @@ def _androidworld_standard_swipe(
 def _androidworld_scrollable_bounds(
     observation: dict[str, Any] | None,
 ) -> tuple[float, float, float, float] | None:
-    """Return the largest enabled scrollable source region, if present."""
-
     if not isinstance(observation, dict):
         return None
     xml = observation_xml(observation)
@@ -813,7 +829,34 @@ def _transfer_state(observation: dict[str, Any]) -> dict[str, Any]:
         for key in ("package_name", "activity_name"):
             if auxiliaries.get(key) not in (None, ""):
                 state[key] = str(auxiliaries[key])
+    if xml and "package_name" not in state:
+        package = _main_xml_package(xml)
+        if package:
+            state["package_name"] = package
     return state
+
+
+def _main_xml_package(xml: str) -> str:
+    """Infer the dominant non-system package from a source UI hierarchy."""
+
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return ""
+    packages: dict[str, int] = {}
+    for element in root.iter():
+        package = str(element.attrib.get("package") or "").strip()
+        if package:
+            packages[package] = packages.get(package, 0) + 1
+    if not packages:
+        return ""
+    non_system = {
+        package: count
+        for package, count in packages.items()
+        if package != "com.android.systemui"
+    }
+    candidates = non_system or packages
+    return max(candidates, key=lambda package: (candidates[package], package))
 
 
 def _map(value: Any) -> dict[str, Any]:

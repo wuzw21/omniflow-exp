@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 from typing import Any
+import xml.etree.ElementTree as ET
 
-from omniflow.core.model import Action, Function, FunctionStep
+from omniflow.core.model import Action, Function, FunctionStep, Observation
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
+
 FUNCTION_ARTIFACT_VERSION = "omniflow.function.v2"
 
 _TOP_LEVEL_FIELDS = {
@@ -15,6 +17,7 @@ _TOP_LEVEL_FIELDS = {
     "description",
     "input_schema",
     "bindings",
+    "render_bindings",
     "steps",
     "agent_visible",
 }
@@ -34,6 +37,7 @@ _NON_PARAMETERIZABLE_ACTION_ARGUMENTS = {
     "y1",
     "y2",
 }
+_RENDER_ATTRIBUTES = {"text", "content-desc"}
 
 
 def parse_function_artifact(value: dict[str, Any]) -> Function:
@@ -153,7 +157,24 @@ def bind_function(function: Function, arguments: dict[str, Any]) -> Function:
             steps[action_index],
             action=Action(steps[action_index].action.tool, params),
         )
-    return replace(function, steps=tuple(steps))
+    render_bindings: list[dict[str, Any]] = []
+    for binding in function.render_bindings:
+        source_match = _SOURCE_PATH.fullmatch(str(binding.get("source") or ""))
+        if source_match is None:
+            raise ValueError("function_render_binding_source_invalid")
+        value = _read_path(source_root, _tokens(
+            ".arguments" + source_match.group("tail")
+        ))
+        if not isinstance(value, str):
+            raise ValueError("function_render_binding_value_invalid")
+        bound = dict(binding)
+        bound["replacement"] = value
+        render_bindings.append(bound)
+    return replace(
+        function,
+        steps=tuple(steps),
+        render_bindings=tuple(render_bindings),
+    )
 
 
 def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> None:
@@ -221,11 +242,180 @@ def _validate_bindings(function: Function) -> None:
             )
         except (IndexError, KeyError, TypeError) as error:
             raise ValueError(f"function_binding_target_missing:{target}") from error
+    _validate_render_bindings(function, bound_properties)
     unbound = sorted(
         set(function.input_schema.get("required") or ()) - bound_properties
     )
     if unbound:
         raise ValueError(f"function_required_parameters_unbound:{','.join(unbound)}")
+
+
+def _validate_render_bindings(
+    function: Function,
+    bound_properties: set[str],
+) -> None:
+    properties = function.input_schema["properties"]
+    targets: set[tuple[int, str, str]] = set()
+    for binding in function.render_bindings:
+        allowed = {
+            "source",
+            "step_index",
+            "node_id",
+            "attribute",
+            "recorded_value",
+            "replacement",
+        }
+        if not isinstance(binding, dict) or set(binding) - allowed:
+            raise ValueError("function_render_binding_contract_invalid")
+        source = str(binding.get("source") or "")
+        source_match = _SOURCE_PATH.fullmatch(source)
+        if source_match is None:
+            raise ValueError(f"function_render_binding_path_invalid:{source}")
+        source_tokens = _tokens(".arguments" + source_match.group("tail"))
+        if len(source_tokens) != 2 or not isinstance(source_tokens[1], str):
+            raise ValueError("function_render_binding_source_invalid")
+        parameter_name = source_tokens[1]
+        if parameter_name not in properties:
+            raise ValueError(f"function_render_binding_source_unknown:{source}")
+        bound_properties.add(parameter_name)
+        step_index = binding.get("step_index")
+        if not isinstance(step_index, int) or isinstance(step_index, bool):
+            raise ValueError("function_render_binding_step_index_invalid")
+        if step_index not in range(len(function.steps)):
+            raise ValueError("function_render_binding_step_index_invalid")
+        if function.steps[step_index].action.tool not in {"click", "long_press"}:
+            raise ValueError("function_render_binding_action_invalid")
+        node_id = str(binding.get("node_id") or "").strip()
+        if not node_id:
+            raise ValueError("function_render_binding_node_id_required")
+        attribute = str(binding.get("attribute") or "").strip()
+        if attribute not in _RENDER_ATTRIBUTES:
+            raise ValueError("function_render_binding_attribute_invalid")
+        recorded_value = binding.get("recorded_value")
+        if not isinstance(recorded_value, str) or not recorded_value:
+            raise ValueError("function_render_binding_recorded_value_invalid")
+        target = (step_index, node_id, attribute)
+        if target in targets:
+            raise ValueError("function_render_binding_target_duplicate")
+        targets.add(target)
+        if "replacement" in binding and not isinstance(binding["replacement"], str):
+            raise ValueError("function_render_binding_replacement_invalid")
+
+
+def render_bound_source_state(
+    source_state: Observation,
+    render_bindings: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    step_index: int,
+) -> Observation:
+    return _render_bound_state(
+        source_state,
+        render_bindings,
+        step_index=step_index,
+        endpoint="source",
+    )
+
+
+def render_bound_target_state(
+    target_state: Observation,
+    render_bindings: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    step_index: int,
+) -> Observation:
+    return _render_bound_state(
+        target_state,
+        render_bindings,
+        step_index=step_index,
+        endpoint="target",
+    )
+
+
+def _render_bound_state(
+    state: Observation,
+    render_bindings: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    step_index: int,
+    endpoint: str,
+) -> Observation:
+    """Render both endpoint observations into a private semantic mask view."""
+
+    bindings = [
+        binding
+        for binding in render_bindings
+        if isinstance(binding, dict)
+        and int(binding.get("step_index", -1)) == int(step_index)
+    ]
+    if not bindings:
+        return state
+    xml = str(state.xml or "")
+    if not xml:
+        raise ValueError(f"function_render_{endpoint}_xml_missing")
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as error:
+        raise ValueError(f"function_render_{endpoint}_xml_invalid") from error
+    for binding in bindings:
+        node_id = str(binding.get("node_id") or "").strip()
+        attribute = str(binding.get("attribute") or "").strip()
+        recorded_value = binding.get("recorded_value")
+        replacement = binding.get("replacement")
+        if (
+            not isinstance(recorded_value, str)
+            or not isinstance(replacement, str)
+            or not replacement
+        ):
+            raise ValueError("function_render_binding_unbound")
+        parameter_name = _render_binding_parameter_name(binding)
+        mask = f"<{parameter_name}>"
+        if endpoint == "source":
+            node = next(
+                (
+                    element
+                    for element in root.iter("node")
+                    if str(element.attrib.get("id") or "").strip() == node_id
+                ),
+                None,
+            )
+            if node is None:
+                raise ValueError(f"function_render_binding_node_missing:{node_id}")
+            current = str(node.attrib.get(attribute) or "")
+            if recorded_value not in current:
+                raise ValueError(
+                    f"function_render_binding_literal_missing:{node_id}:{attribute}"
+                )
+            node.attrib[attribute] = current.replace(recorded_value, mask)
+            continue
+        matched = False
+        for node in root.iter("node"):
+            for target_attribute in (attribute, *_RENDER_ATTRIBUTES):
+                current = str(node.attrib.get(target_attribute) or "")
+                if replacement not in current:
+                    continue
+                node.attrib[target_attribute] = current.replace(replacement, mask)
+                matched = True
+        if not matched:
+            raise ValueError(
+                f"function_render_binding_target_literal_missing:{parameter_name}"
+            )
+    rendered_xml = ET.tostring(root, encoding="unicode")
+    return Observation(
+        xml=rendered_xml,
+        package_name=state.package_name,
+        activity_name=state.activity_name,
+        image_base64=state.image_base64,
+        extra=dict(state.extra),
+    )
+
+
+def _render_binding_parameter_name(binding: dict[str, Any]) -> str:
+    source_match = _SOURCE_PATH.fullmatch(str(binding.get("source") or ""))
+    if source_match is None:
+        raise ValueError("function_render_binding_source_invalid")
+    tokens = _tokens(".arguments" + source_match.group("tail"))
+    parameter_name = str(tokens[-1]) if tokens else ""
+    if not parameter_name:
+        raise ValueError("function_render_binding_source_invalid")
+    return parameter_name
 
 
 def _tokens(tail: str) -> list[str | int]:

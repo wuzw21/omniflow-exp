@@ -23,6 +23,10 @@ from omniflow.core.model import (
     StepResult,
     TransferResult,
 )
+from omniflow.functions.artifact import (
+    render_bound_source_state,
+    render_bound_target_state,
+)
 from omniflow.runtime.checker import (
     checker_rule_action,
     checker_rule_matches,
@@ -35,7 +39,7 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
-from omniflow.transfer.admission import assess_transfer
+from omniflow.transfer.errors import record_transfer_error
 from omniflow.transfer.runtime import (
     transfer_action,
 )
@@ -47,6 +51,7 @@ _OBSERVATION_READY_MAX_ATTEMPTS = 20
 _CHECKER_RECOVERY_MAX_ATTEMPTS = 8
 _ACTION_EFFECT_MAX_ITEMS = 8
 _ACTION_EFFECT_VALUE_MAX_CHARS = 160
+_SWIPE_CONTAINER_EDGE_TOLERANCE_PX = 1.0
 StateLoader = Callable[[str], Any]
 
 
@@ -83,6 +88,25 @@ async def execute_function(
             function_step.source_state_id,
             state_loader=state_loader,
         )
+        try:
+            source_state = render_bound_source_state(
+                source_state or Observation(),
+                function.render_bindings,
+                step_index=function_step.step_index,
+            )
+        except ValueError as error:
+            return RunResult(
+                False,
+                function.id,
+                executed,
+                error=f"function_render_binding_failed:{error}",
+                final_state=current,
+                detail={
+                    "trace": trace,
+                    "failed_step_index": function_step.step_index,
+                    "next_step_index": function_step.step_index,
+                },
+            )
         for checker_phase in ("pre_transfer", "pre_action"):
             checker_steps = await _run_shared_checker_phase(
                 checker_phase,
@@ -120,11 +144,21 @@ async def execute_function(
                             "next_step_index": function_step.step_index,
                         },
                     )
+        transfer_plugins = plugins
+        if function.render_bindings and plugins.transfer is not None:
+            transfer_plugins = replace(
+                plugins,
+                transfer=_render_target_before_transfer(
+                    plugins.transfer,
+                    function.render_bindings,
+                    step_index=function_step.step_index,
+                ),
+            )
         step = await execute_robust_action(
             action,
             observation=current,
             host=host,
-            plugins=plugins,
+            plugins=transfer_plugins,
             function=function,
             source_state=source_state,
             installed_packages=installed_packages,
@@ -210,6 +244,38 @@ async def execute_function(
             ),
         },
     )
+
+
+def _render_target_before_transfer(
+    transfer: Callable[..., Any],
+    render_bindings: tuple[dict[str, Any], ...],
+    *,
+    step_index: int,
+) -> Callable[..., Any]:
+    async def render_target(
+        action: Action,
+        target: Observation,
+        source: Observation | None,
+    ) -> TransferResult:
+        try:
+            rendered_target = render_bound_target_state(
+                target,
+                render_bindings,
+                step_index=step_index,
+            )
+        except ValueError as error:
+            return TransferResult(
+                None,
+                reason=f"function_render_target_binding_failed:{error}",
+            )
+        result = await _await(transfer(action, rendered_target, source))
+        return (
+            result
+            if isinstance(result, TransferResult)
+            else TransferResult(None, reason="transfer_result_invalid")
+        )
+
+    return render_target
 
 
 async def execute_robust_action(
@@ -852,6 +918,30 @@ def default_transfer(
     observation: Observation,
     source_state: Observation | None = None,
 ) -> TransferResult:
+    """Transfer an action and record failed page pairs in the shared pool.
+
+    The matcher may reject a candidate, but that rejection is still evidence
+    about a concrete source page and target page.  Record it at this single
+    runtime boundary so fail-closed fallbacks keep their original return shape
+    and the Planner never receives page-pair diagnostics.
+    """
+
+    result = _default_transfer_impl(action, observation, source_state)
+    if result.action is None:
+        record_transfer_error(
+            action=action,
+            result=result,
+            source_page=source_state,
+            target_page=observation,
+        )
+    return result
+
+
+def _default_transfer_impl(
+    action: Action,
+    observation: Observation,
+    source_state: Observation | None = None,
+) -> TransferResult:
     if action.tool == "swipe" and all(
         action.args.get(key) is not None for key in ("x1", "y1", "x2", "y2")
     ):
@@ -921,18 +1011,6 @@ def default_transfer(
             None,
             reason="omnitransfer_invalid_root_candidate",
             detail=_transfer_detail(result),
-        )
-    transfer_detail = _transfer_detail(result)
-    mapped_transfer = TransferResult(
-        Action(action.tool, {}),
-        reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
-        detail=transfer_detail,
-    )
-    admission = assess_transfer(mapped_transfer)
-    if not admission.accepted:
-        return _recoverable_transfer_failure(
-            admission.reason or "omnitransfer_low_confidence",
-            transfer_detail,
         )
     try:
         target_x = float(result["new_x"])
@@ -1031,17 +1109,6 @@ def _transfer_swipe(
             reason=f"omnitransfer_{reason}",
             detail=detail,
         )
-    container_transfer = TransferResult(
-        Action(action.tool, {}),
-        reason=str(result.get("mapping_mode") or "omnitransfer_mapped"),
-        detail=detail,
-    )
-    container_admission = assess_transfer(container_transfer)
-    if not container_admission.accepted:
-        return _recoverable_transfer_failure(
-            container_admission.reason or "omnitransfer_low_confidence",
-            detail,
-        )
     target_container = _mapped_swipe_container(target_xml, result)
     if target_container is None:
         return _recoverable_transfer_failure(
@@ -1060,11 +1127,22 @@ def _transfer_swipe(
         offset_y = (source_point[1] - source_bounds[1]) / (
             source_bounds[3] - source_bounds[1]
         )
-        if not all(0.0 <= value <= 1.0 for value in (offset_x, offset_y)):
+        tolerance_x = _SWIPE_CONTAINER_EDGE_TOLERANCE_PX / max(
+            1.0, source_bounds[2] - source_bounds[0]
+        )
+        tolerance_y = _SWIPE_CONTAINER_EDGE_TOLERANCE_PX / max(
+            1.0, source_bounds[3] - source_bounds[1]
+        )
+        if not (
+            -tolerance_x <= offset_x <= 1.0 + tolerance_x
+            and -tolerance_y <= offset_y <= 1.0 + tolerance_y
+        ):
             return _recoverable_transfer_failure(
                 "omnitransfer_swipe_source_point_outside_container",
                 detail,
             )
+        offset_x = min(1.0, max(0.0, offset_x))
+        offset_y = min(1.0, max(0.0, offset_y))
         target_x = target_bounds[0] + offset_x * (
             target_bounds[2] - target_bounds[0]
         )
@@ -1127,7 +1205,14 @@ def _swipe_container(
         if str(element.attrib.get("enabled", "true")).lower() == "false":
             continue
         bounds = _bounds(element.attrib.get("bounds"))
-        if bounds is None or not all(_point_in_bounds(point, bounds) for point in points):
+        if bounds is None or not all(
+            _point_in_bounds(
+                point,
+                bounds,
+                tolerance=_SWIPE_CONTAINER_EDGE_TOLERANCE_PX,
+            )
+            for point in points
+        ):
             continue
         resource_id = str(element.attrib.get("resource-id") or "").strip()
         node_id = str(element.attrib.get("id") or "").strip()
@@ -1176,7 +1261,15 @@ def _mapped_swipe_container(
         return None
     candidates: list[dict[str, Any]] = []
     for element in root.iter():
-        if str(element.attrib.get("scrollable") or "").lower() != "true":
+        class_name = str(element.attrib.get("class") or element.tag)
+        short_class_name = class_name.rsplit(".", 1)[-1].lower()
+        is_draggable_control = (
+            short_class_name.endswith("seekbar") or short_class_name == "slider"
+        )
+        if (
+            str(element.attrib.get("scrollable") or "").lower() != "true"
+            and not is_draggable_control
+        ):
             continue
         if str(element.attrib.get("enabled", "true")).lower() == "false":
             continue
@@ -1184,13 +1277,13 @@ def _mapped_swipe_container(
         if bounds is None:
             continue
         numeric_bounds = tuple(float(value) for value in bounds)
-        resource_id = str(element.attrib.get("resource-id") or "").strip()
-        node_id = str(element.attrib.get("id") or "").strip()
-        identifiers = {resource_id, resource_id.rsplit("/", 1)[-1], node_id} - {""}
         bounds_match = all(
             abs(left - right) <= 1.0
             for left, right in zip(numeric_bounds, target_bounds, strict=True)
         )
+        resource_id = str(element.attrib.get("resource-id") or "").strip()
+        node_id = str(element.attrib.get("id") or "").strip()
+        identifiers = {resource_id, resource_id.rsplit("/", 1)[-1], node_id} - {""}
         if not bounds_match and not target_ids.intersection(identifiers):
             continue
         candidates.append(
@@ -1199,7 +1292,7 @@ def _mapped_swipe_container(
                 "element_id": resource_id or node_id,
                 "resource_id": resource_id,
                 "node_id": node_id,
-                "class": str(element.attrib.get("class") or element.tag),
+                "class": class_name,
             }
         )
     return min(
@@ -1216,8 +1309,13 @@ def _mapped_swipe_container(
 def _point_in_bounds(
     point: tuple[float, float],
     bounds: tuple[int, int, int, int],
+    *,
+    tolerance: float = 0.0,
 ) -> bool:
-    return bounds[0] <= point[0] <= bounds[2] and bounds[1] <= point[1] <= bounds[3]
+    return (
+        bounds[0] - tolerance <= point[0] <= bounds[2] + tolerance
+        and bounds[1] - tolerance <= point[1] <= bounds[3] + tolerance
+    )
 
 
 def _mapped_swipe_preserves_gesture(

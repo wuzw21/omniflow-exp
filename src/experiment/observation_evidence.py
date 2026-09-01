@@ -16,6 +16,7 @@ from omniflow.core.trajectory import (
     OMNIFLOW_RUN_LOG_SCHEMA_VERSION,
     canonicalize_androidworld_action,
     canonicalize_run_log,
+    observation_display,
     observation_xml,
     state_id,
 )
@@ -28,6 +29,11 @@ _ANDROIDWORLD_ACTION_FIELDS = (
     "index",
     "x",
     "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "duration_ms",
     "text",
     "direction",
     "app_name",
@@ -259,8 +265,17 @@ class AndroidWorldEpisodeRecorder:
     ) -> Any:
         if not self._active or self._recording_action:
             return execute()
+        if _is_coordinate_swipe(action):
+            if self._latest_observation is None:
+                self._capture_state_with_retry(self._get_state(), (), {})
+            canonical_action = _host_swipe_action_dict(
+                action,
+                self._latest_observation,
+            )
+        else:
+            canonical_action = androidworld_json_action_dict(project(action))
         return self._record_action(
-            androidworld_json_action_dict(project(action)),
+            canonical_action,
             execute,
             after_observation=after_observation,
         )
@@ -410,6 +425,40 @@ def androidworld_json_action_dict(value: Any) -> dict[str, Any]:
         for key, item in raw.items()
         if key in _ANDROIDWORLD_ACTION_FIELDS and item is not None
     }
+    return canonicalize_androidworld_action(action)
+
+
+def _is_coordinate_swipe(value: Any) -> bool:
+    tool = str(getattr(value, "tool", "") or "").strip().lower()
+    args = getattr(value, "args", None)
+    return tool == "swipe" and isinstance(args, dict) and all(
+        args.get(key) is not None for key in ("x1", "y1", "x2", "y2")
+    )
+
+
+def _host_swipe_action_dict(
+    value: Any,
+    observation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(observation, dict):
+        raise ValueError("androidworld_swipe_observation_required")
+    display = observation_display(observation)
+    if display is None:
+        raise ValueError("androidworld_swipe_display_required")
+    width, height = display
+    args = getattr(value, "args", {})
+    action: dict[str, Any] = {
+        "action_type": "swipe",
+        "x1": float(args["x1"]) / 1000.0 * width,
+        "y1": float(args["y1"]) / 1000.0 * height,
+        "x2": float(args["x2"]) / 1000.0 * width,
+        "y2": float(args["y2"]) / 1000.0 * height,
+    }
+    direction = str(args.get("direction") or "").strip().lower()
+    if direction in {"left", "right", "up", "down"}:
+        action["direction"] = direction
+    if args.get("duration_ms") is not None:
+        action["duration_ms"] = int(args["duration_ms"])
     return canonicalize_androidworld_action(action)
 
 

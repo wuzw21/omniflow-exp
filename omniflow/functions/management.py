@@ -65,7 +65,11 @@ def edit_function(
                 continue
             action["args"] = canonical["args"]
             changes.append(_change("replace_args", index, tool, edit.get("reason")))
-    if deletes and (len(deletes) >= len(steps) or updated["bindings"]):
+    if deletes and (
+        len(deletes) >= len(steps)
+        or updated["bindings"]
+        or updated.get("render_bindings")
+    ):
         deletes.clear()
     for index in sorted(deletes, reverse=True):
         tool = steps[index]["action"]["tool"]

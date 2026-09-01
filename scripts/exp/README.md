@@ -1,5 +1,10 @@
 # AndroidWorld launcher
 
+论文评测的冻结合同见
+[`docs/PAPER_FREEZE.md`](../../docs/PAPER_FREEZE.md)。本入口只负责把显式的
+task、method、device、source RunLog 和 Memory 交给既有主线；不会从历史目录
+猜测或选择实验资产。
+
 `run_androidworld.sh` 是唯一公开入口。它只把参数原样交给
 `src.experiment.run_tasks`；不保存调度文件，也不检查 seed、模型、endpoint、路径、
 磁盘、依赖、AVD 或已完成结果。
@@ -22,6 +27,11 @@ bash scripts/exp/run_androidworld.sh run \
 复制的结果，统一包含 validator、物理动作、Function 复用、fallback、模型调用、token、
 execution/lifecycle 时间、Store、RunLog 和 SHA-256；三端并行时按实际完成顺序输出。
 
+Transfer 的每次失败会追加到统一的 `data/androidworld/transfer_errors.jsonl` 错误池，
+其中保存 source/target page pair、候选、分数和失败原因；错误池只用于审计，不会通过
+Transfer 返回值注入 Planner，也不会改变 fail-closed 和 VLM fallback 行为。并行设备共用
+同一文件；需要其他位置时只通过 `OMNIFLOW_TRANSFER_ERROR_POOL` 显式指定。
+
 `--method source --device source5560` 使用无 Memory 的 OmniFlow Planner、统一
 OOB 物理层和官方 validator，采集 seed-111 Source RunLog。
 
@@ -31,6 +41,12 @@ Memory 与直接执行是两个协议：
 
 - `convert-memory`：输入一份 source RunLog，输出一个或多个固定 Memory 地址；
 - `run`：输入 task、method、device 和 Memory 地址，直接执行一次实验。
+
+AutoDroid 的 `convert-memory` 是 Memory Build-only 入口，不是当前正式 E2E method：它还
+需要调用者显式提供一份已收集的 AutoDroid UTG，并按原生格式生成
+`node_filtered_elements.json`、`element_description.json`、
+`embedded_elements_desc.json` 和 `app_state_summary.json`。Source RunLog 只用于 app
+身份、SHA-256 和路径覆盖审计，成功动作不会被复制进 Memory。
 
 如果 `convert-memory` 的目标地址已经存在，入口只在该地址通过 source RunLog、task、
 模型和文件哈希校验时复用它；不会再次调用官方 authoring 模型。校验失败需要人工
@@ -58,6 +74,24 @@ bash scripts/exp/run_androidworld.sh run \
 要用一份 source RunLog 生成并运行需要 Memory 的三个方法，使用 `--method all` 和同一个
 Memory root。转换输出固定为 `omniflow/store.json`、`mobilegpt/memory/`、`appagent/`；
 `fixed_replay` 与 `t3a_hint` 仍直接读取单一 source RunLog。
+
+例如，使用已有 camera UTG 构建 AutoDroid 原生 Memory：
+
+```bash
+bash scripts/exp/run_androidworld.sh convert-memory \
+  --task CameraTakePhoto --method autodroid \
+  --source-run-log data/androidworld/CameraTakePhoto/source/OmniFlowSourceSmall_seed111/runlog/current/run_log.json \
+  --autodroid-utg vendor/autodroid/androidworld_apps/runs/camera \
+  --memory data/androidworld/CameraTakePhoto/autodroid/OmniFlowSourceSmall_seed111/memory/attempt_001
+```
+
+如果官方 AutoDroid checkout 已提供发布好的 native memory 表，可额外传入
+`--autodroid-official-memory` 和明确的 `--autodroid-official-app`；入口只抽取该 app
+条目，Source RunLog 仍只作为 provenance，不会注入 source action。
+
+同一 app 已完成原生 Memory 时，可显式传入 `--autodroid-source-memory` 复用该 app
+的四张 native 表；入口只更新当前任务的 Source provenance，仍不会复制或重放
+Source action。
 
 五个正式 AndroidWorld 方法只在各自定义的执行输入上不同。Memory
 就绪后都进入同一条

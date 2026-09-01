@@ -14,14 +14,16 @@ import tempfile
 import time
 from typing import Any, Sequence
 
-from src.experiment.function_v2 import compile_function_v2, write_function_review
-from src.experiment.appagent_source import convert_runlog_to_appagent_memory
-from src.experiment.paths import relative_reference, resolve_path, sha256_file
 from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
     canonical_method_name,
 )
+from src.experiment.appagent_source import convert_runlog_to_appagent_memory
+from src.experiment.function_v2 import compile_function_v2, write_function_review
+from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
+from src.experiment.paths import relative_reference, resolve_path, sha256_file
 from src.experiment.protocol import (
+    AUTODROID_MEMORY_METHOD,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
     DEFAULT_TASK,
@@ -29,39 +31,74 @@ from src.experiment.protocol import (
     DEVICES,
     ENABLED_METHODS,
     FORMAL_MODEL,
-    FORMAL_MODEL_BASE_URL,
-    FORMAL_MODEL_ENDPOINT_PROFILE,
-    MAX_FALLBACK_STEPS,
-    MAX_STEPS,
     METHODS,
     SOURCE_DEVICE,
     SOURCE_METHOD,
     SOURCE_SEED,
     TASK_DEADLINE_SEC,
     TASK_SEED,
+    omniflow_base_url,
+    omniflow_endpoint_profile,
+    omniflow_model,
     require_formal_model,
+    require_runtime_model,
 )
-from src.integrations.mobilegpt import convert_runlog_to_mobilegpt_bundle
-from src.integrations.mobilegpt import validate_prepared_memory
-from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 from src.integrations.appagent import validate_appagent_memory
+from src.integrations.autodroid_memory import (
+    convert_runlog_to_autodroid_memory,
+    materialize_autodroid_memory_bundle,
+    materialize_official_autodroid_memory,
+    validate_autodroid_memory,
+)
+from src.integrations.mobilegpt import (
+    convert_runlog_to_mobilegpt_bundle,
+    validate_prepared_memory,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _experimental_omniflow_enabled(method: str) -> bool:
+    """Return whether this explicit run is an isolated OmniFlow experiment."""
+
+    return (
+        str(method or "").strip() == "omniflow"
+        and bool(str(os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or "").strip())
+    )
 
 
 def _methods(value: str) -> tuple[str, ...]:
     if not value or value == "all":
         return ENABLED_METHODS
     selected = tuple(item.strip() for item in value.split(",") if item.strip())
+    # AutoDroid is a supplemental Memory-method experiment.  Keep it
+    # addressable through the unified launcher without changing the five
+    # formal AndroidWorld method cells in the protocol configuration.
+    if selected == (AUTODROID_MEMORY_METHOD,):
+        return selected
     unknown = tuple(
-        item for item in selected if item not in (*METHODS, SOURCE_METHOD)
+        item
+        for item in selected
+        if item not in (*METHODS, SOURCE_METHOD, AUTODROID_MEMORY_METHOD)
     )
     if unknown:
         raise ValueError("unknown_method:" + ",".join(unknown))
-    disabled = tuple(item for item in selected if item not in (*ENABLED_METHODS, SOURCE_METHOD))
+    disabled = tuple(
+        item
+        for item in selected
+        if item not in (*ENABLED_METHODS, SOURCE_METHOD, AUTODROID_MEMORY_METHOD)
+    )
     if disabled:
         raise ValueError("method_not_enabled:" + ",".join(disabled))
     return selected
+
+
+def _memory_methods(value: str) -> tuple[str, ...]:
+    """Resolve conversion methods, including AutoDroid's prep-only method."""
+
+    if value == AUTODROID_MEMORY_METHOD:
+        return (AUTODROID_MEMORY_METHOD,)
+    return _methods(value)
 
 
 def _devices(value: str) -> tuple[tuple[str, str, int], ...]:
@@ -136,6 +173,8 @@ def _method_memory_path(memory_root: str | Path, method: str) -> Path:
         return root / "mobilegpt" / "memory"
     if method == "appagent":
         return root / "appagent"
+    if method == AUTODROID_MEMORY_METHOD:
+        return root / "autodroid"
     raise ValueError(f"method_has_no_memory_input:{method}")
 
 
@@ -145,6 +184,7 @@ def _golden_run_root(
     task: str,
     method: str,
     device: tuple[str, str, int],
+    evaluation_seed: int = TASK_SEED,
 ) -> Path:
     """Return the one stable result directory for a task setting.
 
@@ -163,14 +203,14 @@ def _golden_run_root(
             serial=serial,
             console_port=console_port,
             source_seed=SOURCE_SEED,
-            evaluation_seed=TASK_SEED,
+            evaluation_seed=int(evaluation_seed),
         )
         / "runlog"
         / "current"
     )
 
 
-def _run_quality(path: Path) -> tuple[int, int, int, int, int, int] | None:
+def _run_quality(path: Path) -> tuple[int, int, int, int, int, int, int] | None:
     """Score one sealed run without using history selection or a registry."""
 
     run_log_path = path / "run_log.json"
@@ -189,6 +229,7 @@ def _run_quality(path: Path) -> tuple[int, int, int, int, int, int] | None:
         execution = {}
     official = int(isinstance(validator, dict) and validator.get("official") is True)
     succeeded = int(payload.get("status") == "succeeded" and payload.get("success") is True)
+    evidence_complete = int(_run_has_executable_swipe_evidence(payload))
     fallback_steps = int(execution.get("fallback_steps") or 0)
     model_calls = int(execution.get("model_calls") or 0)
     clean_execution = int(not str(execution.get("failure_reason") or "").strip())
@@ -212,11 +253,42 @@ def _run_quality(path: Path) -> tuple[int, int, int, int, int, int] | None:
     return (
         official,
         succeeded,
+        evidence_complete,
         clean_execution,
         protocol_finished,
         -fallback_steps,
         -model_calls,
     )
+
+
+def _run_has_executable_swipe_evidence(payload: dict[str, Any]) -> bool:
+    """Require physical endpoints for every persisted swipe action."""
+
+    steps = payload.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        action = step.get("action")
+        if not isinstance(action, dict):
+            continue
+        if action.get("action_type") not in {"scroll", "swipe"}:
+            continue
+        if not all(action.get(key) is not None for key in ("x1", "y1", "x2", "y2")):
+            return False
+    return True
+
+
+def _golden_run_is_complete(path: Path) -> bool:
+    """Return whether the canonical slot already contains official success.
+
+    This is an execution guard, not a result selector: the caller already
+    resolved one exact task/method/device path.  A completed activity must not
+    be launched again merely because the batch command was resumed.
+    """
+    quality = _run_quality(path)
+    return quality is not None and quality[:2] == (1, 1)
 
 
 def _promote_golden_run(
@@ -230,6 +302,8 @@ def _promote_golden_run(
     if candidate_quality is None or candidate_quality[:2] != (1, 1):
         return False
     current_quality = _run_quality(destination) if destination.is_dir() else None
+    if current_quality is not None and not _promoted_evidence_paths_valid(destination):
+        current_quality = None
     if current_quality is not None and candidate_quality <= current_quality:
         return False
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -237,10 +311,76 @@ def _promote_golden_run(
     if staging.exists():
         shutil.rmtree(staging)
     shutil.copytree(candidate, staging)
+    _relocate_promoted_evidence_paths(
+        staging,
+        source_root=candidate,
+        destination_root=destination,
+    )
     if destination.exists():
         shutil.rmtree(destination)
     staging.replace(destination)
     return True
+
+
+def _relocate_promoted_evidence_paths(
+    root: Path,
+    *,
+    source_root: Path,
+    destination_root: Path,
+) -> None:
+    source_prefix = str(source_root.resolve()) + "/"
+    destination_prefix = str(destination_root.resolve()) + "/"
+
+    def relocate(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith(source_prefix):
+            return destination_prefix + value[len(source_prefix):]
+        if isinstance(value, dict):
+            return {key: relocate(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [relocate(item) for item in value]
+        return value
+
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix not in {".json", ".jsonl"}:
+            continue
+        if path.suffix == ".jsonl":
+            lines = path.read_text(encoding="utf-8").splitlines()
+            payload = [relocate(json.loads(line)) for line in lines if line.strip()]
+            content = "".join(
+                json.dumps(item, ensure_ascii=False, default=str) + "\n"
+                for item in payload
+            )
+        else:
+            payload = relocate(json.loads(path.read_text(encoding="utf-8")))
+            content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        path.write_text(content, encoding="utf-8")
+
+
+def _promoted_evidence_paths_valid(root: Path) -> bool:
+    """Check persisted observation references before comparing run quality."""
+
+    for path in root.rglob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not _evidence_paths_valid(payload):
+            return False
+    return True
+
+
+def _evidence_paths_valid(value: Any, *, key: str = "") -> bool:
+    if isinstance(value, dict):
+        return all(
+            _evidence_paths_valid(item, key=str(field))
+            for field, item in value.items()
+        )
+    if isinstance(value, list):
+        return all(_evidence_paths_valid(item, key=key) for item in value)
+    if key not in {"path", "screenshot_path"} or not isinstance(value, str):
+        return True
+    candidate = Path(value).expanduser()
+    return not candidate.is_absolute() or candidate.is_file()
 
 
 def _archive_failed_run(
@@ -438,6 +578,22 @@ def _reuse_existing_memory(
             },
             memory,
         )
+    if method == AUTODROID_MEMORY_METHOD:
+        validated = validate_autodroid_memory(
+            memory_root,
+            source_run_log=source,
+            task_name=task_name,
+        )
+        return (
+            {
+                "method": method,
+                "task_name": task_name,
+                "memory_root": _relative_output(memory_root),
+                "manifest": validated,
+                "reused": True,
+            },
+            memory_root,
+        )
     if method == "omniflow":
         store = memory_root / "store.json"
         copied_source = memory_root / "run_log.json"
@@ -622,7 +778,7 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
     output = resolve_path(args.memory)
     output_preexisting = output.exists()
 
-    methods = _methods(args.method)
+    methods = _memory_methods(args.method)
     if not source.is_file():
         raise FileNotFoundError(f"source_run_log_missing:{source}")
     source_payload = json.loads(source.read_text(encoding="utf-8"))
@@ -668,9 +824,9 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
                     source,
                     method_output,
                     enhance=True,
-                    model=FORMAL_MODEL,
-                    model_endpoint_profile=FORMAL_MODEL_ENDPOINT_PROFILE,
-                    model_base_url=FORMAL_MODEL_BASE_URL,
+                    model=omniflow_model(),
+                    model_endpoint_profile=omniflow_endpoint_profile(),
+                    model_base_url=omniflow_base_url(),
                 )
                 memory = Path(str(report["store_path"]))
             elif method == "mobilegpt":
@@ -703,6 +859,49 @@ def _convert_memory(args: argparse.Namespace) -> dict[str, Any]:
                     memory_root=method_output,
                     model=FORMAL_MODEL,
                 )
+                memory = Path(str(report["memory_root"]))
+            elif method == AUTODROID_MEMORY_METHOD:
+                if not str(args.autodroid_utg or "").strip():
+                    raise ValueError("conversion_requires_autodroid_utg:autodroid")
+                utg_root = resolve_path(args.autodroid_utg)
+                if not utg_root.is_dir():
+                    raise FileNotFoundError(
+                        f"conversion_dependency_missing:autodroid_utg:{args.autodroid_utg}"
+                    )
+                if str(args.autodroid_official_memory or "").strip():
+                    official_root = resolve_path(args.autodroid_official_memory)
+                    if not official_root.is_dir():
+                        raise FileNotFoundError(
+                            "conversion_dependency_missing:autodroid_official_memory:"
+                            f"{args.autodroid_official_memory}"
+                        )
+                    app_key = str(args.autodroid_official_app or "").strip()
+                    if not app_key:
+                        raise ValueError(
+                            "conversion_requires_autodroid_official_app:autodroid"
+                        )
+                    report = materialize_official_autodroid_memory(
+                        source_run_log=source,
+                        utg_root=utg_root,
+                        official_memory_root=official_root,
+                        memory_root=method_output,
+                        official_app_key=app_key,
+                    )
+                elif str(args.autodroid_source_memory or "").strip():
+                    source_memory = resolve_path(args.autodroid_source_memory)
+                    report = materialize_autodroid_memory_bundle(
+                        source_memory_root=source_memory,
+                        source_run_log=source,
+                        utg_root=utg_root,
+                        memory_root=method_output,
+                    )
+                else:
+                    report = convert_runlog_to_autodroid_memory(
+                        source_run_log=source,
+                        utg_root=utg_root,
+                        memory_root=method_output,
+                        model=FORMAL_MODEL,
+                    )
                 memory = Path(str(report["memory_root"]))
             else:
                 raise ValueError(f"unknown_conversion_method:{method}")
@@ -740,6 +939,14 @@ def _run_command(
     temporary_root: Path,
 ) -> tuple[str, str, int]:
     label, serial, port = device
+    experimental = _experimental_omniflow_enabled(method)
+    destination = _golden_run_root(
+        args.output,
+        task=args.task,
+        method=method,
+        device=device,
+        evaluation_seed=int(args.evaluation_seed or TASK_SEED),
+    )
     command = [
         sys.executable,
         "-m",
@@ -774,9 +981,11 @@ def _run_command(
         )
     if args.source_run_log:
         command.extend(("--source-run-log", args.source_run_log))
+    if args.evaluation_seed is not None:
+        command.extend(("--evaluation-seed", str(int(args.evaluation_seed))))
     if args.memory:
         if args.method == "all":
-            if method in {"omniflow", "mobilegpt", "appagent"}:
+            if method in {"omniflow", "mobilegpt", "appagent", AUTODROID_MEMORY_METHOD}:
                 command.extend(("--memory", str(_method_memory_path(args.memory, method))))
         else:
             command.extend(("--memory", args.memory))
@@ -809,17 +1018,30 @@ def _run_command(
     # truthful protocol_probe/task_results evidence; preserve it instead of
     # deleting the only explanation with the temporary workspace.
     matches = _candidate_run_directories(candidate)
+    effective_returncode = completed.returncode
     if completed.returncode == 0 and len(matches) == 1:
-        promoted = _promote_golden_run(
-            candidate=matches[0],
-            destination=_golden_run_root(
-                args.output,
+        candidate_quality = _run_quality(matches[0])
+        if candidate_quality is None or candidate_quality[:2] != (1, 1):
+            # AndroidWorld can finish its Python lifecycle with return code 0
+            # even when the official validator returns 0/1.  Propagate that
+            # authoritative result to the unified launcher so monitoring and
+            # retry logic cannot misclassify a validator failure as success.
+            effective_returncode = 1
+        if experimental:
+            _archive_failed_run(
+                candidate=matches[0],
+                output_root=args.output,
                 task=args.task,
                 method=method,
                 device=device,
-            ),
-        )
-        if not promoted:
+                archive_kind="experimental_gpt55",
+            )
+        else:
+            promoted = _promote_golden_run(
+                candidate=matches[0],
+                destination=destination,
+            )
+        if not experimental and not promoted:
             _archive_failed_run(
                 candidate=matches[0],
                 output_root=args.output,
@@ -878,7 +1100,7 @@ def _run_command(
                 method=method,
                 device=device,
             )
-    return method, label, completed.returncode
+    return method, label, effective_returncode
 
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:
@@ -894,12 +1116,15 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "devices": [item[0] for item in devices],
             "memory": args.memory or None,
             "source_run_log": args.source_run_log or None,
+            "evaluation_seed": args.evaluation_seed,
         }
     if len(methods) > 1:
         if not args.source_run_log:
             raise ValueError("multi_method_run_requires_one_source_run_log")
         required_memory_methods = {
-            method for method in methods if method in {"omniflow", "mobilegpt", "appagent"}
+            method
+            for method in methods
+            if method in {"omniflow", "mobilegpt", "appagent", AUTODROID_MEMORY_METHOD}
         }
         if required_memory_methods and not args.memory:
             raise ValueError("multi_method_run_requires_one_memory_root")
@@ -958,6 +1183,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--memory", default="")
     parser.add_argument("--source-run-log", default="")
+    parser.add_argument(
+        "--evaluation-seed",
+        type=int,
+        default=None,
+        help="Optional target task seed for an independent repeat; defaults to protocol seed.",
+    )
+    parser.add_argument(
+        "--autodroid-utg",
+        default="",
+        help="Explicit collected AutoDroid UTG root used by conversion-only Memory Build.",
+    )
+    parser.add_argument(
+        "--autodroid-official-memory",
+        default="",
+        help="Optional official AutoDroid native-memory root to materialize exactly.",
+    )
+    parser.add_argument(
+        "--autodroid-official-app",
+        default="",
+        help="Explicit app key in --autodroid-official-memory.",
+    )
+    parser.add_argument(
+        "--autodroid-source-memory",
+        default="",
+        help="Explicit completed app Memory bundle to reuse for this task.",
+    )
     parser.add_argument("--output", default="data/androidworld")
     parser.add_argument(
         "--mobilegpt-root",
@@ -977,13 +1228,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    require_formal_model()
+    if args.method == "omniflow":
+        require_runtime_model("omniflow", omniflow_model())
+    else:
+        require_formal_model()
     if args.action == "convert-memory":
         if not args.source_run_log or not args.memory:
             raise ValueError("convert-memory requires --source-run-log and --memory")
-        if args.method != "all" and args.method not in METHODS:
+        if args.method != "all" and args.method not in (*METHODS, AUTODROID_MEMORY_METHOD):
             raise ValueError(f"unknown_method:{args.method}")
-        selected_methods = _methods(args.method)
+        selected_methods = _memory_methods(args.method)
         result = (
             {
                 "action": "convert-memory",

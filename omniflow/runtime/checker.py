@@ -220,7 +220,6 @@ def checker_rule_matches(
             source_package
             and current_package
             and source_package != current_package
-            and not is_transient_package(source_package)
             and not is_transient_package(current_package)
         )
     if kind == "keyboard_obscuring":
@@ -248,11 +247,21 @@ def checker_rule_matches(
             )
         if not keyboard_visible:
             return False
-        # Hiding the IME proactively can change the meaning of a later Back
-        # action.  The shared recovery is therefore admitted only after this
-        # exact action has failed Transfer; the action is then retried with
-        # the same semantics.
-        return bool(transfer_failed)
+        # This rule is scoped to contextual actions in the shared Store.  Hide
+        # the IME before the first Transfer attempt so the mapper can see the
+        # focused app field instead of treating Gboard nodes as the target.
+        # Keep the transfer_failed argument for compatibility with older
+        # callers, but do not require a failed mapping to discover this state.
+        return True
+    if kind == "xpath_exists":
+        source_package = _observation_package(source)
+        current_package = _observation_package(current)
+        if (
+            source_package
+            and source_package == current_package
+            and is_transient_package(current_package)
+        ):
+            return False
     xpath = str(condition.get("xpath") or "")
     return bool(_xpath_nodes(str(getattr(current, "xml", "") or ""), xpath))
 
@@ -270,6 +279,17 @@ def checker_rule_action(
         package_name = str(specification.get("package_name") or "").strip()
         if not package_name and source is not None:
             package_name = _observation_package(source)
+        if package_name == "com.android.systemui":
+            return Action(
+                "swipe",
+                {
+                    "x1": 500,
+                    "y1": 0,
+                    "x2": 500,
+                    "y2": 1000,
+                    "duration_ms": 500,
+                },
+            )
         return Action("open_app", {"package_name": package_name}) if package_name else None
     if kind == "hide_keyboard":
         return Action("press_key", {"key": "back"})
@@ -384,12 +404,15 @@ def _normalize_library_action(value: Any) -> dict[str, Any]:
     if kind == "wait":
         result["wait_ms"] = int(value.get("wait_ms") or 0)
     if kind == "swipe":
+        coordinate_keys = ("x1", "y1", "x2", "y2")
+        if not all(value.get(key) is not None for key in coordinate_keys):
+            raise ValueError("checker_rule_swipe_coordinates_required")
         canonical = canonicalize_action(
             {
                 "tool": "swipe",
                 "args": {
                     key: value[key]
-                    for key in ("direction", "duration_ms")
+                    for key in (*coordinate_keys, "duration_ms")
                     if key in value
                 },
             },
@@ -411,7 +434,7 @@ def _scope_matches(
         "function_ids": function_id,
         "step_indexes": step_index,
         "action_types": action.tool,
-        "package_names": str(getattr(current, "package_name", "") or ""),
+        "package_names": _observation_package(current),
     }
     for name, actual in checks.items():
         expected = scope.get(name)
@@ -450,15 +473,25 @@ def _parse_bounds(value: Any) -> tuple[float, float, float, float] | None:
 def default_checker(context: CheckerContext) -> Action | None:
     if context.action.tool in {"open_app", "press_key"}:
         return None
-    source_package = str(context.source.package_name or "") if context.source else ""
-    current_package = str(context.current.package_name or "")
+    source_package = _observation_package(context.source)
+    current_package = _observation_package(context.current)
     if (
         source_package
         and current_package
         and source_package != current_package
-        and not is_transient_package(source_package)
         and not is_transient_package(current_package)
     ):
+        if source_package == "com.android.systemui":
+            return Action(
+                "swipe",
+                {
+                    "x1": 500,
+                    "y1": 0,
+                    "x2": 500,
+                    "y2": 1000,
+                    "duration_ms": 500,
+                },
+            )
         return Action("open_app", {"package_name": source_package})
     return _advertisement_recovery(context.current, context.action)
 
@@ -471,7 +504,7 @@ def default_checker_trigger(
     context: CheckerContext,
     recovery_action: Action,
 ) -> str | None:
-    current_package = str(context.current.package_name or "").strip()
+    current_package = _observation_package(context.current)
     if recovery_action.tool == "open_app" and current_package:
         return f"package_is({json.dumps(current_package, ensure_ascii=False)})"
     if recovery_action.tool != "click":
@@ -791,7 +824,7 @@ def _observation_package(observation: Any | None) -> str:
     counts: dict[str, int] = {}
     for node in root.iter():
         package = _normalize(node.attrib.get("package"))
-        if not package or package == "com.android.systemui":
+        if not package:
             continue
         counts[package] = counts.get(package, 0) + 1
     return max(counts, key=counts.get) if counts else ""

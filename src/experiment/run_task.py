@@ -26,7 +26,6 @@ if str(REPO_ROOT) not in sys.path:
 from omniflow.core.trajectory import (
     canonicalize_run_log,
 )
-from omniflow.transfer.admission import MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE
 from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
     canonical_method_name,
@@ -49,6 +48,7 @@ from src.experiment.paths import (
 from src.experiment.protocol import (
     ANDROIDWORLD_REVISION,
     APPAGENT_MODEL,
+    AUTODROID_MEMORY_METHOD,
     FORMAL_THINKING,
     DEFAULT_DEVICE,
     DEFAULT_METHOD,
@@ -67,17 +67,23 @@ from src.experiment.protocol import (
     MAX_STEPS,
     METHODS,
     PLANNER_TIMEOUT_SEC,
+    SOURCE_MAX_STEPS,
     SOURCE_METHOD,
     SOURCE_DEVICE,
     SOURCE_SEED,
     TASK_DEADLINE_SEC,
     TASK_SEED,
+    omniflow_base_url,
+    omniflow_endpoint_profile,
+    omniflow_model,
+    require_runtime_model,
     require_formal_model,
 )
 from src.experiment.run_process import run_process, start_process, stop_process
 from src.experiment.source_records import CanonicalRunLog, SourceRunLogProfile
 from src.integrations import mobilegpt_memory
 from src.integrations.android_world.apps import resolve_androidworld_package
+from src.integrations.autodroid_memory import validate_autodroid_memory
 
 DEFAULT_ANDROID_WORLD_ROOT = Path(
     os.environ.get("OMNIFLOW_ANDROID_WORLD_ROOT")
@@ -142,30 +148,6 @@ def _replay_step_budget(
     return min(max(1, int(maximum)), recorded_steps + 10)
 
 
-def _infer_source_run_log_from_memory(
-    memory: str | Path,
-) -> Path | None:
-    """Recover the sibling source RunLog for a Memory-only ``run`` call."""
-
-    supplied = Path(memory).expanduser()
-    candidates = [
-        supplied.parent / "run_log.json",
-        supplied.parent.parent / "run_log.json",
-        # Official MobileGPT bundles expose the source evidence beside the
-        # native ``memory/`` directory.  Treat that explicit provenance file
-        # as the same source-parameter authority used by OmniFlow; otherwise
-        # a Memory-only MobileGPT run silently regenerates task parameters
-        # from evaluation seed 113.
-        supplied.parent / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
-        supplied.parent.parent / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
-        supplied / "provenance_mobilegpt_runlog_semantic_v1" / "source.run_log.json",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
-
-
 @dataclass(frozen=True)
 class CommandSpec:
     label: str
@@ -217,7 +199,7 @@ def _json_default(value: Any) -> Any:
     dataclasses (for example CalendarEvent, Expense, and Recipe).  They are
     valid task parameters but are not directly serializable by ``json``.
     Preserve their field structure instead of stringifying them so the target
-    task receives the same parameter values as the source run.
+    task receives the exact parameters generated for its evaluation seed.
     """
     if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
@@ -302,10 +284,20 @@ def _subprocess_env(
         env.get("LLMTHU_API_KEY") or ""
     ).strip():
         env["OPENAI_API_KEY"] = str(env["LLMTHU_API_KEY"])
-    # A stale shell endpoint is an experimental variable.  The formal
-    # protocol owns the provider seam for every AndroidWorld method.
-    env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
-    env["OPENAI_MODEL"] = FORMAL_MODEL
+    experimental_model = str(
+        env.get("OMNIFLOW_EXPERIMENTAL_MODEL") or ""
+    ).strip()
+    if experimental_model:
+        # Experimental OmniFlow calls still use the common OpenAI-compatible
+        # seam.  The explicit opt-in is inherited by the episode child, while
+        # the formal five-method protocol remains pinned to Qwen by default.
+        env["OPENAI_BASE_URL"] = omniflow_base_url()
+        env["OPENAI_MODEL"] = experimental_model
+        env["OMNIFLOW_PLANNER_MODEL"] = experimental_model
+        env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] = omniflow_endpoint_profile()
+    else:
+        env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+        env["OPENAI_MODEL"] = FORMAL_MODEL
     env["MOBILEGPT_CHAT_BASE_URL"] = FORMAL_MODEL_BASE_URL
     env["MOBILEGPT_EMBEDDING_BASE_URL"] = FORMAL_MODEL_BASE_URL
     env["MOBILEGPT_CHAT_MODEL"] = FORMAL_MODEL
@@ -322,11 +314,14 @@ def _subprocess_env(
         FORMAL_APPAGENT_EMPTY_RESPONSE_RETRIES
     )
     env["APPAGENT_RETRY_MAX_TOKENS"] = str(FORMAL_APPAGENT_RETRY_MAX_TOKENS)
-    env["OMNIFLOW_PLANNER_MODEL"] = FORMAL_MODEL
-    env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] = FORMAL_MODEL_ENDPOINT_PROFILE
-    env["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(PLANNER_TIMEOUT_SEC)
+    if not experimental_model:
+        env["OMNIFLOW_PLANNER_MODEL"] = FORMAL_MODEL
+        env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] = FORMAL_MODEL_ENDPOINT_PROFILE
+    if env.get("OMNIFLOW_ANDROIDWORLD_BASELINE") != "1":
+        env["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(PLANNER_TIMEOUT_SEC)
     env["OMNIFLOW_ANDROIDWORLD_LLM_MAX_TOKENS"] = str(FORMAL_MAX_TOKENS)
-    env["OMNIFLOW_OPENAI_TIMEOUT_SEC"] = str(FORMAL_REQUEST_TIMEOUT_SEC)
+    if env.get("OMNIFLOW_ANDROIDWORLD_BASELINE") != "1":
+        env["OMNIFLOW_OPENAI_TIMEOUT_SEC"] = str(FORMAL_REQUEST_TIMEOUT_SEC)
     env["OMNIFLOW_OPENAI_RETRY_WAIT_SECONDS"] = str(FORMAL_RETRY_WAIT_SEC)
     env.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
     return env
@@ -381,6 +376,7 @@ def _experiment_run_dir(
     device: str = "",
     serial: str = "",
     console_port: int | None = None,
+    evaluation_seed: int = TASK_SEED,
     attempt_id: str = "",
     repo_root: Path = REPO_ROOT,
 ) -> Path:
@@ -393,7 +389,7 @@ def _experiment_run_dir(
             serial=serial,
             console_port=console_port,
             source_seed=SOURCE_SEED,
-            evaluation_seed=TASK_SEED,
+            evaluation_seed=int(evaluation_seed),
         )
     )
     batch_attempt = str(
@@ -910,7 +906,10 @@ def build_replay_command(
         dict(task_params_override) if task_params_override is not None else item.params
     )
     params_json = json.dumps(
-        effective_params, ensure_ascii=False, separators=(",", ":")
+        effective_params,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=_json_default,
     )
     raw_replay_result = resolved_output / "raw_replay_result.json"
     env = {
@@ -1037,6 +1036,11 @@ def build_official_command(
         device=resolved_device,
         serial=serial,
         console_port=console_port,
+        evaluation_seed=(
+            int(task_random_seed)
+            if task_random_seed is not None
+            else TASK_SEED
+        ),
         repo_root=repo_root,
     )
     resolved_output = _next_attempt(setting_root, "runlog")
@@ -1074,6 +1078,7 @@ def build_official_command(
             effective_params,
             ensure_ascii=False,
             separators=(",", ":"),
+            default=_json_default,
         )
         argv.extend(["--task-params-json", params_json])
     if fixed_task_seed:
@@ -1162,6 +1167,7 @@ def build_task_command(
     model: str = "",
     planner_timeout_sec: float | None = None,
     store_path: str | Path | None = None,
+    autodroid_memory_root: str | Path | None = None,
     omnitransfer_root: str | Path | None = None,
     python_executable: str = sys.executable,
     repo_root: Path = REPO_ROOT,
@@ -1186,6 +1192,11 @@ def build_task_command(
         device=resolved_device,
         serial=serial,
         console_port=console_port,
+        evaluation_seed=(
+            int(task_random_seed)
+            if task_random_seed is not None
+            else TASK_SEED
+        ),
         repo_root=repo_root,
     )
     resolved_output = _next_attempt(setting_root, "runlog")
@@ -1197,6 +1208,11 @@ def build_task_command(
     resolved_store_path = (
         resolve_path(store_path, root=repo_root)
         if store_path
+        else None
+    )
+    resolved_autodroid_memory_root = (
+        resolve_path(autodroid_memory_root, root=repo_root)
+        if autodroid_memory_root
         else None
     )
     resolved_task_seed = int(
@@ -1213,10 +1229,17 @@ def build_task_command(
     env: dict[str, str] = {}
     if serial.strip():
         env["ANDROID_SERIAL"] = serial.strip()
+    baseline_without_functions = resolved_agent == "omniflow" and not str(
+        store_path or ""
+    ).strip()
     if resolved_agent == "omniflow" and max_fallback_steps is not None:
         env["OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS"] = str(
             max(0, int(max_fallback_steps))
         )
+    if baseline_without_functions:
+        env["OMNIFLOW_ANDROIDWORLD_BASELINE"] = "1"
+        env.pop("OMNIFLOW_PLANNER_TIMEOUT_SEC", None)
+        env.pop("OMNIFLOW_OPENAI_TIMEOUT_SEC", None)
     # The public launcher exports this setting, but make it explicit on every
     # child CommandSpec as well.  This prevents a scheduler worker from
     # silently falling back to AndroidWorld-native observe/act when the
@@ -1224,8 +1247,17 @@ def build_task_command(
     control_backend = str(
         os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND", "oob")
     ).strip().lower() or "androidworld"
-    if resolved_agent == "omniflow":
+    if resolved_agent in {"omniflow", "autodroid"}:
         env["OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND"] = control_backend
+        env["OMNIFLOW_TRANSFER_ERROR_CONTEXT"] = json.dumps(
+            {
+                "task": item.task,
+                "method": resolved_method,
+                "device": resolved_device,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     resolved_omnitransfer_root = (
         resolve_path(omnitransfer_root, root=repo_root)
         if omnitransfer_root
@@ -1260,7 +1292,10 @@ def build_task_command(
     ]
     if fixed_task_params:
         params_json = json.dumps(
-            effective_params, ensure_ascii=False, separators=(",", ":")
+            effective_params,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=_json_default,
         )
         argv.extend(["--task-params-json", params_json])
     if fixed_task_seed:
@@ -1279,6 +1314,10 @@ def build_task_command(
             and float(planner_timeout_sec) > 0
         ):
             argv.extend(["--planner-timeout-sec", str(float(planner_timeout_sec))])
+    elif resolved_agent == "autodroid":
+        if resolved_autodroid_memory_root is None:
+            raise ValueError("autodroid_memory_root_required")
+        argv.extend(["--autodroid-memory-root", str(resolved_autodroid_memory_root)])
     if adb_path.strip():
         argv.extend(["--adb-path", adb_path.strip()])
     execution_mode = (
@@ -1293,7 +1332,13 @@ def build_task_command(
         cwd=repo_root,
         output_path=resolved_output,
         timeout_sec=(
-            float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
+            None
+            if baseline_without_functions
+            else (
+                float(timeout_sec)
+                if timeout_sec is not None and timeout_sec > 0
+                else None
+            )
         ),
         metadata={
             "mode": execution_mode,
@@ -1307,6 +1352,7 @@ def build_task_command(
             if str(run_dir_suffix or "").strip()
             else "",
             "store_path": str(resolved_store_path or ""),
+            "autodroid_memory_root": str(resolved_autodroid_memory_root or ""),
             "omnitransfer_root": str(resolved_omnitransfer_root or ""),
             "perform_emulator_setup": bool(perform_emulator_setup),
             "fixed_task_seed": bool(fixed_task_seed),
@@ -1331,18 +1377,18 @@ def build_task_command(
             "state_backend": "androidworld",
             "control_backend": (
                 "oob_control"
-                if resolved_agent == "omniflow"
+                if resolved_agent in {"omniflow", "autodroid"}
                 and control_backend in {"oob", "omniflow", "oob_control"}
                 else "androidworld"
             ),
             "action_backend": (
                 "oob_control"
-                if resolved_agent == "omniflow"
+                if resolved_agent in {"omniflow", "autodroid"}
                 and control_backend in {"oob", "omniflow", "oob_control"}
                 else "androidworld"
             ),
             "native_androidworld_agent_io": not (
-                resolved_agent == "omniflow"
+                resolved_agent in {"omniflow", "autodroid"}
                 and control_backend in {"oob", "omniflow", "oob_control"}
             ),
             "include_indexed_context": False,
@@ -1401,6 +1447,35 @@ def task_goal_for_params(
         # task parameters used.
         pass
     return str(fallback_goal)
+
+
+def _evaluation_item_for_seed(
+    item: CanonicalRunLog,
+    *,
+    android_world_root: str | Path,
+    task_seed: int,
+) -> CanonicalRunLog:
+    """Build the target task instance from the evaluation seed.
+
+    Source RunLogs identify the task and preserve provenance, but their
+    generated parameters belong to the source episode. Target evaluation must
+    derive one fresh parameter set from the requested evaluation seed and
+    share that set across methods and devices.
+    """
+
+    from src.integrations.android_world.run_episode import (
+        instantiate_androidworld_task,
+    )
+
+    task = instantiate_androidworld_task(
+        android_world_root=android_world_root,
+        task_name=item.task,
+        task_params=None,
+        task_seed=int(task_seed),
+    )
+    parameters = dict(getattr(task, "params", {}) or {})
+    goal = str(getattr(task, "goal", "") or item.goal).strip() or item.goal
+    return replace(item, goal=goal, params=parameters)
 
 
 
@@ -2334,11 +2409,8 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         if isinstance(transfer, dict):
             score = _coerce_float(transfer.get("score"))
             detail += f" score={score:.3f}"
-            if error == "omnitransfer_low_confidence":
-                detail += (
-                    f"<{MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE:.3f}"
-                    " admission_threshold"
-                )
+            if error.startswith("omnitransfer_"):
+                detail += " canonical_transfer_result"
             candidates = transfer.get("candidates")
             candidate_rows: list[str] = []
             for candidate in candidates[:3] if isinstance(candidates, list) else ():
@@ -5134,20 +5206,35 @@ def _run_result_mobilegpt(
 
 
 def run_task(args: argparse.Namespace) -> int:
-    if args.method not in (*ENABLED_METHODS, SOURCE_METHOD):
+    if args.method not in (*ENABLED_METHODS, SOURCE_METHOD, AUTODROID_MEMORY_METHOD):
         raise ValueError(f"method_not_enabled:{args.method}")
     # The public runner is intentionally the only experiment control surface.
     # Keep this normalization here as a second boundary so a direct invocation
     # of the atomic runner cannot create a second protocol variant.
     args.source_seed = SOURCE_SEED
+    requested_evaluation_seed = getattr(args, "evaluation_seed", None)
     args.task_random_seed = (
-        SOURCE_SEED if args.method == SOURCE_METHOD else TASK_SEED
+        SOURCE_SEED
+        if args.method == SOURCE_METHOD
+        else int(requested_evaluation_seed)
+        if requested_evaluation_seed is not None
+        else TASK_SEED
     )
-    args.max_steps = MAX_STEPS
-    args.max_fallback_steps = MAX_FALLBACK_STEPS
+    args.max_steps = SOURCE_MAX_STEPS if args.method == SOURCE_METHOD else MAX_STEPS
+    baseline_without_functions = args.method == "omniflow" and not str(
+        getattr(args, "memory", "") or ""
+    ).strip()
+    args.max_fallback_steps = (
+        SOURCE_MAX_STEPS if args.method == SOURCE_METHOD else MAX_FALLBACK_STEPS
+    )
     args.timeout_sec = TASK_DEADLINE_SEC
-    args.planner_timeout_sec = PLANNER_TIMEOUT_SEC
-    args.model = require_formal_model()
+    args.planner_timeout_sec = (
+        None if baseline_without_functions else PLANNER_TIMEOUT_SEC
+    )
+    args.model = require_runtime_model(
+        args.method,
+        omniflow_model() if args.method == "omniflow" else FORMAL_MODEL,
+    )
     args.planner_provider = ""
     args.random_task_seed = False
     args.no_fixed_task_seed = False
@@ -5165,13 +5252,24 @@ def run_task(args: argparse.Namespace) -> int:
     memory = str(getattr(args, "memory", "") or "").strip()
     if memory:
         if args.method == "omniflow":
-            args.store_path = memory
+            # The public --memory contract accepts the canonical Memory
+            # directory.  The episode owner consumes its single store.json;
+            # normalize that directory here without changing the execution
+            # flow or introducing a second input path.
+            supplied_memory = resolve_path(memory)
+            args.store_path = str(
+                supplied_memory / "store.json"
+                if supplied_memory.is_dir()
+                else supplied_memory
+            )
         elif args.method == "mobilegpt":
             args.mobilegpt_source_memory_root = memory
         elif args.method == "appagent":
             args.appagent_memory_root = memory
         elif args.method == "fixed_replay":
             args.source_run_log = memory
+        elif args.method == AUTODROID_MEMORY_METHOD:
+            args.autodroid_memory_root = memory
     # An explicitly supplied OmniFlow Memory must fail at the launcher
     # boundary when its Store is absent.  FunctionStore intentionally permits
     # a missing path so source/no-memory runs can use an empty Store; that
@@ -5183,10 +5281,14 @@ def run_task(args: argparse.Namespace) -> int:
             raise FileNotFoundError(
                 f"omniflow_memory_store_missing:{resolved_store_path}"
             )
-    if not str(getattr(args, "source_run_log", "") or "").strip() and memory:
-        inferred_source = _infer_source_run_log_from_memory(memory)
-        if inferred_source is not None:
-            args.source_run_log = str(inferred_source)
+    if args.method == AUTODROID_MEMORY_METHOD:
+        autodroid_memory_root = resolve_path(
+            str(getattr(args, "autodroid_memory_root", "") or "")
+        )
+        if not autodroid_memory_root.is_dir():
+            raise FileNotFoundError(
+                f"autodroid_memory_root_missing:{autodroid_memory_root}"
+            )
     selected = _select_from_args(args)
     if len(selected) != 1:
         raise ValueError("result requires exactly one selected --task entry")
@@ -5197,7 +5299,11 @@ def run_task(args: argparse.Namespace) -> int:
         # terminate a valid cross-device recovery before the Planner had the
         # configured budget.  The formal protocol is the single owner here.
         args.max_steps = MAX_STEPS
-        args.max_fallback_steps = min(MAX_FALLBACK_STEPS, MAX_STEPS)
+        args.max_fallback_steps = (
+            None
+            if baseline_without_functions
+            else min(MAX_FALLBACK_STEPS, MAX_STEPS)
+        )
     methods = (args.method,)
     targets = parse_device_targets(args.device)
     if len(targets) != 1:
@@ -5205,7 +5311,11 @@ def run_task(args: argparse.Namespace) -> int:
     if targets[0].serial == SOURCE_DEVICE[1]:
         args.task_random_seed = SOURCE_SEED
     else:
-        args.task_random_seed = TASK_SEED
+        args.task_random_seed = (
+            int(args.evaluation_seed)
+            if args.evaluation_seed is not None
+            else TASK_SEED
+        )
     args.mobilegpt_port = _mobilegpt_server_port(targets[0].console_port)
     mobilegpt_source_run_log = item.source_run_log
     mobilegpt_source_run_log_sha256s: tuple[str, ...] = ()
@@ -5229,14 +5339,24 @@ def run_task(args: argparse.Namespace) -> int:
         else _source_seed_output_root(attempt_root, source_seed)
     )
     attempt_id = attempt_root.name
-    # The source RunLog is the one task-parameter authority shared by all
-    # methods. There is no per-method parameter override in the formal run.
-    task_params_override = dict(item.params or {})
     task_seed = (
         random.randint(1, 2**31 - 1)
         if bool(args.random_task_seed)
         else args.task_random_seed
     )
+    if args.method == SOURCE_METHOD:
+        # Source collection is the only phase that may use its own source
+        # parameters. Target evaluation must never replay those parameters.
+        task_params_override = dict(item.params or {})
+    else:
+        # Build one fresh official task instance from the evaluation seed and
+        # share its generated parameters across target devices and adapters.
+        item = _evaluation_item_for_seed(
+            item,
+            android_world_root=args.android_world_root,
+            task_seed=int(task_seed),
+        )
+        task_params_override = dict(item.params or {})
     command_records: list[dict[str, Any]] = []
     failed = 0
 
@@ -5270,6 +5390,8 @@ def run_task(args: argparse.Namespace) -> int:
         if method == "omniflow":
             store_text = str(args.store_path or "").strip()
             store_path = resolve_path(store_text) if store_text else None
+        elif method == AUTODROID_MEMORY_METHOD:
+            store_path = memory_root / "unused-store.json"
         else:
             store_path = memory_root / "unused-store.json"
 
@@ -5442,6 +5564,39 @@ def run_task(args: argparse.Namespace) -> int:
                     perform_emulator_setup=bool(args.perform_emulator_setup),
                     model=str(args.model or ""),
                 )
+            elif method == AUTODROID_MEMORY_METHOD:
+                autodroid_memory_path = resolve_path(
+                    str(getattr(args, "autodroid_memory_root", "") or "")
+                )
+                if not autodroid_memory_path.is_dir():
+                    raise FileNotFoundError(
+                        f"autodroid_memory_root_missing:{autodroid_memory_path}"
+                    )
+                validate_autodroid_memory(
+                    autodroid_memory_path,
+                    source_run_log=item.source_run_log,
+                    task_name=item.task,
+                )
+                spec = build_task_command(
+                    item,
+                    android_world_root=args.android_world_root,
+                    output_root=output_root,
+                    method_name=method,
+                    agent_name=method,
+                    device_label=target.label,
+                    serial=target.serial,
+                    console_port=target.console_port,
+                    adb_path=args.adb_path,
+                    max_steps=int(args.max_steps or MAX_STEPS),
+                    timeout_sec=int(args.timeout_sec or 0),
+                    task_random_seed=task_seed,
+                    fixed_task_seed=not bool(args.no_fixed_task_seed),
+                    fixed_task_params=not bool(args.no_fixed_task_params),
+                    task_params_override=task_params_override,
+                    perform_emulator_setup=bool(args.perform_emulator_setup),
+                    model=str(args.model or ""),
+                    autodroid_memory_root=autodroid_memory_path,
+                )
             else:
                 spec = build_task_command(
                     item,
@@ -5453,7 +5608,11 @@ def run_task(args: argparse.Namespace) -> int:
                     console_port=target.console_port,
                     adb_path=args.adb_path,
                     max_steps=int(args.max_steps or MAX_STEPS),
-                    timeout_sec=int(args.timeout_sec or 0),
+                    timeout_sec=(
+                        None
+                        if baseline_without_functions
+                        else int(args.timeout_sec or 0)
+                    ),
                     max_fallback_steps=args.max_fallback_steps,
                     task_random_seed=task_seed,
                     fixed_task_seed=not bool(args.no_fixed_task_seed),
@@ -5534,13 +5693,19 @@ def build_parser() -> argparse.ArgumentParser:
     result_parser.add_argument("--task", required=True)
     result_parser.add_argument("--source-run-log", default="")
     result_parser.add_argument(
+        "--evaluation-seed",
+        type=int,
+        default=None,
+        help="Optional target task seed for an independent repeat; defaults to protocol seed.",
+    )
+    result_parser.add_argument(
         "--memory",
         default="",
         help="Optional method-specific Memory path, passed through unchanged.",
     )
     result_parser.add_argument(
         "--method",
-        choices=(*METHODS, SOURCE_METHOD),
+        choices=(*METHODS, SOURCE_METHOD, AUTODROID_MEMORY_METHOD),
         default=DEFAULT_SOURCE_METHOD,
         help="One paper method for this AndroidWorld result.",
     )
@@ -5548,6 +5713,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--store-path",
         default="",
         help=("Validated omniflow.store.v2 required by the OmniFlow methods."),
+    )
+    result_parser.add_argument(
+        "--autodroid-memory-root",
+        default="",
+        help="Explicit converted AutoDroid native Memory directory.",
     )
     result_parser.add_argument(
         "--omnitransfer-root",

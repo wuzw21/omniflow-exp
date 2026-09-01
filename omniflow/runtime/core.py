@@ -1,11 +1,4 @@
-"""Common action path with optimistic transfer admission.
-
-The backend owns the short post-action transition window.  Runtime transfer
-admission first consumes that fast observation and only asks the backend for
-one complete stable observation when admission fails.  This keeps the normal
-path cheap without weakening the transfer contract or adding action-specific
-recovery logic.
-"""
+"""Common action path with one canonical transfer attempt and stable retry."""
 
 from __future__ import annotations
 
@@ -22,7 +15,7 @@ from omniflow.core.model import (
     Observation,
     StepResult,
 )
-from omniflow.transfer.admission import assess_transfer, requires_contextual_mapping
+from omniflow.transfer.runtime import requires_contextual_mapping
 
 async def execute_action(
     action: Action,
@@ -107,7 +100,7 @@ async def prepare_action(
     plugins: PluginSet,
     source_state: Observation | None = None,
 ) -> ActionDecision:
-    """Admit transfer from the fast state, then use one stable fallback.
+    """Use the canonical transfer result, then use one stable retry on failure.
 
     The fallback is deliberately generic: it applies equally to Function
     actions and shared Checker actions, and never changes the action mapper or
@@ -122,8 +115,7 @@ async def prepare_action(
     if plugins.transfer is None:
         return ActionDecision("block", reason="transfer_not_configured")
     transfer = await _await(plugins.transfer(action, observation, source_state))
-    admission = assess_transfer(transfer, observation=observation)
-    if admission.accepted:
+    if transfer.action is not None:
         return ActionDecision(
             "ready",
             action=transfer.action,
@@ -138,32 +130,40 @@ async def prepare_action(
         stable_transfer = await _await(
             plugins.transfer(action, stable_observation, source_state)
         )
-        stable_admission = assess_transfer(
-            stable_transfer,
-            observation=stable_observation,
-        )
-        if stable_admission.accepted:
+        if stable_transfer.action is not None:
             return ActionDecision(
                 "ready",
                 action=stable_transfer.action,
                 reason=stable_transfer.reason,
                 detail={
                     **dict(stable_transfer.detail),
-                    "transfer_admission_path": "stable_fallback",
-                    "fast_admission_reason": (
-                        admission.reason or transfer.reason or "transfer_failed"
-                    ),
+                    "transfer_retry_path": "stable_observation",
+                    "fast_transfer_failure": {
+                        "reason": transfer.reason or "transfer_failed",
+                    },
                 },
             )
+        fast_failure = {
+            "path": "fast",
+            "reason": transfer.reason or "transfer_failed",
+        }
+        stable_failure = {
+            "path": "stable",
+            "reason": stable_transfer.reason or "transfer_failed",
+        }
         transfer = stable_transfer
-        admission = stable_admission
+    else:
+        fast_failure = None
+        stable_failure = None
+    failure_detail = {
+        **dict(transfer.detail),
+    }
+    if fast_failure is not None and stable_failure is not None:
+        failure_detail["transfer_attempts"] = [fast_failure, stable_failure]
     return ActionDecision(
         "block",
-        reason=admission.reason or transfer.reason or "transfer_failed",
-        detail={
-            **dict(transfer.detail),
-            "mapping_confidence": admission.confidence,
-        },
+        reason=transfer.reason or "transfer_failed",
+        detail=failure_detail,
     )
 
 

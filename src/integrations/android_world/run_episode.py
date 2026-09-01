@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import copy
 import dataclasses
@@ -50,6 +51,10 @@ from src.experiment.protocol import (
     MAX_STEPS,
     PLANNER_TIMEOUT_SEC,
     TASK_SEED,
+    omniflow_base_url,
+    omniflow_endpoint_profile,
+    omniflow_model,
+    require_runtime_model,
     require_formal_model,
 )
 from src.integrations.android_world.agent import (
@@ -66,6 +71,7 @@ from src.integrations.android_world.methods import (
     default_method_adapter_registry,
     reuse_metrics,
 )
+from src.integrations.android_world.autodroid_agent import AutoDroidMemoryAgent
 from src.integrations.android_world.oob_control import (
     CONTROL_ACCESSIBILITY_SERVICE as OOB_CONTROL_ACCESSIBILITY_SERVICE,
     EXPERIMENTAL_CONTROL_PACKAGES,
@@ -127,6 +133,7 @@ _LLM_USAGE_COUNTER_KEYS = (
     "responses_with_usage",
     "responses_without_usage",
     "failed_calls",
+    "embedding_calls",
 )
 
 
@@ -910,6 +917,7 @@ class _ExperimentAgentAdapter:
         self._recording_session = recording_session
         self._goal_hint = str(goal_hint or "").strip()
         self._max_steps = max(1, int(max_steps)) if max_steps is not None else None
+        self._configured_max_steps = self._max_steps
         self._prepare_after_reset = prepare_after_reset
         self._completed_steps = 0
         self.execution_duration_ms = 0.0
@@ -933,6 +941,15 @@ class _ExperimentAgentAdapter:
             reset()
         if self._prepare_after_reset is not None:
             self._prepare_after_reset()
+
+    def set_max_steps(self, max_steps: int) -> None:
+        requested_steps = max(1, int(max_steps))
+        if self._configured_max_steps is not None:
+            requested_steps = min(self._configured_max_steps, requested_steps)
+        self._max_steps = requested_steps
+        set_max_steps = getattr(self._agent, "set_max_steps", None)
+        if callable(set_max_steps):
+            set_max_steps(self._max_steps)
 
     def step(self, goal: str) -> Any:
         if self._max_steps is not None and self._completed_steps >= self._max_steps:
@@ -1055,6 +1072,7 @@ class _OpenAICompatibleMultimodalWrapper:
         self.latency_ms = 0.0
         self.last_error: str | None = None
         self.request_records: list[dict[str, Any]] = []
+        self.embedding_calls = 0
 
     @staticmethod
     def _chat_completions_url(base_url: str) -> str:
@@ -1233,11 +1251,44 @@ class _OpenAICompatibleMultimodalWrapper:
             "responses_with_usage": int(self.responses_with_usage),
             "responses_without_usage": int(self.responses_without_usage),
             "failed_calls": int(self.failed_calls),
+            "embedding_calls": int(self.embedding_calls),
             "latency_ms": round(float(self.latency_ms), 6),
             "last_error": self.last_error,
         }
         summary["token_usage_status"] = token_usage_status(summary)
         return summary
+
+
+def _build_autodroid_memory_agent(
+    *,
+    env: Any,
+    memory_root: str,
+    model_name: str,
+    adb_serial: str,
+    adb_path: str,
+    max_steps: int,
+    evidence_root: str,
+    performance_metrics: PerformanceMetrics | None = None,
+) -> AutoDroidMemoryAgent:
+    """Build AutoDroid's Memory policy on the shared official lifecycle."""
+
+    llm = _OpenAICompatibleMultimodalWrapper(
+        model_name=str(model_name or FORMAL_MODEL),
+        base_url=FORMAL_MODEL_BASE_URL,
+        max_retry=3,
+        temperature=0.0,
+        max_tokens=512,
+    )
+    return AutoDroidMemoryAgent(
+        env=env,
+        memory_root=memory_root,
+        llm=llm,
+        adb_serial=adb_serial,
+        adb_path=adb_path,
+        max_steps=max_steps,
+        evidence_root=evidence_root,
+        performance_metrics=performance_metrics,
+    )
 
 
 def _get_agent_llm_usage(agent: Any) -> dict[str, Any]:
@@ -1460,6 +1511,7 @@ def _summarize_task_results(
     total_duration_ms = sum(_coerce_float(row.get("duration_ms")) for row in rows)
     total_actions = sum(_coerce_int(row.get("actions_executed")) for row in rows)
     total_model_calls = sum(_coerce_int(row.get("model_calls")) for row in rows)
+    total_embedding_calls = sum(_coerce_int(row.get("embedding_calls")) for row in rows)
     runtime_integrity_errors = [
         str(row.get("runtime_integrity_error") or "").strip()
         for row in rows
@@ -1491,6 +1543,9 @@ def _summarize_task_results(
                 "action_completed_rate": _rate(action_completed, action_total),
                 "tool_calls": _coerce_int(row.get("model_calls")),
                 "model_calls": _coerce_int(row.get("model_calls")),
+                "embedding_calls": _coerce_int(row.get("embedding_calls")),
+                "memory_lookup_count": _coerce_int(row.get("memory_lookup_count")),
+                "memory_hit_count": _coerce_int(row.get("memory_hit_count")),
                 "prompt_tokens": _coerce_int(row.get("prompt_tokens")),
                 "completion_tokens": _coerce_int(row.get("completion_tokens")),
                 "total_tokens": _coerce_int(row.get("total_tokens")),
@@ -1535,12 +1590,13 @@ def _summarize_task_results(
             official_validator_success_actions, total_actions
         ),
         "tool_calls": total_model_calls,
+        "embedding_calls": total_embedding_calls,
         "tokens": total_tokens,
         "per_task": per_task,
     }
 
     print(
-        "[omniflow] summary: "
+        f"[{agent}] summary: "
         f"official_validator={successful_tasks}/{official_validator_tasks} "
         f"coverage={official_validator_tasks}/{total_tasks} "
         f"duration={total_duration_ms / 1000.0:.1f}s "
@@ -1793,11 +1849,47 @@ def _rehydrate_task_params(
         row
         for key in ("row_objects", "noise_row_objects")
         for row in (hydrated.get(key) if isinstance(hydrated.get(key), list) else [])
-        if isinstance(row, dict)
+        if isinstance(row, (dict, str))
     ]
     if not serialized_rows:
         return hydrated
     from android_world.task_evals.utils import sqlite_schema_utils
+
+    row_types = {
+        "CalendarEvent": sqlite_schema_utils.CalendarEvent,
+        "Expense": sqlite_schema_utils.Expense,
+        "Recipe": sqlite_schema_utils.Recipe,
+    }
+
+    def deserialize_row(value: object) -> object:
+        """Restore legacy JSON strings emitted by AndroidWorld row reprs."""
+
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text or "(" not in text or not text.endswith(")"):
+            return value
+        try:
+            expression = ast.parse(text, mode="eval").body
+        except (SyntaxError, ValueError):
+            return value
+        if not isinstance(expression, ast.Call) or not isinstance(
+            expression.func, ast.Name
+        ):
+            return value
+        row_type = row_types.get(expression.func.id)
+        if row_type is None or expression.args or any(
+            keyword.arg is None for keyword in expression.keywords
+        ):
+            return value
+        try:
+            fields = {
+                str(keyword.arg): ast.literal_eval(keyword.value)
+                for keyword in expression.keywords
+            }
+            return row_type(**fields)
+        except (TypeError, ValueError, SyntaxError):
+            return value
 
     def expense_row(row: object) -> object:
         if not isinstance(row, dict):
@@ -1868,6 +1960,7 @@ def _rehydrate_task_params(
         return sqlite_schema_utils.Recipe(**payload)
 
     def hydrate_row(row: object) -> object:
+        row = deserialize_row(row)
         if not isinstance(row, dict):
             return row
         keys = set(row)
@@ -2386,6 +2479,36 @@ def _run_androidworld_task_initialization(
         controller._a11y_method = previous_a11y_method
 
 
+def _ensure_androidworld_vlc_fixture(task: Any, env: Any) -> None:
+    """Create VLC's official fixture before a task reads its app database."""
+
+    if not any(
+        str(name).strip().lower() == "vlc"
+        for name in getattr(task, "app_names", ())
+    ):
+        return
+    from android_world.env import adb_utils
+    from android_world.env import android_world_controller
+    from android_world.env.setup_device.apps import VlcApp
+    from android_world.utils import file_utils
+
+    db_dir = "/data/data/org.videolan.vlc/app_db"
+    previous_a11y_method = getattr(env.controller, "_a11y_method", None)
+    env.controller._a11y_method = android_world_controller.A11yMethod.UIAUTOMATOR
+    try:
+        if file_utils.check_directory_exists(db_dir, env.controller):
+            logger.info("AndroidWorld VLC fixture already exists; launching VLC")
+            adb_utils.launch_app("vlc", env.controller)
+            return
+        logger.info(
+            "AndroidWorld VLC fixture is missing; running official VLC setup "
+            "before task initialization"
+        )
+        VlcApp.setup(env)
+    finally:
+        env.controller._a11y_method = previous_a11y_method
+
+
 def _patch_androidworld_sms_init_compat() -> None:
     """Recover SMS fixture setup when AndroidWorld reports no foreground app."""
 
@@ -2470,7 +2593,12 @@ def start_androidworld_task_session(
         )
         if task_type is None:
             raise ValueError(f"unknown AndroidWorld task: {task_name}")
-        task = task_type(dict(task_params))
+        task = instantiate_androidworld_task(
+            android_world_root=root,
+            task_name=task_name,
+            task_params=dict(task_params),
+            task_seed=task_seed,
+        )
     else:
         task = instantiate_androidworld_task(
             android_world_root=root,
@@ -2511,29 +2639,7 @@ def start_androidworld_task_session(
         )
         type(task).set_device_time(startup.env)
     # VLC's task fixtures read its on-device app_db during initialization.
-    # A freshly initialized emulator does not create that database until the
-    # app has been launched once; perform this one-time official AndroidWorld
-    # warm-up before initialize_task. MobileGPT still owns all formal episode
-    # app launches and Accessibility actions after this seam returns.
-    if any(
-        str(name).strip().lower() == "vlc"
-        for name in getattr(task, "app_names", ())
-    ):
-        # AndroidWorld's own VlcApp.setup performs the launcher-style warm-up
-        # (including onboarding/permission handling) that creates app_db.  A
-        # plain start_activity/monkey launch leaves a fresh tablet in the
-        # onboarding activity and the task initializer then fails before the
-        # MobileGPT episode starts.  Only invoke setup when the database is
-        # genuinely absent; calling it on an initialized device would try to
-        # click a non-existent skip button.
-        from android_world.env.setup_device.apps import VlcApp
-        from android_world.utils import file_utils
-
-        db_dir = "/data/data/org.videolan.vlc/app_db"
-        if not file_utils.check_directory_exists(db_dir, startup.env.controller):
-            VlcApp.setup(startup.env)
-        else:
-            adb_utils.launch_app("vlc", startup.env.controller)
+    _ensure_androidworld_vlc_fixture(task, startup.env)
     _run_androidworld_task_initialization(task, startup.env)
     return startup, task
 
@@ -4051,7 +4157,8 @@ class _OobOfficialAgentEnvironment:
             args["direction"] = str(getattr(action, "direction", "") or "down")
         elif action_type == "open_app":
             args["app_name"] = str(getattr(action, "app_name", "") or "")
-        result = self._host.act(Action(tool=tool, args=args))
+        host_action = Action(tool=tool, args=args)
+        result = self._host.act(host_action)
         if not result.success:
             raise RuntimeError(result.error or f"t3a_oob_action_failed:{action_type}")
 
@@ -5553,6 +5660,7 @@ def _build_launch_agent(
     task_seed: int | None = None,
     evidence_root: str = "",
     performance_metrics: PerformanceMetrics | None = None,
+    autodroid_memory_root: str = "",
 ) -> Any:
     """Build the launcher-facing AndroidWorld agent for one explicit selector.
 
@@ -5589,6 +5697,8 @@ def _build_launch_agent(
             build_omniflow_agent=build_agent,
             apply_fixed_replay=_apply_fixed_replay,
             build_official_agent=_build_official_androidworld_agent,
+            autodroid_memory_root=autodroid_memory_root,
+            build_autodroid_agent=_build_autodroid_memory_agent,
         )
     )
     return agent_instance
@@ -5604,17 +5714,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--environment",
-        choices=("androidworld", "bmoca"),
+        choices=("androidworld",),
         default="androidworld",
-        help="Official task environment; this does not select an execution method.",
+        help="AndroidWorld is the only environment owned by this lifecycle entry.",
     )
     parser.add_argument("--android-world-root", default="")
-    parser.add_argument("--bmoca-root", default="")
-    parser.add_argument(
-        "--environment-ids",
-        default="100,101,102,103,104,105,106,107,108,109",
-        help="Comma-separated B-MoCA environment IDs.",
-    )
     parser.add_argument(
         "--android-sdk-root",
         default=os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "",
@@ -5623,7 +5727,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--android-avd-home",
         default=os.environ.get("ANDROID_AVD_HOME") or "",
     )
-    parser.add_argument("--bmoca-avd-template-home", default="")
     parser.add_argument("--appium-port", type=int, default=4723)
     parser.add_argument("--appium-system-port", type=int, default=8200)
     parser.add_argument("--emulator-console-port", type=int, default=5554)
@@ -5669,6 +5772,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Function Store path.",
     )
     parser.add_argument(
+        "--autodroid-memory-root",
+        default="",
+        help="Explicit converted AutoDroid native Memory directory.",
+    )
+    parser.add_argument(
         "--reuse-memory-path",
         default="",
         help="Oracle-selected task-local memory for a reuse-only method.",
@@ -5707,7 +5815,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=FORMAL_MODEL,
+        default=(
+            os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or FORMAL_MODEL
+        ),
         help=(
             "Optional online planner model for --agent omniflow, for example "
             "`Qwen3.6-Plus`."
@@ -5715,10 +5825,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model-endpoint-profile",
-        choices=("auto", "openai", "llmthu"),
+        choices=("auto", "openai", "llmthu", "omnimind"),
         default=(
-            os.environ.get("OMNIFLOW_MODEL_ENDPOINT_PROFILE")
-            or FORMAL_MODEL_ENDPOINT_PROFILE
+            omniflow_endpoint_profile()
         ),
         help="Credential and endpoint profile for the selected model.",
     )
@@ -6016,15 +6125,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         # direct source collection may pass it on to install the official
         # AndroidWorld app snapshots before the first task.
         args.perform_emulator_setup = bool(args.perform_emulator_setup)
-        args.planner_provider = ""
-        args.model_endpoint_profile = FORMAL_MODEL_ENDPOINT_PROFILE
-        args.planner_timeout_sec = PLANNER_TIMEOUT_SEC
-        args.model = require_formal_model()
+        experimental_model = str(
+            os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or ""
+        ).strip()
+        baseline_without_functions = (
+            str(args.agent or MODE_OMNIFLOW).strip() == MODE_OMNIFLOW
+            and not str(args.store_path or "").strip()
+        )
+        experimental_omniflow = (
+            str(args.agent or MODE_OMNIFLOW).strip() == MODE_OMNIFLOW
+            and bool(experimental_model)
+        )
+        if experimental_omniflow:
+            args.planner_provider = str(
+                os.environ.get("OMNIFLOW_PLANNER_PROVIDER") or ""
+            ).strip()
+            args.model_endpoint_profile = omniflow_endpoint_profile()
+            args.planner_timeout_sec = float(
+                os.environ.get("OMNIFLOW_PLANNER_TIMEOUT_SEC")
+                or PLANNER_TIMEOUT_SEC
+            )
+            args.model = require_runtime_model("omniflow", experimental_model)
+        else:
+            args.planner_provider = ""
+            args.model_endpoint_profile = FORMAL_MODEL_ENDPOINT_PROFILE
+            args.planner_timeout_sec = (
+                None if baseline_without_functions else PLANNER_TIMEOUT_SEC
+            )
+            args.model = require_formal_model()
         # Keep direct lifecycle invocation on the same provider seam as the
         # unified launcher; otherwise the wrapper could fall back to a stale
         # shell OPENAI_BASE_URL when this module is invoked directly.
-        os.environ["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
-        os.environ["OPENAI_MODEL"] = FORMAL_MODEL
+        os.environ["OPENAI_BASE_URL"] = (
+            omniflow_base_url() if experimental_omniflow else FORMAL_MODEL_BASE_URL
+        )
+        os.environ["OPENAI_MODEL"] = (
+            experimental_model if experimental_omniflow else FORMAL_MODEL
+        )
         if not str(os.environ.get("OPENAI_API_KEY") or "").strip() and str(
             os.environ.get("LLMTHU_API_KEY") or ""
         ).strip():
@@ -6038,11 +6175,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["OMNIFLOW_PLANNER_TIMEOUT_SEC"] = str(
             float(args.planner_timeout_sec)
         )
-    if args.environment == "bmoca":
-        return _run_bmoca_e2e(args)
-    if selected_agent not in {"omniflow", "fixed_replay", "official:t3a_gpt4"}:
+    if selected_agent not in {
+        "autodroid",
+        "omniflow",
+        "fixed_replay",
+        "official:t3a_gpt4",
+    }:
         raise ValueError(
-            "disabled_androidworld_agent:use omniflow, fixed_replay, or official:t3a_gpt4"
+            "disabled_androidworld_agent:use autodroid, omniflow, fixed_replay, or official:t3a_gpt4"
         )
     android_world_root = Path(args.android_world_root).expanduser().resolve()
     run_py = android_world_root / "run.py"
@@ -6196,6 +6336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_seed=int(args.task_random_seed),
             evidence_root=str(run_output_dir),
             performance_metrics=performance_metrics,
+            autodroid_memory_root=str(args.autodroid_memory_root or ""),
         )
         checkpoint_dir = (
             str(Path(args.checkpoint_dir).expanduser().resolve())
@@ -6219,6 +6360,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "the unified script owns task-major scheduling."
             )
         task = suite[selected_task_names[0]][0]
+        # The formal runner skips per-episode emulator setup, so repair only
+        # the official VLC fixture before AndroidWorld initializes the task.
+        _ensure_androidworld_vlc_fixture(task, env)
         original_task_initialize = task.initialize_task
 
         def initialize_task_with_official_ui(
@@ -6264,6 +6408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _get_agent_llm_usage(agent)
             if selected_agent.startswith("official:")
             or selected_agent == "appagent"
+            or selected_agent == "autodroid"
             else {}
         )
         started_at = utc_now_iso()
@@ -6383,6 +6528,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                             else "validator_failure"
                         ),
                     }
+                    if selected_agent == "autodroid":
+                        get_autodroid_summary = getattr(
+                            agent, "get_execution_summary", None
+                        )
+                        autodroid_summary = (
+                            dict(get_autodroid_summary() or {})
+                            if callable(get_autodroid_summary)
+                            else {}
+                        )
+                        if autodroid_summary:
+                            diagnostics["execution_summary"] = autodroid_summary
+                            diagnostics["autodroid_memory"] = {
+                                key: value
+                                for key, value in autodroid_summary.items()
+                                if key
+                                in {
+                                    "memory_root",
+                                    "memory_app_key",
+                                    "memory_retrieval",
+                                    "embedding_calls",
+                                    "memory_lookup_count",
+                                    "memory_hit_count",
+                                }
+                            }
                     runtime_function_id = str(
                         getattr(runtime_result, "function_id", "") or ""
                     ).strip()
@@ -6591,7 +6760,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 args.model_endpoint_profile
                             ),
                         )
-                if selected_agent.startswith("official:") or selected_agent == "appagent":
+                if (
+                    selected_agent.startswith("official:")
+                    or selected_agent == "appagent"
+                    or selected_agent == "autodroid"
+                ):
                     official_agent_usage = _diff_llm_usage(
                         _get_agent_llm_usage(agent),
                         official_llm_usage_before,
@@ -6616,7 +6789,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if canonical_run_id:
                     artifact_kind = "canonical_run"
                     artifact_ref = canonical_run_id
-                elif selected_agent.startswith("official:") or selected_agent == "appagent":
+                elif (
+                    selected_agent.startswith("official:")
+                    or selected_agent == "appagent"
+                    or selected_agent == "autodroid"
+                ):
                     artifact_kind = "checkpoint"
                     artifact_ref = checkpoint_dir
                 evaluation_task_params, evaluation_task_params_sha256 = (
@@ -6627,6 +6804,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "goal": goal_text,
                     "agent": selected_agent,
                     "task_random_seed": int(args.task_random_seed),
+                    "task_complexity": float(getattr(task, "complexity", 0.0)),
+                    "step_budget": int(args.max_steps),
                     "task_params": evaluation_task_params,
                     "task_params_sha256": evaluation_task_params_sha256,
                     "state_backend": "androidworld",
@@ -6716,11 +6895,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                             getattr(agent, "documentation_round_count", 0)
                         ),
                     }
+                autodroid_reuse_result: dict[str, Any] = {}
+                if selected_agent == "autodroid":
+                    get_autodroid_summary = getattr(
+                        agent, "get_execution_summary", None
+                    )
+                    if callable(get_autodroid_summary):
+                        autodroid_reuse_result = dict(
+                            get_autodroid_summary() or {}
+                        )
                 task_result_record["reuse_metrics"] = reuse_metrics(
                     selected_agent,
                     actions_executed=actions_executed,
                     canonical_run=canonical_run,
                     appagent_result=appagent_reuse_result,
+                    autodroid_result=autodroid_reuse_result,
                     source_action_hint=official_goal_hint_meta,
                     uses_source_action_hints=bool(official_goal_hint_text),
                 )
@@ -6745,6 +6934,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
                 if llm_usage:
                     task_result_record["llm_usage"] = to_serializable(llm_usage)
+                if selected_agent == "autodroid":
+                    task_result_record["embedding_calls"] = _coerce_int(
+                        autodroid_reuse_result.get("embedding_calls")
+                    )
+                    task_result_record["memory_lookup_count"] = _coerce_int(
+                        autodroid_reuse_result.get("memory_lookup_count")
+                    )
+                    task_result_record["memory_hit_count"] = _coerce_int(
+                        autodroid_reuse_result.get("memory_hit_count")
+                    )
+                    task_result_record["autodroid_memory_root"] = str(
+                        autodroid_reuse_result.get("memory_root") or ""
+                    )
                 if official_goal_hint_meta is not None:
                     task_result_record["source_action_hint"] = to_serializable(
                         official_goal_hint_meta
