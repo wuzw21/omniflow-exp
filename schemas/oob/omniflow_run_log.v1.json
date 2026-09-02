@@ -88,7 +88,9 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": {"enum": ["runtime", "legacy_import"]},
+        "kind": {
+          "enum": ["runtime", "manual_native_androidworld", "legacy_import"]
+        },
         "source_path": {"type": "string", "minLength": 1},
         "source_sha256": {
           "type": "string",
@@ -100,7 +102,7 @@
     "screenshot_reference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256", "width", "height", "mime_type"],
+      "required": ["path", "width", "height", "mime_type"],
       "properties": {
         "path": {"type": "string", "minLength": 1},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -133,6 +135,20 @@
     "xml_state": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["screenshot", "xml"],
+      "properties": {
+        "screenshot": {
+          "anyOf": [
+            {"$ref": "#/$defs/screenshot_reference"},
+            {"type": "null"}
+          ]
+        },
+        "xml": {"type": "string", "minLength": 1}
+      }
+    },
+    "legacy_xml_state": {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["pixels", "xml", "auxiliaries"],
       "properties": {
         "pixels": {
@@ -157,14 +173,47 @@
     },
     "state": {
       "anyOf": [
-        {"$ref": "#/$defs/androidworld_state"},
-        {"$ref": "#/$defs/xml_state"}
+        {"$ref": "#/$defs/xml_state"},
+        {"$ref": "#/$defs/legacy_xml_state"},
+        {"$ref": "#/$defs/androidworld_state"}
       ]
     },
     "action": {
       "type": "object",
       "additionalProperties": false,
       "required": ["action_type"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action_type": {"enum": ["swipe", "scroll"]}
+            },
+            "required": ["action_type"]
+          },
+          "then": {
+            "anyOf": [
+              {"required": ["direction"]},
+              {"required": ["x1", "y1", "x2", "y2"]}
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {"required": ["x1"]},
+              {"required": ["y1"]},
+              {"required": ["x2"]},
+              {"required": ["y2"]}
+            ]
+          },
+          "then": {
+            "properties": {
+              "action_type": {"const": "swipe"}
+            },
+            "required": ["action_type", "x1", "y1", "x2", "y2"]
+          }
+        }
+      ],
       "properties": {
         "action_type": {
           "enum": [
@@ -188,6 +237,11 @@
         "index": {"type": "integer"},
         "x": {"type": "number"},
         "y": {"type": "number"},
+        "x1": {"type": "number"},
+        "y1": {"type": "number"},
+        "x2": {"type": "number"},
+        "y2": {"type": "number"},
+        "duration_ms": {"type": "integer", "minimum": 0},
         "text": {"type": "string"},
         "direction": {"enum": ["left", "right", "down", "up"]},
         "app_name": {"type": "string"},

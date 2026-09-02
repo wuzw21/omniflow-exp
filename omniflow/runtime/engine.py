@@ -173,7 +173,6 @@ class OmniFlow:
         planner_function_catalog: dict[str, Function] = {}
         recall_events: list[dict[str, Any]] = []
         recall_source_states: dict[str, Observation | None] = {}
-        execution_timing: dict[str, Any] = {}
         function_resolution: dict[str, Any] = {
             "candidate_count": 0,
             "candidate_function_ids": [],
@@ -216,10 +215,6 @@ class OmniFlow:
                     "schema_version": "omniflow.function-recall-events.v1",
                     "events": [dict(event) for event in recall_events],
                 }
-            if execution_timing:
-                terminal_detail = dict(kwargs.get("terminal_detail") or {})
-                terminal_detail.setdefault("timing", dict(execution_timing))
-                kwargs["terminal_detail"] = terminal_detail
             evidence_function = function_session.completed or (
                 function_session.bound if function_session.failed else None
             )
@@ -290,10 +285,6 @@ class OmniFlow:
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
                 )
-                replay_timing = replay.detail.get("timing")
-                if isinstance(replay_timing, dict):
-                    execution_timing.clear()
-                    execution_timing.update(replay_timing)
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
             if replay.success:
@@ -643,10 +634,6 @@ class OmniFlow:
                             checker_rules=self.checker_library.rules,
                             checker_trigger_counts=shared_checker_trigger_counts,
                         )
-                        replay_timing = replay.detail.get("timing")
-                        if isinstance(replay_timing, dict):
-                            execution_timing.clear()
-                            execution_timing.update(replay_timing)
                         actions_executed += replay.actions_executed
                         replay_trace = list(replay.detail.get("trace") or ())
                         trace.extend(replay_trace)
@@ -778,10 +765,6 @@ class OmniFlow:
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
                 )
-                replay_timing = replay.detail.get("timing")
-                if isinstance(replay_timing, dict):
-                    execution_timing.clear()
-                    execution_timing.update(replay_timing)
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)

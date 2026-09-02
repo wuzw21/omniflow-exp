@@ -1015,10 +1015,7 @@ def test_authoring_harness_explains_complete_parameter_placement() -> None:
             {
                 "source_step_index": 0,
                 "before_state_id": "state-0",
-                "action": {
-                    "tool": "input_text",
-                    "args": {"text": "meeting_audio", "x": 500, "y": 500},
-                },
+                "action": {"tool": "input_text", "args": {"text": "meeting_audio"}},
                 "metadata": {},
             }
         ],

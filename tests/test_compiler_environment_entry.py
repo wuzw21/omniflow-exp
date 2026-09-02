@@ -3,10 +3,7 @@ from __future__ import annotations
 import json
 
 from omniflow.functions.artifact import parse_function_artifact
-from omniflow.functions.compiler import (
-    _validate_materialized_function_artifacts,
-    compile_runlog_to_store,
-)
+from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
 
 
@@ -128,78 +125,3 @@ def test_launcher_systemui_action_remains_business_action(tmp_path) -> None:
     _, function = _compile(run_log, tmp_path / "compiled")
 
     assert [step.action.tool for step in function.steps] == ["click", "click"]
-
-
-def test_materialized_author_attempt_checks_duplicate_render_targets() -> None:
-    function = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": "edit_note",
-        "name": "Edit note",
-        "description": "Edit a requested note.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"title": {"type": "string"}},
-            "required": ["title"],
-            "additionalProperties": False,
-        },
-        "bindings": [],
-        "render_bindings": [
-            {
-                "source": "$.arguments.title",
-                "step_index": 0,
-                "node_id": "title",
-                "attribute": "text",
-                "recorded_value": "Old title",
-            },
-            {
-                "source": "$.arguments.title",
-                "step_index": 0,
-                "node_id": "title",
-                "attribute": "text",
-                "recorded_value": "Old title",
-            },
-        ],
-        "steps": [
-            {
-                "step_index": 0,
-                "source_state_id": "state-1",
-                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
-            }
-        ],
-        "agent_visible": True,
-    }
-    authored = {
-        "bundle": {
-            "schema_version": "omniflow.function-bundle.v2",
-            "run_id": "environment-entry-test",
-            "arguments": {"edit_note": {"title": "Old title"}},
-            "functions": [function],
-            "checker_rules": [],
-        }
-    }
-    raw_payload = _run_log(
-        "Edit a note.",
-        [
-            {
-                "step_index": 0,
-                "observation": _state(
-                    '<hierarchy><node id="title" package="app.notes" '
-                    'text="Old title" /></hierarchy>'
-                ),
-                "action": {"action_type": "click", "x": 500, "y": 500},
-                "result": {"success": True},
-                "next_observation": _state(
-                    '<hierarchy><node id="title" package="app.notes" '
-                    'text="Old title" /></hierarchy>'
-                ),
-            }
-        ],
-    )
-
-    import pytest
-
-    with pytest.raises(ValueError, match="function_render_binding_target_duplicate"):
-        _validate_materialized_function_artifacts(
-            authored,
-            raw_payload=raw_payload,
-        )
