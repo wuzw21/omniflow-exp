@@ -204,7 +204,7 @@ def compile_runlog_to_store(
         if action_type in {"answer", "status", "unknown"}:
             omitted_action_types.add(action_type)
             continue
-        if action_type == "open_app":
+        if action_type == "open_app" and source_has_main_action:
             omitted_action_types.add("open_app")
             optional_checker_actions.append(
                 {
@@ -339,7 +339,12 @@ def compile_runlog_to_store(
     elif selected_model is None:
         if client is not None or prompt is not None:
             raise ValueError("author_model_required_for_author_options")
-        raise ValueError("function_author_model_or_bundle_required")
+        # Device RunLog registration must not require a second Kotlin
+        # converter or a model round-trip.  The canonical facts above already
+        # contain the official projected actions and immutable source-state
+        # ids, so use the same Python authoring/materialization path with a
+        # deterministic complete Function.
+        authored = _direct_source_authoring_plan(facts)
     else:
         if client is None:
             try:
@@ -436,7 +441,20 @@ def compile_runlog_to_store(
                 response=raw_author_response,
                 usage=usage,
             )
-            raise authoring_error
+            authored = _direct_source_authoring_plan(facts)
+            authored["reason"] = (
+                "The semantic Function proposal did not satisfy the authoring "
+                "contract after three attempts, so the harness registered the "
+                "complete successful source workflow with compiler-derived "
+                "action and render bindings."
+            )
+            authoring_attempt_trace.append(
+                {
+                    "attempt": "source_workflow_fallback",
+                    "accepted": True,
+                    "error": None,
+                }
+            )
     if not isinstance(authored, dict) or not {"reason", "bundle"}.issubset(authored):
         raise ValueError("function_author_response_contract_invalid")
     if set(authored) - {
@@ -1358,39 +1376,26 @@ def _direct_source_authoring_plan(facts: dict[str, Any]) -> dict[str, Any]:
         if goal
         else "Execute every converted source action in order."
     )
-    function = {
-        "schema_version": "omniflow.function.v2",
-        "function_id": function_id,
-        "name": name,
-        "description": description,
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
+    return _materialize_authoring_plan(
+        {
+            "reason": "Registered the complete converted source workflow.",
+            "plan": {
+                "functions": [],
+                "complete_function": {
+                    "function_id": function_id,
+                    "name": name,
+                    "description": description,
+                    "source_step_indices": [
+                        int(step["source_step_index"])
+                        for step in source_steps
+                    ],
+                    "parameters": [],
+                },
+            },
         },
-        "bindings": [],
-        "render_bindings": [],
-        "steps": [
-            {
-                "step_index": index,
-                "source_state_id": str(step["before_state_id"]),
-                "action": json.loads(json.dumps(step["action"], ensure_ascii=False)),
-            }
-            for index, step in enumerate(source_steps)
-        ],
-        "agent_visible": True,
-    }
-    return {
-        "reason": "Registered the complete converted source workflow.",
-        "bundle": {
-            "schema_version": "omniflow.function-bundle.v2",
-            "run_id": str(facts["run_id"]),
-            "arguments": {function_id: {}},
-            "checker_rules": [],
-            "functions": [function],
-        },
-    }
+        facts,
+        synthesize_missing_locals=False,
+    )
 
 
 def _materialize_authoring_plan(
@@ -1812,6 +1817,11 @@ def _materialize_authoring_plan(
                     "recorded_value"
                 ]
         _materialize_agent_parameters(function, parameter_proposals)
+        source_arguments = {
+            name: value
+            for name, value in source_arguments.items()
+            if name in function["input_schema"]["properties"]
+        }
         node_parameter_literals = _materialize_node_parameters(
             function,
             facts.get("node_parameter_evidence") or (),
@@ -2333,7 +2343,7 @@ def _source_node_parameter_evidence(
         return None
 
     evidence: list[dict[str, Any]] = []
-    seen_targets: dict[tuple[str, str], dict[str, Any]] = {}
+    seen_targets: dict[tuple[str, str, str], dict[str, Any]] = {}
     ranked_matches: list[
         tuple[tuple[float, int, float], str, str, str, ET.Element]
     ] = []
@@ -2386,12 +2396,15 @@ def _source_node_parameter_evidence(
             if recorded_value in str(node.attrib.get(name) or "")
         )
         label = str(node.attrib.get(attribute) or "")
-        target = (str(node.attrib["id"]), attribute)
+        target = (
+            str(node.attrib["id"]),
+            attribute,
+            recorded_value.casefold(),
+        )
         existing = seen_targets.get(target)
         if existing is not None:
             if (
-                existing["recorded_value"] != recorded_value
-                or existing["task_parameter_value"] != task_value
+                existing["task_parameter_value"] != task_value
             ):
                 raise ValueError("function_node_parameter_target_ambiguous")
             continue
@@ -2448,14 +2461,6 @@ def _materialize_agent_parameters(
         if candidate is None:
             raise ValueError("function_author_plan_parameter_target_invalid")
         recorded_value = str(candidate["recorded_value"])
-        if name in values_by_name and values_by_name[name] != recorded_value:
-            raise ValueError("function_author_plan_parameter_name_ambiguous")
-        if name not in function["input_schema"]["properties"]:
-            definition = {"type": "string"}
-            if description:
-                definition["description"] = description
-            function["input_schema"]["properties"][name] = definition
-            function["input_schema"]["required"].append(name)
         binding_steps = [step_index]
         if (
             arg_name == "text"
@@ -2487,6 +2492,7 @@ def _materialize_agent_parameters(
                 if " ".join(repeated_value.casefold().split()) != normalized_recorded_value:
                     continue
                 binding_steps.append(repeated_step_index)
+        unbound_binding_steps = []
         for binding_step_index in binding_steps:
             target = (
                 f"$.steps[{binding_step_index}].action.args.{arg_name}"
@@ -2497,6 +2503,21 @@ def _materialize_agent_parameters(
                 if isinstance(binding, dict)
             ):
                 continue
+            unbound_binding_steps.append(binding_step_index)
+        if not unbound_binding_steps:
+            continue
+        if name in values_by_name and values_by_name[name] != recorded_value:
+            raise ValueError("function_author_plan_parameter_name_ambiguous")
+        if name not in function["input_schema"]["properties"]:
+            definition = {"type": "string"}
+            if description:
+                definition["description"] = description
+            function["input_schema"]["properties"][name] = definition
+            function["input_schema"]["required"].append(name)
+        for binding_step_index in unbound_binding_steps:
+            target = (
+                f"$.steps[{binding_step_index}].action.args.{arg_name}"
+            )
             function["bindings"].append(
                 {
                     "source": f"$.arguments.{name}",
@@ -2589,6 +2610,15 @@ def _remove_compiler_entry_actions(
     source_steps = raw_payload.get("steps")
     if not isinstance(source_steps, list):
         return raw_functions
+    source_has_main_action = any(
+        isinstance(source_step, dict)
+        and str(
+            (source_step.get("action") or {}).get("action_type") or ""
+        ).strip()
+        not in {"answer", "status", "unknown", "open_app"}
+        and not _is_transient_system_action(source_step)
+        for source_step in source_steps
+    )
     effective_steps = [
         (index, step)
         for index, step in enumerate(source_steps)
@@ -2696,6 +2726,15 @@ def _remove_compiler_environment_actions(
     source_steps = raw_payload.get("steps")
     if not isinstance(source_steps, list):
         return raw_functions
+    source_has_main_action = any(
+        isinstance(source_step, dict)
+        and str(
+            (source_step.get("action") or {}).get("action_type") or ""
+        ).strip()
+        not in {"answer", "status", "unknown", "open_app"}
+        and not _is_transient_system_action(source_step)
+        for source_step in source_steps
+    )
     entry_state_ids: set[str] = set()
     for step in source_steps:
         if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
@@ -2728,7 +2767,7 @@ def _remove_compiler_environment_actions(
                 and tool == "press_key"
                 and key in {"back", "home"}
             )
-            if tool == "open_app" or is_entry_navigation:
+            if (tool == "open_app" and source_has_main_action) or is_entry_navigation:
                 removed_indices.add(original_index)
                 continue
             candidate["step_index"] = len(kept_steps)

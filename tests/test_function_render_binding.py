@@ -22,6 +22,7 @@ from omniflow.functions.artifact import (
 from omniflow.functions.compiler import (
     _authoring_candidate_catalog,
     _default_authoring_workflow_prompt,
+    _direct_source_authoring_plan,
     _materialize_authoring_plan,
     _materialize_authoring_workflow,
     _source_parameter_candidates,
@@ -361,6 +362,116 @@ def test_compiler_disambiguates_same_parameter_name_with_different_values() -> N
         "titles": "Pasta",
         "titles_2": "Soup",
     }
+
+
+def test_compiler_drops_parameter_already_bound_by_repeated_literal() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Enter the same title twice.",
+        "task_parameters": {},
+        "steps": [
+            {
+                "source_step_index": index,
+                "before_state_id": f"state-{index}",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Pasta", "x": 500, "y": 500},
+                },
+                "metadata": {},
+            }
+            for index in range(2)
+        ],
+        "node_parameter_evidence": [],
+    }
+
+    result = _materialize_authoring_plan(
+        {
+            "reason": "Enter the repeated requested title.",
+            "plan": {
+                "functions": [],
+                "complete_function": {
+                    "function_id": "enter_title_twice",
+                    "name": "Enter title twice",
+                    "description": "Enter the requested title twice.",
+                    "source_step_indices": [0, 1],
+                    "parameters": [
+                        {
+                            "name": "title",
+                            "description": "Requested title",
+                            "source_step_index": 0,
+                            "arg_name": "text",
+                        },
+                        {
+                            "name": "input_text",
+                            "description": "Repeated title",
+                            "source_step_index": 1,
+                            "arg_name": "text",
+                        },
+                    ],
+                },
+            },
+        },
+        facts,
+    )
+
+    function = next(
+        item
+        for item in result["bundle"]["functions"]
+        if item["function_id"] == "enter_title_twice"
+    )
+    assert function["input_schema"]["required"] == ["title"]
+    assert result["bundle"]["arguments"]["enter_title_twice"] == {
+        "title": "Pasta"
+    }
+    assert len(function["bindings"]) == 2
+
+
+def test_direct_source_fallback_derives_action_and_render_bindings() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Create a recipe titled Pasta.",
+        "task_parameters": {"title": "Pasta"},
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Pasta", "x": 500, "y": 500},
+                },
+                "metadata": {},
+            }
+        ],
+        "node_parameter_evidence": [
+            {
+                "source_step_index": 0,
+                "tool": "input_text",
+                "parameter_name": "title",
+                "suggested_name": "title",
+                "task_parameter_value": "Pasta",
+                "recorded_value": "Pasta",
+                "node_id": "title-field",
+                "attribute": "text",
+                "node_label": "Pasta",
+            }
+        ],
+    }
+
+    result = _direct_source_authoring_plan(facts)
+
+    function = result["bundle"]["functions"][0]
+    assert function["function_id"] == "complete_source_workflow"
+    assert function["input_schema"]["required"] == ["title"]
+    assert result["bundle"]["arguments"]["complete_source_workflow"] == {
+        "title": "Pasta"
+    }
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.title",
+            "target": "$.steps[0].action.args.text",
+        }
+    ]
+    assert function["render_bindings"][0]["node_id"] == "title-field"
 
 
 def test_execution_sends_both_masked_endpoints_to_transfer() -> None:
@@ -861,6 +972,36 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     assert '"registration"' not in prompt
     assert "never put parameters inside complete_function" in prompt
     assert "single occurrence spans the complete source" in prompt
+
+
+def test_node_parameter_evidence_allows_distinct_values_in_one_node() -> None:
+    evidence = _source_node_parameter_evidence(
+        source_step={
+            "observation": {
+                "xml": (
+                    '<hierarchy width="720" height="1280">'
+                    '<node id="editor" class="android.widget.EditText" '
+                    'text="Meeting notes\n\nExisting body" clickable="true" '
+                    'bounds="[0,200][720,1100]" />'
+                    "</hierarchy>"
+                )
+            }
+        },
+        action={"tool": "click", "args": {"x": 500, "y": 500}},
+        source_step_index=4,
+        task_parameters={
+            "header": "Meeting notes",
+            "original_content": "Existing body",
+        },
+    )
+
+    assert {
+        (item["parameter_name"], item["recorded_value"])
+        for item in evidence
+    } == {
+        ("header", "Meeting notes"),
+        ("original_content", "Existing body"),
+    }
 
 
 def test_authoring_harness_explains_complete_parameter_placement() -> None:
