@@ -26,7 +26,7 @@
     {
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_initial_setup",
-      "enabled": false,
+      "enabled": true,
       "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[.//node[normalize-space(@text)='Setup'] and .//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')]]"
@@ -58,7 +58,7 @@
     {
       "schema_version": "omniflow.checker_rule.v1",
       "id": "advance_first_run_onboarding",
-      "enabled": false,
+      "enabled": true,
       "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[contains(@resource-id,'introduction') or contains(@resource-id,'onboarding') or contains(@resource-id,'welcome') or contains(@class,'ViewPager')]"

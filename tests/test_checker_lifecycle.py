@@ -53,6 +53,59 @@ def _obscured_source_observation() -> Observation:
     )
 
 
+def test_default_checkers_enable_first_run_and_initial_setup_recovery() -> None:
+    rules = {rule["id"]: rule for rule in CheckerLibrary.load().rules}
+    source = Observation(
+        xml=(
+            '<hierarchy width="720" height="1280">'
+            '<node package="com.example.app" resource-id="record" '
+            'clickable="true" bounds="[250,900][470,1120]" />'
+            '</hierarchy>'
+        ),
+        package_name="com.example.app",
+    )
+    action = Action("click", {"x": 360, "y": 1010})
+    welcome = Observation(
+        xml=(
+            '<hierarchy width="1440" height="3120">'
+            '<node class="androidx.viewpager.widget.ViewPager">'
+            '<node text="Get started" clickable="true" '
+            'bounds="[478,2700][962,2868]" />'
+            '</node></hierarchy>'
+        ),
+        package_name="com.example.app",
+    )
+    setup = Observation(
+        xml=(
+            '<hierarchy width="1440" height="3120">'
+            '<node><node text="Setup" />'
+            '<node text="Apply" clickable="true" '
+            'bounds="[741,2840][1412,3008]" />'
+            '</node></hierarchy>'
+        ),
+        package_name="com.example.app",
+    )
+
+    assert rules["advance_first_run_onboarding"]["enabled"] is True
+    assert checker_rule_matches(
+        rules["advance_first_run_onboarding"],
+        current=welcome,
+        source=source,
+        function_id="record_audio",
+        step_index=0,
+        action=action,
+    )
+    assert rules["dismiss_initial_setup"]["enabled"] is True
+    assert checker_rule_matches(
+        rules["dismiss_initial_setup"],
+        current=setup,
+        source=source,
+        function_id="record_audio",
+        step_index=0,
+        action=action,
+    )
+
+
 def test_transfer_identity_uses_app_under_ime_overlay() -> None:
     source = Observation(
         xml=(
