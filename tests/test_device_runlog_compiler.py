@@ -67,6 +67,34 @@ def test_device_registration_uses_official_python_projection_without_model(
     }
 
 
+def test_input_text_keeps_source_point_for_omnitransfer_replay(tmp_path) -> None:
+    run_log = _run_log()
+    run_log["goal"] = "输入完成"
+    run_log["steps"][0]["action"] = {
+        "action_type": "input_text",
+        "text": "完成",
+        "x": 500,
+        "y": 500,
+    }
+
+    report = compile_runlog_to_store(
+        run_log,
+        tmp_path / "compiled",
+        source_states=import_run_log_evidence(run_log)[1],
+    )
+    function = parse_function_artifact(
+        json.loads((tmp_path / "compiled" / "store.json").read_text())["functions"][
+            report["function_ids"][0]
+        ]
+    )
+
+    assert function.steps[0].action.to_dict() == {
+        "tool": "input_text",
+        "args": {"text": "", "x": 500, "y": 500},
+    }
+    assert function.bindings[0]["target"] == "$.steps[0].action.args.text"
+
+
 def test_answer_only_source_retains_app_entry_as_reusable_progress(tmp_path) -> None:
     run_log = _run_log()
     run_log["goal"] = "Open the clock app and report what is visible."

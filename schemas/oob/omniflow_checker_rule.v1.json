@@ -2,71 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://omniflow.local/schemas/oob/omniflow_checker_rule.v1.json",
   "title": "OmniFlow Checker Rule",
-  "description": "A shared checker-library rule evaluated independently of any one Function.",
+  "description": "One learned recovery: a restricted Python trigger and one canonical Action grounded by source_state_id.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "id", "condition", "action"],
+  "required": ["schema_version", "trigger", "source_state_id", "action"],
   "properties": {
     "schema_version": {"const": "omniflow.checker_rule.v1"},
-    "id": {"type": "string", "minLength": 1},
-    "enabled": {"type": "boolean", "default": true},
-    "scope": {"$ref": "#/$defs/scope"},
-    "phase": {"enum": ["pre_transfer", "pre_action", "post_action"]},
-    "condition": {"$ref": "#/$defs/condition"},
-    "action": {"$ref": "#/$defs/action"},
-    "budget": {"$ref": "#/$defs/budget"},
-    "priority": {"type": "integer"},
-    "source": {"type": "string"}
-  },
-  "$defs": {
-    "string_list": {"oneOf": [{"type": "array", "items": {"type": "string"}, "minItems": 1}, {"type": "string", "minLength": 1}]},
-    "scope": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "function_ids": {"$ref": "#/$defs/string_list"},
-        "step_indexes": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-        "action_types": {"$ref": "#/$defs/string_list"},
-        "package_names": {"$ref": "#/$defs/string_list"}
-      }
-    },
-    "condition": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {"enum": ["xpath_exists", "target_covered_by_xpath", "keyboard_obscuring", "package_mismatch", "ui_unstable"]},
-        "xpath_exists": {"type": "string", "minLength": 1},
-        "xpath": {"type": "string", "minLength": 1},
-        "target_covered_by_xpath": {"type": "string", "minLength": 1},
-        "keyboard_obscuring": {"type": "boolean"},
-        "keyboard_obscures_target": {"type": "boolean"},
-        "package_mismatch": {"type": "boolean"},
-        "ui_unstable": {"type": "boolean"}
-      }
-    },
+    "trigger": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_state_id": {"type": "string", "minLength": 1},
     "action": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["tool", "args"],
       "properties": {
-        "type": {"enum": ["click", "hide_keyboard", "open_app", "swipe", "wait"]},
-        "action": {"enum": ["click", "hide_keyboard", "open_app", "swipe", "wait"]},
-        "target_xpath": {"type": "string", "minLength": 1},
-        "package_name": {"type": "string", "minLength": 1},
-        "wait_ms": {"type": "integer", "minimum": 0},
-        "x1": {"type": "number", "minimum": 0, "maximum": 1000},
-        "y1": {"type": "number", "minimum": 0, "maximum": 1000},
-        "x2": {"type": "number", "minimum": 0, "maximum": 1000},
-        "y2": {"type": "number", "minimum": 0, "maximum": 1000},
-        "duration_ms": {"type": "integer", "minimum": 0}
-      }
-    },
-    "budget": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "max_triggers_per_run": {"type": "integer", "minimum": 0},
-        "max_triggers_per_step": {"type": "integer", "minimum": 0},
-        "cooldown_ms": {"type": "integer", "minimum": 0}
+        "tool": {"type": "string", "minLength": 1},
+        "args": {"type": "object"}
       }
     }
   }

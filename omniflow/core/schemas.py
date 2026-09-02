@@ -11,7 +11,7 @@ from typing import Any
 CANONICAL_ACTION_SCHEMA_FILENAME = "oob_canonical_actions.v1.json"
 CANONICAL_ACTION_SCHEMA_VERSION = "oob.canonical_actions.v1"
 CANONICAL_ACTION_SCHEMA_SHA256 = (
-    "5769667a576d82621a5a1b013df16fde6c905871f4c2805bb93da34435ef62a2"
+    "eb552c08e89123f42667c2c3296db9b3094d74715dfdb4d0cb7df50aeec62333"
 )
 OMNIFLOW_RUN_LOG_SCHEMA_FILENAME = "omniflow_run_log.v1.json"
 CHECKER_RULE_SCHEMA_FILENAME = "omniflow_checker_rule.v1.json"
