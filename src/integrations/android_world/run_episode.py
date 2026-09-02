@@ -596,7 +596,35 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
             timeout_sec = max(float(timeout_sec), expense_timeout_sec)
         try:
             return original(controller, resource_ids, timeout_sec)
-        except ValueError:
+        except ValueError as error:
+            elements = controller._env.get_ui_elements() or []
+            labels = {
+                str(value or "").strip().casefold()
+                for element in elements
+                for value in (
+                    getattr(element, "text", None),
+                    getattr(element, "content_description", None),
+                )
+                if str(value or "").strip()
+            }
+            if "ok" in labels and any(
+                label.startswith("this app was built for an older version of android")
+                for label in labels
+            ):
+                logger.info(
+                    "AndroidWorld setup is dismissing the legacy-app dialog "
+                    "before retrying resource-id %s",
+                    resource_ids,
+                )
+                controller.click_element("OK")
+                last_error: ValueError = error
+                for _ in range(6):
+                    try:
+                        return original(controller, resource_ids, timeout_sec)
+                    except ValueError as retry_error:
+                        last_error = retry_error
+                        time.sleep(0.5)
+                raise last_error
             if not chrome_onboarding_ids.intersection(ids):
                 raise
             activity = str(
@@ -606,15 +634,6 @@ def _patch_androidworld_expense_setup_timeout() -> tuple[Any, Any] | None:
                 str(getattr(element, "package_name", "") or "").strip().casefold()
                 for element in controller._env.get_ui_elements() or ()
                 if str(getattr(element, "package_name", "") or "").strip()
-            }
-            labels = {
-                str(value or "").strip().casefold()
-                for element in controller._env.get_ui_elements() or ()
-                for value in (
-                    getattr(element, "text", None),
-                    getattr(element, "content_description", None),
-                )
-                if str(value or "").strip()
             }
             chrome_is_foreground = activity.startswith("com.android.chrome/")
             chrome_is_visible = "com.android.chrome" in packages
