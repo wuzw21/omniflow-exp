@@ -172,6 +172,7 @@ def compile_runlog_to_store(
         == "open_app"
         else None
     )
+    launcher_entry_indices = _recorded_launcher_entry_indices(source_steps)
     for source_step_index, step in enumerate(source_steps):
         if not isinstance(step, dict):
             continue
@@ -203,6 +204,16 @@ def compile_runlog_to_store(
         action_type = str(step.get("action", {}).get("action_type") or "")
         if action_type in {"answer", "status", "unknown"}:
             omitted_action_types.add(action_type)
+            continue
+        if source_step_index in launcher_entry_indices:
+            omitted_action_types.add("open_app")
+            optional_checker_actions.append(
+                {
+                    "source_step_index": source_step_index,
+                    "checker_id": "restore_target_app",
+                    "reason": "recorded_launcher_app_entry_is_environment_recovery",
+                }
+            )
             continue
         if action_type == "open_app" and source_has_main_action:
             omitted_action_types.add("open_app")
@@ -2735,6 +2746,11 @@ def _remove_compiler_environment_actions(
         and not _is_transient_system_action(source_step)
         for source_step in source_steps
     )
+    launcher_entry_indices = _recorded_launcher_entry_indices(source_steps)
+    launcher_entry_state_ids = {
+        state_id(source_steps[index].get("observation"))
+        for index in launcher_entry_indices
+    }
     entry_state_ids: set[str] = set()
     for step in source_steps:
         if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
@@ -2767,7 +2783,12 @@ def _remove_compiler_environment_actions(
                 and tool == "press_key"
                 and key in {"back", "home"}
             )
-            if (tool == "open_app" and source_has_main_action) or is_entry_navigation:
+            is_launcher_app_entry = source_id in launcher_entry_state_ids
+            if (
+                (tool == "open_app" and source_has_main_action)
+                or is_entry_navigation
+                or is_launcher_app_entry
+            ):
                 removed_indices.add(original_index)
                 continue
             candidate["step_index"] = len(kept_steps)
@@ -2792,6 +2813,52 @@ def _remove_compiler_environment_actions(
         updated["bindings"] = updated_bindings
         result.append(updated)
     return result
+
+
+def _recorded_launcher_entry_indices(source_steps: list[Any]) -> set[int]:
+    """Find a recorded Launcher-to-app prefix owned by runtime recovery.
+
+    OOB source collection can represent opening the task app as physical
+    Launcher swipes/clicks instead of a canonical ``open_app`` action.  A
+    target AndroidWorld episode already initializes its task app, so replaying
+    that prefix attempts to map a Launcher point against the in-app page.  Only
+    classify a leading Launcher prefix when it demonstrably transitions into
+    a non-system app and a later successful business action remains.  SystemUI
+    gestures (for example brightness or Wi-Fi tasks) stay in the Function.
+    """
+
+    launcher_prefix: list[int] = []
+    for index, step in enumerate(source_steps):
+        if not isinstance(step, dict) or not isinstance(step.get("action"), dict):
+            return set()
+        action_type = str(step["action"].get("action_type") or "").strip()
+        if action_type in {"answer", "status", "unknown"}:
+            continue
+        if (step.get("result") or {}).get("success") is not True:
+            return set()
+        before_package = _primary_observation_package(step.get("observation"))
+        if "launcher" not in before_package.casefold():
+            return set()
+        launcher_prefix.append(index)
+        after_package = _primary_observation_package(step.get("next_observation"))
+        if not after_package or "launcher" in after_package.casefold():
+            continue
+        if any(
+            marker in after_package.casefold()
+            for marker in ("systemui", "inputmethod", "permissioncontroller")
+        ):
+            return set()
+        has_later_business_action = any(
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("action"), dict)
+            and (candidate.get("result") or {}).get("success") is True
+            and str(candidate["action"].get("action_type") or "").strip()
+            not in {"answer", "status", "unknown", "open_app"}
+            and not _is_transient_system_action(candidate)
+            for candidate in source_steps[index + 1 :]
+        )
+        return set(launcher_prefix) if has_later_business_action else set()
+    return set()
 
 
 def _primary_observation_package(observation: Any) -> str:
