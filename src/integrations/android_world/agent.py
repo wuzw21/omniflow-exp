@@ -32,6 +32,16 @@ from src.integrations.android_world.host import AndroidWorldHost, make_agent_res
 MODE_OMNIFLOW = "omniflow"
 
 
+def _emit_official_completion(env: Any) -> None:
+    json_action = importlib.import_module("android_world.env.json_action")
+    env.execute_action(
+        json_action.JSONAction(
+            action_type=json_action.STATUS,
+            goal_status="complete",
+        )
+    )
+
+
 class _TaskHost:
     def __init__(
         self,
@@ -217,9 +227,6 @@ def build_agent(
         context: dict[str, Any] | None = None,
     ) -> None:
         task_context = dict(context or {})
-        completion_checker = task_context.get("completion_checker")
-        if callable(completion_checker):
-            flow.completion_checker = completion_checker
         task_parameters = task_context.get("task_parameters")
         if not isinstance(task_parameters, dict):
             task_parameters = {}
@@ -234,7 +241,6 @@ def build_agent(
         parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
         return {
             "task_parameters": _json_copy(parameters),
-            "completion_checker": lambda: float(task.is_successful(env)) > 0.5,
         }
 
     def step(goal: str):
@@ -252,7 +258,7 @@ def build_agent(
                     "fallback": False,
                     "error": None,
                     "done_reason": "omniflow_cycle_already_completed",
-                    "answer": None,
+                    "finished_content": None,
                 },
             )
         state["goal"] = goal_text
@@ -284,14 +290,8 @@ def build_agent(
                 result.final_state,
                 {**result.detail, "done_reason": done_reason},
             )
-        if done_reason == "finished" and finished_content:
-            json_action = importlib.import_module("android_world.env.json_action")
-            env.execute_action(
-                json_action.JSONAction(
-                    action_type=json_action.ANSWER,
-                    text=finished_content,
-                )
-            )
+        if done_reason == "finished":
+            _emit_official_completion(env)
         state["step_index"] = 1
         state["last_result"] = result
         return make_agent_result(
@@ -310,7 +310,7 @@ def build_agent(
                     if result.actions_executed
                     else "planner_failed"
                 ),
-                "answer": finished_content or None,
+                "finished_content": finished_content or None,
             },
         )
 

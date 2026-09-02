@@ -35,7 +35,11 @@ def resolve_openai_compatible_config(
             api_key,
             env.get("LLMTHU_API_KEY"),
         )
-        base_url_candidates = (base_url,)
+        base_url_candidates = (
+            base_url,
+            env.get("OPENAI_BASE_URL"),
+            env.get("OMNIFLOW_MODEL_BASE_URL"),
+        )
     elif resolved_profile == "openai":
         key_candidates = (api_key, env.get("OPENAI_API_KEY"))
         base_url_candidates = (base_url, env.get("OPENAI_BASE_URL"))

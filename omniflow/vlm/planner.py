@@ -265,6 +265,7 @@ def planner_state(observation: Observation) -> dict[str, Any]:
         in {
             "planner_feedback",
             "forbid_finished",
+            "completion_only",
             "previous_action_error",
             "previous_action",
             "recent_actions",

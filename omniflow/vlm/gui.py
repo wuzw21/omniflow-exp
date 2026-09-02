@@ -29,6 +29,7 @@ _MAX_ACCESSIBILITY_ROWS = 50
 _PLANNER_CONTEXT_KEYS = (
     "planner_feedback",
     "forbid_finished",
+    "completion_only",
     "previous_action_error",
     "previous_action",
     "recent_actions",
@@ -95,16 +96,24 @@ def build_model_turn_request(
     )
     native_tools = vlm_action_tools(include_summary=True)
     projected_extra = projected_state.get("extra")
-    if isinstance(projected_extra, dict) and bool(
-        projected_extra.get("forbid_finished")
-    ):
-        native_tools = [
-            tool
-            for tool in native_tools
-            if tool.get("function", {}).get("name") != "finished"
-        ]
+    if isinstance(projected_extra, dict):
+        if bool(projected_extra.get("completion_only")):
+            native_tools = [
+                tool
+                for tool in native_tools
+                if tool.get("function", {}).get("name") == "finished"
+            ]
+        elif bool(projected_extra.get("forbid_finished")):
+            native_tools = [
+                tool
+                for tool in native_tools
+                if tool.get("function", {}).get("name") != "finished"
+            ]
     tools = relative_coordinate_tools(native_tools, display)
-    tools.extend(function_tools(functions, include_summary=True))
+    if not isinstance(projected_extra, dict) or not bool(
+        projected_extra.get("completion_only")
+    ):
+        tools.extend(function_tools(functions, include_summary=True))
     request: dict[str, Any] = {
         "model": str(model),
         "messages": [

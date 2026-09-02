@@ -292,6 +292,18 @@ def _androidworld_input_target(
             if str(node.attrib.get("focused") or "").casefold() == "true"
         ]
         node = min(focused, key=_xml_node_area, default=None)
+        if node is None:
+            expected = " ".join(str(action.get("text") or "").casefold().split())
+            matching_text = [
+                candidate
+                for candidate in editable_nodes
+                if " ".join(
+                    str(candidate.attrib.get("text") or "").casefold().split()
+                )
+                == expected
+            ]
+            if len(matching_text) == 1:
+                node = matching_text[0]
         # WebView accessibility snapshots can keep focused=false immediately
         # after a successful click.  A sole editable node is still an
         # unambiguous input target; multiple unfocused fields remain rejected.
@@ -602,12 +614,12 @@ def _xml_index_bounds(xml: str, index: int) -> tuple[float, float, float, float]
     windows = list(root.iter("window"))
     for window in windows:
         ordered_nodes: list[tuple[int, ET.Element]] = []
-        for element in window.iter("node"):
+        for ordinal, element in enumerate(window.iter("node")):
             raw_id = str(element.attrib.get("id") or "")
             try:
-                order = int(raw_id.rsplit(":", maxsplit=1)[1])
-            except (IndexError, ValueError):
-                return None
+                order = int(raw_id.rsplit(":", maxsplit=1)[-1])
+            except ValueError:
+                order = ordinal
             ordered_nodes.append((order, element))
             for child in element:
                 if child.tag == "node":

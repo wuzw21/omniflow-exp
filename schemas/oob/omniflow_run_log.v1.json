@@ -182,6 +182,38 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["action_type"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action_type": {"enum": ["swipe", "scroll"]}
+            },
+            "required": ["action_type"]
+          },
+          "then": {
+            "anyOf": [
+              {"required": ["direction"]},
+              {"required": ["x1", "y1", "x2", "y2"]}
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {"required": ["x1"]},
+              {"required": ["y1"]},
+              {"required": ["x2"]},
+              {"required": ["y2"]}
+            ]
+          },
+          "then": {
+            "properties": {
+              "action_type": {"const": "swipe"}
+            },
+            "required": ["action_type", "x1", "y1", "x2", "y2"]
+          }
+        }
+      ],
       "properties": {
         "action_type": {
           "enum": [
