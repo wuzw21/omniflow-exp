@@ -859,6 +859,46 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     assert "Stage 4" not in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
+    assert "never put parameters inside complete_function" in prompt
+    assert "single occurrence spans the complete source" in prompt
+
+
+def test_authoring_harness_explains_complete_parameter_placement() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Save the recording as meeting_audio.",
+        "task_parameters": {},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [],
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {"tool": "input_text", "args": {"text": "meeting_audio"}},
+                "metadata": {},
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="parameters_must_be_declared_on_a_function",
+    ):
+        _materialize_authoring_workflow(
+            {
+                "reason": "The complete workflow needs one file-name parameter.",
+                "functions": [],
+                "complete_function": {
+                    "function_id": "save_recording",
+                    "name": "Save recording",
+                    "description": "Save a recording under the requested name.",
+                    "source_step_indices": [0],
+                    "parameters": [],
+                },
+            },
+            facts,
+            candidate_map={},
+        )
 
 
 def test_source_call_loader_preserves_repeated_function_references(tmp_path) -> None:

@@ -71,6 +71,13 @@ task value, group all of them under that one parameter; this renders every actio
 whose source-state semantics depend on the value. Angle-bracket strings in the
 example are placeholders, not literal names to copy.
 
+The complete_function object must contain exactly function_id, name, description,
+and source_step_indices; never put parameters inside complete_function. When the
+complete workflow needs parameters but there is no smaller local operation, emit
+one Function in functions whose single occurrence spans the complete source
+sequence and declare the parameters there. The Harness will merge that redundant
+full-span definition into the complete Function while preserving its parameters.
+
 Stage 3 — compile and register. This stage is performed by the Compiler Harness,
 not by the Agent. The Harness validates continuity, coverage, repeated-occurrence
 shape, and parameter evidence; derives invocation order from source_step_indices;
@@ -933,6 +940,11 @@ def _materialize_authoring_workflow(
         "description",
         "source_step_indices",
     }
+    if isinstance(raw_complete, dict) and "parameters" in raw_complete:
+        raise ValueError(
+            "function_author_inventory_complete_invalid:"
+            "parameters_must_be_declared_on_a_function"
+        )
     if not isinstance(raw_complete, dict) or set(raw_complete) != complete_fields:
         raise ValueError("function_author_inventory_complete_invalid")
     complete_id = str(raw_complete.get("function_id") or "").strip()
