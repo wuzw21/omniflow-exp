@@ -2382,6 +2382,8 @@ def prepare_androidworld_environment(
                 env,
                 setup_module=setup_module,
                 setup_apps=tuple(setup_apps),
+                console_port=int(console_port),
+                adb_path=str(adb_path or ""),
             )
         finally:
             if setup_apps_module is not None and original_app_download is not None:
@@ -2852,6 +2854,8 @@ def _run_androidworld_setup_apps(
     *,
     setup_module: Any,
     setup_apps: Sequence[Any],
+    console_port: int,
+    adb_path: str,
 ) -> None:
     transfer_timeout_sec = _androidworld_adb_file_transfer_timeout_sec()
     setup_timeout_sec = _androidworld_setup_timeout_sec()
@@ -2929,7 +2933,12 @@ def _run_androidworld_setup_apps(
     setup_env = SetupEnvironment(env)
     if file_utils is not None:
         file_utils.copy_file_to_device = copy_file_to_device
-    original_adb_controller_install = _patch_androidworld_adb_controller_install_compat()
+    original_adb_controller_install = _patch_androidworld_adb_controller_install_compat(
+        bypass_flag_supported=_androidworld_bypass_low_target_sdk_flag_supported(
+            console_port=int(console_port),
+            adb_path=str(adb_path or ""),
+        )
+    )
     original_install_apk = _patch_androidworld_apk_install_compat(setup_module)
     original_issue_generic_request = _patch_androidworld_chcon_compat(setup_module)
     optional_setup_patch = _patch_androidworld_optional_setup_click()
@@ -2992,7 +3001,41 @@ def _run_androidworld_setup_apps(
             controller_type.click_resource_id = original_click_resource_id
 
 
-def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | None:
+def _androidworld_bypass_low_target_sdk_flag_supported(
+    *,
+    console_port: int,
+    adb_path: str,
+) -> bool | None:
+    """Return whether this Android image supports the legacy APK install flag."""
+
+    if int(console_port) <= 0:
+        return None
+    adb_bin = os.path.expanduser(str(adb_path or "").strip()) or "adb"
+    try:
+        result = subprocess.run(
+            [
+                adb_bin,
+                "-s",
+                f"emulator-{int(console_port)}",
+                "shell",
+                "getprop",
+                "ro.build.version.sdk",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        api_level = int(str(result.stdout or "").strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return api_level >= 34
+
+
+def _patch_androidworld_adb_controller_install_compat(
+    *,
+    bypass_flag_supported: bool | None = None,
+) -> tuple[Any, Any] | None:
     """Retry AndroidWorld APK installs without an unsupported adb flag."""
 
     try:
@@ -3026,14 +3069,40 @@ def _patch_androidworld_adb_controller_install_compat() -> tuple[Any, Any] | Non
                 timeout=resolved_timeout,
                 device_specific=device_specific,
             )
-        # The target emulator images reject this flag deterministically.  Do
-        # not spend AndroidWorld's retry budget on a command that cannot work;
-        # issue the equivalent install without the optional flag directly.
         fallback_args = [
             value
             for value in normalized
             if value != "--bypass-low-target-sdk-block"
         ]
+        if bypass_flag_supported is False:
+            return original(
+                self,
+                fallback_args,
+                timeout=resolved_timeout,
+                device_specific=device_specific,
+            )
+        try:
+            return original(
+                self,
+                args,
+                timeout=resolved_timeout,
+                device_specific=device_specific,
+            )
+        except Exception as exc:
+            error_parts = [str(exc)]
+            for attribute in ("stdout", "stderr", "output"):
+                value = getattr(exc, attribute, None)
+                if isinstance(value, bytes):
+                    error_parts.append(value.decode("utf-8", errors="replace"))
+                elif value is not None:
+                    error_parts.append(str(value))
+            if "Unknown option --bypass-low-target-sdk-block" not in "\n".join(
+                error_parts
+            ):
+                raise
+        # Android 13 rejects this optional flag, while Android 14 needs it to
+        # install the benchmark's legacy APKs. Retry only the explicit Android
+        # 13 incompatibility through AndroidWorld's own ADB controller.
         return original(
             self,
             fallback_args,
@@ -4764,9 +4833,6 @@ def _raw_replay_action_to_payload(
             "seconds": max(0.0, float(seconds if seconds is not None else 1.0)),
         }, None
     if action_type in {"finished", "finish", "done", "status"}:
-        content = str(params.get("content") or "").strip()
-        if content:
-            return {"action_type": "answer", "text": content}, None
         return {"action_type": "status", "goal_status": "complete"}, None
 
     if action_type == "answer":

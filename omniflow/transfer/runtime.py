@@ -859,9 +859,24 @@ def _select_transfer_candidate(
                 or "target_candidates_missing"
             ),
         }
-    selected = candidates[0]
-    if not isinstance(selected, dict):
-        raise RuntimeError("omnitransfer_candidate_invalid")
+    typed_candidates = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise RuntimeError("omnitransfer_candidate_invalid")
+        typed_candidates.append(candidate)
+    executable_candidates = [
+        candidate
+        for candidate in typed_candidates
+        if candidate.get("executable") is True
+    ]
+    if not executable_candidates:
+        return {
+            **ranking,
+            "mapped": False,
+            "selection_policy": "omniflow_best_ranked_executable",
+            "reason": "target_candidate_not_executable",
+        }
+    selected = executable_candidates[0]
     try:
         new_x = float(selected["new_x"])
         new_y = float(selected["new_y"])
@@ -873,7 +888,7 @@ def _select_transfer_candidate(
     return {
         **ranking,
         "mapped": True,
-        "selection_policy": "omniflow_top_candidate",
+        "selection_policy": "omniflow_best_ranked_executable",
         "new_x": new_x,
         "new_y": new_y,
         "target_candidate_id": str(selected.get("candidate_id") or ""),

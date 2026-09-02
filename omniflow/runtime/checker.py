@@ -223,36 +223,20 @@ def checker_rule_matches(
             and not is_transient_package(current_package)
         )
     if kind == "keyboard_obscuring":
-        extra = getattr(current, "extra", {}) or {}
-        if extra.get("keyboard_visible") is True or extra.get("ime_visible") is True:
-            keyboard_visible = True
-        else:
-            package_name = _normalize(getattr(current, "package_name", ""))
-            activity_name = _normalize(getattr(current, "activity_name", ""))
-            xml = _normalize(getattr(current, "xml", ""))
-            # The IME is often embedded in the app's accessibility hierarchy while
-            # the reported foreground package remains the app (for example Contacts
-            # with Gboard open).  Package-only detection therefore misses exactly
-            # the state in which a mapped form-field click can land on the keyboard.
-            keyboard_visible = any(
-                marker in value
-                for value in (package_name, activity_name, xml)
-                for marker in (
-                    "inputmethod",
-                    "softinputwindow",
-                    "com.google.android.inputmethod",
-                    "com.android.inputmethod",
-                    "key_pos_",
-                )
-            )
-        if not keyboard_visible:
-            return False
-        # This rule is scoped to contextual actions in the shared Store.  Hide
-        # the IME before the first Transfer attempt so the mapper can see the
-        # focused app field instead of treating Gboard nodes as the target.
-        # Keep the transfer_failed argument for compatibility with older
-        # callers, but do not require a failed mapping to discover this state.
-        return True
+        # Android Back is context-sensitive: without an active IME it may close
+        # an application dialog. A boolean flag or a stale text marker is not
+        # enough evidence to emit it. Require a bounded IME node in the current
+        # tree and source grounding that proves the Function step's app node was
+        # actually covered by the source IME. This keeps source and target page
+        # context aligned when a visible keyboard does not obstruct the action.
+        source_target = _action_target(action, source)
+        source_keyboard = _keyboard_bounds(source)
+        return bool(
+            _keyboard_bounds(current)
+            and source_target is not None
+            and source_keyboard is not None
+            and _bounds_overlap(source_target[1], source_keyboard)
+        )
     if kind == "xpath_exists":
         source_package = _observation_package(source)
         current_package = _observation_package(current)
@@ -468,6 +452,96 @@ def _parse_bounds(value: Any) -> tuple[float, float, float, float] | None:
         return None
     left, top, right, bottom = map(float, match.groups())
     return (left, top, right, bottom) if right > left and bottom > top else None
+
+
+def _keyboard_bounds(observation: Any) -> tuple[float, float, float, float] | None:
+    """Return an IME region only when bounded accessibility nodes prove it."""
+
+    try:
+        root = ET.fromstring(str(getattr(observation, "xml", "") or ""))
+    except ET.ParseError:
+        return None
+    bounds = [
+        parsed
+        for node in root.iter()
+        if _is_keyboard_node(node)
+        and (parsed := _parse_bounds(node.attrib.get("bounds"))) is not None
+    ]
+    if not bounds:
+        return None
+    return (
+        min(item[0] for item in bounds),
+        min(item[1] for item in bounds),
+        max(item[2] for item in bounds),
+        max(item[3] for item in bounds),
+    )
+
+
+def _is_keyboard_node(node: Any) -> bool:
+    values = (
+        _normalize(node.attrib.get("package")),
+        _normalize(node.attrib.get("resource-id")),
+        _normalize(node.attrib.get("class")),
+    )
+    return any(
+        marker in value
+        for value in values
+        for marker in (
+            "inputmethod",
+            "softinputwindow",
+            "com.google.android.inputmethod",
+            "com.android.inputmethod",
+            "key_pos_",
+        )
+    )
+
+
+def _action_target(
+    action: Action,
+    source: Any | None,
+) -> tuple[Any, tuple[float, float, float, float]] | None:
+    if action.tool not in {"click", "long_press", "input_text"}:
+        return None
+    try:
+        x = float(action.args["x"])
+        y = float(action.args["y"])
+        display = (getattr(source, "extra", {}) or {})["display"]
+        width = float(display["width"])
+        height = float(display["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    try:
+        root = ET.fromstring(str(getattr(source, "xml", "") or ""))
+    except ET.ParseError:
+        return None
+    point = (x / 1000.0 * width, y / 1000.0 * height)
+    candidates = [
+        (node, bounds)
+        for node in root.iter()
+        if (bounds := _parse_bounds(node.attrib.get("bounds"))) is not None
+        and bounds[0] <= point[0] <= bounds[2]
+        and bounds[1] <= point[1] <= bounds[3]
+    ]
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda item: (item[1][2] - item[1][0]) * (item[1][3] - item[1][1]),
+    )
+
+
+def _bounds_overlap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> bool:
+    return (
+        first[0] < second[2]
+        and second[0] < first[2]
+        and first[1] < second[3]
+        and second[1] < first[3]
+    )
 
 
 def default_checker(context: CheckerContext) -> Action | None:

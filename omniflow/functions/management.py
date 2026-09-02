@@ -27,6 +27,10 @@ _NON_SEMANTIC_TASK_PARAMETER_NAMES = frozenset(
         "task_random_seed",
     }
 )
+_STRUCTURED_FIELD = re.compile(
+    r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
+)
 
 
 def edit_function(
@@ -384,6 +388,13 @@ def semantic_parameter_evidence(
             evidence["suggested_name"] = task_matches[0]
         return evidence
 
+    filename_stem = _filename_stem_parameter_evidence(
+        run_log,
+        normalized_value,
+    )
+    if filename_stem is not None:
+        return filename_stem
+
     goal = " ".join(str(run_log.get("goal") or "").casefold().split())
     if tool == "input_text" and arg_name == "text":
         return {
@@ -394,6 +405,60 @@ def semantic_parameter_evidence(
             )
         }
     return None
+
+
+def _filename_stem_parameter_evidence(
+    run_log: dict[str, Any],
+    normalized_value: str,
+) -> dict[str, str] | None:
+    """Recognize source inputs that omit a task filename's fixed extension.
+
+    A successful flow may choose a format in the UI and then accept only the
+    basename in its name field.  The Function must expose that accepted value,
+    rather than misleading the Planner into typing the complete filename.
+    """
+
+    task_parameters = run_log.get("task_parameters")
+    if not isinstance(task_parameters, dict) or not normalized_value:
+        return None
+    matches: list[tuple[str, str]] = []
+    for raw_name, raw_value in task_parameters.items():
+        parameter_name = str(raw_name or "").strip()
+        if not _is_filename_parameter_name(parameter_name):
+            continue
+        if not isinstance(raw_value, str):
+            continue
+        stem, suffix = _filename_stem_and_suffix(raw_value)
+        if stem and suffix and _normalize_parameter_value(stem) == normalized_value:
+            matches.append((parameter_name, suffix))
+    if len(matches) != 1:
+        return None
+    parameter_name, suffix = matches[0]
+    return {
+        "evidence": "task_parameter_filename_stem",
+        "suggested_name": _filename_stem_parameter_name(parameter_name),
+        "fixed_suffix": suffix,
+    }
+
+
+def _is_filename_parameter_name(name: str) -> bool:
+    normalized = name.casefold()
+    return normalized in {"filename", "file_name"} or normalized.endswith("_file_name")
+
+
+def _filename_stem_and_suffix(value: str) -> tuple[str, str]:
+    basename = value.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem, separator, extension = basename.rpartition(".")
+    if not stem or not separator or not extension:
+        return "", ""
+    return stem, f".{extension}"
+
+
+def _filename_stem_parameter_name(parameter_name: str) -> str:
+    normalized = parameter_name.casefold()
+    if normalized in {"filename", "file_name"}:
+        return "file_stem"
+    return f"{parameter_name[:-len('_file_name')]}_file_stem"
 
 
 def _matching_task_parameter_names(
@@ -407,9 +472,8 @@ def _matching_task_parameter_names(
         return []
     names = [
         name
-        for raw_name, raw_value in task_parameters.items()
-        if (name := str(raw_name or "").strip())
-        and name not in _NON_SEMANTIC_TASK_PARAMETER_NAMES
+        for name, raw_value in iter_task_parameter_values(task_parameters)
+        if name not in _NON_SEMANTIC_TASK_PARAMETER_NAMES
         and _PARAMETER_NAME.fullmatch(name) is not None
         and _normalize_parameter_value(raw_value) == normalized_value
     ]
@@ -421,6 +485,56 @@ def _matching_task_parameter_names(
     if derived and derived not in names:
         names.append(derived)
     return names
+
+
+def iter_task_parameter_values(
+    task_parameters: Any,
+) -> list[tuple[str, str]]:
+    """Expose direct and serialized structured task values for semantic binding."""
+
+    if not isinstance(task_parameters, dict):
+        return []
+    values: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: Any, value: Any) -> None:
+        parameter_name = str(name or "").strip()
+        if not parameter_name or not isinstance(value, str) or not value.strip():
+            return
+        item = (parameter_name, value)
+        if item not in seen:
+            seen.add(item)
+            values.append(item)
+
+    def visit(name: str, value: Any) -> None:
+        if isinstance(value, dict):
+            for child_name, child_value in value.items():
+                visit(str(child_name or "").strip(), child_value)
+            return
+        if isinstance(value, (list, tuple)):
+            for child_value in value:
+                visit(name, child_value)
+            return
+        if not isinstance(value, str):
+            return
+        add(name, value)
+        object_match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", value)
+        if object_match is None:
+            return
+        object_name = re.sub(
+            r"(?<!^)(?=[A-Z])",
+            "_",
+            object_match.group(1),
+        ).casefold()
+        for field_match in _STRUCTURED_FIELD.finditer(value):
+            field_name = field_match.group("field")
+            if field_name in _NON_SEMANTIC_TASK_PARAMETER_NAMES:
+                continue
+            add(f"{object_name}_{field_name}", field_match.group("value"))
+
+    for raw_name, raw_value in task_parameters.items():
+        visit(str(raw_name or "").strip(), raw_value)
+    return values
 
 
 def _derived_task_parameter_name(

@@ -121,6 +121,27 @@ transfer state、target observation 和 Action Schema 不变。source 节点找�
 原文字不匹配或 target 页面找不到绑定参数时，直接报告 Function/Transfer failure，进入
 既有 Planner fallback，不回放 source 坐标。
 
+## Function authoring Agent Loop
+
+`compile_runlog_to_store` 是唯一 Function writer，同时也是 Agent Loop 的 Harness。
+Authoring Agent 可以返回一份 JSON，但必须显式包含四个阶段：
+
+1. `inventory`：把成功 RunLog 按语义稳定边界切成 Function definitions，并列出每个
+   definition 的一个或多个连续 occurrences；另列出覆盖完整主流程的 complete Function。
+2. `parameterization`：只引用 Compiler 提供的 candidate id，把每个参数绑定到每个
+   occurrence 的 Action argument 或 Node render target。坐标、重复次数和无证据值不能
+   成为参数。
+3. `validation`：声明稳定性和可执行性；Harness 实际复核 action-tool shape、连续性、
+   参数在所有 occurrences 上的完整性以及 source step 覆盖率。
+4. `registration`：每个 definition 只注册一次，并给出按 source 顺序排列的 invocation
+   references。相同 `function_id` 可以带不同参数重复出现。
+
+Harness 校验失败时把确定性的错误原因反馈给同一 Agent，要求返回完整替换 workflow；
+最多尝试三次。Harness 不再用一个自动生成的完整 replay Function 掩盖无效 authoring。
+最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
+`compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
+定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。
+
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。
 
 ## OmniFlow Online Planner
@@ -132,3 +153,12 @@ OmniFlow 的在线执行仍是通用 `Observe -> Act` 循环。每轮先对 Stor
 以及失败转移的 Top-5 候选提示，然后只选择一个下一动作。Function 的 Recall 结果只
 控制 Cache 快路径，不再裁掉注册给 Planner 的 Function tools。VLM Planner 只暴露
 一个可选的 system-prompt 注入点；不为 task、设备或失败类型增加专用执行分支。
+
+Function 是一种普通 Action；它的 action list 和返回结果写入统一 action history，提供给
+Planner 模型作为完成判断证据。无论 Function replay 成功还是失败，都回到同一条 Planner
+主线；Engine 不自行生成 `finished`。Planner 模型输出带非空内容的 `finished` 后，Engine
+立即关闭 OmniFlow 生命周期，并沿同一终止路径将结果交给 AndroidWorld；任务是否成功只
+由 AndroidWorld 官方 validator 判定。到 AndroidWorld 边界时，内部 `finished` 只映射为
+官方 `JSONAction(action_type="status", goal_status="complete")`，不伪装成 `answer`；
+`finished_content` 仅作为 AgentInteractionResult 数据和审计信息保存。Function 的完整
+动作历史仍写入证据，便于审计模型判断与官方 validator 结果。

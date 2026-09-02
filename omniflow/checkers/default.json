@@ -5,7 +5,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "grant_foreground_permission",
       "enabled": true,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {"xpath_exists": "//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')]"},
       "action": {"action": "click", "target_xpath": "(//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')])[1]"},
       "budget": {"max_triggers_per_run": 2},
@@ -16,7 +16,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_permission_dialog",
       "enabled": true,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {"xpath_exists": "//node[(contains(@package,'permissioncontroller') or contains(@resource-id,'permissioncontroller') or contains(@resource-id,'packageinstaller') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'open with') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'just once') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'always') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use a different app'))]"},
       "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='allow' or normalize-space(@text)='允许' or normalize-space(@text)='确定' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='just once' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='always' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='only this time' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='allow only while using' or normalize-space(@text)='仅在使用该应用时' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='use a different app' or contains(@resource-id,'permission_allow_button') or contains(@resource-id,'allow_button') or contains(@resource-id,'button1'))][1]"},
       "budget": {"max_triggers_per_run": 2},
@@ -27,7 +27,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_initial_setup",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[.//node[normalize-space(@text)='Setup'] and .//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')]]"
       },
@@ -43,7 +43,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_informational_dialog",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[@resource-id='android:id/content' and .//node[normalize-space(@text)='Warning!'] and .//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')]]"
       },
@@ -51,7 +51,7 @@
         "action": "click",
         "target_xpath": "(//node[@resource-id='android:id/content' and .//node[normalize-space(@text)='Warning!'] and .//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')]]//node[@clickable='true' and (normalize-space(@text)='Ok' or normalize-space(@text)='OK')])[1]"
       },
-      "budget": {"max_triggers_per_run": 2, "max_triggers_per_step": 1},
+      "budget": {"max_triggers_per_run": 1, "max_triggers_per_step": 1},
       "priority": 115,
       "source": "runtime_policy"
     },
@@ -59,7 +59,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "advance_first_run_onboarding",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[contains(@resource-id,'introduction') or contains(@resource-id,'onboarding') or contains(@resource-id,'welcome') or contains(@class,'ViewPager')]"
       },
@@ -75,7 +75,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_transient_overlay",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {"xpath_exists": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or @text='Get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
       "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@text='跳过' or @text='关闭' or @text='稍后' or @text='以后再说' or @text='NEXT' or @text='Get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='skip' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='next' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='get started' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='not now' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='no thanks' or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad') or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='close' or translate(normalize-space(@content-desc),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dismiss' or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'close ad') or contains(translate(@content-desc,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip ad'))]"},
       "budget": {"max_triggers_per_run": 1},
@@ -86,7 +86,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "select_camera_video_mode",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "scope": {
         "function_ids": ["take_video"],
         "step_indexes": [1],
@@ -110,19 +110,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "restore_target_app",
       "enabled": true,
-      "phase": "pre_transfer",
-      "condition": {"package_mismatch": true},
-      "action": {"action": "open_app"},
-      "budget": {"max_triggers_per_run": 1},
-      "priority": 10,
-      "source": "runtime_policy"
-    },
-    {
-      "schema_version": "omniflow.checker_rule.v1",
-      "id": "restore_target_app_after_action",
-      "enabled": true,
-      "phase": "post_action",
-      "scope": {"action_types": ["click", "long_press", "input_text", "swipe"]},
+      "phase": "pre_action",
       "condition": {"package_mismatch": true},
       "action": {"action": "open_app"},
       "budget": {"max_triggers_per_run": 1},
@@ -134,10 +122,10 @@
       "id": "hide_keyboard",
       "enabled": true,
       "phase": "pre_action",
-      "scope": {"action_types": ["click", "long_press", "input_text", "swipe"]},
+      "scope": {"action_types": ["click", "long_press", "input_text"]},
       "condition": {"keyboard_obscuring": true},
       "action": {"action": "hide_keyboard"},
-      "budget": {"max_triggers_per_run": 2, "max_triggers_per_step": 1},
+      "budget": {"max_triggers_per_run": 1, "max_triggers_per_step": 1},
       "priority": 100,
       "source": "runtime_policy"
     },
@@ -145,7 +133,7 @@
       "schema_version": "omniflow.checker_rule.v1",
       "id": "wait_for_ui_stable",
       "enabled": false,
-      "phase": "pre_transfer",
+      "phase": "pre_action",
       "condition": {"ui_unstable": true},
       "action": {"action": "wait", "wait_ms": 500},
       "budget": {"max_triggers_per_run": 1},

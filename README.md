@@ -68,6 +68,14 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory data/androidworld/CameraTakePhoto/omniflow/OmniFlowSourceSmall_seed111/memory/current
 ```
 
+OmniFlow 的 Function 转换由一个受 Compiler Harness 约束的 Agent workflow
+完成。Agent 在一份 JSON 中依次给出：稳定 Function 及其 occurrence inventory、
+参数与 action-level render candidate 绑定、可执行性自检、以及去重注册和有序
+invocation 引用。Harness 逐阶段验证后才由 `compile_runlog_to_store` 写 Store；
+验证失败会把精确错误反馈给 Agent 重写，最多三次，不再静默退化为整段 replay。
+同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
+`compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
+
 直接执行：
 
 ```bash
@@ -103,6 +111,14 @@ V10 `omnitransfer_point_conditioned_sparse_graph_v10` 模型的归一化 1024D
 page-attention readout；不维护第二套页面编码器或旧 64D/512D 表示。
 
 Online Planner 仅通过 canonical 工具 Schema 输出一个动作；`finished`
-必须带非空 `content`，作为已完成目标的最终说明。
+必须带非空 `content`，作为已完成目标的审计说明。在 AndroidWorld 边界，
+`finished` 只转换为官方 `JSONAction(action_type="status", goal_status="complete")`；
+不发送 `answer` 动作，任务成功仍只由 AndroidWorld 官方 validator 判定。
+
+Function 是一种普通 Action；它的 action list 和返回结果写入统一 action history，作为
+Planner 的判断证据。Function replay 成功或失败都回到同一条 Planner 主线。Planner
+模型输出带非空内容的 `finished` 后，Engine 立即结束 OmniFlow 生命周期并把终止结果
+交给 AndroidWorld；任务是否成功只由 AndroidWorld 官方 validator 判定。`observation`
+只表示当前状态，`finished` 只表示终止结果，二者不与同一轮设备动作混合。
 
 架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。

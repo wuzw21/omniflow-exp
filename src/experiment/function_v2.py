@@ -310,8 +310,6 @@ def load_v2_source_calls(store_path: str | Path) -> list[dict[str, Any]]:
             calls.append(
                 {"function_id": function_id, "arguments": dict(arguments)}
             )
-        if len({call["function_id"] for call in calls}) != len(calls):
-            raise ValueError("function_compile_source_calls_invalid")
         return calls
 
     # Older collectors persisted only this insertion-ordered mapping. Keep it

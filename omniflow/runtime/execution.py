@@ -107,43 +107,6 @@ async def execute_function(
                     "next_step_index": function_step.step_index,
                 },
             )
-        for checker_phase in ("pre_transfer", "pre_action"):
-            checker_steps = await _run_shared_checker_phase(
-                checker_phase,
-                rules=checker_rules,
-                trigger_counts=checker_trigger_counts,
-                function=function,
-                function_step_index=function_step.step_index,
-                action=action,
-                observation=current,
-                source_state=source_state,
-                host=host,
-                installed_packages=installed_packages,
-            )
-            for checker_step in checker_steps:
-                executed += checker_step.actions_executed
-                trace.extend(
-                    await record_execution(
-                        host,
-                        checker_step,
-                        trace_start_index=int(trace_start_index) + len(trace),
-                        metadata={"function_step_index": function_step.step_index},
-                    )
-                )
-                current = checker_step.after or checker_step.before or current
-                if not checker_step.success:
-                    return RunResult(
-                        False,
-                        function.id,
-                        executed,
-                        error=checker_step.error,
-                        final_state=current,
-                        detail={
-                            "trace": trace,
-                            "failed_step_index": function_step.step_index,
-                            "next_step_index": function_step.step_index,
-                        },
-                    )
         transfer_plugins = plugins
         if function.render_bindings and plugins.transfer is not None:
             transfer_plugins = replace(
@@ -163,6 +126,9 @@ async def execute_function(
             source_state=source_state,
             installed_packages=installed_packages,
             state_loader=state_loader,
+            checker_rules=checker_rules,
+            checker_trigger_counts=checker_trigger_counts,
+            function_step_index=function_step.step_index,
         )
 
         after_observation = step.after or step.before or current
@@ -195,42 +161,6 @@ async def execute_function(
                     "next_step_index": function_step.step_index,
                 },
             )
-        post_checker_steps = await _run_shared_checker_phase(
-            "post_action",
-            rules=checker_rules,
-            trigger_counts=checker_trigger_counts,
-            function=function,
-            function_step_index=function_step.step_index,
-            action=action,
-            observation=current,
-            source_state=source_state,
-            host=host,
-            installed_packages=installed_packages,
-        )
-        for checker_step in post_checker_steps:
-            executed += checker_step.actions_executed
-            trace.extend(
-                await record_execution(
-                    host,
-                    checker_step,
-                    trace_start_index=int(trace_start_index) + len(trace),
-                    metadata={"function_step_index": function_step.step_index},
-                )
-            )
-            current = checker_step.after or checker_step.before or current
-            if not checker_step.success:
-                return RunResult(
-                    False,
-                    function.id,
-                    executed,
-                    error=checker_step.error,
-                    final_state=current,
-                    detail={
-                        "trace": trace,
-                        "failed_step_index": function_step.step_index,
-                        "next_step_index": function_step.step_index + 1,
-                    },
-                )
     return RunResult(
         True,
         function.id,
@@ -288,10 +218,35 @@ async def execute_robust_action(
     source_state: Observation | None = None,
     installed_packages: frozenset[str] | None = None,
     state_loader: StateLoader | None = None,
+    checker_rules: tuple[dict[str, Any], ...] = (),
+    checker_trigger_counts: dict[str, int] | None = None,
+    function_step_index: int = 0,
     _checker_recovery_attempts_remaining: int = _CHECKER_RECOVERY_MAX_ATTEMPTS,
 ) -> StepResult:
     function_id = function.id if function is not None else None
     executed_steps: list[StepResult] = []
+    trigger_counts = checker_trigger_counts if checker_trigger_counts is not None else {}
+    checker_steps = await _run_shared_checker_phase(
+        "pre_action",
+        rules=checker_rules,
+        trigger_counts=trigger_counts,
+        function_id=function_id or "",
+        function_step_index=function_step_index,
+        action=action,
+        observation=observation,
+        source_state=source_state,
+        host=host,
+        installed_packages=installed_packages,
+    )
+    for checker_step in checker_steps:
+        executed_steps.append(checker_step)
+        observation = checker_step.after or checker_step.before or observation
+        if not checker_step.success:
+            return replace(
+                checker_step,
+                actions_executed=sum(item.actions_executed for item in executed_steps),
+                executed_steps=tuple(executed_steps),
+            )
     recovery_action: Action | None = None
     recovery_trigger: str | None = None
     checker = plugins.checker
@@ -341,6 +296,7 @@ async def execute_robust_action(
                 observation=observation,
                 host=host,
                 installed_packages=installed_packages,
+                force_fresh_observation=True,
             ),
             origin="checker",
             function_id=function_id,
@@ -362,12 +318,15 @@ async def execute_robust_action(
             source_state=source_state,
             installed_packages=installed_packages,
             state_loader=state_loader,
+            checker_rules=checker_rules,
+            checker_trigger_counts=trigger_counts,
+            function_step_index=function_step_index,
             _checker_recovery_attempts_remaining=(
                 _checker_recovery_attempts_remaining - 1
             ),
         )
         retried_steps = tuple(retried.executed_steps or (retried,))
-        all_steps = (recovery_step, *retried_steps)
+        all_steps = (*executed_steps, *retried_steps)
         return replace(
             retried,
             actions_executed=sum(item.actions_executed for item in all_steps),
@@ -409,8 +368,6 @@ async def execute_robust_action(
         function_id=function_id,
         detail=decision.detail,
     )
-    if not executed_steps:
-        return result
     executed_steps.append(result)
     return replace(
         result,
@@ -424,7 +381,7 @@ async def _run_shared_checker_phase(
     *,
     rules: tuple[dict[str, Any], ...],
     trigger_counts: dict[str, int],
-    function: Function,
+    function_id: str,
     function_step_index: int,
     action: Action,
     observation: Observation,
@@ -455,7 +412,7 @@ async def _run_shared_checker_phase(
                 rule,
                 current=current,
                 source=source_state,
-                function_id=function.id,
+                function_id=function_id,
                 step_index=function_step_index,
                 action=action,
                 transfer_failed=transfer_failed,
@@ -481,9 +438,10 @@ async def _run_shared_checker_phase(
                 observation=current,
                 host=host,
                 installed_packages=installed_packages,
+                force_fresh_observation=True,
             ),
             origin="checker",
-            function_id=function.id,
+            function_id=function_id or None,
             checker_trigger=rule_id,
             detail={"checker_id": rule_id, "checker_phase": phase},
         )
@@ -529,6 +487,7 @@ async def _dispatch_prepared(
     observation: Observation,
     host: Host,
     installed_packages: frozenset[str] | None,
+    force_fresh_observation: bool = False,
 ) -> StepResult:
     if action.tool == "open_app":
         from src.integrations.android_world.apps import (
@@ -566,7 +525,7 @@ async def _dispatch_prepared(
     if not core_step.success:
         return replace(core_step, origin="action")
     after = core_step.after or observation
-    if _observation_window_outside_display(after):
+    if force_fresh_observation or _observation_window_outside_display(after):
         after = await _observe_ready(host)
     if action.tool == "open_app":
         expected_package = str(action.args.get("package_name") or "").strip()
@@ -718,10 +677,8 @@ def _action_effect(
 ) -> dict[str, Any]:
     """Describe the observed post-action change without another model call."""
 
-    before_state = _state(before)
-    after_state = _state(after)
     effect: dict[str, Any] = {
-        "state_changed": before_state["state_id"] != after_state["state_id"],
+        "state_changed": not _same_action_observation(before, after),
     }
     if before.package_name != after.package_name:
         effect["package"] = {
@@ -783,6 +740,27 @@ def _action_effect(
     if disappeared:
         effect["disappeared"] = disappeared
     return effect
+
+
+def _same_action_observation(
+    before: Observation,
+    after: Observation,
+) -> bool:
+    """Compare UI state without treating a fresh evidence screenshot as change."""
+
+    if (
+        before.package_name,
+        before.activity_name,
+    ) != (
+        after.package_name,
+        after.activity_name,
+    ):
+        return False
+    before_xml = str(before.xml or "")
+    after_xml = str(after.xml or "")
+    if before_xml or after_xml:
+        return before_xml == after_xml
+    return before.image_base64 == after.image_base64
 
 
 def _effect_nodes(xml: str, *, target_package: str) -> dict[str, dict[str, str]]:
@@ -965,8 +943,8 @@ def _default_transfer_impl(
     request: dict[str, Any] = {
         "source_xml": source_xml,
         "target_xml": target_xml,
-        "source_package_name": source_state.package_name,
-        "target_package_name": observation.package_name,
+        "source_package_name": _transfer_page_package(source_state),
+        "target_package_name": _transfer_page_package(observation),
         "source_activity_name": source_state.activity_name,
         "target_activity_name": observation.activity_name,
         "action_type": action.tool,
@@ -1032,6 +1010,40 @@ def _default_transfer_impl(
     )
 
 
+def _transfer_page_package(observation: Observation | None) -> str:
+    """Return the app identity for package-equality transfer admission.
+
+    OOB can report the IME as foreground while its XML still contains the
+    application page being operated on.  The IME is an overlay, not the page
+    identity used by the transfer gate; preserve it when no app content exists.
+    """
+
+    if observation is None:
+        return ""
+    reported = str(observation.package_name or "").strip()
+    activity = str(observation.activity_name or "").strip()
+    if not _is_input_method_overlay(reported, activity):
+        return reported
+    try:
+        root = ET.fromstring(str(observation.xml or ""))
+    except ET.ParseError:
+        return reported
+    packages: dict[str, int] = {}
+    for node in root.iter():
+        package = str(node.attrib.get("package") or "").strip()
+        if not package or package == "com.android.systemui":
+            continue
+        if _is_input_method_overlay(package, ""):
+            continue
+        packages[package] = packages.get(package, 0) + 1
+    return max(packages, key=packages.get) if packages else reported
+
+
+def _is_input_method_overlay(package_name: str, activity_name: str) -> bool:
+    identity = f"{package_name} {activity_name}".casefold()
+    return "inputmethod" in identity or "softinputwindow" in identity
+
+
 def _transfer_swipe(
     action: Action,
     observation: Observation,
@@ -1079,8 +1091,8 @@ def _transfer_swipe(
         "target_xml": target_xml,
         "source_xml": source_xml,
         "source_point": source_center,
-        "source_package_name": source_state.package_name,
-        "target_package_name": observation.package_name,
+        "source_package_name": _transfer_page_package(source_state),
+        "target_package_name": _transfer_page_package(observation),
         "source_activity_name": source_state.activity_name,
         "target_activity_name": observation.activity_name,
         "action_type": action.tool,
