@@ -189,8 +189,11 @@ def test_successful_complete_function_returns_to_planner_for_finish(tmp_path) ->
     action_history = str(
         planner.observations[1].extra.get("execution_history") or ""
     )
+    assert planner.observations[1].extra.get("completion_only") is not True
     assert "Action: complete_source_workflow" in action_history
     assert "action_list:" in action_history
+    assert "Last internal action outcome: executed=yes" in action_history
+    assert '"state_changed":false' in action_history
     assert "[Function]" not in action_history
 
 

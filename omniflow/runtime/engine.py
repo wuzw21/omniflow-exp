@@ -463,7 +463,6 @@ class OmniFlow:
                     extra={
                         **dict(observation.extra),
                         "previous_action_error": previous_action_error,
-                        "completion_only": function_session.completed is not None,
                         **(
                             {"execution_history": execution_history}
                             if execution_history
@@ -1389,8 +1388,17 @@ def _execution_history(
                 continue
             if str(metadata.get("function_id") or "").strip() != function.id:
                 continue
+            if str(metadata.get("origin") or "").strip() != "action":
+                continue
             try:
-                trace_by_step[int(raw_step.get("step_index"))] = raw_step
+                trace_by_step[
+                    int(
+                        metadata.get(
+                            "function_step_index",
+                            raw_step.get("step_index"),
+                        )
+                    )
+                ] = raw_step
             except (TypeError, ValueError):
                 continue
         action_details: list[str] = []
@@ -1418,12 +1426,51 @@ def _execution_history(
             f"progress: {completed_count}/{total_actions} internal actions | "
             f"action_list: {action_list} | intent: {description}."
         )
+        last_attempt_index = (
+            failed_index
+            if failed_index is not None
+            else completed_count - 1
+        )
+        last_attempt = trace_by_step.get(last_attempt_index) or {}
+        last_result = last_attempt.get("result")
+        last_metadata = last_attempt.get("metadata")
+        last_succeeded = (
+            isinstance(last_result, dict)
+            and last_result.get("success") is True
+        )
+        last_effect = (
+            last_metadata.get("action_effect")
+            if isinstance(last_metadata, dict)
+            else None
+        )
+        compact_last_effect = (
+            _compact_history_effect(last_effect)
+            if isinstance(last_effect, dict)
+            else {}
+        )
+        if last_attempt:
+            function_line += (
+                " Last internal action outcome: "
+                f"executed={'yes' if last_succeeded else 'no'}"
+                + (
+                    "; observed UI facts: "
+                    + json.dumps(
+                        compact_last_effect,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    if compact_last_effect
+                    else ""
+                )
+                + "."
+            )
         if completed_function is not None:
             function_line += (
                 " This Function completed its recorded action sequence. "
-                "The task lifecycle is now at the completion decision: "
-                "output `finished` if the current UI is consistent with the "
-                "task; do not repeat or add device actions."
+                "Inspect the current UI and the last action outcome. Output "
+                "`finished` only when they are consistent with the goal; "
+                "otherwise take the next corrective device action without "
+                "blindly repeating completed steps."
             )
         if failed_function is not None and failed_step_index is not None:
             next_step = (
