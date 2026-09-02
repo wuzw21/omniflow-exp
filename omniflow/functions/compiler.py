@@ -428,6 +428,10 @@ def compile_runlog_to_store(
                     facts,
                     candidate_map=authoring_candidate_map,
                 )
+                _validate_materialized_function_artifacts(
+                    authored,
+                    raw_payload=raw,
+                )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 authoring_error = error
                 authoring_attempt_trace.append(
@@ -2859,6 +2863,43 @@ def _recorded_launcher_entry_indices(source_steps: list[Any]) -> set[int]:
         )
         return set(launcher_prefix) if has_later_business_action else set()
     return set()
+
+
+def _validate_materialized_function_artifacts(
+    authored: dict[str, Any],
+    *,
+    raw_payload: dict[str, Any],
+) -> None:
+    """Validate a model-authored Function before accepting its attempt.
+
+    Materialization proves that source steps and parameter candidates are
+    grounded, while ``parse_function_artifact`` owns the complete executable
+    schema, including render-binding uniqueness.  Running both inside the
+    authoring retry loop prevents a late artifact error from bypassing the
+    existing three-attempt recovery and deterministic source-workflow
+    fallback.
+    """
+
+    from omniflow.functions.artifact import parse_function_artifact
+
+    bundle = authored.get("bundle")
+    if not isinstance(bundle, dict):
+        raise ValueError("function_author_bundle_must_be_object_or_null")
+    raw_functions = bundle.get("functions")
+    if not isinstance(raw_functions, list) or not raw_functions:
+        raise ValueError("function_bundle_functions_required")
+    validated_functions = _remove_compiler_entry_actions(
+        raw_functions,
+        raw_payload=raw_payload,
+    )
+    validated_functions = _remove_compiler_environment_actions(
+        validated_functions,
+        raw_payload=raw_payload,
+    )
+    if not validated_functions:
+        raise ValueError("function_bundle_functions_required")
+    for value in validated_functions:
+        parse_function_artifact(value)
 
 
 def _primary_observation_package(observation: Any) -> str:
