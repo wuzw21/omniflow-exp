@@ -21,6 +21,7 @@ from omniflow.functions.artifact import (
 )
 from omniflow.functions.compiler import (
     _authoring_candidate_catalog,
+    _default_authoring_workflow_prompt,
     _materialize_authoring_plan,
     _materialize_authoring_workflow,
     _source_parameter_candidates,
@@ -305,6 +306,63 @@ def test_compiler_materializes_filename_stem_schema() -> None:
     assert ".txt extension" in function["input_schema"]["properties"]["file_stem"]["description"]
 
 
+def test_compiler_disambiguates_same_parameter_name_with_different_values() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Enter Pasta and Soup.",
+        "task_parameters": {"titles": ["Pasta", "Soup"]},
+        "steps": [
+            {
+                "source_step_index": index,
+                "before_state_id": f"state-{index}",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": value, "x": 500, "y": 500},
+                },
+                "metadata": {},
+            }
+            for index, value in enumerate(("Pasta", "Soup"))
+        ],
+        "node_parameter_evidence": [],
+    }
+
+    result = _materialize_authoring_plan(
+        {
+            "reason": "Enter two requested titles.",
+            "plan": {
+                "functions": [],
+                "complete_function": {
+                    "function_id": "enter_titles",
+                    "name": "Enter titles",
+                    "description": "Enter the requested titles.",
+                    "source_step_indices": [0, 1],
+                    "parameters": [
+                        {
+                            "name": "title",
+                            "description": "Requested title",
+                            "source_step_index": index,
+                            "arg_name": "text",
+                        }
+                        for index in range(2)
+                    ],
+                },
+            },
+        },
+        facts,
+    )
+
+    function = next(
+        item
+        for item in result["bundle"]["functions"]
+        if item["function_id"] == "enter_titles"
+    )
+    assert function["input_schema"]["required"] == ["titles", "titles_2"]
+    assert result["bundle"]["arguments"]["enter_titles"] == {
+        "titles": "Pasta",
+        "titles_2": "Soup",
+    }
+
+
 def test_execution_sends_both_masked_endpoints_to_transfer() -> None:
     function = bind_function(_function(), {"file_name": "happy_pig_backup"})
     captured: list[tuple[str, str]] = []
@@ -455,7 +513,7 @@ def test_compiler_disambiguates_repeated_structured_field_parameters() -> None:
     }
 
 
-def test_authoring_workflow_registers_one_repeated_function_with_three_calls() -> None:
+def test_authoring_harness_registers_one_repeated_function_with_three_calls() -> None:
     titles = ["First Recipe", "Second Recipe", "Third Recipe"]
     facts = {
         "run_id": "run-1",
@@ -490,62 +548,36 @@ def test_authoring_workflow_registers_one_repeated_function_with_three_calls() -
     result = _materialize_authoring_workflow(
         {
             "reason": "Reuse one stable delete operation for three recipes.",
-            "workflow": {
-                "inventory": {
-                    "definitions": [
+            "functions": [
+                {
+                    "function_id": "delete_recipe",
+                    "name": "Delete requested recipe",
+                    "description": "Delete one requested recipe.",
+                    "occurrences": [
+                        {"source_step_indices": [0]},
+                        {"source_step_indices": [1]},
+                        {"source_step_indices": [2]},
+                    ],
+                    "parameters": [
                         {
-                            "function_id": "delete_recipe",
-                            "name": "Delete requested recipe",
-                            "description": "Delete one requested recipe.",
-                            "occurrences": [
-                                {"source_step_indices": [0]},
-                                {"source_step_indices": [1]},
-                                {"source_step_indices": [2]},
+                            "name": "recipe_title",
+                            "description": "Recipe title requested by the goal",
+                            "bindings": [
+                                {
+                                    "occurrence_index": index,
+                                    "candidate_id": f"render_parameter_{index:03d}",
+                                }
+                                for index in range(3)
                             ],
                         }
                     ],
-                    "complete_function": {
-                        "function_id": "delete_requested_recipes",
-                        "name": "Delete requested recipes",
-                        "description": "Delete all recipes requested by the goal.",
-                        "source_step_indices": [0, 1, 2],
-                    },
-                },
-                "parameterization": [
-                    {
-                        "function_id": "delete_recipe",
-                        "parameters": [
-                            {
-                                "name": "recipe_title",
-                                "description": "Recipe title requested by the goal",
-                                "bindings": [
-                                    {
-                                        "occurrence_index": index,
-                                        "candidate_id": f"render_parameter_{index:03d}",
-                                    }
-                                    for index in range(3)
-                                ],
-                            }
-                        ],
-                    }
-                ],
-                "validation": {
-                    "accepted": True,
-                    "notes": "Each call deletes one visible recipe and then re-observes.",
-                },
-                "registration": {
-                    "function_ids": [
-                        "delete_recipe",
-                        "delete_requested_recipes",
-                    ],
-                    "invocations": [
-                        {
-                            "function_id": "delete_recipe",
-                            "occurrence_index": index,
-                        }
-                        for index in range(3)
-                    ],
-                },
+                }
+            ],
+            "complete_function": {
+                "function_id": "delete_requested_recipes",
+                "name": "Delete requested recipes",
+                "description": "Delete all recipes requested by the goal.",
+                "source_step_indices": [0, 1, 2],
             },
         },
         facts,
@@ -573,6 +605,260 @@ def test_authoring_workflow_registers_one_repeated_function_with_three_calls() -
     )
     assert len(repeated["steps"]) == 1
     assert repeated["input_schema"]["required"] == ["recipe_title"]
+
+
+def test_authoring_harness_derives_invocation_order_from_source_steps() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Perform the first and second operation.",
+        "task_parameters": {},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [],
+        "steps": [
+            {
+                "source_step_index": index,
+                "before_state_id": f"state-{index}",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                "metadata": {},
+            }
+            for index in range(2)
+        ],
+    }
+
+    result = _materialize_authoring_workflow(
+        {
+            "reason": "Identify two stable operations.",
+            "functions": [
+                {
+                    "function_id": "second_operation",
+                    "name": "Second operation",
+                    "description": "Perform the second stable operation.",
+                    "occurrences": [{"source_step_indices": [1]}],
+                    "parameters": [],
+                },
+                {
+                    "function_id": "first_operation",
+                    "name": "First operation",
+                    "description": "Perform the first stable operation.",
+                    "occurrences": [{"source_step_indices": [0]}],
+                    "parameters": [],
+                },
+            ],
+            "complete_function": {
+                "function_id": "complete_operations",
+                "name": "Complete operations",
+                "description": "Perform both requested operations.",
+                "source_step_indices": [0, 1],
+            },
+        },
+        facts,
+        candidate_map={},
+    )
+
+    assert [call["function_id"] for call in result["source_calls"]] == [
+        "first_operation",
+        "second_operation",
+    ]
+
+
+def test_authoring_harness_accepts_unselected_render_candidates() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Create the Pasta recipe.",
+        "task_parameters": {"title": "Pasta"},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [
+            {
+                "source_step_index": 0,
+                "tool": "input_text",
+                "parameter_name": "title",
+                "suggested_name": "title",
+                "task_parameter_value": "Pasta",
+                "recorded_value": "Pasta",
+                "node_id": "title-field",
+                "attribute": "text",
+                "node_label": "Pasta",
+            }
+        ],
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Pasta", "x": 500, "y": 500},
+                },
+                "metadata": {},
+            }
+        ],
+    }
+    _public_candidates, candidate_map = _authoring_candidate_catalog(facts)
+
+    result = _materialize_authoring_workflow(
+        {
+            "reason": "Create a reusable recipe entry Function.",
+            "functions": [
+                {
+                    "function_id": "create_recipe",
+                    "name": "Create recipe",
+                    "description": "Create the requested recipe.",
+                    "occurrences": [{"source_step_indices": [0]}],
+                    "parameters": [
+                        {
+                            "name": "title",
+                            "description": "Recipe title",
+                            "bindings": [
+                                {
+                                    "occurrence_index": 0,
+                                    "candidate_id": "action_parameter_000",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_recipe",
+                "name": "Complete recipe",
+                "description": "Create the requested recipe.",
+                "source_step_indices": [0],
+            },
+        },
+        facts,
+        candidate_map=candidate_map,
+    )
+
+    assert result["authoring_workflow"]["unselected_candidate_ids"] == [
+        "render_parameter_000"
+    ]
+    complete_recipe = next(
+        function
+        for function in result["bundle"]["functions"]
+        if function["function_id"] == "complete_recipe"
+    )
+    assert complete_recipe["input_schema"]["required"] == ["title"]
+    assert result["authoring_workflow"]["definitions"][0]["registered"] is False
+    assert result["source_calls"] == [
+        {"function_id": "complete_recipe", "arguments": {"title": "Pasta"}}
+    ]
+
+
+def test_authoring_harness_selects_modal_repeated_occurrence_shape() -> None:
+    actions = [
+        {"tool": "click", "args": {"x": 100, "y": 100}},
+        {
+            "tool": "swipe",
+            "args": {"x1": 100, "y1": 800, "x2": 100, "y2": 200},
+        },
+        {"tool": "navigate_back", "args": {}},
+        {"tool": "click", "args": {"x": 100, "y": 100}},
+        {"tool": "navigate_back", "args": {}},
+        {"tool": "click", "args": {"x": 100, "y": 100}},
+    ]
+    facts = {
+        "run_id": "run-1",
+        "goal": "Perform a repeated operation.",
+        "task_parameters": {},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [],
+        "steps": [
+            {
+                "source_step_index": index,
+                "before_state_id": f"state-{index}",
+                "action": action,
+                "metadata": {},
+            }
+            for index, action in enumerate(actions)
+        ],
+    }
+
+    result = _materialize_authoring_workflow(
+        {
+            "reason": "The repeated operation has one longer setup variant.",
+            "functions": [
+                {
+                    "function_id": "repeat_operation",
+                    "name": "Repeat operation",
+                    "description": "Perform the reusable operation.",
+                    "occurrences": [
+                        {"source_step_indices": [0, 1]},
+                        {"source_step_indices": [3]},
+                        {"source_step_indices": [5]},
+                    ],
+                    "parameters": [],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_operation",
+                "name": "Complete operation",
+                "description": "Complete the recorded operation.",
+                "source_step_indices": list(range(6)),
+            },
+        },
+        facts,
+        candidate_map={},
+    )
+
+    definition = result["authoring_workflow"]["definitions"][0]
+    assert definition["representative_source_step_indices"] == [3]
+    assert result["authoring_workflow"]["uncovered_local_source_step_indices"] == [
+        2,
+        4,
+    ]
+    assert len(result["source_calls"]) == 3
+
+
+def test_authoring_harness_accepts_complete_function_without_locals() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Open one recipe.",
+        "task_parameters": {},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [],
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                "metadata": {},
+            }
+        ],
+    }
+
+    result = _materialize_authoring_workflow(
+        {
+            "reason": "The complete capability is already atomic.",
+            "functions": [],
+            "complete_function": {
+                "function_id": "open_recipe",
+                "name": "Open recipe",
+                "description": "Open the requested recipe.",
+                "source_step_indices": [],
+            },
+        },
+        facts,
+        candidate_map={},
+    )
+
+    assert result["authoring_workflow"]["definition_count"] == 0
+    assert result["authoring_workflow"]["complete_source_indices_normalized"] is True
+    assert result["source_calls"] == [
+        {"function_id": "open_recipe", "arguments": {}}
+    ]
+    assert [
+        function["function_id"] for function in result["bundle"]["functions"]
+    ] == ["open_recipe"]
+
+
+def test_default_authoring_prompt_exposes_three_stages_only() -> None:
+    prompt = _default_authoring_workflow_prompt()
+
+    assert "Stage 1 — discover Functions" in prompt
+    assert "Stage 2 — describe their semantics" in prompt
+    assert "Stage 3 — compile and register" in prompt
+    assert "Stage 4" not in prompt
+    assert '"validation"' not in prompt
+    assert '"registration"' not in prompt
 
 
 def test_source_call_loader_preserves_repeated_function_references(tmp_path) -> None:

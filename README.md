@@ -69,12 +69,14 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 ```
 
 OmniFlow 的 Function 转换由一个受 Compiler Harness 约束的 Agent workflow
-完成。Agent 在一份 JSON 中依次给出：稳定 Function 及其 occurrence inventory、
-参数与 action-level render candidate 绑定、可执行性自检、以及去重注册和有序
-invocation 引用。Harness 逐阶段验证后才由 `compile_runlog_to_store` 写 Store；
-验证失败会把精确错误反馈给 Agent 重写，最多三次，不再静默退化为整段 replay。
+完成。这个过程只有三步：Agent 先从成功 RunLog 中找到可复用的 Function，再为它们
+生成语义名称、描述和参数；最后由 Harness 根据 source step 自动校验、排序并通过
+`compile_runlog_to_store` 注册为真正的 Function Store。Agent 不再输出自检声明或注册
+顺序；验证失败会收到精确错误并重写完整 proposal，最多三次，不再静默退化为整段 replay。
 同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
 `compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
+局部 Function 不必覆盖完整 RunLog；多余的 render candidate 作为未使用证据记录，重复
+occurrence 存在轻微动作差异时由 Harness 选择最常见的 action shape 作为注册定义。
 
 直接执行：
 

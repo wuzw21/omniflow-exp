@@ -124,23 +124,28 @@ transfer state、target observation 和 Action Schema 不变。source 节点找�
 ## Function authoring Agent Loop
 
 `compile_runlog_to_store` 是唯一 Function writer，同时也是 Agent Loop 的 Harness。
-Authoring Agent 可以返回一份 JSON，但必须显式包含四个阶段：
+Authoring 过程对外只包含三个阶段：
 
-1. `inventory`：把成功 RunLog 按语义稳定边界切成 Function definitions，并列出每个
-   definition 的一个或多个连续 occurrences；另列出覆盖完整主流程的 complete Function。
-2. `parameterization`：只引用 Compiler 提供的 candidate id，把每个参数绑定到每个
-   occurrence 的 Action argument 或 Node render target。坐标、重复次数和无证据值不能
+1. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
+   同类片段表示为同一个 Function 的多个 occurrences；同时标出完整主流程。
+2. **Semantic abstraction**：Agent 为每个 Function 生成语义名称和描述，并只引用
+   Compiler 提供的 candidate id，将实例值提升为参数。坐标、重复次数和无证据值不能
    成为参数。
-3. `validation`：声明稳定性和可执行性；Harness 实际复核 action-tool shape、连续性、
-   参数在所有 occurrences 上的完整性以及 source step 覆盖率。
-4. `registration`：每个 definition 只注册一次，并给出按 source 顺序排列的 invocation
-   references。相同 `function_id` 可以带不同参数重复出现。
+3. **Compilation and registration**：Harness 根据 `source_step_indices` 自动恢复调用顺序，
+   校验每个已选片段及其参数证据，为重复 occurrence 选择最常见的 action-tool shape，
+   然后生成 `input_schema`、
+   `bindings`、`render_bindings`、`source_calls` 及最终 Function Store。
 
-Harness 校验失败时把确定性的错误原因反馈给同一 Agent，要求返回完整替换 workflow；
-最多尝试三次。Harness 不再用一个自动生成的完整 replay Function 掩盖无效 authoring。
+因此 Agent 的 JSON 只包含 `functions` 和 `complete_function`，不再提交 `validation` 或
+`registration` 字段。Harness 校验失败时把确定性的错误原因反馈给同一 Agent，要求
+返回完整替换 proposal；最多尝试三次。Harness 不再用一个自动生成的完整 replay
+Function 掩盖无效 authoring。
 最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
 `compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
 定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。
+局部 Functions 可以只覆盖 Agent 发现的可复用方向；完整主流程始终由
+`complete_function` 保存。未选中的额外 GUI render candidate 会写入编译报告供审计，
+不会单独导致整次 authoring 被拒绝。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。
 
