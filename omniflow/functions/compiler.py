@@ -30,6 +30,58 @@ Return exactly one JSON object in this shape; return no prose:
 {
   "binding_owner": "agent",
   "reason": "short rationale",
+  "semantic_analysis": {
+    "steps": [
+      {
+        "source_step_index": 0,
+        "semantic_kind": "stable",
+        "parameter_names": [],
+        "reason": "Opening the task page does not depend on the goal or live UI."
+      },
+      {
+        "source_step_index": 2,
+        "semantic_kind": "task_parameter",
+        "parameter_names": ["recipe_title"],
+        "reason": "The selected recipe name comes from the current task goal."
+      },
+      {
+        "source_step_index": 1,
+        "semantic_kind": "stable",
+        "parameter_names": [],
+        "reason": "This navigation action is invariant."
+      },
+      {
+        "source_step_index": 3,
+        "semantic_kind": "stable",
+        "parameter_names": [],
+        "reason": "This confirmation action is invariant."
+      },
+      {
+        "source_step_index": 4,
+        "semantic_kind": "online_observation",
+        "parameter_names": [],
+        "reason": "The next choice requires reading the changed collection."
+      },
+      {
+        "source_step_index": 5,
+        "semantic_kind": "stable",
+        "parameter_names": [],
+        "reason": "This navigation action is invariant."
+      },
+      {
+        "source_step_index": 6,
+        "semantic_kind": "task_parameter",
+        "parameter_names": ["recipe_title"],
+        "reason": "The selected recipe name comes from the current task goal."
+      },
+      {
+        "source_step_index": 7,
+        "semantic_kind": "stable",
+        "parameter_names": [],
+        "reason": "This confirmation action is invariant."
+      }
+    ]
+  },
   "functions": [{
     "function_id": "delete_recipe",
     "name": "Delete requested recipe",
@@ -66,17 +118,34 @@ Return exactly one JSON object in this shape; return no prose:
     "name": "Complete requested task",
     "description": "Complete the requested task using the successful workflow.",
     "source_step_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "execution_mode": "planner_handoff",
     "parameters": []
   }
 }
 
-Stage 1 — discover Functions. Find zero or more semantically stable, contiguous
+Stage 1 — classify semantics before authoring any Function. Account for every
+source step exactly once in semantic_analysis.steps and make the distinction
+yourself:
+- stable: the action and consumed value are invariant across task instances.
+- task_parameter: the action is reusable, but one or more consumed values come
+  from the current goal/task_parameters. List their semantic parameter_names.
+- online_observation: the action or its value depends on reading the current UI,
+  computing a fresh result, or making a conditional decision. Never turn a
+  source answer into a task parameter merely to make replay possible.
+An input such as an event title is task_parameter. An answer computed from live
+numbers in a browser is online_observation.
+
+Stage 2 — discover Functions. Find zero or more semantically stable, contiguous
 local operations in the successful source steps. If the same operation repeats,
 represent it as one Function with multiple occurrences. Also identify one
-complete_function spanning the successful source sequence. Returning no local
-Function is valid when raw replay is the safest reusable capability.
+complete_function spanning the successful source sequence. A local Function must
+not contain an online_observation step. When any step is online_observation, set
+complete_function.execution_mode to planner_handoff; the full source sequence is
+then retained only as hidden evidence and the online Planner performs the dynamic
+part. Otherwise use direct_replay. Returning no local Function is valid only when
+the complete Function is safe for direct replay.
 
-Stage 2 — author every binding on the A side. The Compiler will not infer,
+Stage 3 — author every binding on the A side. The Compiler will not infer,
 recommend, repair, or select bindings. Read task_parameters, each source action,
 and source_ui.nodes. Decide the semantic parameter name and emit every binding
 yourself:
@@ -92,14 +161,19 @@ yourself:
 The source default for action_arg is copied verbatim from that action argument;
 the source default for render_node is its recorded_value. All undeclared action
 arguments and UI values remain fixed at their recorded defaults. If a safe binding
-cannot be determined, simply omit it. Never bind coordinates or repetition counts.
+cannot be determined, do not relabel the step as stable: keep it task_parameter
+and revise the Function boundary or proposal. Every task_parameter step in an
+executable Function must bind every parameter_name declared for that step. Never
+bind coordinates or repetition counts.
 
 The complete_function must contain exactly function_id, name, description,
-source_step_indices, and parameters. Its parameters may be empty: bindings declared
-on local Functions do not need to be repeated. Any omitted value keeps the recorded
-RunLog default.
+source_step_indices, execution_mode, and parameters. For direct_replay, its
+parameters must bind all task_parameter steps in the complete sequence. For
+planner_handoff, it may keep parameters empty because this complete Function is
+stored as non-executable source evidence. Any undeclared stable value keeps the
+recorded RunLog default.
 
-Stage 3 — convert and register. The Compiler only maps your source_step_index values
+Stage 4 — convert and register. The Compiler only maps your source_step_index values
 to immutable RunLog actions/source states and serializes your declared parameters,
 bindings, default values, calls, and Function Store. It performs schema and index
 checks required to make valid JSON artifacts, but makes no semantic binding decision.
@@ -872,9 +946,16 @@ def _raw_source_replay_authoring(
         facts=facts,
         parameters=[],
         occurrence_index=0,
+        # A rejected semantic proposal must never turn into an executable
+        # static replay. Keep the source sequence only as auditable evidence.
+        agent_visible=rejected_error is None,
     )
     result = {
-        "reason": "Registered the unparameterized successful source replay.",
+        "reason": (
+            "Registered the unparameterized successful source replay."
+            if rejected_error is None
+            else "Preserved the rejected source replay as hidden evidence."
+        ),
         "bundle": {
             "schema_version": "omniflow.function-bundle.v2",
             "run_id": str(facts["run_id"]),
@@ -887,7 +968,11 @@ def _raw_source_replay_authoring(
             "schema_version": "omniflow.function-authoring-workflow.v3",
             "binding_owner": "agent",
             "agent_proposal_accepted": rejected_error is None,
-            "fallback_mode": "raw_source_replay",
+            "fallback_mode": (
+                "raw_source_replay"
+                if rejected_error is None
+                else "hidden_raw_source_evidence"
+            ),
             "complete_function_id": function_id,
         },
     }
@@ -905,6 +990,7 @@ def _materialize_agent_owned_workflow(
     if not isinstance(value, dict) or set(value) != {
         "binding_owner",
         "reason",
+        "semantic_analysis",
         "functions",
         "complete_function",
     }:
@@ -922,11 +1008,16 @@ def _materialize_agent_owned_workflow(
         for step in facts.get("steps") or ()
         if isinstance(step, dict) and isinstance(step.get("source_step_index"), int)
     ]
+    semantic_steps = _agent_owned_semantic_analysis(
+        value.get("semantic_analysis"),
+        source_indices=source_indices,
+    )
     complete_fields = {
         "function_id",
         "name",
         "description",
         "source_step_indices",
+        "execution_mode",
         "parameters",
     }
     if set(raw_complete) != complete_fields:
@@ -956,6 +1047,15 @@ def _materialize_agent_owned_workflow(
             _agent_owned_occurrence_span(occurrence, source_indices)
             for occurrence in occurrences
         ]
+        if any(
+            semantic_steps[source_index]["semantic_kind"]
+            == "online_observation"
+            for span in spans
+            for source_index in span
+        ):
+            raise ValueError(
+                "function_author_local_online_observation_not_replayable"
+            )
         function_id = _agent_owned_function_id(raw_function, seen_ids)
         parameters = _agent_owned_parameters(
             raw_function.get("parameters"),
@@ -964,6 +1064,12 @@ def _materialize_agent_owned_workflow(
             spans=spans,
         )
         _validate_agent_owned_binding_spans(parameters, spans)
+        _validate_agent_owned_semantic_bindings(
+            parameters,
+            spans=spans,
+            semantic_steps=semantic_steps,
+            require_all=True,
+        )
         function = _agent_owned_function_artifact(
             function_id=function_id,
             name=str(raw_function.get("name") or "").strip(),
@@ -986,6 +1092,17 @@ def _materialize_agent_owned_workflow(
             )
 
     complete_id = _agent_owned_function_id(raw_complete, seen_ids)
+    execution_mode = str(raw_complete.get("execution_mode") or "").strip()
+    if execution_mode not in {"direct_replay", "planner_handoff"}:
+        raise ValueError("function_author_complete_execution_mode_invalid")
+    has_online_observation = any(
+        item["semantic_kind"] == "online_observation"
+        for item in semantic_steps.values()
+    )
+    if has_online_observation and execution_mode != "planner_handoff":
+        raise ValueError(
+            "function_author_online_observation_requires_planner_handoff"
+        )
     complete_parameters = _agent_owned_parameters(
         raw_complete.get("parameters"),
         occurrence_count=1,
@@ -993,6 +1110,12 @@ def _materialize_agent_owned_workflow(
         spans=[source_indices],
     )
     _validate_agent_owned_binding_spans(complete_parameters, [source_indices])
+    _validate_agent_owned_semantic_bindings(
+        complete_parameters,
+        spans=[source_indices],
+        semantic_steps=semantic_steps,
+        require_all=execution_mode == "direct_replay",
+    )
     complete_function = _agent_owned_function_artifact(
         function_id=complete_id,
         name=str(raw_complete.get("name") or "").strip(),
@@ -1001,6 +1124,7 @@ def _materialize_agent_owned_workflow(
         facts=facts,
         parameters=complete_parameters,
         occurrence_index=0,
+        agent_visible=execution_mode == "direct_replay",
     )
     materialized_functions.append(complete_function)
     arguments[complete_id] = _agent_owned_occurrence_arguments(
@@ -1031,11 +1155,84 @@ def _materialize_agent_owned_workflow(
             "binding_owner": "agent",
             "agent_proposal_accepted": True,
             "fallback_mode": None,
+            "semantic_analysis": {
+                "counts": {
+                    semantic_kind: sum(
+                        item["semantic_kind"] == semantic_kind
+                        for item in semantic_steps.values()
+                    )
+                    for semantic_kind in (
+                        "stable",
+                        "task_parameter",
+                        "online_observation",
+                    )
+                },
+                "steps": [semantic_steps[index] for index in source_indices],
+            },
+            "complete_execution_mode": execution_mode,
             "definition_count": len(raw_functions),
             "invocation_count": len(source_calls),
             "complete_function_id": complete_id,
         },
     }
+
+
+def _agent_owned_semantic_analysis(
+    value: Any,
+    *,
+    source_indices: list[int],
+) -> dict[int, dict[str, Any]]:
+    """Validate the Agent's explicit semantic classification without inferring it."""
+
+    if not isinstance(value, dict) or set(value) != {"steps"}:
+        raise ValueError("function_author_semantic_analysis_invalid")
+    raw_steps = value.get("steps")
+    if not isinstance(raw_steps, list):
+        raise ValueError("function_author_semantic_analysis_invalid")
+    expected_fields = {
+        "source_step_index",
+        "semantic_kind",
+        "parameter_names",
+        "reason",
+    }
+    parsed: dict[int, dict[str, Any]] = {}
+    for raw_step in raw_steps:
+        if not isinstance(raw_step, dict) or set(raw_step) != expected_fields:
+            raise ValueError("function_author_semantic_step_invalid")
+        source_step_index = raw_step.get("source_step_index")
+        semantic_kind = str(raw_step.get("semantic_kind") or "").strip()
+        parameter_names = raw_step.get("parameter_names")
+        reason = str(raw_step.get("reason") or "").strip()
+        if (
+            isinstance(source_step_index, bool)
+            or not isinstance(source_step_index, int)
+            or source_step_index not in source_indices
+            or source_step_index in parsed
+            or semantic_kind
+            not in {"stable", "task_parameter", "online_observation"}
+            or not isinstance(parameter_names, list)
+            or not reason
+        ):
+            raise ValueError("function_author_semantic_step_invalid")
+        normalized_names = [str(name or "").strip() for name in parameter_names]
+        if (
+            any(
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name) is None
+                for name in normalized_names
+            )
+            or len(normalized_names) != len(set(normalized_names))
+            or (semantic_kind == "task_parameter") != bool(normalized_names)
+        ):
+            raise ValueError("function_author_semantic_parameter_names_invalid")
+        parsed[source_step_index] = {
+            "source_step_index": source_step_index,
+            "semantic_kind": semantic_kind,
+            "parameter_names": normalized_names,
+            "reason": reason,
+        }
+    if set(parsed) != set(source_indices):
+        raise ValueError("function_author_semantic_steps_incomplete")
+    return parsed
 
 
 def _agent_owned_occurrence_span(value: Any, source_indices: list[int]) -> list[int]:
@@ -1222,6 +1419,51 @@ def _validate_agent_owned_binding_spans(
                 raise ValueError("function_author_parameter_binding_outside_occurrence")
 
 
+def _validate_agent_owned_semantic_bindings(
+    parameters: list[dict[str, Any]],
+    *,
+    spans: list[list[int]],
+    semantic_steps: dict[int, dict[str, Any]],
+    require_all: bool,
+) -> None:
+    """Check only consistency between Agent-owned classifications and bindings."""
+
+    bound_by_occurrence: list[dict[int, set[str]]] = [
+        {} for _ in range(len(spans))
+    ]
+    for parameter in parameters:
+        parameter_name = str(parameter["name"])
+        for binding in parameter["bindings"]:
+            occurrence_index = int(binding["occurrence_index"])
+            source_step_index = int(binding["source_step_index"])
+            semantic = semantic_steps[source_step_index]
+            if (
+                semantic["semantic_kind"] != "task_parameter"
+                or parameter_name not in semantic["parameter_names"]
+            ):
+                raise ValueError(
+                    "function_author_binding_semantic_classification_mismatch"
+                )
+            bound_by_occurrence[occurrence_index].setdefault(
+                source_step_index, set()
+            ).add(parameter_name)
+    if not require_all:
+        return
+    for occurrence_index, span in enumerate(spans):
+        for source_step_index in span:
+            semantic = semantic_steps[source_step_index]
+            if semantic["semantic_kind"] != "task_parameter":
+                continue
+            expected = set(semantic["parameter_names"])
+            actual = bound_by_occurrence[occurrence_index].get(
+                source_step_index, set()
+            )
+            if not expected.issubset(actual):
+                raise ValueError(
+                    "function_author_task_parameter_binding_incomplete"
+                )
+
+
 def _agent_owned_function_artifact(
     *,
     function_id: str,
@@ -1231,6 +1473,7 @@ def _agent_owned_function_artifact(
     facts: dict[str, Any],
     parameters: list[dict[str, Any]],
     occurrence_index: int,
+    agent_visible: bool = True,
 ) -> dict[str, Any]:
     if not name or not description:
         raise ValueError("function_author_inventory_definition_invalid")
@@ -1309,7 +1552,7 @@ def _agent_owned_function_artifact(
             }
             for local_index, source_index in enumerate(source_indices)
         ],
-        "agent_visible": True,
+        "agent_visible": agent_visible,
     }
 
 

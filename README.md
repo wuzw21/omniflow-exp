@@ -69,14 +69,18 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 ```
 
 OmniFlow 的 Function 转换由 A 端 authoring Agent 和无语义判定的 Compiler 完成。
-Agent 先从成功 RunLog 中找到可复用 Function，再直接决定参数名和完整的
-action/render binding（包括 `arg_name` 或
+Agent 必须先逐步区分 `stable`、`task_parameter` 和 `online_observation`：稳定值可按
+Source 默认值复用；任务参数必须声明参数名和完整的 action/render binding；依赖当前
+页面读取、计算或条件判断的动作必须保留给在线 Planner。完成分类后，Agent 再从成功
+RunLog 中找到可复用 Function，并直接决定参数名和完整的 action/render binding（包括 `arg_name` 或
 `node_id`/`attribute`/`recorded_value`）。Compiler 不生成候选、不推断参数、不选择节点，
 也不补写遗漏的 binding；它只把 Agent 给出的 source step 索引映射为不可变 action 和
 source state，并从 Agent 已选定的 source binding 原样复制默认值，完成 schema/index
-校验与 Store 序列化。未声明的值保留 RunLog 默认值。三次 proposal 都不满足结构
-合同时会保留 `authoring_failure.json`，随后注册不含任何 binding 的原始 RunLog replay；
-这个 fallback 只转换已记录动作，不含 compiler-derived 参数。
+校验与 Store 序列化。只有 Agent 明确分类为稳定的未声明值才保留 RunLog 默认值。
+只要存在 `online_observation`，完整 Source workflow 就以不可执行证据保存，运行时只暴露
+安全的局部 Function 并交还在线 Planner。三次 proposal 都不满足结构合同时会保留
+`authoring_failure.json`，原始 RunLog 也只作为不可执行证据注册，禁止以无参数静态 replay
+进入正式 Function Recall。
 同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
 `compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
 局部 Function 不必覆盖完整 RunLog；重复 occurrence 的稳定性和绑定均由 Agent 负责，

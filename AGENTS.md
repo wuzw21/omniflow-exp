@@ -83,7 +83,7 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 - `src/experiment/run_task.py` 只执行一个原子 AndroidWorld 结果。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
 - `compile_runlog_to_store` 是唯一 Function 写 API；输出 v2 `store.json`、`compile_report.json` 和 sibling `transfer_states.json`。
-- 成功 RunLog 由 authoring Agent 提取零个或多个连续局部 Function，并生成一个覆盖全部成功主流程动作的完整 Function。Agent 和 Compiler 都不得删除、重排或截断所选连续段的中间动作；`origin=checker` 恢复动作仍由独立共享 Checker 提取和执行。所有 binding 只能由 A-side authoring Agent 显式决定；Agent 未填写的字段原样使用成功 RunLog 中的默认值。Compiler 只校验 schema、连续 source 顺序和显式引用，并机械转换 Agent 已声明的 binding，不得推断、推荐、修复或补全参数。最终 Function 数量大于等于一，不增加嵌套或 parent/child schema。
+- 成功 RunLog 必须先由 A-side authoring Agent 对每个 source step 显式区分 `stable`、`task_parameter` 和 `online_observation`，再提取零个或多个连续局部 Function，并生成一个覆盖全部成功主流程动作的完整 Function。任务参数必须由 Agent 声明 action/render binding；在线观察、实时计算或条件决策步骤不得进入可执行的静态 replay，完整 Function 只以 `agent_visible=false` 的证据保存并交还既有 Planner 主线。Agent 和 Compiler 都不得删除、重排或截断所选连续段的中间动作；`origin=checker` 恢复动作仍由独立共享 Checker 提取和执行。所有 binding 只能由 A-side authoring Agent 显式决定；只有 Agent 明确分类为稳定而未填写的字段才原样使用成功 RunLog 中的默认值。Compiler 只校验 schema、连续 source 顺序和显式引用，并机械转换 Agent 已声明的分类与 binding，不得推断、推荐、修复或补全参数。最终 Function 数量大于等于一，不增加嵌套或 parent/child schema。
 - runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
 - `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
 - AndroidWorld 当前统一 E2E 方法为 `fixed_replay`、`omniflow`、`mobilegpt`、

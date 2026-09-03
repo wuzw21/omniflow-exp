@@ -126,23 +126,30 @@ transfer state、target observation 和 Action Schema 不变。source 节点找�
 `compile_runlog_to_store` 是唯一 Function writer，同时也是 Agent Loop 的 Harness。
 Authoring 过程对外只包含三个阶段：
 
-1. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
+1. **Semantic classification**：Agent 对每个 source step 显式声明 `stable`、
+   `task_parameter` 或 `online_observation`。前者允许保留 Source 默认值；中间一类必须
+   同时列出参数名；后一类表示动作依赖当前页面读取、实时计算或条件分支，必须交回在线
+   Planner，不能静态重放历史答案。
+2. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
    同类片段表示为同一个 Function 的多个 occurrences；同时标出完整主流程。
-2. **A-side binding authoring**：Agent 读取 task parameters、source actions 和未筛选的
+3. **A-side binding authoring**：Agent 读取 task parameters、source actions 和未筛选的
    source UI node 投影，直接给出每个参数的全部
    `action_arg`/`render_node` binding。数值显示格式、`arg_name`、`node_id`、attribute 和
    recorded substring 都由 Agent 决定；Compiler 不提供 candidate 或 evidence shortlist。
-3. **Conversion and registration**：Compiler 只检查 JSON schema、source step/occurrence
+4. **Conversion and registration**：Compiler 只检查 JSON schema、source step/occurrence
    索引和 artifact 可解析性，将 Agent 已声明的 binding 机械映射成 `input_schema`、
    `bindings`、`render_bindings` 与 `source_calls`，然后写入 Function Store。它不推断、
    推荐、修复或补全任何 binding；source 默认值只从 Agent 指定的 action arg 或
-   `recorded_value` 原样复制，未声明的值继续使用 RunLog 默认值。
+   `recorded_value` 原样复制，只有 Agent 分类为稳定的未声明值继续使用 RunLog 默认值。
 
-因此 Agent 的 JSON 以 `binding_owner=agent` 明确所有权，并在 `functions` 与
+因此 Agent 的 JSON 以 `binding_owner=agent` 明确所有权，并在 `semantic_analysis` 中
+先完成逐步分类，再在 `functions` 与
 `complete_function` 内只声明需要变化的 bindings，不提交 `validation` 或
 `registration` 字段。结构校验失败时 Harness 把错误反馈给同一 Agent并要求完整重写，
-最多三次；仍失败则写出 `authoring_failure.json` 并注册无参数、无 binding 的原始 source
-replay。该 fallback 不做语义抽象，因而不会产生任何 compiler-derived binding。
+最多三次；仍失败则写出 `authoring_failure.json`，原始 source replay 仅以
+`agent_visible=false` 的证据 Function 保存，不参与 Recall。若分类包含
+`online_observation`，完整 Function 同样只作隐藏证据，安全的局部 Function 仍可参与
+Recall，动态步骤由既有 Planner 主线完成。该行为不产生任何 compiler-derived binding。
 最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
 `compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
 定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。

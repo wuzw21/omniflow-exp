@@ -964,16 +964,20 @@ def test_authoring_harness_accepts_complete_function_without_locals() -> None:
     ] == ["open_recipe"]
 
 
-def test_default_authoring_prompt_exposes_three_stages_only() -> None:
+def test_default_authoring_prompt_requires_semantic_classification() -> None:
     prompt = _default_authoring_workflow_prompt()
 
-    assert "Stage 1 — discover Functions" in prompt
-    assert "Stage 2 — author every binding on the A side" in prompt
-    assert "Stage 3 — convert and register" in prompt
-    assert "Stage 4" not in prompt
+    assert "Stage 1 — classify semantics" in prompt
+    assert "Stage 2 — discover Functions" in prompt
+    assert "Stage 3 — author every binding on the A side" in prompt
+    assert "Stage 4 — convert and register" in prompt
+    assert "stable" in prompt
+    assert "task_parameter" in prompt
+    assert "online_observation" in prompt
+    assert "planner_handoff" in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
-    assert "Any omitted value keeps the recorded" in prompt
+    assert "Any undeclared stable value keeps the" in prompt
     assert '"binding_owner": "agent"' in prompt
     assert "occurrence_values" not in prompt
     assert "other fixed control" in prompt
@@ -1014,12 +1018,35 @@ def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> Non
         {
             "binding_owner": "agent",
             "reason": "The A-side Agent authored the title binding.",
+            "semantic_analysis": {
+                "steps": [
+                    {
+                        "source_step_index": 0,
+                        "semantic_kind": "task_parameter",
+                        "parameter_names": ["title"],
+                        "reason": "The input text comes from the task goal.",
+                    },
+                    {
+                        "source_step_index": 1,
+                        "semantic_kind": "task_parameter",
+                        "parameter_names": ["title"],
+                        "reason": "The selected row is named by the task goal.",
+                    },
+                    {
+                        "source_step_index": 2,
+                        "semantic_kind": "stable",
+                        "parameter_names": [],
+                        "reason": "The suffix is invariant.",
+                    },
+                ]
+            },
             "functions": [],
             "complete_function": {
                 "function_id": "create_recipe",
                 "name": "Create recipe",
                 "description": "Create the requested recipe.",
                 "source_step_indices": [0, 1, 2],
+                "execution_mode": "direct_replay",
                 "parameters": [
                     {
                         "name": "title",
@@ -1069,6 +1096,141 @@ def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> Non
     assert "input_text" not in function["input_schema"]["properties"]
 
 
+def test_agent_cannot_label_task_parameter_then_emit_empty_schema() -> None:
+    facts = {
+        "run_id": "calendar-event",
+        "goal": "Create an event titled Meeting with HR.",
+        "task_parameters": {"title": "Meeting with HR"},
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "calendar-editor",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Call with Dr. Smith", "x": 500, "y": 500},
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="function_author_task_parameter_binding_incomplete",
+    ):
+        _materialize_authoring_response(
+            {
+                "binding_owner": "agent",
+                "reason": "The event title varies with the task.",
+                "semantic_analysis": {
+                    "steps": [
+                        {
+                            "source_step_index": 0,
+                            "semantic_kind": "task_parameter",
+                            "parameter_names": ["event_title"],
+                            "reason": "The title is supplied by the current goal.",
+                        }
+                    ]
+                },
+                "functions": [],
+                "complete_function": {
+                    "function_id": "create_calendar_event",
+                    "name": "Create calendar event",
+                    "description": "Create the requested calendar event.",
+                    "source_step_indices": [0],
+                    "execution_mode": "direct_replay",
+                    "parameters": [],
+                },
+            },
+            facts,
+            candidate_map={},
+        )
+
+
+def test_online_observation_hides_complete_replay_and_keeps_safe_local() -> None:
+    facts = {
+        "run_id": "browser-multiply",
+        "goal": "Multiply the two numbers shown on the page.",
+        "task_parameters": {},
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "browser-page",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+            },
+            {
+                "source_step_index": 1,
+                "before_state_id": "answer-field",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "15750", "x": 500, "y": 500},
+                },
+            },
+        ],
+    }
+    proposal = {
+        "binding_owner": "agent",
+        "reason": "Navigation is reusable; the product must be recomputed live.",
+        "semantic_analysis": {
+            "steps": [
+                {
+                    "source_step_index": 0,
+                    "semantic_kind": "stable",
+                    "parameter_names": [],
+                    "reason": "Focusing the answer field is stable.",
+                },
+                {
+                    "source_step_index": 1,
+                    "semantic_kind": "online_observation",
+                    "parameter_names": [],
+                    "reason": "The answer depends on the numbers visible now.",
+                },
+            ]
+        },
+        "functions": [
+            {
+                "function_id": "focus_answer_field",
+                "name": "Focus answer field",
+                "description": "Focus the visible answer field.",
+                "occurrences": [{"source_step_indices": [0]}],
+                "parameters": [],
+            }
+        ],
+        "complete_function": {
+            "function_id": "complete_multiplication",
+            "name": "Complete multiplication task",
+            "description": "Historical evidence for the full source workflow.",
+            "source_step_indices": [0, 1],
+            "execution_mode": "planner_handoff",
+            "parameters": [],
+        },
+    }
+
+    result = _materialize_authoring_response(proposal, facts, candidate_map={})
+    functions = {
+        function["function_id"]: function
+        for function in result["bundle"]["functions"]
+    }
+
+    assert functions["focus_answer_field"]["agent_visible"] is True
+    assert functions["complete_multiplication"]["agent_visible"] is False
+    assert result["authoring_workflow"]["complete_execution_mode"] == (
+        "planner_handoff"
+    )
+    assert result["authoring_workflow"]["semantic_analysis"]["counts"] == {
+        "stable": 1,
+        "task_parameter": 0,
+        "online_observation": 1,
+    }
+
+    unsafe = json.loads(json.dumps(proposal))
+    unsafe["complete_function"]["execution_mode"] = "direct_replay"
+    with pytest.raises(
+        ValueError,
+        match="function_author_online_observation_requires_planner_handoff",
+    ):
+        _materialize_authoring_response(unsafe, facts, candidate_map={})
+
+
 def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
     tmp_path,
 ) -> None:
@@ -1084,12 +1246,23 @@ def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
     proposal = {
         "binding_owner": "agent",
         "reason": "Bind the requested title.",
+        "semantic_analysis": {
+            "steps": [
+                {
+                    "source_step_index": 0,
+                    "semantic_kind": "task_parameter",
+                    "parameter_names": ["title"],
+                    "reason": "The text is supplied by the task goal.",
+                }
+            ]
+        },
         "functions": [],
         "complete_function": {
             "function_id": "create_recipe",
             "name": "Create recipe",
             "description": "Create the requested recipe.",
             "source_step_indices": [0],
+            "execution_mode": "direct_replay",
             "parameters": [
                 {
                     "name": "title",
@@ -1389,7 +1562,10 @@ def test_authoring_agent_rejection_falls_back_only_to_raw_source_replay(
     assert completions.calls == 3
     failure = json.loads((output / "authoring_failure.json").read_text())
     assert failure["success"] is False
-    assert report["authoring_workflow"]["fallback_mode"] == "raw_source_replay"
+    assert (
+        report["authoring_workflow"]["fallback_mode"]
+        == "hidden_raw_source_evidence"
+    )
     function = parse_function_artifact(
         json.loads((output / "store.json").read_text())["functions"][
             "complete_source_workflow"
@@ -1398,6 +1574,7 @@ def test_authoring_agent_rejection_falls_back_only_to_raw_source_replay(
     assert function.input_schema["required"] == []
     assert function.bindings == ()
     assert function.render_bindings == ()
+    assert function.agent_visible is False
     assert function.steps[0].action.to_dict() == {
         "tool": "click",
         "args": {"x": 500, "y": 500},
