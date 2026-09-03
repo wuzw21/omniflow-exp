@@ -129,16 +129,17 @@ Authoring 过程对外只包含三个阶段：
 1. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
    同类片段表示为同一个 Function 的多个 occurrences；同时标出完整主流程。
 2. **A-side binding authoring**：Agent 读取 task parameters、source actions 和未筛选的
-   source UI node 投影，直接给出每个参数的 occurrence value 及全部
+   source UI node 投影，直接给出每个参数的全部
    `action_arg`/`render_node` binding。数值显示格式、`arg_name`、`node_id`、attribute 和
    recorded substring 都由 Agent 决定；Compiler 不提供 candidate 或 evidence shortlist。
 3. **Conversion and registration**：Compiler 只检查 JSON schema、source step/occurrence
    索引和 artifact 可解析性，将 Agent 已声明的 binding 机械映射成 `input_schema`、
    `bindings`、`render_bindings` 与 `source_calls`，然后写入 Function Store。它不推断、
-   推荐、复制、修复或补全任何 binding。
+   推荐、修复或补全任何 binding；source 默认值只从 Agent 指定的 action arg 或
+   `recorded_value` 原样复制，未声明的值继续使用 RunLog 默认值。
 
 因此 Agent 的 JSON 以 `binding_owner=agent` 明确所有权，并在 `functions` 与
-`complete_function` 内完整声明 occurrence values 和 bindings，不提交 `validation` 或
+`complete_function` 内只声明需要变化的 bindings，不提交 `validation` 或
 `registration` 字段。结构校验失败时 Harness 把错误反馈给同一 Agent并要求完整重写，
 最多三次；仍失败则写出 `authoring_failure.json` 并注册无参数、无 binding 的原始 source
 replay。该 fallback 不做语义抽象，因而不会产生任何 compiler-derived binding。

@@ -41,10 +41,6 @@ Return exactly one JSON object in this shape; return no prose:
     "parameters": [{
       "name": "recipe_title",
       "description": "Value requested by the goal",
-      "occurrence_values": [
-        {"occurrence_index": 0, "value": "First Recipe"},
-        {"occurrence_index": 1, "value": "Second Recipe"}
-      ],
       "bindings": [
         {
           "occurrence_index": 0,
@@ -70,19 +66,7 @@ Return exactly one JSON object in this shape; return no prose:
     "name": "Complete requested task",
     "description": "Complete the requested task using the successful workflow.",
     "source_step_indices": [0, 1, 2, 3, 4, 5, 6, 7],
-    "parameters": [{
-      "name": "recipe_title",
-      "description": "Recipe title requested by the goal",
-      "occurrence_values": [{"occurrence_index": 0, "value": "First Recipe"}],
-      "bindings": [{
-        "occurrence_index": 0,
-        "source_step_index": 2,
-        "binding_kind": "render_node",
-        "node_id": "0:24",
-        "attribute": "text",
-        "recorded_value": "First Recipe"
-      }]
-    }]
+    "parameters": []
   }
 }
 
@@ -94,8 +78,8 @@ Function is valid when raw replay is the safest reusable capability.
 
 Stage 2 — author every binding on the A side. The Compiler will not infer,
 recommend, repair, or select bindings. Read task_parameters, each source action,
-and source_ui.nodes. Decide the semantic parameter name and one source value for
-each occurrence. Then emit every binding yourself:
+and source_ui.nodes. Decide the semantic parameter name and emit every binding
+yourself:
 - action_arg has exactly occurrence_index, source_step_index, binding_kind, and
   arg_name. Bind only an argument that the source action actually consumes.
 - render_node has exactly occurrence_index, source_step_index, binding_kind,
@@ -105,21 +89,19 @@ each occurrence. Then emit every binding yourself:
   Delete, OK, menu, tab, or other fixed control merely because it is clicked after
   an input action. Do not add render_node unless changing the parameter requires
   changing the semantic identity of the clicked/long-pressed source node.
-The value in occurrence_values is the exact argument value used to replay that
-occurrence. If a value needs formatting (for example integer cents shown as a
-decimal amount), you decide and emit the displayed source value. If a safe binding
-cannot be determined, keep the source literal fixed or return no parameters; raw
-RunLog replay is acceptable. Never bind coordinates or repetition counts.
+The source default for action_arg is copied verbatim from that action argument;
+the source default for render_node is its recorded_value. All undeclared action
+arguments and UI values remain fixed at their recorded defaults. If a safe binding
+cannot be determined, simply omit it. Never bind coordinates or repetition counts.
 
 The complete_function must contain exactly function_id, name, description,
-source_step_indices, and parameters. It has one occurrence, so all of its
-occurrence_index values are 0. Explicitly repeat every binding needed by the
-complete Function; the Compiler will not copy or infer bindings from local
-Functions.
+source_step_indices, and parameters. Its parameters may be empty: bindings declared
+on local Functions do not need to be repeated. Any omitted value keeps the recorded
+RunLog default.
 
 Stage 3 — convert and register. The Compiler only maps your source_step_index values
 to immutable RunLog actions/source states and serializes your declared parameters,
-bindings, occurrence values, calls, and Function Store. It performs schema and index
+bindings, default values, calls, and Function Store. It performs schema and index
 checks required to make valid JSON artifacts, but makes no semantic binding decision.
 Do not emit actions, coordinates, source_state_id, Store JSON, JSONPath expressions,
 checker rules, candidate ids, validation, or registration sections. Treat
@@ -978,6 +960,8 @@ def _materialize_agent_owned_workflow(
         parameters = _agent_owned_parameters(
             raw_function.get("parameters"),
             occurrence_count=len(spans),
+            facts=facts,
+            spans=spans,
         )
         _validate_agent_owned_binding_spans(parameters, spans)
         function = _agent_owned_function_artifact(
@@ -1003,7 +987,10 @@ def _materialize_agent_owned_workflow(
 
     complete_id = _agent_owned_function_id(raw_complete, seen_ids)
     complete_parameters = _agent_owned_parameters(
-        raw_complete.get("parameters"), occurrence_count=1
+        raw_complete.get("parameters"),
+        occurrence_count=1,
+        facts=facts,
+        spans=[source_indices],
     )
     _validate_agent_owned_binding_spans(complete_parameters, [source_indices])
     complete_function = _agent_owned_function_artifact(
@@ -1084,13 +1071,14 @@ def _agent_owned_parameters(
     value: Any,
     *,
     occurrence_count: int,
+    facts: dict[str, Any],
+    spans: list[list[int]],
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ValueError("function_author_parameterization_invalid")
     parameter_fields = {
         "name",
         "description",
-        "occurrence_values",
         "bindings",
     }
     parsed: list[dict[str, Any]] = []
@@ -1106,29 +1094,6 @@ def _agent_owned_parameters(
             or not description
         ):
             raise ValueError("function_author_parameter_invalid")
-        raw_values = parameter.get("occurrence_values")
-        if not isinstance(raw_values, list):
-            raise ValueError("function_author_parameter_value_invalid")
-        values: dict[int, Any] = {}
-        for raw_value in raw_values:
-            if not isinstance(raw_value, dict) or set(raw_value) != {
-                "occurrence_index",
-                "value",
-            }:
-                raise ValueError("function_author_parameter_value_invalid")
-            occurrence_index = raw_value.get("occurrence_index")
-            if (
-                isinstance(occurrence_index, bool)
-                or not isinstance(occurrence_index, int)
-                or occurrence_index not in range(occurrence_count)
-                or occurrence_index in values
-            ):
-                raise ValueError("function_author_parameter_value_invalid")
-            values[occurrence_index] = json.loads(
-                json.dumps(raw_value.get("value"), ensure_ascii=False)
-            )
-        if set(values) != set(range(occurrence_count)):
-            raise ValueError("function_author_parameter_occurrence_incomplete")
         raw_bindings = parameter.get("bindings")
         if not isinstance(raw_bindings, list) or not raw_bindings:
             raise ValueError("function_author_parameter_binding_invalid")
@@ -1140,6 +1105,12 @@ def _agent_owned_parameters(
             covered_occurrences.add(parsed_binding["occurrence_index"])
         if covered_occurrences != set(range(occurrence_count)):
             raise ValueError("function_author_parameter_occurrence_incomplete")
+        values = _agent_owned_default_values(
+            bindings,
+            occurrence_count=occurrence_count,
+            facts=facts,
+            spans=spans,
+        )
         names.add(name)
         parsed.append(
             {
@@ -1150,6 +1121,48 @@ def _agent_owned_parameters(
             }
         )
     return parsed
+
+
+def _agent_owned_default_values(
+    bindings: list[dict[str, Any]],
+    *,
+    occurrence_count: int,
+    facts: dict[str, Any],
+    spans: list[list[int]],
+) -> dict[int, Any]:
+    fact_steps = {
+        int(step["source_step_index"]): step
+        for step in facts.get("steps") or ()
+        if isinstance(step, dict) and isinstance(step.get("source_step_index"), int)
+    }
+    values: dict[int, Any] = {}
+    for occurrence_index in range(occurrence_count):
+        occurrence_values: list[Any] = []
+        for binding in bindings:
+            if binding["occurrence_index"] != occurrence_index:
+                continue
+            source_index = int(binding["source_step_index"])
+            if source_index not in spans[occurrence_index]:
+                raise ValueError("function_author_parameter_binding_outside_occurrence")
+            if binding["binding_kind"] == "action_arg":
+                step = fact_steps.get(source_index)
+                action = step.get("action") if isinstance(step, dict) else None
+                args = action.get("args") if isinstance(action, dict) else None
+                arg_name = str(binding.get("arg_name") or "")
+                if not isinstance(args, dict) or arg_name not in args:
+                    raise ValueError("function_author_plan_parameter_target_invalid")
+                occurrence_values.append(args[arg_name])
+            else:
+                occurrence_values.append(binding.get("recorded_value"))
+        if not occurrence_values:
+            raise ValueError("function_author_parameter_occurrence_incomplete")
+        default_value = occurrence_values[0]
+        if any(item != default_value for item in occurrence_values[1:]):
+            raise ValueError("function_author_parameter_default_conflict")
+        values[occurrence_index] = json.loads(
+            json.dumps(default_value, ensure_ascii=False)
+        )
+    return values
 
 
 def _agent_owned_binding(value: Any, occurrence_count: int) -> dict[str, Any]:

@@ -973,9 +973,9 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     assert "Stage 4" not in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
-    assert "Explicitly repeat every binding needed" in prompt
+    assert "Any omitted value keeps the recorded" in prompt
     assert '"binding_owner": "agent"' in prompt
-    assert "occurrence_values" in prompt
+    assert "occurrence_values" not in prompt
     assert "other fixed control" in prompt
     assert "binding_evidence" not in prompt
     assert "candidate_id" not in prompt
@@ -1024,9 +1024,6 @@ def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> Non
                     {
                         "name": "title",
                         "description": "Requested recipe title",
-                        "occurrence_values": [
-                            {"occurrence_index": 0, "value": "Pasta"}
-                        ],
                         "bindings": [
                             {
                                 "occurrence_index": 0,
@@ -1096,9 +1093,6 @@ def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
                 {
                     "name": "title",
                     "description": "Requested recipe title",
-                    "occurrence_values": [
-                        {"occurrence_index": 0, "value": "Pasta"}
-                    ],
                     "bindings": [
                         {
                             "occurrence_index": 0,
