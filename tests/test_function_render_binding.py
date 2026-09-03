@@ -25,6 +25,7 @@ from omniflow.functions.compiler import (
     _default_authoring_workflow_prompt,
     _direct_source_authoring_plan,
     _materialize_authoring_plan,
+    _materialize_authoring_response,
     _materialize_authoring_workflow,
     _source_parameter_candidates,
     _source_node_parameter_evidence,
@@ -967,15 +968,212 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     prompt = _default_authoring_workflow_prompt()
 
     assert "Stage 1 — discover Functions" in prompt
-    assert "Stage 2 — describe their semantics" in prompt
-    assert "Stage 3 — compile and register" in prompt
+    assert "Stage 2 — author every binding on the A side" in prompt
+    assert "Stage 3 — convert and register" in prompt
     assert "Stage 4" not in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
-    assert "never put parameters inside complete_function" in prompt
-    assert "single occurrence spans the complete source" in prompt
-    assert "binding_evidence" in prompt
+    assert "Explicitly repeat every binding needed" in prompt
+    assert '"binding_owner": "agent"' in prompt
+    assert "occurrence_values" in prompt
+    assert "binding_evidence" not in prompt
     assert "candidate_id" not in prompt
+
+
+def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> None:
+    facts = {
+        "run_id": "agent-owned",
+        "goal": "Create the Pasta recipe.",
+        "task_parameters": {"title": "Pasta"},
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Pasta", "x": 500, "y": 500},
+                },
+            },
+            {
+                "source_step_index": 1,
+                "before_state_id": "state-1",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+            },
+            {
+                "source_step_index": 2,
+                "before_state_id": "state-2",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": ".txt", "x": 500, "y": 500},
+                },
+            },
+        ],
+    }
+    result = _materialize_authoring_response(
+        {
+            "binding_owner": "agent",
+            "reason": "The A-side Agent authored the title binding.",
+            "functions": [],
+            "complete_function": {
+                "function_id": "create_recipe",
+                "name": "Create recipe",
+                "description": "Create the requested recipe.",
+                "source_step_indices": [0, 1, 2],
+                "parameters": [
+                    {
+                        "name": "title",
+                        "description": "Requested recipe title",
+                        "occurrence_values": [
+                            {"occurrence_index": 0, "value": "Pasta"}
+                        ],
+                        "bindings": [
+                            {
+                                "occurrence_index": 0,
+                                "source_step_index": 0,
+                                "binding_kind": "action_arg",
+                                "arg_name": "text",
+                            },
+                            {
+                                "occurrence_index": 0,
+                                "source_step_index": 1,
+                                "binding_kind": "render_node",
+                                "node_id": "recipe-row",
+                                "attribute": "text",
+                                "recorded_value": "Pasta",
+                            },
+                        ],
+                    }
+                ],
+            },
+        },
+        facts,
+        candidate_map={},
+    )
+
+    function = result["bundle"]["functions"][0]
+    assert function["bindings"] == [
+        {
+            "source": "$.arguments.title",
+            "target": "$.steps[0].action.args.text",
+        }
+    ]
+    assert function["render_bindings"] == [
+        {
+            "source": "$.arguments.title",
+            "step_index": 1,
+            "node_id": "recipe-row",
+            "attribute": "text",
+            "recorded_value": "Pasta",
+        }
+    ]
+    assert function["steps"][2]["action"]["args"]["text"] == ".txt"
+    assert "input_text" not in function["input_schema"]["properties"]
+
+
+def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
+    tmp_path,
+) -> None:
+    state = {
+        "pixels": None,
+        "xml": (
+            '<hierarchy width="1000" height="1000">'
+            '<node id="title-field" text="Pasta" bounds="[0,0][500,100]" />'
+            "</hierarchy>"
+        ),
+        "auxiliaries": {"display": {"width": 1000, "height": 1000}},
+    }
+    proposal = {
+        "binding_owner": "agent",
+        "reason": "Bind the requested title.",
+        "functions": [],
+        "complete_function": {
+            "function_id": "create_recipe",
+            "name": "Create recipe",
+            "description": "Create the requested recipe.",
+            "source_step_indices": [0],
+            "parameters": [
+                {
+                    "name": "title",
+                    "description": "Requested recipe title",
+                    "occurrence_values": [
+                        {"occurrence_index": 0, "value": "Pasta"}
+                    ],
+                    "bindings": [
+                        {
+                            "occurrence_index": 0,
+                            "source_step_index": 0,
+                            "binding_kind": "action_arg",
+                            "arg_name": "text",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    class CapturingCompletions:
+        request = None
+
+        def create(self, **kwargs):
+            self.request = kwargs
+            return SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=2,
+                    total_tokens=12,
+                ),
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(proposal))
+                    )
+                ],
+            )
+
+    completions = CapturingCompletions()
+    run_log = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "agent-owned-request",
+        "task_name": "agent-owned-request",
+        "goal": "Create the Pasta recipe.",
+        "task_parameters": {"title": "Pasta"},
+        "seed": 111,
+        "status": "succeeded",
+        "success": True,
+        "validator": {"official": True, "success": True, "reward": 1},
+        "provenance": {"kind": "runtime"},
+        "steps": [
+            {
+                "step_index": 0,
+                "observation": state,
+                "action": {
+                    "action_type": "input_text",
+                    "text": "Pasta",
+                    "x": 500,
+                    "y": 500,
+                },
+                "result": {"success": True},
+                "next_observation": state,
+            }
+        ],
+    }
+    report = compile_runlog_to_store(
+        run_log,
+        tmp_path / "memory",
+        model="test-author",
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions)
+        ),
+        state_loader=lambda _state_id: state,
+    )
+
+    request = json.loads(completions.request["messages"][1]["content"])
+    assert "binding_evidence" not in request
+    assert "parameter_evidence" not in request["source_run"]
+    assert request["source_run"]["steps"][0]["source_ui"]["nodes"][0][
+        "id"
+    ] == "title-field"
+    assert report["authoring_workflow"]["binding_owner"] == "agent"
+    assert report["authoring_workflow"]["agent_proposal_accepted"] is True
 
 
 def test_agent_authors_semantic_binding_requests_and_harness_materializes_them() -> None:
@@ -1133,7 +1331,7 @@ def test_agent_semantic_binding_request_fails_closed_without_evidence() -> None:
         )
 
 
-def test_authoring_agent_rejection_never_falls_back_to_mechanical_bindings(
+def test_authoring_agent_rejection_falls_back_only_to_raw_source_replay(
     tmp_path,
 ) -> None:
     class InvalidCompletions:
@@ -1184,21 +1382,30 @@ def test_authoring_agent_rejection_never_falls_back_to_mechanical_bindings(
     }
     output = tmp_path / "memory"
 
-    with pytest.raises(
-        ValueError,
-        match="function_authoring_rejected_after_retries",
-    ):
-        compile_runlog_to_store(
-            run_log,
-            output,
-            model="test-author",
-            client=client,
-        )
+    report = compile_runlog_to_store(
+        run_log,
+        output,
+        model="test-author",
+        client=client,
+        state_loader=lambda _state_id: state,
+    )
 
     assert completions.calls == 3
     failure = json.loads((output / "authoring_failure.json").read_text())
     assert failure["success"] is False
-    assert not (output / "store.json").exists()
+    assert report["authoring_workflow"]["fallback_mode"] == "raw_source_replay"
+    function = parse_function_artifact(
+        json.loads((output / "store.json").read_text())["functions"][
+            "complete_source_workflow"
+        ]
+    )
+    assert function.input_schema["required"] == []
+    assert function.bindings == ()
+    assert function.render_bindings == ()
+    assert function.steps[0].action.to_dict() == {
+        "tool": "click",
+        "args": {"x": 500, "y": 500},
+    }
 
 
 def test_node_parameter_evidence_allows_distinct_values_in_one_node() -> None:

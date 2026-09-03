@@ -128,26 +128,25 @@ Authoring 过程对外只包含三个阶段：
 
 1. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
    同类片段表示为同一个 Function 的多个 occurrences；同时标出完整主流程。
-2. **Semantic abstraction**：Agent 为每个 Function 生成语义名称和描述，将实例值提升为
-   参数，并为每个 occurrence 显式指出参数所绑定的 source step 以及
-   `action_arg`/`render_node` 类型。Compiler 提供的是只读 binding evidence，不是让
-   Agent 机械复制的 candidate id；坐标、重复次数和无证据值不能成为参数。
-3. **Compilation and registration**：Harness 根据 `source_step_indices` 自动恢复调用顺序，
-   将 Agent 的 semantic binding request 逐项解析到唯一 source evidence，校验每个已选
-   片段及其参数证据，为重复 occurrence 选择最常见的 action-tool shape，然后生成 `input_schema`、
-   `bindings`、`render_bindings`、`source_calls` 及最终 Function Store。
+2. **A-side binding authoring**：Agent 读取 task parameters、source actions 和未筛选的
+   source UI node 投影，直接给出每个参数的 occurrence value 及全部
+   `action_arg`/`render_node` binding。数值显示格式、`arg_name`、`node_id`、attribute 和
+   recorded substring 都由 Agent 决定；Compiler 不提供 candidate 或 evidence shortlist。
+3. **Conversion and registration**：Compiler 只检查 JSON schema、source step/occurrence
+   索引和 artifact 可解析性，将 Agent 已声明的 binding 机械映射成 `input_schema`、
+   `bindings`、`render_bindings` 与 `source_calls`，然后写入 Function Store。它不推断、
+   推荐、复制、修复或补全任何 binding。
 
-因此 Agent 的 JSON 只包含 `functions` 和 `complete_function`，不再提交 `validation` 或
-`registration` 字段。Harness 校验失败时把确定性的错误原因反馈给同一 Agent，要求
-返回完整替换 proposal；最多尝试三次。Harness 不再用一个自动生成的完整 replay
-Function 掩盖无效 authoring；三次均失败时写出 `authoring_failure.json` 并令转换失败，
-不会注册任何 compiler-derived binding。
+因此 Agent 的 JSON 以 `binding_owner=agent` 明确所有权，并在 `functions` 与
+`complete_function` 内完整声明 occurrence values 和 bindings，不提交 `validation` 或
+`registration` 字段。结构校验失败时 Harness 把错误反馈给同一 Agent并要求完整重写，
+最多三次；仍失败则写出 `authoring_failure.json` 并注册无参数、无 binding 的原始 source
+replay。该 fallback 不做语义抽象，因而不会产生任何 compiler-derived binding。
 最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
 `compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
 定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。
 局部 Functions 可以只覆盖 Agent 发现的可复用方向；完整主流程始终由
-`complete_function` 保存。未选中的额外 GUI render candidate 会写入编译报告供审计，
-不会单独导致整次 authoring 被拒绝。
+`complete_function` 保存。Compiler 不再生成或记录未选 candidate。
 
 B-MoCA 是独立 benchmark，不进入此 AndroidWorld 入口。
 

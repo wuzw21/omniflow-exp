@@ -68,21 +68,18 @@ bash scripts/exp/run_androidworld.sh convert-memory \
   --memory data/androidworld/CameraTakePhoto/omniflow/OmniFlowSourceSmall_seed111/memory/current
 ```
 
-OmniFlow 的 Function 转换由一个受 Compiler Harness 约束的 Agent workflow
-完成。这个过程只有三步：Agent 先从成功 RunLog 中找到可复用的 Function，再为它们
-生成语义名称、描述和参数，并显式提出每个参数对应的 occurrence、source step 与
-binding 类型；最后由 Harness 根据不可变 source evidence 逐项验证这些语义 binding
-request、排序并通过
-`compile_runlog_to_store` 注册为真正的 Function Store。Agent 不再输出自检声明或注册
-顺序；验证失败会收到精确错误并重写完整 proposal，最多三次，不再静默退化为整段 replay。
-Agent 不再从机械生成的 candidate id 列表中挑选绑定；Harness 也不会替 Agent 决定
-参数语义，只负责把通过证据验证的 request 落成 `input_schema`、`bindings` 与
-`render_bindings`。三次 proposal 都无法通过时，转换明确失败并保留
-`authoring_failure.json`，禁止回退到 compiler 自动生成绑定的 Memory。
+OmniFlow 的 Function 转换由 A 端 authoring Agent 和无语义判定的 Compiler 完成。
+Agent 先从成功 RunLog 中找到可复用 Function，再直接决定参数名、每个 occurrence 的
+source value，以及完整的 action/render binding（包括 `arg_name` 或
+`node_id`/`attribute`/`recorded_value`）。Compiler 不生成候选、不推断参数、不选择节点，
+也不补写遗漏的 binding；它只把 Agent 给出的 source step 索引映射为不可变 action 和
+source state，并完成 schema/index 校验与 Store 序列化。三次 proposal 都不满足结构
+合同时会保留 `authoring_failure.json`，随后注册不含任何 binding 的原始 RunLog replay；
+这个 fallback 只转换已记录动作，不含 compiler-derived 参数。
 同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
 `compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
-局部 Function 不必覆盖完整 RunLog；多余的 render candidate 作为未使用证据记录，重复
-occurrence 存在轻微动作差异时由 Harness 选择最常见的 action shape 作为注册定义。
+局部 Function 不必覆盖完整 RunLog；重复 occurrence 的稳定性和绑定均由 Agent 负责，
+Compiler 按 Agent 给出的第一个 occurrence 注册定义并保存其余 invocation 引用。
 
 直接执行：
 

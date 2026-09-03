@@ -23,11 +23,12 @@ from omniflow.runtime.checker import (
 
 
 def _default_authoring_workflow_prompt() -> str:
-    """Return the three-stage Agent contract consumed by the Compiler Harness."""
+    """Return the A-side authoring contract consumed by the converter."""
 
     return """Turn one successful GUI RunLog into reusable Function Memory.
 Return exactly one JSON object in this shape; return no prose:
 {
+  "binding_owner": "agent",
   "reason": "short rationale",
   "functions": [{
     "function_id": "delete_recipe",
@@ -38,18 +39,28 @@ Return exactly one JSON object in this shape; return no prose:
       {"source_step_indices": [6, 7]}
     ],
     "parameters": [{
-      "name": "<suggested_name>",
+      "name": "recipe_title",
       "description": "Value requested by the goal",
+      "occurrence_values": [
+        {"occurrence_index": 0, "value": "First Recipe"},
+        {"occurrence_index": 1, "value": "Second Recipe"}
+      ],
       "bindings": [
         {
           "occurrence_index": 0,
           "source_step_index": 2,
-          "binding_kind": "render_node"
+          "binding_kind": "render_node",
+          "node_id": "0:24",
+          "attribute": "text",
+          "recorded_value": "First Recipe"
         },
         {
           "occurrence_index": 1,
           "source_step_index": 6,
-          "binding_kind": "render_node"
+          "binding_kind": "render_node",
+          "node_id": "0:19",
+          "attribute": "content-desc",
+          "recorded_value": "Second Recipe"
         }
       ]
     }]
@@ -58,56 +69,57 @@ Return exactly one JSON object in this shape; return no prose:
     "function_id": "complete_task",
     "name": "Complete requested task",
     "description": "Complete the requested task using the successful workflow.",
-    "source_step_indices": [0, 1, 2, 3, 4, 5, 6, 7]
+    "source_step_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "parameters": [{
+      "name": "recipe_title",
+      "description": "Recipe title requested by the goal",
+      "occurrence_values": [{"occurrence_index": 0, "value": "First Recipe"}],
+      "bindings": [{
+        "occurrence_index": 0,
+        "source_step_index": 2,
+        "binding_kind": "render_node",
+        "node_id": "0:24",
+        "attribute": "text",
+        "recorded_value": "First Recipe"
+      }]
+    }]
   }
 }
 
 Stage 1 — discover Functions. Find zero or more semantically stable, contiguous
-local operations in the remaining successful source steps. If the same operation
-appears repeatedly, represent it as one Function with multiple occurrences. Also
-identify one complete_function spanning the entire remaining successful source
-sequence. It is valid to return no local Function when the only reusable capability
-is identical to the complete Function.
+local operations in the successful source steps. If the same operation repeats,
+represent it as one Function with multiple occurrences. Also identify one
+complete_function spanning the successful source sequence. Returning no local
+Function is valid when raw replay is the safest reusable capability.
 
-Stage 2 — describe their semantics. Give each Function a semantic name and
-description, and lift goal-dependent values into parameters. You—not the Harness—
-must identify which source step in every occurrence consumes each parameter and
-whether it changes an action argument (binding_kind="action_arg") or the semantic
-identity of a clicked/long-pressed source node (binding_kind="render_node"). The
-supplied binding_evidence is evidence for this judgment, not a list of ids to copy.
-Every binding request must be supported by an evidence item with the same
-source_step_index, binding kind, and suggested_name. A parameter must have one or
-more binding requests in every occurrence of its Function, and every requested
-source_step_index must be inside that occurrence's source_step_indices. Use each
-evidence item's suggested_name. Every action_arg evidence item inside a declared
-Function occurrence must be assigned to a parameter; render_node evidence may be
-left unused when the node does not define that Function's semantics. If both an
-action argument and a rendered node depend on the value, emit both requests. Never
-parameterize coordinates, repetition counts, fixed UI controls, or values without
-evidence. Angle-bracket strings in the example are placeholders, not literal names
-to copy.
+Stage 2 — author every binding on the A side. The Compiler will not infer,
+recommend, repair, or select bindings. Read task_parameters, each source action,
+and source_ui.nodes. Decide the semantic parameter name and one source value for
+each occurrence. Then emit every binding yourself:
+- action_arg has exactly occurrence_index, source_step_index, binding_kind, and
+  arg_name. Bind only an argument that the source action actually consumes.
+- render_node has exactly occurrence_index, source_step_index, binding_kind,
+  node_id, attribute, and recorded_value. Use a node_id and text/content-desc
+  substring from that step's source_ui; render_node is for click/long_press only.
+The value in occurrence_values is the exact argument value used to replay that
+occurrence. If a value needs formatting (for example integer cents shown as a
+decimal amount), you decide and emit the displayed source value. If a safe binding
+cannot be determined, keep the source literal fixed or return no parameters; raw
+RunLog replay is acceptable. Never bind coordinates or repetition counts.
 
-The complete_function object must contain exactly function_id, name, description,
-and source_step_indices; never put parameters inside complete_function. When the
-complete workflow needs parameters but there is no smaller local operation, emit
-one Function in functions whose single occurrence spans the complete source
-sequence and declare the parameters there. The Harness will merge that redundant
-full-span definition into the complete Function while preserving its parameters.
+The complete_function must contain exactly function_id, name, description,
+source_step_indices, and parameters. It has one occurrence, so all of its
+occurrence_index values are 0. Explicitly repeat every binding needed by the
+complete Function; the Compiler will not copy or infer bindings from local
+Functions.
 
-Stage 3 — compile and register. This stage is performed by the Compiler Harness,
-not by the Agent. The Harness validates continuity, coverage, repeated-occurrence
-shape, and parameter evidence; derives invocation order from source_step_indices;
-then materializes executable schemas, bindings, calls, and Function Store artifacts.
-Do not emit validation or registration sections.
-
-Do not emit actions, coordinates, source_state_id, Store JSON, Function schemas,
-executable JSONPath bindings, render_bindings, checker rules, candidate ids, or
-target-side descriptions. The semantic binding requests above are the only binding
-form the Agent emits. The Harness resolves them against immutable evidence,
-materializes executable artifacts, validates them, and is the only Store writer.
-Treat optional_checker_actions as removed setup and do not reconstruct them. Keep
-descriptions semantic and state fixed outcome-affecting constraints without copying
-instance-specific parameter literals.
+Stage 3 — convert and register. The Compiler only maps your source_step_index values
+to immutable RunLog actions/source states and serializes your declared parameters,
+bindings, occurrence values, calls, and Function Store. It performs schema and index
+checks required to make valid JSON artifacts, but makes no semantic binding decision.
+Do not emit actions, coordinates, source_state_id, Store JSON, JSONPath expressions,
+checker rules, candidate ids, validation, or registration sections. Treat
+optional_checker_actions as removed setup and do not reconstruct them.
 """
 
 
@@ -149,8 +161,6 @@ def compile_runlog_to_store(
         raise ValueError("successful_source_goal_required")
 
     steps: list[dict[str, Any]] = []
-    parameter_evidence: list[dict[str, Any]] = []
-    node_parameter_evidence: list[dict[str, Any]] = []
     omitted_action_types: set[str] = set()
     optional_checker_actions: list[dict[str, Any]] = []
     onboarding_active = False
@@ -300,27 +310,12 @@ def compile_runlog_to_store(
                 action,
                 next_observation=next_observation,
             )
-            parameter_evidence.extend(
-                _source_action_parameter_evidence(
-                    source_step=step,
-                    action=action,
-                    source_step_index=source_step_index,
-                    task_parameters=payload.get("task_parameters"),
-                )
-            )
-            node_parameter_evidence.extend(
-                _source_node_parameter_evidence(
-                    source_step=step,
-                    action=action,
-                    source_step_index=source_step_index,
-                    task_parameters=payload.get("task_parameters"),
-                )
-            )
             steps.append(
                 {
                     "source_step_index": source_step_index,
                     "before_state_id": before_state_id,
                     "action": action,
+                    "source_ui": _source_ui_projection(observation),
                     "result": {"success": True},
                     "after_state_id": after_state_id,
                     "metadata": action_metadata,
@@ -338,16 +333,9 @@ def compile_runlog_to_store(
         "status": "succeeded",
         "success": True,
         "steps": steps,
-        "parameter_evidence": parameter_evidence,
-        "node_parameter_evidence": node_parameter_evidence,
         "omitted_action_types": sorted(omitted_action_types),
         "optional_checker_actions": optional_checker_actions,
     }
-    source_parameter_candidates = _source_parameter_candidates(facts)
-    authoring_candidates, authoring_candidate_map = _authoring_candidate_catalog(
-        facts,
-        action_candidates=source_parameter_candidates,
-    )
     authoring_prompt = prompt or _default_authoring_workflow_prompt()
     selected_model = str(model or "").strip() or None
     usage = {
@@ -372,7 +360,7 @@ def compile_runlog_to_store(
         # contain the official projected actions and immutable source-state
         # ids, so use the same Python authoring/materialization path with a
         # deterministic complete Function.
-        authored = _direct_source_authoring_plan(facts)
+        authored = _raw_source_replay_authoring(facts)
     else:
         if client is None:
             try:
@@ -392,7 +380,6 @@ def compile_runlog_to_store(
             request_payload: dict[str, Any] = {
                 "output_format": "json",
                 "source_run": facts,
-                "binding_evidence": authoring_candidates,
             }
             if authoring_attempt_trace:
                 request_payload["harness_feedback"] = {
@@ -443,7 +430,7 @@ def compile_runlog_to_store(
                 authored = _materialize_authoring_response(
                     proposal,
                     facts,
-                    candidate_map=authoring_candidate_map,
+                    candidate_map={},
                 )
                 _validate_materialized_function_artifacts(
                     authored,
@@ -473,10 +460,10 @@ def compile_runlog_to_store(
                 response=raw_author_response,
                 usage=usage,
             )
-            raise ValueError(
-                "function_authoring_rejected_after_retries:"
-                f"{str(authoring_error) or type(authoring_error).__name__}"
-            ) from authoring_error
+            authored = _raw_source_replay_authoring(
+                facts,
+                rejected_error=str(authoring_error) or type(authoring_error).__name__,
+            )
     if not isinstance(authored, dict) or not {"reason", "bundle"}.issubset(authored):
         raise ValueError("function_author_response_contract_invalid")
     if set(authored) - {
@@ -824,6 +811,8 @@ def _materialize_authoring_response(
 ) -> dict[str, Any]:
     """Accept the compact Agent proposal and retain legacy plans for callers."""
 
+    if isinstance(value, dict) and value.get("binding_owner") == "agent":
+        return _materialize_agent_owned_workflow(value, facts)
     if isinstance(value, dict) and (
         "functions" in value or "complete_function" in value
     ):
@@ -833,6 +822,483 @@ def _materialize_authoring_response(
             candidate_map=candidate_map,
         )
     return _materialize_authoring_plan(value, facts)
+
+
+def _source_ui_projection(observation: Any) -> dict[str, Any]:
+    """Expose source UI facts without choosing any parameter or target node."""
+
+    if not isinstance(observation, dict):
+        return {"nodes": []}
+    xml = observation.get("xml") or observation.get("forest")
+    if not isinstance(xml, str) or not xml.strip():
+        return {"nodes": []}
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return {"nodes": []}
+    nodes: list[dict[str, Any]] = []
+    exposed_attributes = (
+        "id",
+        "text",
+        "content-desc",
+        "resource-id",
+        "class",
+        "bounds",
+        "clickable",
+        "long-clickable",
+        "enabled",
+    )
+    for node in root.iter("node"):
+        projected = {
+            attribute: str(node.attrib.get(attribute) or "")
+            for attribute in exposed_attributes
+            if str(node.attrib.get(attribute) or "").strip()
+        }
+        if projected:
+            nodes.append(projected)
+    return {"nodes": nodes}
+
+
+def _raw_source_replay_authoring(
+    facts: dict[str, Any],
+    *,
+    rejected_error: str | None = None,
+) -> dict[str, Any]:
+    """Convert the successful source sequence verbatim, with no inferred binding."""
+
+    source_steps = [
+        step for step in facts.get("steps") or () if isinstance(step, dict)
+    ]
+    if not source_steps:
+        raise ValueError("successful_source_actions_required")
+    function_id = "complete_source_workflow"
+    goal = " ".join(str(facts.get("goal") or "").split())
+    function = _agent_owned_function_artifact(
+        function_id=function_id,
+        name=f"Complete task: {goal}" if goal else "Complete source replay",
+        description=(
+            f"Complete the requested task: {goal}. Replay the converted source "
+            "actions in order."
+            if goal
+            else "Replay the converted source actions in order."
+        ),
+        source_indices=[int(step["source_step_index"]) for step in source_steps],
+        facts=facts,
+        parameters=[],
+        occurrence_index=0,
+    )
+    result = {
+        "reason": "Registered the unparameterized successful source replay.",
+        "bundle": {
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": str(facts["run_id"]),
+            "arguments": {function_id: {}},
+            "checker_rules": [],
+            "functions": [function],
+        },
+        "source_calls": [{"function_id": function_id, "arguments": {}}],
+        "authoring_workflow": {
+            "schema_version": "omniflow.function-authoring-workflow.v3",
+            "binding_owner": "agent",
+            "agent_proposal_accepted": rejected_error is None,
+            "fallback_mode": "raw_source_replay",
+            "complete_function_id": function_id,
+        },
+    }
+    if rejected_error is not None:
+        result["authoring_workflow"]["rejected_error"] = rejected_error
+    return result
+
+
+def _materialize_agent_owned_workflow(
+    value: Any,
+    facts: dict[str, Any],
+) -> dict[str, Any]:
+    """Map the A-side Agent's complete binding declaration into Store artifacts."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "binding_owner",
+        "reason",
+        "functions",
+        "complete_function",
+    }:
+        raise ValueError("function_author_workflow_response_contract_invalid")
+    reason = str(value.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("function_author_reason_must_be_string")
+    raw_functions = value.get("functions")
+    raw_complete = value.get("complete_function")
+    if not isinstance(raw_functions, list) or not isinstance(raw_complete, dict):
+        raise ValueError("function_author_inventory_contract_invalid")
+
+    source_indices = [
+        int(step["source_step_index"])
+        for step in facts.get("steps") or ()
+        if isinstance(step, dict) and isinstance(step.get("source_step_index"), int)
+    ]
+    complete_fields = {
+        "function_id",
+        "name",
+        "description",
+        "source_step_indices",
+        "parameters",
+    }
+    if set(raw_complete) != complete_fields:
+        raise ValueError("function_author_inventory_complete_invalid")
+    if raw_complete.get("source_step_indices") != source_indices:
+        raise ValueError("function_author_plan_complete_sequence_required")
+
+    function_fields = {
+        "function_id",
+        "name",
+        "description",
+        "occurrences",
+        "parameters",
+    }
+    materialized_functions: list[dict[str, Any]] = []
+    arguments: dict[str, dict[str, Any]] = {}
+    source_calls: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for raw_function in raw_functions:
+        if not isinstance(raw_function, dict) or set(raw_function) != function_fields:
+            raise ValueError("function_author_inventory_definition_invalid")
+        occurrences = raw_function.get("occurrences")
+        if not isinstance(occurrences, list) or not occurrences:
+            raise ValueError("function_author_inventory_occurrence_invalid")
+        spans = [
+            _agent_owned_occurrence_span(occurrence, source_indices)
+            for occurrence in occurrences
+        ]
+        function_id = _agent_owned_function_id(raw_function, seen_ids)
+        parameters = _agent_owned_parameters(
+            raw_function.get("parameters"),
+            occurrence_count=len(spans),
+        )
+        _validate_agent_owned_binding_spans(parameters, spans)
+        function = _agent_owned_function_artifact(
+            function_id=function_id,
+            name=str(raw_function.get("name") or "").strip(),
+            description=str(raw_function.get("description") or "").strip(),
+            source_indices=spans[0],
+            facts=facts,
+            parameters=parameters,
+            occurrence_index=0,
+        )
+        materialized_functions.append(function)
+        arguments[function_id] = _agent_owned_occurrence_arguments(parameters, 0)
+        for occurrence_index in range(len(spans)):
+            source_calls.append(
+                {
+                    "function_id": function_id,
+                    "arguments": _agent_owned_occurrence_arguments(
+                        parameters, occurrence_index
+                    ),
+                }
+            )
+
+    complete_id = _agent_owned_function_id(raw_complete, seen_ids)
+    complete_parameters = _agent_owned_parameters(
+        raw_complete.get("parameters"), occurrence_count=1
+    )
+    _validate_agent_owned_binding_spans(complete_parameters, [source_indices])
+    complete_function = _agent_owned_function_artifact(
+        function_id=complete_id,
+        name=str(raw_complete.get("name") or "").strip(),
+        description=str(raw_complete.get("description") or "").strip(),
+        source_indices=source_indices,
+        facts=facts,
+        parameters=complete_parameters,
+        occurrence_index=0,
+    )
+    materialized_functions.append(complete_function)
+    arguments[complete_id] = _agent_owned_occurrence_arguments(
+        complete_parameters, 0
+    )
+    if not source_calls:
+        source_calls.append(
+            {"function_id": complete_id, "arguments": arguments[complete_id]}
+        )
+
+    from omniflow.functions.artifact import bind_function, parse_function_artifact
+
+    for function in materialized_functions:
+        parsed = parse_function_artifact(function)
+        bind_function(parsed, arguments[function["function_id"]])
+    return {
+        "reason": reason,
+        "bundle": {
+            "schema_version": "omniflow.function-bundle.v2",
+            "run_id": str(facts["run_id"]),
+            "arguments": arguments,
+            "checker_rules": [],
+            "functions": materialized_functions,
+        },
+        "source_calls": source_calls,
+        "authoring_workflow": {
+            "schema_version": "omniflow.function-authoring-workflow.v3",
+            "binding_owner": "agent",
+            "agent_proposal_accepted": True,
+            "fallback_mode": None,
+            "definition_count": len(raw_functions),
+            "invocation_count": len(source_calls),
+            "complete_function_id": complete_id,
+        },
+    }
+
+
+def _agent_owned_occurrence_span(value: Any, source_indices: list[int]) -> list[int]:
+    if not isinstance(value, dict) or set(value) != {"source_step_indices"}:
+        raise ValueError("function_author_inventory_occurrence_invalid")
+    span = value.get("source_step_indices")
+    if (
+        not isinstance(span, list)
+        or not span
+        or any(isinstance(index, bool) or not isinstance(index, int) for index in span)
+        or span != sorted(set(span))
+        or any(index not in source_indices for index in span)
+    ):
+        raise ValueError("function_author_inventory_occurrence_invalid")
+    positions = [source_indices.index(index) for index in span]
+    if positions != list(range(positions[0], positions[-1] + 1)):
+        raise ValueError("function_author_inventory_occurrence_not_contiguous")
+    return list(span)
+
+
+def _agent_owned_function_id(value: dict[str, Any], seen_ids: set[str]) -> str:
+    function_id = str(value.get("function_id") or "").strip()
+    if (
+        re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", function_id) is None
+        or function_id in seen_ids
+    ):
+        raise ValueError("function_author_inventory_function_id_invalid")
+    seen_ids.add(function_id)
+    return function_id
+
+
+def _agent_owned_parameters(
+    value: Any,
+    *,
+    occurrence_count: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("function_author_parameterization_invalid")
+    parameter_fields = {
+        "name",
+        "description",
+        "occurrence_values",
+        "bindings",
+    }
+    parsed: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for parameter in value:
+        if not isinstance(parameter, dict) or set(parameter) != parameter_fields:
+            raise ValueError("function_author_parameter_invalid")
+        name = str(parameter.get("name") or "").strip()
+        description = str(parameter.get("description") or "").strip()
+        if (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name) is None
+            or name in names
+            or not description
+        ):
+            raise ValueError("function_author_parameter_invalid")
+        raw_values = parameter.get("occurrence_values")
+        if not isinstance(raw_values, list):
+            raise ValueError("function_author_parameter_value_invalid")
+        values: dict[int, Any] = {}
+        for raw_value in raw_values:
+            if not isinstance(raw_value, dict) or set(raw_value) != {
+                "occurrence_index",
+                "value",
+            }:
+                raise ValueError("function_author_parameter_value_invalid")
+            occurrence_index = raw_value.get("occurrence_index")
+            if (
+                isinstance(occurrence_index, bool)
+                or not isinstance(occurrence_index, int)
+                or occurrence_index not in range(occurrence_count)
+                or occurrence_index in values
+            ):
+                raise ValueError("function_author_parameter_value_invalid")
+            values[occurrence_index] = json.loads(
+                json.dumps(raw_value.get("value"), ensure_ascii=False)
+            )
+        if set(values) != set(range(occurrence_count)):
+            raise ValueError("function_author_parameter_occurrence_incomplete")
+        raw_bindings = parameter.get("bindings")
+        if not isinstance(raw_bindings, list) or not raw_bindings:
+            raise ValueError("function_author_parameter_binding_invalid")
+        bindings: list[dict[str, Any]] = []
+        covered_occurrences: set[int] = set()
+        for binding in raw_bindings:
+            parsed_binding = _agent_owned_binding(binding, occurrence_count)
+            bindings.append(parsed_binding)
+            covered_occurrences.add(parsed_binding["occurrence_index"])
+        if covered_occurrences != set(range(occurrence_count)):
+            raise ValueError("function_author_parameter_occurrence_incomplete")
+        names.add(name)
+        parsed.append(
+            {
+                "name": name,
+                "description": description,
+                "values": values,
+                "bindings": bindings,
+            }
+        )
+    return parsed
+
+
+def _agent_owned_binding(value: Any, occurrence_count: int) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("function_author_parameter_binding_invalid")
+    binding_kind = str(value.get("binding_kind") or "").strip()
+    common = {"occurrence_index", "source_step_index", "binding_kind"}
+    expected = (
+        common | {"arg_name"}
+        if binding_kind == "action_arg"
+        else common | {"node_id", "attribute", "recorded_value"}
+    )
+    occurrence_index = value.get("occurrence_index")
+    source_step_index = value.get("source_step_index")
+    if (
+        set(value) != expected
+        or isinstance(occurrence_index, bool)
+        or not isinstance(occurrence_index, int)
+        or occurrence_index not in range(occurrence_count)
+        or isinstance(source_step_index, bool)
+        or not isinstance(source_step_index, int)
+        or binding_kind not in {"action_arg", "render_node"}
+    ):
+        raise ValueError("function_author_parameter_binding_invalid")
+    return json.loads(json.dumps(value, ensure_ascii=False))
+
+
+def _agent_owned_occurrence_arguments(
+    parameters: list[dict[str, Any]], occurrence_index: int
+) -> dict[str, Any]:
+    return {
+        str(parameter["name"]): json.loads(
+            json.dumps(parameter["values"][occurrence_index], ensure_ascii=False)
+        )
+        for parameter in parameters
+    }
+
+
+def _validate_agent_owned_binding_spans(
+    parameters: list[dict[str, Any]], spans: list[list[int]]
+) -> None:
+    for parameter in parameters:
+        for binding in parameter["bindings"]:
+            occurrence_index = int(binding["occurrence_index"])
+            if int(binding["source_step_index"]) not in spans[occurrence_index]:
+                raise ValueError("function_author_parameter_binding_outside_occurrence")
+
+
+def _agent_owned_function_artifact(
+    *,
+    function_id: str,
+    name: str,
+    description: str,
+    source_indices: list[int],
+    facts: dict[str, Any],
+    parameters: list[dict[str, Any]],
+    occurrence_index: int,
+) -> dict[str, Any]:
+    if not name or not description:
+        raise ValueError("function_author_inventory_definition_invalid")
+    fact_steps = {
+        int(step["source_step_index"]): step
+        for step in facts.get("steps") or ()
+        if isinstance(step, dict) and isinstance(step.get("source_step_index"), int)
+    }
+    if any(index not in fact_steps for index in source_indices):
+        raise ValueError("function_author_plan_source_steps_invalid")
+    local_by_source = {
+        source_index: local_index
+        for local_index, source_index in enumerate(source_indices)
+    }
+    properties: dict[str, dict[str, Any]] = {}
+    required: list[str] = []
+    bindings: list[dict[str, Any]] = []
+    render_bindings: list[dict[str, Any]] = []
+    for parameter in parameters:
+        parameter_name = str(parameter["name"])
+        value = parameter["values"][occurrence_index]
+        properties[parameter_name] = {
+            "type": _json_schema_type(value),
+            "description": str(parameter["description"])[:240],
+        }
+        required.append(parameter_name)
+        for binding in parameter["bindings"]:
+            if binding["occurrence_index"] != occurrence_index:
+                continue
+            source_index = int(binding["source_step_index"])
+            if source_index not in local_by_source:
+                raise ValueError("function_author_parameter_binding_outside_occurrence")
+            local_index = local_by_source[source_index]
+            if binding["binding_kind"] == "action_arg":
+                arg_name = str(binding.get("arg_name") or "").strip()
+                action = fact_steps[source_index].get("action")
+                args = action.get("args") if isinstance(action, dict) else None
+                if not arg_name or not isinstance(args, dict) or arg_name not in args:
+                    raise ValueError("function_author_plan_parameter_target_invalid")
+                bindings.append(
+                    {
+                        "source": f"$.arguments.{parameter_name}",
+                        "target": f"$.steps[{local_index}].action.args.{arg_name}",
+                    }
+                )
+            else:
+                render_bindings.append(
+                    {
+                        "source": f"$.arguments.{parameter_name}",
+                        "step_index": local_index,
+                        "node_id": str(binding.get("node_id") or "").strip(),
+                        "attribute": str(binding.get("attribute") or "").strip(),
+                        "recorded_value": str(binding.get("recorded_value") or ""),
+                    }
+                )
+    return {
+        "schema_version": "omniflow.function.v2",
+        "function_id": function_id,
+        "name": name,
+        "description": description,
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        },
+        "bindings": bindings,
+        "render_bindings": render_bindings,
+        "steps": [
+            {
+                "step_index": local_index,
+                "source_state_id": str(fact_steps[source_index]["before_state_id"]),
+                "action": json.loads(
+                    json.dumps(fact_steps[source_index]["action"], ensure_ascii=False)
+                ),
+            }
+            for local_index, source_index in enumerate(source_indices)
+        ],
+        "agent_visible": True,
+    }
+
+
+def _json_schema_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    if value is None:
+        return "null"
+    return "string"
 
 
 def _materialize_authoring_workflow(
