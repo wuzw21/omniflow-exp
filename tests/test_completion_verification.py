@@ -517,3 +517,112 @@ def test_successful_local_function_returns_to_planner_mainline(tmp_path) -> None
     assert result.detail["done_reason"] == "finished"
     assert planner.calls == 2
     assert host.actions == 1
+
+
+def test_incomplete_local_function_can_route_to_second_local_function(
+    tmp_path,
+) -> None:
+    class CompositionRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def route_function(
+            self,
+            _goal: object,
+            _functions: object,
+        ) -> ToolCall:
+            self.calls += 1
+            return ToolCall(
+                "first_local" if self.calls == 1 else "second_local",
+                {},
+            )
+
+    class CompositionPlanner:
+        async def one_step_tool_call(self, *_: object, **__: object) -> ToolCall:
+            raise AssertionError(
+                "the second page-matched local Function should use the Router"
+            )
+
+    class CompositionHost:
+        def __init__(self) -> None:
+            self.actions = 0
+
+        async def observe(self, **_: object) -> Observation:
+            return Observation(
+                xml='<hierarchy width="720" height="1280" />',
+                extra={"display": {"width": 720, "height": 1280}},
+            )
+
+        async def get_state(self, _state_id: str) -> Observation:
+            return await self.observe()
+
+        async def act(self, _action: object) -> ActionResult:
+            self.actions += 1
+            return ActionResult(True)
+
+    class CompositionChecker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 1.0 if self.calls == 2 else 0.0
+
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    for function_id, name in (
+        ("first_local", "Complete the first subtask"),
+        ("second_local", "Complete the second subtask"),
+    ):
+        store.put_function(
+            parse_function_artifact(
+                {
+                    "schema_version": "omniflow.function.v2",
+                    "function_id": function_id,
+                    "name": name,
+                    "description": f"{name} for the combined task.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                    "bindings": [],
+                    "render_bindings": [],
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "source_state_id": f"{function_id}-state",
+                            "action": {
+                                "tool": "wait",
+                                "args": {"duration_ms": 1},
+                            },
+                        }
+                    ],
+                    "agent_visible": True,
+                }
+            )
+        )
+
+    router = CompositionRouter()
+    checker = CompositionChecker()
+    host = CompositionHost()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=CompositionPlanner(),
+        function_router=router,
+        completion_checker=checker,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    )
+
+    result = asyncio.run(flow.arun("Complete the first and second subtasks."))
+
+    assert result.success is True
+    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.detail["completion_review_calls"] == 2
+    assert result.fallback_steps == 0
+    assert result.function_id == "second_local"
+    assert router.calls == 2
+    assert checker.calls == 2
+    assert host.actions == 2

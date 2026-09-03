@@ -57,6 +57,7 @@ class _FunctionSession:
     fallback_context: dict[str, Any] | None = None
     recovery_pending: bool = False
     completed: Function | None = None
+    completion_rejected: bool = False
     invocation_summary: str = ""
     excluded_ids: set[str] = field(default_factory=set)
 
@@ -76,11 +77,13 @@ class _FunctionSession:
         self.failed_step_index = None
         self.fallback_context = None
         self.recovery_pending = False
+        self.completion_rejected = False
 
     def mark_failed(self, replay: RunResult, observation: Observation) -> None:
         if self.selected_id is not None:
             self.excluded_ids.add(self.selected_id)
         self.failed = True
+        self.completion_rejected = False
         self.recovery_pending = True
         self.failed_step_index = _optional_step_index(
             replay.detail.get("failed_step_index")
@@ -281,7 +284,11 @@ class OmniFlow:
             return verified
 
         def mark_completion_rejected() -> None:
-            function_session.recovery_pending = True
+            # A successfully executed local Function may complete only one
+            # subtask. Keep this distinct from replay failure so the next
+            # page-matched Function can still use the Router fast path.
+            function_session.recovery_pending = False
+            function_session.completion_rejected = True
             function_session.fallback_context = {"completion_rejected": True}
 
         selected_function: Function | None = None
@@ -598,8 +605,6 @@ class OmniFlow:
             routed_call: ToolCall | None = None
             if fallback_this_turn:
                 cache_audit["status"] = "bypassed_after_function_failure"
-            elif function_session.completed is not None:
-                cache_audit["status"] = "bypassed_after_function_completion"
             elif not cache_functions:
                 cache_audit["status"] = "below_threshold"
             elif self.function_router is None:
@@ -738,23 +743,17 @@ class OmniFlow:
                     function_session.bound,
                     function_session.fallback_context,
                 )
-                if fallback_this_turn
+                if fallback_this_turn or function_session.completion_rejected
                 else ""
             )
             planner_observation = observation
             if fallback_this_turn or planner_feedback:
-                completion_rejected = bool(
-                    fallback_this_turn
-                    and function_session.fallback_context
-                    and function_session.fallback_context.get("completion_rejected")
-                    is True
-                )
                 planner_observation = _with_observation_extra(
                     observation,
                     planner_feedback=planner_feedback,
                     **(
                         {"forbid_finished": True}
-                        if completion_rejected
+                        if function_session.completion_rejected
                         else {}
                     ),
                 )
@@ -1031,6 +1030,9 @@ class OmniFlow:
             )
             if function_session.recovery_pending:
                 function_session.recovery_pending = False
+            if function_session.completion_rejected:
+                function_session.completion_rejected = False
+                function_session.fallback_context = None
 
         return finish(
             False,
