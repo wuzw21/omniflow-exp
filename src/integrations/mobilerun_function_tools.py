@@ -15,6 +15,11 @@ import re
 from typing import Any
 
 from omniflow.core.model import Function, RunResult
+from src.integrations.gui_agent_tools import (
+    GuiAgentTool,
+    GuiAgentToolResult,
+    GuiAgentToolRuntime,
+)
 
 MobilerunInvoker = Callable[
     [Function, dict[str, Any], Any],
@@ -105,6 +110,51 @@ def build_omniflow_custom_tools(flow: Any) -> dict[str, dict[str, Any]]:
     )
 
 
+def build_runtime_custom_tools(
+    runtime: GuiAgentToolRuntime,
+) -> dict[str, dict[str, Any]]:
+    """Expose the complete OOB-owned tool surface to Mobilerun.
+
+    These custom tools intentionally use the same names as Mobilerun's atomic
+    actions.  Mobilerun registers custom tools last, so the OOB-backed tools
+    replace its native device-driver actions instead of creating a second
+    physical execution path.
+    """
+
+    if not isinstance(runtime, GuiAgentToolRuntime):
+        raise TypeError("mobilerun_gui_agent_runtime_required")
+
+    tools: dict[str, dict[str, Any]] = {}
+    for tool in runtime.list_tools():
+        name = str(tool.name or "").strip()
+        if not _MOBILERUN_NAME.fullmatch(name):
+            raise ValueError(f"mobilerun_tool_name_invalid:{name}")
+        if name in tools:
+            raise ValueError(f"mobilerun_duplicate_tool_name:{name}")
+        public_parameters, reverse_parameter_names = _tool_parameters(tool)
+
+        async def call_tool(
+            *,
+            ctx: Any = None,
+            _name: str = name,
+            _reverse: Mapping[str, str] = reverse_parameter_names,
+            **arguments: Any,
+        ) -> str:
+            del ctx
+            canonical_arguments = {
+                _reverse.get(key, key): value for key, value in arguments.items()
+            }
+            result = await runtime.call_tool(_name, canonical_arguments)
+            return _gui_agent_result_text(result)
+
+        tools[name] = {
+            "parameters": public_parameters,
+            "description": tool.description,
+            "function": call_tool,
+        }
+    return tools
+
+
 def _custom_parameters(
     function: Function,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -112,9 +162,7 @@ def _custom_parameters(
     properties = schema.get("properties") if isinstance(schema, dict) else None
     if not isinstance(properties, dict):
         raise TypeError(f"mobilerun_function_schema_invalid:{function.id}")
-    required = {
-        str(value) for value in schema.get("required") or ()
-    }
+    required = {str(value) for value in schema.get("required") or ()}
     parameters: dict[str, dict[str, Any]] = {}
     reverse: dict[str, str] = {}
     used_names: set[str] = set()
@@ -152,6 +200,37 @@ def _public_parameter_name(name: str, used_names: set[str]) -> str:
     return candidate
 
 
+def _tool_parameters(
+    tool: GuiAgentTool,
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    schema = tool.input_schema
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(properties, dict):
+        raise TypeError(f"mobilerun_tool_schema_invalid:{tool.name}")
+    required = {str(value) for value in schema.get("required") or ()}
+    parameters: dict[str, dict[str, Any]] = {}
+    reverse: dict[str, str] = {}
+    used_names: set[str] = set()
+    for canonical_name, raw_definition in properties.items():
+        canonical_name = str(canonical_name)
+        if not isinstance(raw_definition, dict):
+            raise TypeError(
+                f"mobilerun_tool_parameter_schema_invalid:{tool.name}:{canonical_name}"
+            )
+        public_name = _public_parameter_name(canonical_name, used_names)
+        used_names.add(public_name)
+        definition: dict[str, Any] = {
+            "type": str(raw_definition.get("type") or "string"),
+            "required": canonical_name in required,
+        }
+        for field in ("description", "default", "enum", "minimum", "maximum", "items"):
+            if field in raw_definition:
+                definition[field] = raw_definition[field]
+        parameters[public_name] = definition
+        reverse[public_name] = canonical_name
+    return parameters, reverse
+
+
 def _result_text(result: Any) -> str:
     if isinstance(result, str):
         return result
@@ -175,8 +254,18 @@ def _result_text(result: Any) -> str:
     return str(result)
 
 
+def _gui_agent_result_text(result: GuiAgentToolResult) -> str:
+    prefix = "Completed" if result.success else "Failed"
+    return f"{prefix}: " + json.dumps(
+        result.to_dict(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 __all__ = [
     "MobilerunInvoker",
     "build_custom_tools",
     "build_omniflow_custom_tools",
+    "build_runtime_custom_tools",
 ]

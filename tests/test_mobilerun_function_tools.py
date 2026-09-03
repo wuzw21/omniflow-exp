@@ -4,9 +4,11 @@ import asyncio
 import unittest
 
 from omniflow.core.model import Function, RunResult
+from src.integrations.gui_agent_tools import GuiAgentToolRuntime
 from src.integrations.mobilerun_function_tools import (
     build_custom_tools,
     build_omniflow_custom_tools,
+    build_runtime_custom_tools,
 )
 
 
@@ -106,7 +108,10 @@ class MobilerunFunctionToolsTest(unittest.TestCase):
             flow.calls,
             [
                 (
-                    {"name": "search_records", "arguments": {"search.query": "calendar"}},
+                    {
+                        "name": "search_records",
+                        "arguments": {"search.query": "calendar"},
+                    },
                     "mobilerun",
                 )
             ],
@@ -131,6 +136,26 @@ class MobilerunFunctionToolsTest(unittest.TestCase):
         )
 
         self.assertTrue(registry_result.startswith("Failed:"))
+
+    def test_generic_runtime_overrides_atomic_actions_with_oob_tools(self) -> None:
+        class Host:
+            def __init__(self) -> None:
+                self.actions: list[dict] = []
+
+            def act(self, action: dict) -> dict:
+                self.actions.append(action)
+                return {"success": True, "extra": {"transport": "oob"}}
+
+        host = Host()
+        runtime = GuiAgentToolRuntime(host=host, experiment="mobilerun")
+        tools = build_runtime_custom_tools(runtime)
+
+        result = asyncio.run(tools["click"]["function"](x=500, y=500, ctx=object()))
+
+        self.assertTrue(result.startswith("Completed:"))
+        self.assertEqual(
+            host.actions, [{"tool": "click", "args": {"x": 500, "y": 500}}]
+        )
 
 
 if __name__ == "__main__":
