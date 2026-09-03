@@ -976,6 +976,7 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     assert "Explicitly repeat every binding needed" in prompt
     assert '"binding_owner": "agent"' in prompt
     assert "occurrence_values" in prompt
+    assert "other fixed control" in prompt
     assert "binding_evidence" not in prompt
     assert "candidate_id" not in prompt
 

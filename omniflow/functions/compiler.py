@@ -101,6 +101,10 @@ each occurrence. Then emit every binding yourself:
 - render_node has exactly occurrence_index, source_step_index, binding_kind,
   node_id, attribute, and recorded_value. Use a node_id and text/content-desc
   substring from that step's source_ui; render_node is for click/long_press only.
+  The node text must itself represent this parameter value. Never bind a Save,
+  Delete, OK, menu, tab, or other fixed control merely because it is clicked after
+  an input action. Do not add render_node unless changing the parameter requires
+  changing the semantic identity of the clicked/long-pressed source node.
 The value in occurrence_values is the exact argument value used to replay that
 occurrence. If a value needs formatting (for example integer cents shown as a
 decimal amount), you decide and emit the displayed source value. If a safe binding
@@ -1153,21 +1157,30 @@ def _agent_owned_binding(value: Any, occurrence_count: int) -> dict[str, Any]:
         raise ValueError("function_author_parameter_binding_invalid")
     binding_kind = str(value.get("binding_kind") or "").strip()
     common = {"occurrence_index", "source_step_index", "binding_kind"}
-    expected = (
-        common | {"arg_name"}
-        if binding_kind == "action_arg"
-        else common | {"node_id", "attribute", "recorded_value"}
-    )
+    if binding_kind == "action_arg":
+        expected = common | {"arg_name"}
+    elif binding_kind == "render_node":
+        expected = common | {"node_id", "attribute", "recorded_value"}
+    else:
+        raise ValueError(
+            "function_author_parameter_binding_kind_invalid:"
+            f"{binding_kind or '<missing>'}"
+        )
+    actual = set(value)
+    if actual != expected:
+        raise ValueError(
+            f"function_author_{binding_kind}_fields_invalid:"
+            f"expected={','.join(sorted(expected))}:"
+            f"got={','.join(sorted(actual))}"
+        )
     occurrence_index = value.get("occurrence_index")
     source_step_index = value.get("source_step_index")
     if (
-        set(value) != expected
-        or isinstance(occurrence_index, bool)
+        isinstance(occurrence_index, bool)
         or not isinstance(occurrence_index, int)
         or occurrence_index not in range(occurrence_count)
         or isinstance(source_step_index, bool)
         or not isinstance(source_step_index, int)
-        or binding_kind not in {"action_arg", "render_node"}
     ):
         raise ValueError("function_author_parameter_binding_invalid")
     return json.loads(json.dumps(value, ensure_ascii=False))
