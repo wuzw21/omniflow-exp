@@ -41,8 +41,16 @@ Return exactly one JSON object in this shape; return no prose:
       "name": "<suggested_name>",
       "description": "Value requested by the goal",
       "bindings": [
-        {"occurrence_index": 0, "candidate_id": "render_parameter_000"},
-        {"occurrence_index": 1, "candidate_id": "render_parameter_001"}
+        {
+          "occurrence_index": 0,
+          "source_step_index": 2,
+          "binding_kind": "render_node"
+        },
+        {
+          "occurrence_index": 1,
+          "source_step_index": 6,
+          "binding_kind": "render_node"
+        }
       ]
     }]
   }],
@@ -62,14 +70,18 @@ sequence. It is valid to return no local Function when the only reusable capabil
 is identical to the complete Function.
 
 Stage 2 — describe their semantics. Give each Function a semantic name and
-description, and lift goal-dependent values into parameters. Use only supplied
-candidate_id values. A parameter must bind one or more candidates in every
-occurrence of its Function. Use each candidate's suggested_name. Never parameterize
-coordinates, repetition counts, fixed UI controls, or values without a candidate.
-When multiple candidates in one occurrence carry the same suggested_name and
-task value, group all of them under that one parameter; this renders every action
-whose source-state semantics depend on the value. Angle-bracket strings in the
-example are placeholders, not literal names to copy.
+description, and lift goal-dependent values into parameters. You—not the Harness—
+must identify which source step in every occurrence consumes each parameter and
+whether it changes an action argument (binding_kind="action_arg") or the semantic
+identity of a clicked/long-pressed source node (binding_kind="render_node"). The
+supplied binding_evidence is evidence for this judgment, not a list of ids to copy.
+Every binding request must be supported by an evidence item with the same
+source_step_index, binding kind, and suggested_name. A parameter must have one or
+more binding requests in every occurrence of its Function. Use each evidence item's
+suggested_name. If both an action argument and a rendered node depend on the value,
+emit both requests. Never parameterize coordinates, repetition counts, fixed UI
+controls, or values without evidence. Angle-bracket strings in the example are
+placeholders, not literal names to copy.
 
 The complete_function object must contain exactly function_id, name, description,
 and source_step_indices; never put parameters inside complete_function. When the
@@ -85,12 +97,13 @@ then materializes executable schemas, bindings, calls, and Function Store artifa
 Do not emit validation or registration sections.
 
 Do not emit actions, coordinates, source_state_id, Store JSON, Function schemas,
-executable action bindings, render_bindings, checker rules, or target-side
-descriptions; only reference candidate ids inside each parameter. The Harness copies
-immutable evidence, materializes executable artifacts, validates them, and is the
-only Store writer. Treat optional_checker_actions as removed setup and do not
-reconstruct them. Keep descriptions semantic and state fixed outcome-affecting
-constraints without copying instance-specific parameter literals.
+executable JSONPath bindings, render_bindings, checker rules, candidate ids, or
+target-side descriptions. The semantic binding requests above are the only binding
+form the Agent emits. The Harness resolves them against immutable evidence,
+materializes executable artifacts, validates them, and is the only Store writer.
+Treat optional_checker_actions as removed setup and do not reconstruct them. Keep
+descriptions semantic and state fixed outcome-affecting constraints without copying
+instance-specific parameter literals.
 """
 
 
@@ -375,7 +388,7 @@ def compile_runlog_to_store(
             request_payload: dict[str, Any] = {
                 "output_format": "json",
                 "source_run": facts,
-                "parameter_candidates": authoring_candidates,
+                "binding_evidence": authoring_candidates,
             }
             if authoring_attempt_trace:
                 request_payload["harness_feedback"] = {
@@ -755,7 +768,7 @@ def _authoring_candidate_catalog(
     *,
     action_candidates: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Give the Agent opaque candidate ids while retaining compiler evidence."""
+    """Expose binding evidence while retaining private materialization ids."""
 
     public: list[dict[str, Any]] = []
     catalog: dict[str, dict[str, Any]] = {}
@@ -772,7 +785,6 @@ def _authoring_candidate_catalog(
             {
                 key: candidate[key]
                 for key in (
-                    "kind",
                     "source_step_index",
                     "tool",
                     "arg_name",
@@ -783,7 +795,7 @@ def _authoring_candidate_catalog(
                 )
                 if key in candidate
             }
-            | {"candidate_id": candidate_id}
+            | {"binding_kind": candidate["kind"]}
         )
     for index, raw in enumerate(facts.get("node_parameter_evidence") or ()):
         if not isinstance(raw, dict):
@@ -795,7 +807,6 @@ def _authoring_candidate_catalog(
             {
                 key: candidate[key]
                 for key in (
-                    "kind",
                     "source_step_index",
                     "tool",
                     "attribute",
@@ -806,7 +817,7 @@ def _authoring_candidate_catalog(
                 )
                 if key in candidate
             }
-            | {"candidate_id": candidate_id}
+            | {"binding_kind": candidate["kind"]}
         )
     return public, catalog
 
@@ -997,7 +1008,12 @@ def _materialize_authoring_workflow(
 
     parameterization_fields = {"function_id", "parameters"}
     parameter_fields = {"name", "description", "bindings"}
-    parameter_binding_fields = {"occurrence_index", "candidate_id"}
+    legacy_parameter_binding_fields = {"occurrence_index", "candidate_id"}
+    semantic_parameter_binding_fields = {
+        "occurrence_index",
+        "source_step_index",
+        "binding_kind",
+    }
     parameters_by_function: dict[str, list[dict[str, Any]]] = {}
     selected_candidate_ids: set[str] = set()
     invocation_arguments: dict[tuple[str, int], dict[str, Any]] = {
@@ -1039,39 +1055,98 @@ def _materialize_authoring_workflow(
             parameter_names.add(name)
             by_occurrence: dict[int, list[tuple[str, dict[str, Any]]]] = {}
             for raw_binding in raw_bindings:
-                if (
-                    not isinstance(raw_binding, dict)
-                    or set(raw_binding) != parameter_binding_fields
-                ):
+                if not isinstance(raw_binding, dict):
                     raise ValueError("function_author_parameter_binding_invalid")
+                raw_binding_fields = set(raw_binding)
                 occurrence_index = raw_binding.get("occurrence_index")
-                candidate_id = str(raw_binding.get("candidate_id") or "").strip()
                 if (
                     isinstance(occurrence_index, bool)
                     or not isinstance(occurrence_index, int)
                     or occurrence_index not in range(len(occurrence_spans[function_id]))
-                    or candidate_id not in candidate_map
-                    or candidate_id in selected_candidate_ids
                 ):
                     raise ValueError("function_author_parameter_binding_invalid")
-                candidate = candidate_map[candidate_id]
                 span = occurrence_spans[function_id][occurrence_index]
-                if candidate.get("source_step_index") not in span:
-                    raise ValueError("function_author_parameter_binding_outside_occurrence")
-                suggested_name = str(candidate.get("suggested_name") or "").strip()
-                if suggested_name and not (
-                    name == suggested_name
-                    or re.fullmatch(re.escape(suggested_name) + r"_[2-9][0-9]*", name)
-                ):
-                    raise ValueError(
-                        "function_author_parameter_name_not_suggested:"
-                        f"{candidate_id}:expected={suggested_name}:got={name}"
+                resolved_candidates: list[tuple[str, dict[str, Any]]] = []
+                if raw_binding_fields == legacy_parameter_binding_fields:
+                    candidate_id = str(
+                        raw_binding.get("candidate_id") or ""
+                    ).strip()
+                    if candidate_id not in candidate_map:
+                        raise ValueError(
+                            "function_author_parameter_binding_evidence_missing"
+                        )
+                    resolved_candidates = [(candidate_id, candidate_map[candidate_id])]
+                elif raw_binding_fields == semantic_parameter_binding_fields:
+                    source_step_index = raw_binding.get("source_step_index")
+                    binding_kind = str(
+                        raw_binding.get("binding_kind") or ""
+                    ).strip()
+                    if (
+                        isinstance(source_step_index, bool)
+                        or not isinstance(source_step_index, int)
+                        or source_step_index not in span
+                        or binding_kind not in {"action_arg", "render_node"}
+                    ):
+                        raise ValueError(
+                            "function_author_parameter_binding_invalid"
+                        )
+                    for candidate_id, candidate in candidate_map.items():
+                        suggested_name = str(
+                            candidate.get("suggested_name") or ""
+                        ).strip()
+                        parameter_name_matches = bool(suggested_name) and (
+                            name == suggested_name
+                            or re.fullmatch(
+                                re.escape(suggested_name) + r"_[2-9][0-9]*",
+                                name,
+                            )
+                            is not None
+                        )
+                        if (
+                            candidate.get("kind") == binding_kind
+                            and candidate.get("source_step_index")
+                            == source_step_index
+                            and parameter_name_matches
+                        ):
+                            resolved_candidates.append((candidate_id, candidate))
+                    if not resolved_candidates:
+                        raise ValueError(
+                            "function_author_parameter_binding_evidence_missing:"
+                            f"function={function_id}:parameter={name}:"
+                            f"occurrence={occurrence_index}:"
+                            f"source_step={source_step_index}:kind={binding_kind}"
+                        )
+                else:
+                    raise ValueError("function_author_parameter_binding_invalid")
+
+                for candidate_id, candidate in resolved_candidates:
+                    if candidate_id in selected_candidate_ids:
+                        raise ValueError(
+                            "function_author_parameter_binding_duplicate_evidence"
+                        )
+                    if candidate.get("source_step_index") not in span:
+                        raise ValueError(
+                            "function_author_parameter_binding_outside_occurrence"
+                        )
+                    suggested_name = str(
+                        candidate.get("suggested_name") or ""
+                    ).strip()
+                    if suggested_name and not (
+                        name == suggested_name
+                        or re.fullmatch(
+                            re.escape(suggested_name) + r"_[2-9][0-9]*",
+                            name,
+                        )
+                    ):
+                        raise ValueError(
+                            "function_author_parameter_name_not_suggested:"
+                            f"{candidate_id}:expected={suggested_name}:got={name}"
+                        )
+                    selected_candidate_ids.add(candidate_id)
+                    candidate_parameter_names[candidate_id] = name
+                    by_occurrence.setdefault(occurrence_index, []).append(
+                        (candidate_id, candidate)
                     )
-                selected_candidate_ids.add(candidate_id)
-                candidate_parameter_names[candidate_id] = name
-                by_occurrence.setdefault(occurrence_index, []).append(
-                    (candidate_id, candidate)
-                )
             if set(by_occurrence) != set(range(len(occurrence_spans[function_id]))):
                 raise ValueError("function_author_parameter_occurrence_incomplete")
             for occurrence_index, bindings in sorted(by_occurrence.items()):
@@ -1266,7 +1341,7 @@ def _materialize_authoring_workflow(
         "bundle": bundle,
         "source_calls": source_calls,
         "authoring_workflow": {
-            "schema_version": "omniflow.function-authoring-workflow.v1",
+            "schema_version": "omniflow.function-authoring-workflow.v2",
             "definition_count": len(definitions),
             "invocation_count": len(source_calls),
             "definitions": [
@@ -1285,9 +1360,10 @@ def _materialize_authoring_workflow(
             "uncovered_local_source_step_indices": uncovered_local_indices,
             "unselected_candidate_ids": unselected_candidate_ids,
             "validation_notes": (
-                "Compiler Harness validated each selected segment and its "
-                "parameter evidence, selected a representative occurrence "
-                "shape, and materialized the complete source sequence."
+                "The Agent authored semantic parameter-to-step binding requests. "
+                "Compiler Harness resolved every request against immutable source "
+                "evidence, validated each selected segment, selected a representative "
+                "occurrence shape, and materialized the complete source sequence."
             ),
         },
     }

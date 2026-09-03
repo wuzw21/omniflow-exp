@@ -972,6 +972,163 @@ def test_default_authoring_prompt_exposes_three_stages_only() -> None:
     assert '"registration"' not in prompt
     assert "never put parameters inside complete_function" in prompt
     assert "single occurrence spans the complete source" in prompt
+    assert "binding_evidence" in prompt
+    assert "candidate_id" not in prompt
+
+
+def test_agent_authors_semantic_binding_requests_and_harness_materializes_them() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Create the Pasta recipe.",
+        "task_parameters": {"title": "Pasta"},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [
+            {
+                "source_step_index": 1,
+                "tool": "click",
+                "parameter_name": "title",
+                "suggested_name": "title",
+                "task_parameter_value": "Pasta",
+                "recorded_value": "Pasta",
+                "node_id": "title-field",
+                "attribute": "text",
+                "node_label": "Pasta",
+            }
+        ],
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {
+                    "tool": "input_text",
+                    "args": {"text": "Pasta", "x": 500, "y": 500},
+                },
+                "metadata": {},
+            },
+            {
+                "source_step_index": 1,
+                "before_state_id": "state-1",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                "metadata": {},
+            },
+        ],
+    }
+    public_evidence, candidate_map = _authoring_candidate_catalog(facts)
+
+    assert all("candidate_id" not in item for item in public_evidence)
+    result = _materialize_authoring_workflow(
+        {
+            "reason": "Bind the requested title to the entry action and its node.",
+            "functions": [
+                {
+                    "function_id": "create_recipe",
+                    "name": "Create recipe",
+                    "description": "Create the requested recipe.",
+                    "occurrences": [{"source_step_indices": [0, 1]}],
+                    "parameters": [
+                        {
+                            "name": "title",
+                            "description": "Requested recipe title",
+                            "bindings": [
+                                {
+                                    "occurrence_index": 0,
+                                    "source_step_index": 0,
+                                    "binding_kind": "action_arg",
+                                },
+                                {
+                                    "occurrence_index": 0,
+                                    "source_step_index": 1,
+                                    "binding_kind": "render_node",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "complete_function": {
+                "function_id": "complete_recipe",
+                "name": "Complete recipe",
+                "description": "Create the requested recipe.",
+                "source_step_indices": [0, 1],
+            },
+        },
+        facts,
+        candidate_map=candidate_map,
+    )
+
+    function = next(
+        item
+        for item in result["bundle"]["functions"]
+        if item["function_id"] == "complete_recipe"
+    )
+    assert function["bindings"] == [
+        {"source": "$.arguments.title", "target": "$.steps[0].action.args.text"}
+    ]
+    assert function["render_bindings"][0]["source"] == "$.arguments.title"
+    assert result["source_calls"] == [
+        {"function_id": "complete_recipe", "arguments": {"title": "Pasta"}}
+    ]
+    assert (
+        result["authoring_workflow"]["schema_version"]
+        == "omniflow.function-authoring-workflow.v2"
+    )
+
+
+def test_agent_semantic_binding_request_fails_closed_without_evidence() -> None:
+    facts = {
+        "run_id": "run-1",
+        "goal": "Select swimming.",
+        "task_parameters": {"category": "swimming"},
+        "parameter_evidence": [],
+        "node_parameter_evidence": [],
+        "steps": [
+            {
+                "source_step_index": 0,
+                "before_state_id": "state-0",
+                "action": {"tool": "click", "args": {"x": 500, "y": 500}},
+                "metadata": {},
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="function_author_parameter_binding_evidence_missing",
+    ):
+        _materialize_authoring_workflow(
+            {
+                "reason": "Bind the requested activity category.",
+                "functions": [
+                    {
+                        "function_id": "select_category",
+                        "name": "Select category",
+                        "description": "Select the requested activity category.",
+                        "occurrences": [{"source_step_indices": [0]}],
+                        "parameters": [
+                            {
+                                "name": "category",
+                                "description": "Requested activity category",
+                                "bindings": [
+                                    {
+                                        "occurrence_index": 0,
+                                        "source_step_index": 0,
+                                        "binding_kind": "render_node",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                "complete_function": {
+                    "function_id": "complete_selection",
+                    "name": "Complete selection",
+                    "description": "Select the requested activity category.",
+                    "source_step_indices": [0],
+                },
+            },
+            facts,
+            candidate_map={},
+        )
 
 
 def test_node_parameter_evidence_allows_distinct_values_in_one_node() -> None:

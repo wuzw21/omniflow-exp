@@ -128,12 +128,13 @@ Authoring 过程对外只包含三个阶段：
 
 1. **Function discovery**：Agent 在成功 RunLog 中找到语义稳定的连续片段，并将重复的
    同类片段表示为同一个 Function 的多个 occurrences；同时标出完整主流程。
-2. **Semantic abstraction**：Agent 为每个 Function 生成语义名称和描述，并只引用
-   Compiler 提供的 candidate id，将实例值提升为参数。坐标、重复次数和无证据值不能
-   成为参数。
+2. **Semantic abstraction**：Agent 为每个 Function 生成语义名称和描述，将实例值提升为
+   参数，并为每个 occurrence 显式指出参数所绑定的 source step 以及
+   `action_arg`/`render_node` 类型。Compiler 提供的是只读 binding evidence，不是让
+   Agent 机械复制的 candidate id；坐标、重复次数和无证据值不能成为参数。
 3. **Compilation and registration**：Harness 根据 `source_step_indices` 自动恢复调用顺序，
-   校验每个已选片段及其参数证据，为重复 occurrence 选择最常见的 action-tool shape，
-   然后生成 `input_schema`、
+   将 Agent 的 semantic binding request 逐项解析到唯一 source evidence，校验每个已选
+   片段及其参数证据，为重复 occurrence 选择最常见的 action-tool shape，然后生成 `input_schema`、
    `bindings`、`render_bindings`、`source_calls` 及最终 Function Store。
 
 因此 Agent 的 JSON 只包含 `functions` 和 `complete_function`，不再提交 `validation` 或
