@@ -7,7 +7,10 @@ from omniflow.core.model import ActionResult, Observation, ToolCall
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
-from src.integrations.android_world.agent import _emit_official_completion
+from src.integrations.android_world.agent import (
+    _emit_official_completion,
+    _install_official_completion_checker,
+)
 from src.integrations.android_world.run_episode import _raw_replay_action_to_payload
 
 
@@ -47,6 +50,33 @@ def test_androidworld_answer_populates_official_interaction_cache() -> None:
     assert action.action_type == "answer"
     assert action.text == "75"
     assert action.goal_status is None
+
+
+def test_androidworld_installs_current_task_completion_checker() -> None:
+    class Flow:
+        def __init__(self) -> None:
+            self.checker = None
+
+        def set_completion_checker(self, checker: object) -> None:
+            self.checker = checker
+
+    class Task:
+        def __init__(self) -> None:
+            self.seen_env = None
+
+        def is_successful(self, env: object) -> float:
+            self.seen_env = env
+            return 1.0
+
+    flow = Flow()
+    task = Task()
+    env = object()
+
+    _install_official_completion_checker(flow, task, env)  # type: ignore[arg-type]
+
+    assert callable(flow.checker)
+    assert flow.checker() == 1.0
+    assert task.seen_env is env
 
 
 def test_raw_replay_finished_uses_official_status_without_answer() -> None:
@@ -214,6 +244,202 @@ def test_successful_complete_function_returns_to_planner_for_finish(tmp_path) ->
     assert "Last internal action outcome: executed=yes" in action_history
     assert '"state_changed":false' in action_history
     assert "[Function]" not in action_history
+
+
+def test_successful_function_stops_when_official_completion_checker_passes(
+    tmp_path,
+) -> None:
+    class FunctionPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def one_step_tool_call(self, *_: object, **__: object) -> ToolCall:
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("verified Function must bypass the Planner")
+            return ToolCall("complete_source_workflow", {})
+
+    class FunctionHost:
+        def __init__(self) -> None:
+            self.actions = 0
+
+        async def observe(self, **_: object) -> Observation:
+            return Observation(
+                xml='<hierarchy width="720" height="1280" />',
+                extra={"display": {"width": 720, "height": 1280}},
+            )
+
+        async def get_state(self, _state_id: str) -> Observation:
+            return await self.observe()
+
+        async def act(self, _action: object) -> ActionResult:
+            self.actions += 1
+            return ActionResult(True)
+
+    class CompletionChecker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 1.0
+
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    store.put_function(
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "complete_source_workflow",
+                "name": "Set brightness",
+                "description": "Set the requested brightness.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "bindings": [],
+                "render_bindings": [],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "state-1",
+                        "action": {
+                            "tool": "wait",
+                            "args": {"duration_ms": 1},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
+    )
+    planner = FunctionPlanner()
+    checker = CompletionChecker()
+    host = FunctionHost()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        completion_checker=checker,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    )
+
+    result = asyncio.run(flow.arun("Set brightness to the maximum."))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.detail["completion_review_calls"] == 1
+    assert result.detail["function_execution"]["task_completion_status"] == "verified"
+    assert planner.calls == 1
+    assert checker.calls == 1
+    assert host.actions == 1
+
+
+def test_rejected_function_completion_returns_checker_feedback_to_planner(
+    tmp_path,
+) -> None:
+    class FunctionPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.observations: list[Observation] = []
+
+        async def one_step_tool_call(
+            self,
+            _goal: object,
+            observation: Observation,
+            *_: object,
+            **__: object,
+        ) -> ToolCall:
+            self.calls += 1
+            self.observations.append(observation)
+            if self.calls == 1:
+                return ToolCall("complete_source_workflow", {})
+            if self.calls == 2:
+                return ToolCall("click", {"x": 500, "y": 500})
+            return ToolCall("finished", {"content": "done"})
+
+    class FunctionHost:
+        def __init__(self) -> None:
+            self.actions = 0
+
+        async def observe(self, **_: object) -> Observation:
+            return Observation(
+                xml='<hierarchy width="720" height="1280" />',
+                extra={"display": {"width": 720, "height": 1280}},
+            )
+
+        async def get_state(self, _state_id: str) -> Observation:
+            return await self.observe()
+
+        async def act(self, _action: object) -> ActionResult:
+            self.actions += 1
+            return ActionResult(True)
+
+    class CompletionChecker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 0.0 if self.calls == 1 else 1.0
+
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    store.put_function(
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "complete_source_workflow",
+                "name": "Set brightness",
+                "description": "Set the requested brightness.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "bindings": [],
+                "render_bindings": [],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "state-1",
+                        "action": {
+                            "tool": "wait",
+                            "args": {"duration_ms": 1},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
+    )
+    planner = FunctionPlanner()
+    checker = CompletionChecker()
+    host = FunctionHost()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        completion_checker=checker,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=4)),
+    )
+
+    result = asyncio.run(flow.arun("Set brightness to the maximum."))
+
+    assert result.success is True
+    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.detail["completion_review_calls"] == 2
+    assert planner.calls == 3
+    assert checker.calls == 2
+    assert host.actions == 2
+    planner_feedback = str(
+        planner.observations[1].extra.get("planner_feedback") or ""
+    )
+    assert "official completion checker rejected" in planner_feedback
 
 
 def test_successful_local_function_returns_to_planner_mainline(tmp_path) -> None:

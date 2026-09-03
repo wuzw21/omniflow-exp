@@ -51,6 +51,16 @@ def _emit_official_completion(env: Any, answer: str = "") -> None:
     )
 
 
+def _install_official_completion_checker(
+    flow: OmniFlow,
+    task: Any,
+    env: Any,
+) -> None:
+    """Bind the initialized AndroidWorld task validator to this runtime."""
+
+    flow.set_completion_checker(lambda: task.is_successful(env))
+
+
 class _TaskHost:
     def __init__(
         self,
@@ -248,6 +258,7 @@ def build_agent(
     def update_current_task_context(task: Any) -> dict[str, Any]:
         raw_parameters = getattr(task, "params", {})
         parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
+        _install_official_completion_checker(flow, task, env)
         return {
             "task_parameters": _json_copy(parameters),
         }
@@ -299,7 +310,7 @@ def build_agent(
                 result.final_state,
                 {**result.detail, "done_reason": done_reason},
             )
-        if done_reason == "finished":
+        if done_reason in {"finished", "function_completed_verified"}:
             _emit_official_completion(env, finished_content)
         state["step_index"] = 1
         state["last_result"] = result

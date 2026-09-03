@@ -6,7 +6,7 @@ import inspect
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from omniflow.catalog import CatalogSnapshot
@@ -99,6 +99,7 @@ class OmniFlow:
         host: Host | None = None,
         planner: Planner | None = None,
         function_router: FunctionRouter | None = None,
+        completion_checker: Callable[[], Any] | None = None,
         installed_apps: dict[str, str] | None = None,
         config: OmniFlowConfig | None = None,
         catalog: CatalogSnapshot | None = None,
@@ -117,6 +118,7 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
+        self.completion_checker = completion_checker
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -140,6 +142,14 @@ class OmniFlow:
             set_router_installed_apps(dict(self.installed_apps))
         self.plugins = self.config.resolved_plugins()
         self._page_encoder: PageEncoder | None = None
+
+    def set_completion_checker(
+        self,
+        checker: Callable[[], Any] | None,
+    ) -> None:
+        """Attach the current benchmark task's authoritative completion check."""
+
+        self.completion_checker = checker
 
     async def _execute(
         self,
@@ -173,6 +183,7 @@ class OmniFlow:
         planner_function_catalog: dict[str, Function] = {}
         recall_events: list[dict[str, Any]] = []
         recall_source_states: dict[str, Observation | None] = {}
+        completion_gate: dict[str, Any] | None = None
         function_resolution: dict[str, Any] = {
             "candidate_count": 0,
             "candidate_function_ids": [],
@@ -223,21 +234,55 @@ class OmniFlow:
                 final_observation, Observation
             ):
                 terminal_detail = dict(kwargs.get("terminal_detail") or {})
-                terminal_detail["function_execution"] = (
-                    _function_execution_evidence(
-                        trace,
-                        function=evidence_function,
-                        final_observation=final_observation,
-                        succeeded=function_session.completed is not None,
-                        invocation_summary=function_session.invocation_summary,
-                    )
+                function_execution = _function_execution_evidence(
+                    trace,
+                    function=evidence_function,
+                    final_observation=final_observation,
+                    succeeded=function_session.completed is not None,
+                    invocation_summary=function_session.invocation_summary,
                 )
+                if completion_gate is not None:
+                    function_execution["task_completion_status"] = str(
+                        completion_gate["status"]
+                    )
+                    function_execution["official_validator_status"] = str(
+                        completion_gate["status"]
+                    )
+                    function_execution["completion_gate"] = dict(completion_gate)
+                terminal_detail["function_execution"] = function_execution
                 kwargs["terminal_detail"] = terminal_detail
             return self._result(
                 success,
                 function_resolution=function_resolution,
                 **kwargs,
             )
+
+        async def review_function_completion() -> bool | None:
+            """Ask the benchmark checker before trusting Function completion."""
+
+            nonlocal completion_gate, completion_review_calls
+            checker = self.completion_checker
+            if checker is None:
+                return None
+            completion_review_calls += 1
+            try:
+                reward = await _await(checker())
+                verified = float(reward) > 0.5
+            except Exception as error:  # noqa: BLE001
+                completion_gate = {
+                    "status": "error",
+                    "error": f"{type(error).__name__}:{error}",
+                }
+                return False
+            completion_gate = {
+                "status": "verified" if verified else "rejected",
+                "reward": float(reward),
+            }
+            return verified
+
+        def mark_completion_rejected() -> None:
+            function_session.recovery_pending = True
+            function_session.fallback_context = {"completion_rejected": True}
 
         selected_function: Function | None = None
         resolved_arguments: dict[str, Any] = {}
@@ -306,20 +351,28 @@ class OmniFlow:
                 )
 
             if direct_tool_call is not None and replay.success:
-                return finish(
-                    True,
-                    profile=profile,
-                    trace=trace,
-                    function_id=direct_tool_call.name,
-                    actions_executed=actions_executed,
-                    model_calls=model_calls,
-                    llm_usage=llm_usage,
-                    error=None,
-                    final_state=observation,
-                    terminal_detail={
-                        "done_reason": "function_completed"
-                    },
-                )
+                verified = await review_function_completion()
+                if verified is not False:
+                    return finish(
+                        True,
+                        profile=profile,
+                        trace=trace,
+                        function_id=direct_tool_call.name,
+                        actions_executed=actions_executed,
+                        model_calls=model_calls,
+                        llm_usage=llm_usage,
+                        error=None,
+                        final_state=observation,
+                        terminal_detail={
+                            "done_reason": (
+                                "function_completed_verified"
+                                if verified is True
+                                else "function_completed"
+                            )
+                        },
+                    )
+                last_error = "official_completion_checker_rejected_function_result"
+                mark_completion_rejected()
 
         if direct_tool_call is not None and selected_function is None:
             try:
@@ -641,7 +694,30 @@ class OmniFlow:
                             cache_audit["status"] = "executed"
                             function_resolution["replay_status"] = "succeeded"
                             function_session.mark_completed()
-                            previous_action_error = None
+                            verified = await review_function_completion()
+                            if verified is True:
+                                return finish(
+                                    True,
+                                    profile=profile,
+                                    trace=trace,
+                                    function_id=function_session.selected_id,
+                                    actions_executed=actions_executed,
+                                    model_calls=model_calls,
+                                    llm_usage=llm_usage,
+                                    fallback_steps=fallback_steps,
+                                    final_state=observation,
+                                    planner_diagnostics=planner_diagnostics,
+                                    terminal_detail={
+                                        "done_reason": "function_completed_verified"
+                                    },
+                                )
+                            if verified is False:
+                                previous_action_error = (
+                                    "official_completion_checker_rejected_function_result"
+                                )
+                                mark_completion_rejected()
+                            else:
+                                previous_action_error = None
                         else:
                             cache_audit["status"] = "execution_failed"
                             cache_audit["error"] = (
@@ -770,7 +846,30 @@ class OmniFlow:
                 observation = replay.final_state or observation
                 if replay.success:
                     function_session.mark_completed()
-                    previous_action_error = None
+                    verified = await review_function_completion()
+                    if verified is True:
+                        return finish(
+                            True,
+                            profile=profile,
+                            trace=trace,
+                            function_id=function_session.selected_id,
+                            actions_executed=actions_executed,
+                            model_calls=model_calls,
+                            llm_usage=llm_usage,
+                            fallback_steps=fallback_steps,
+                            final_state=observation,
+                            planner_diagnostics=planner_diagnostics,
+                            terminal_detail={
+                                "done_reason": "function_completed_verified"
+                            },
+                        )
+                    if verified is False:
+                        previous_action_error = (
+                            "official_completion_checker_rejected_function_result"
+                        )
+                        mark_completion_rejected()
+                    else:
+                        previous_action_error = None
                 else:
                     function_session.mark_failed(replay, observation)
                     previous_action_error = replay.error or "function_replay_failed"
@@ -785,6 +884,34 @@ class OmniFlow:
                 if not finished_content:
                     previous_action_error = "finished_content_required"
                     continue
+                if function_session.completed is not None:
+                    verified = await review_function_completion()
+                    if verified is False:
+                        previous_action_error = (
+                            "official_completion_checker_rejected_function_result"
+                        )
+                        mark_completion_rejected()
+                        continue
+                    if verified is True:
+                        return finish(
+                            True,
+                            profile=profile,
+                            trace=trace,
+                            function_id=(
+                                function_session.selected_id
+                                or function_session.failed_id
+                            ),
+                            actions_executed=actions_executed,
+                            model_calls=model_calls,
+                            llm_usage=llm_usage,
+                            fallback_steps=fallback_steps,
+                            final_state=observation,
+                            planner_diagnostics=planner_diagnostics,
+                            terminal_detail={
+                                "done_reason": "function_completed_verified",
+                                "finished_content": finished_content,
+                            },
+                        )
                 return finish(
                     True,
                     profile=profile,
@@ -1194,6 +1321,14 @@ def _function_fallback_feedback(
 ) -> str:
     details = dict(context or {})
     function_name = function.name if function is not None else "selected Function"
+    if details.get("completion_rejected") is True:
+        return (
+            f'Function "{function_name}" executed all recorded actions, but the '
+            "official completion checker rejected the resulting task state. "
+            "The task is not complete. Inspect the current UI, correct the "
+            "remaining state with online actions, and only finish after the "
+            "official checker can pass."
+        )
     lines = [
         f'Function "{function_name}" stopped at one transition.',
         "The shared Checker Store has handled any configured recovery for this transition. Inspect the current UI before continuing.",
