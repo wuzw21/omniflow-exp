@@ -32,8 +32,17 @@ from src.integrations.android_world.host import AndroidWorldHost, make_agent_res
 MODE_OMNIFLOW = "omniflow"
 
 
-def _emit_official_completion(env: Any) -> None:
+def _emit_official_completion(env: Any, answer: str = "") -> None:
     json_action = importlib.import_module("android_world.env.json_action")
+    answer_text = str(answer or "").strip()
+    if answer_text:
+        env.execute_action(
+            json_action.JSONAction(
+                action_type=json_action.ANSWER,
+                text=answer_text,
+            )
+        )
+        return
     env.execute_action(
         json_action.JSONAction(
             action_type=json_action.STATUS,
@@ -291,7 +300,7 @@ def build_agent(
                 {**result.detail, "done_reason": done_reason},
             )
         if done_reason == "finished":
-            _emit_official_completion(env)
+            _emit_official_completion(env, finished_content)
         state["step_index"] = 1
         state["last_result"] = result
         return make_agent_result(

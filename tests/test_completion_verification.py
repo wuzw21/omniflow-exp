@@ -30,6 +30,25 @@ def test_androidworld_completion_uses_official_status_action() -> None:
     assert action.text is None
 
 
+def test_androidworld_answer_populates_official_interaction_cache() -> None:
+    class Environment:
+        def __init__(self) -> None:
+            self.actions = []
+
+        def execute_action(self, action: object) -> None:
+            self.actions.append(action)
+
+    environment = Environment()
+
+    _emit_official_completion(environment, "75")
+
+    assert len(environment.actions) == 1
+    action = environment.actions[0]
+    assert action.action_type == "answer"
+    assert action.text == "75"
+    assert action.goal_status is None
+
+
 def test_raw_replay_finished_uses_official_status_without_answer() -> None:
     finished_payload, finished_error = _raw_replay_action_to_payload(
         {"action_type": "finished", "content": "done"},
