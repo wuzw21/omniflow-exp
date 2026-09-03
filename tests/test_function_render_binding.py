@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,7 @@ from omniflow.functions.compiler import (
     _materialize_authoring_workflow,
     _source_parameter_candidates,
     _source_node_parameter_evidence,
+    compile_runlog_to_store,
 )
 from omniflow.functions.management import semantic_parameter_evidence
 from omniflow.runtime.execution import execute_function
@@ -1129,6 +1131,74 @@ def test_agent_semantic_binding_request_fails_closed_without_evidence() -> None:
             facts,
             candidate_map={},
         )
+
+
+def test_authoring_agent_rejection_never_falls_back_to_mechanical_bindings(
+    tmp_path,
+) -> None:
+    class InvalidCompletions:
+        calls = 0
+
+        def create(self, **_kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=2,
+                    total_tokens=12,
+                ),
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content="{}"))
+                ],
+            )
+
+    completions = InvalidCompletions()
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+    state = {
+        "pixels": None,
+        "xml": '<hierarchy width="1000" height="1000" />',
+        "auxiliaries": {"display": {"width": 1000, "height": 1000}},
+    }
+    run_log = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "agent-rejection-test",
+        "task_name": "agent-rejection-test",
+        "goal": "Tap the requested item.",
+        "task_parameters": {"item": "Pasta"},
+        "seed": 111,
+        "status": "succeeded",
+        "success": True,
+        "validator": {"official": True, "success": True, "reward": 1},
+        "provenance": {"kind": "runtime"},
+        "steps": [
+            {
+                "step_index": 0,
+                "observation": state,
+                "action": {"action_type": "click", "x": 500, "y": 500},
+                "result": {"success": True},
+                "next_observation": state,
+            }
+        ],
+    }
+    output = tmp_path / "memory"
+
+    with pytest.raises(
+        ValueError,
+        match="function_authoring_rejected_after_retries",
+    ):
+        compile_runlog_to_store(
+            run_log,
+            output,
+            model="test-author",
+            client=client,
+        )
+
+    assert completions.calls == 3
+    failure = json.loads((output / "authoring_failure.json").read_text())
+    assert failure["success"] is False
+    assert not (output / "store.json").exists()
 
 
 def test_node_parameter_evidence_allows_distinct_values_in_one_node() -> None:

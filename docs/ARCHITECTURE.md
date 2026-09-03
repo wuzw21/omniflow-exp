@@ -140,7 +140,8 @@ Authoring 过程对外只包含三个阶段：
 因此 Agent 的 JSON 只包含 `functions` 和 `complete_function`，不再提交 `validation` 或
 `registration` 字段。Harness 校验失败时把确定性的错误原因反馈给同一 Agent，要求
 返回完整替换 proposal；最多尝试三次。Harness 不再用一个自动生成的完整 replay
-Function 掩盖无效 authoring。
+Function 掩盖无效 authoring；三次均失败时写出 `authoring_failure.json` 并令转换失败，
+不会注册任何 compiler-derived binding。
 最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
 `compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
 定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。

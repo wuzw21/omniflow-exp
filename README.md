@@ -77,7 +77,8 @@ request、排序并通过
 顺序；验证失败会收到精确错误并重写完整 proposal，最多三次，不再静默退化为整段 replay。
 Agent 不再从机械生成的 candidate id 列表中挑选绑定；Harness 也不会替 Agent 决定
 参数语义，只负责把通过证据验证的 request 落成 `input_schema`、`bindings` 与
-`render_bindings`。
+`render_bindings`。三次 proposal 都无法通过时，转换明确失败并保留
+`authoring_failure.json`，禁止回退到 compiler 自动生成绑定的 Memory。
 同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
 `compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
 局部 Function 不必覆盖完整 RunLog；多余的 render candidate 作为未使用证据记录，重复

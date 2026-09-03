@@ -77,11 +77,15 @@ identity of a clicked/long-pressed source node (binding_kind="render_node"). The
 supplied binding_evidence is evidence for this judgment, not a list of ids to copy.
 Every binding request must be supported by an evidence item with the same
 source_step_index, binding kind, and suggested_name. A parameter must have one or
-more binding requests in every occurrence of its Function. Use each evidence item's
-suggested_name. If both an action argument and a rendered node depend on the value,
-emit both requests. Never parameterize coordinates, repetition counts, fixed UI
-controls, or values without evidence. Angle-bracket strings in the example are
-placeholders, not literal names to copy.
+more binding requests in every occurrence of its Function, and every requested
+source_step_index must be inside that occurrence's source_step_indices. Use each
+evidence item's suggested_name. Every action_arg evidence item inside a declared
+Function occurrence must be assigned to a parameter; render_node evidence may be
+left unused when the node does not define that Function's semantics. If both an
+action argument and a rendered node depend on the value, emit both requests. Never
+parameterize coordinates, repetition counts, fixed UI controls, or values without
+evidence. Angle-bracket strings in the example are placeholders, not literal names
+to copy.
 
 The complete_function object must contain exactly function_id, name, description,
 and source_step_indices; never put parameters inside complete_function. When the
@@ -469,20 +473,10 @@ def compile_runlog_to_store(
                 response=raw_author_response,
                 usage=usage,
             )
-            authored = _direct_source_authoring_plan(facts)
-            authored["reason"] = (
-                "The semantic Function proposal did not satisfy the authoring "
-                "contract after three attempts, so the harness registered the "
-                "complete successful source workflow with compiler-derived "
-                "action and render bindings."
-            )
-            authoring_attempt_trace.append(
-                {
-                    "attempt": "source_workflow_fallback",
-                    "accepted": True,
-                    "error": None,
-                }
-            )
+            raise ValueError(
+                "function_authoring_rejected_after_retries:"
+                f"{str(authoring_error) or type(authoring_error).__name__}"
+            ) from authoring_error
     if not isinstance(authored, dict) or not {"reason", "bundle"}.issubset(authored):
         raise ValueError("function_author_response_contract_invalid")
     if set(authored) - {
@@ -1084,11 +1078,17 @@ def _materialize_authoring_workflow(
                     if (
                         isinstance(source_step_index, bool)
                         or not isinstance(source_step_index, int)
-                        or source_step_index not in span
                         or binding_kind not in {"action_arg", "render_node"}
                     ):
                         raise ValueError(
                             "function_author_parameter_binding_invalid"
+                        )
+                    if source_step_index not in span:
+                        raise ValueError(
+                            "function_author_parameter_binding_outside_occurrence:"
+                            f"function={function_id}:parameter={name}:"
+                            f"occurrence={occurrence_index}:"
+                            f"source_step={source_step_index}:span={span}"
                         )
                     for candidate_id, candidate in candidate_map.items():
                         suggested_name = str(
