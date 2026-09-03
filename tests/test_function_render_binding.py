@@ -975,6 +975,7 @@ def test_default_authoring_prompt_requires_semantic_classification() -> None:
     assert "task_parameter" in prompt
     assert "online_observation" in prompt
     assert "planner_handoff" in prompt
+    assert "Dynamic grounding is not itself an" in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
     assert "Any undeclared stable value keeps the" in prompt

@@ -133,7 +133,11 @@ yourself:
   computing a fresh result, or making a conditional decision. Never turn a
   source answer into a task parameter merely to make replay possible.
 An input such as an event title is task_parameter. An answer computed from live
-numbers in a browser is online_observation.
+numbers in a browser is online_observation. Dynamic grounding is not itself an
+online semantic dependency: selecting a date, time, item, or record already
+specified by the goal/task_parameters remains task_parameter even when its target
+position must be mapped on the current device. Use online_observation only when
+the semantic value cannot be known from the goal/task_parameters before execution.
 
 Stage 2 — discover Functions. Find zero or more semantically stable, contiguous
 local operations in the successful source steps. If the same operation repeats,
@@ -1231,7 +1235,15 @@ def _agent_owned_semantic_analysis(
             "reason": reason,
         }
     if set(parsed) != set(source_indices):
-        raise ValueError("function_author_semantic_steps_incomplete")
+        missing = [
+            index for index in dict.fromkeys(source_indices) if index not in parsed
+        ]
+        raise ValueError(
+            "function_author_semantic_steps_incomplete:"
+            f"missing={','.join(str(index) for index in missing) or '<none>'}:"
+            "semantic_analysis_and_complete_function_must_cover="
+            + ",".join(str(index) for index in source_indices)
+        )
     return parsed
 
 
