@@ -440,6 +440,7 @@ def test_rejected_function_completion_returns_checker_feedback_to_planner(
         planner.observations[1].extra.get("planner_feedback") or ""
     )
     assert "official completion checker rejected" in planner_feedback
+    assert planner.observations[1].extra["forbid_finished"] is True
 
 
 def test_successful_local_function_returns_to_planner_mainline(tmp_path) -> None:

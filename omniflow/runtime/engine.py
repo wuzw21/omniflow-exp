@@ -743,9 +743,20 @@ class OmniFlow:
             )
             planner_observation = observation
             if fallback_this_turn or planner_feedback:
+                completion_rejected = bool(
+                    fallback_this_turn
+                    and function_session.fallback_context
+                    and function_session.fallback_context.get("completion_rejected")
+                    is True
+                )
                 planner_observation = _with_observation_extra(
                     observation,
                     planner_feedback=planner_feedback,
+                    **(
+                        {"forbid_finished": True}
+                        if completion_rejected
+                        else {}
+                    ),
                 )
             try:
                 planned_call = ToolCall.from_value(
