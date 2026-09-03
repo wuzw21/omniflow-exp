@@ -1030,6 +1030,7 @@ def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> Non
                                 "source_step_index": 0,
                                 "binding_kind": "action_arg",
                                 "arg_name": "text",
+                                "recorded_value": "Pasta",
                             },
                             {
                                 "occurrence_index": 0,

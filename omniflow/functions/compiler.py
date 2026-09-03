@@ -1172,15 +1172,17 @@ def _agent_owned_binding(value: Any, occurrence_count: int) -> dict[str, Any]:
     common = {"occurrence_index", "source_step_index", "binding_kind"}
     if binding_kind == "action_arg":
         expected = common | {"arg_name"}
+        allowed_shapes = {frozenset(expected), frozenset(expected | {"recorded_value"})}
     elif binding_kind == "render_node":
         expected = common | {"node_id", "attribute", "recorded_value"}
+        allowed_shapes = {frozenset(expected)}
     else:
         raise ValueError(
             "function_author_parameter_binding_kind_invalid:"
             f"{binding_kind or '<missing>'}"
         )
     actual = set(value)
-    if actual != expected:
+    if frozenset(actual) not in allowed_shapes:
         raise ValueError(
             f"function_author_{binding_kind}_fields_invalid:"
             f"expected={','.join(sorted(expected))}:"
