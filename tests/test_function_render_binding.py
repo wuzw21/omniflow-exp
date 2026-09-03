@@ -976,6 +976,7 @@ def test_default_authoring_prompt_requires_semantic_classification() -> None:
     assert "online_observation" in prompt
     assert "planner_handoff" in prompt
     assert "Dynamic grounding is not itself an" in prompt
+    assert "Classify by where the desired semantic" in prompt
     assert '"validation"' not in prompt
     assert '"registration"' not in prompt
     assert "Any undeclared stable value keeps the" in prompt
@@ -1230,6 +1231,14 @@ def test_online_observation_hides_complete_replay_and_keeps_safe_local() -> None
         match="function_author_online_observation_requires_planner_handoff",
     ):
         _materialize_authoring_response(unsafe, facts, candidate_map={})
+
+    missing_local = json.loads(json.dumps(proposal))
+    missing_local["functions"] = []
+    with pytest.raises(
+        ValueError,
+        match="function_author_planner_handoff_safe_local_required",
+    ):
+        _materialize_authoring_response(missing_local, facts, candidate_map={})
 
 
 def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(

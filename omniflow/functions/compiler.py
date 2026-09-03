@@ -138,6 +138,9 @@ online semantic dependency: selecting a date, time, item, or record already
 specified by the goal/task_parameters remains task_parameter even when its target
 position must be mapped on the current device. Use online_observation only when
 the semantic value cannot be known from the goal/task_parameters before execution.
+A value deterministically derived from task parameters, such as an end time from
+hour plus duration, is also task_parameter. Classify by where the desired semantic
+value comes from, not by whether the current target coordinates must be observed.
 
 Stage 2 — discover Functions. Find zero or more semantically stable, contiguous
 local operations in the successful source steps. If the same operation repeats,
@@ -146,8 +149,11 @@ complete_function spanning the successful source sequence. A local Function must
 not contain an online_observation step. When any step is online_observation, set
 complete_function.execution_mode to planner_handoff; the full source sequence is
 then retained only as hidden evidence and the online Planner performs the dynamic
-part. Otherwise use direct_replay. Returning no local Function is valid only when
-the complete Function is safe for direct replay.
+part. Otherwise use direct_replay. If planner_handoff is necessary and you classified
+any source steps as stable or task_parameter, expose at least one maximal safe local
+Function; do not return an empty local inventory while claiming reusable steps.
+Returning no local Function is valid only when the complete Function is safe for
+direct replay or every source step is genuinely online_observation.
 
 Stage 3 — author every binding on the A side. The Compiler will not infer,
 recommend, repair, or select bindings. Read task_parameters, each source action,
@@ -1028,6 +1034,17 @@ def _materialize_agent_owned_workflow(
         raise ValueError("function_author_inventory_complete_invalid")
     if raw_complete.get("source_step_indices") != source_indices:
         raise ValueError("function_author_plan_complete_sequence_required")
+    execution_mode = str(raw_complete.get("execution_mode") or "").strip()
+    if execution_mode not in {"direct_replay", "planner_handoff"}:
+        raise ValueError("function_author_complete_execution_mode_invalid")
+    has_online_observation = any(
+        item["semantic_kind"] == "online_observation"
+        for item in semantic_steps.values()
+    )
+    if has_online_observation and execution_mode != "planner_handoff":
+        raise ValueError(
+            "function_author_online_observation_requires_planner_handoff"
+        )
 
     function_fields = {
         "function_id",
@@ -1095,18 +1112,19 @@ def _materialize_agent_owned_workflow(
                 }
             )
 
-    complete_id = _agent_owned_function_id(raw_complete, seen_ids)
-    execution_mode = str(raw_complete.get("execution_mode") or "").strip()
-    if execution_mode not in {"direct_replay", "planner_handoff"}:
-        raise ValueError("function_author_complete_execution_mode_invalid")
-    has_online_observation = any(
-        item["semantic_kind"] == "online_observation"
-        for item in semantic_steps.values()
-    )
-    if has_online_observation and execution_mode != "planner_handoff":
+    safe_source_indices = [
+        source_index
+        for source_index in source_indices
+        if semantic_steps[source_index]["semantic_kind"]
+        in {"stable", "task_parameter"}
+    ]
+    if execution_mode == "planner_handoff" and not raw_functions and safe_source_indices:
         raise ValueError(
-            "function_author_online_observation_requires_planner_handoff"
+            "function_author_planner_handoff_safe_local_required:"
+            "safe_source_step_indices="
+            + ",".join(str(index) for index in safe_source_indices)
         )
+    complete_id = _agent_owned_function_id(raw_complete, seen_ids)
     complete_parameters = _agent_owned_parameters(
         raw_complete.get("parameters"),
         occurrence_count=1,
