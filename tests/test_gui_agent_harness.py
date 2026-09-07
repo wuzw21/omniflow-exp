@@ -41,6 +41,11 @@ def test_host_usage_does_not_invent_api_request_count(tmp_path):
     from jsonschema import validate, ValidationError
     schema = json.loads((Path(__file__).parents[1]/'schemas/oob/omniflow_run_log.v1.json').read_text())
     validate({'harness': report}, schema['properties']['diagnostics'])
+    from omniflow.core.trajectory import _validate_schema
+    _validate_schema({'harness': report}, schema['properties']['diagnostics'], schema, 'diagnostics')
+    with pytest.raises(ValueError, match='type:'):
+        _validate_schema({'harness': {**report, 'model': 123}},
+                         schema['properties']['diagnostics'], schema, 'diagnostics')
     with pytest.raises(ValidationError):
         validate({'harness': {**report, 'model_calls': -1}}, schema['properties']['diagnostics'])
 

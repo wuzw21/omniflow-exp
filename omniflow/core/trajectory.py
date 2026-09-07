@@ -298,7 +298,7 @@ def _validate_schema(
 def _validate_type(value: Any, expected: Any, path: str) -> None:
     if expected is None:
         return
-    matches = {
+    type_matches = {
         "object": isinstance(value, dict),
         "array": isinstance(value, list),
         "string": isinstance(value, str),
@@ -306,7 +306,9 @@ def _validate_type(value: Any, expected: Any, path: str) -> None:
         "number": isinstance(value, (int, float)) and not isinstance(value, bool),
         "boolean": isinstance(value, bool),
         "null": value is None,
-    }.get(str(expected), False)
+    }
+    allowed = expected if isinstance(expected, list) else [expected]
+    matches = any(type_matches.get(str(item), False) for item in allowed)
     if not matches:
         raise ValueError(f"run_log_schema_invalid:{path}:type:{expected}")
 
