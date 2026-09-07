@@ -62,6 +62,10 @@ class OobGuiAgentHost:
             extra=extra,
         )
 
+    def installed_apps(self) -> dict[str, str] | None:
+        inventory = getattr(self.control_client, "installed_apps", None)
+        return inventory() if callable(inventory) else None
+
     def get_state(self, state_id: str) -> Observation | None:
         value = self.source_states.get(state_id)
         return Observation.from_value(value) if value is not None else None

@@ -92,26 +92,16 @@ def build_omniflow_custom_tools(flow: Any) -> dict[str, dict[str, Any]]:
     remains responsible for OOB-compatible physical execution.
     """
 
-    store = getattr(flow, "store", None)
-    list_functions = getattr(store, "list_functions", None)
-    acall_tool = getattr(flow, "acall_tool", None)
-    if not callable(list_functions) or not callable(acall_tool):
+    if not callable(getattr(flow, "arecall", None)) or not callable(getattr(flow, "aexecute_function", None)):
         raise TypeError("omniflow_runtime_with_store_required")
-
-    async def invoke(function: Function, arguments: dict[str, Any], _ctx: Any) -> Any:
-        return await acall_tool(
-            {"name": function.id, "arguments": arguments},
-            experiment="mobilerun",
-        )
-
-    return build_custom_tools(
-        list_functions(include_hidden=False),
-        invoker=invoke,
-    )
+    runtime = GuiAgentToolRuntime(host=flow.host, flow=flow, experiment="mobilerun")
+    return build_runtime_custom_tools(runtime, include_actions=False)
 
 
 def build_runtime_custom_tools(
     runtime: GuiAgentToolRuntime,
+    *,
+    include_actions: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """Expose the complete OOB-owned tool surface to Mobilerun.
 
@@ -125,7 +115,7 @@ def build_runtime_custom_tools(
         raise TypeError("mobilerun_gui_agent_runtime_required")
 
     tools: dict[str, dict[str, Any]] = {}
-    for tool in runtime.list_tools():
+    for tool in (runtime.harness_tools() if include_actions else runtime.function_tools()):
         name = str(tool.name or "").strip()
         if not _MOBILERUN_NAME.fullmatch(name):
             raise ValueError(f"mobilerun_tool_name_invalid:{name}")

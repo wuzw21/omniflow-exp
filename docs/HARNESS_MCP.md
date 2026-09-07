@@ -1,74 +1,91 @@
-# 外部宿主 MCP 接入
+# 两工具 Function 服务接入
 
-协议见 [HARNESS_PROTOCOL.md](HARNESS_PROTOCOL.md)。实现是 `src/integrations/gui_agent_mcp.py`，
-仅调用已有 `GuiAgentToolRuntime`，不创建 Planner。当前支持 MCP stdio，依赖 MCP Python
-SDK 2.x；HTTP 服务、远程身份认证和跨进程恢复不在当前实现内。
+当前版本为 1.1.0.dev1。对外仅暴露两个工具，定义统一来自
+GuiAgentToolRuntime.function_tools()，MCP 和 Python harness 不各自复制 schema：
 
-在 canonical checkout 中安装可选依赖并查看启动参数：
+| 工具 | 输入 | 返回 |
+|---|---|---|
+| omniflow_recall | task_id、goal、limit（1–32） | 候选 Function、input_schema、当前 observation、session_id、召回审计 |
+| omniflow_execute | session_id、request_id、function_id、arguments | invocation v1 执行事实、失败位置、当前 observation |
 
-```bash
-.venv/bin/python -m pip install -e '.[mcp]'
-.venv/bin/python -m src.integrations.gui_agent_mcp --help
-```
+召回调用既有 page-aware recall 与 canonical OmniTransfer；它不执行设备动作。
+执行只接受注册且可见的 Function，使用同一个 Check → Transfer → Act → Observe
+闭环，不启动内部 Planner，也不把 Function 成功当作任务成功。
 
-服务需要已初始化且运行 OOB 的 Android 设备；不会自行构建或安装 APK。`--device`
-是明确的 adb serial。`--store` 是明确的 v2 Store；省略表示 Memory OFF，只暴露原始
-动作，不编译或扫描任何 Memory。canonical OmniTransfer 使用既有配置和模型安装。
+## 安装与连接
 
-Codex 配置示例（将 serial 和路径替换为实际值；不需要在此配置模型 endpoint）：
+在 canonical checkout 中运行：
 
-```toml
-[mcp_servers.omniflow]
-command = "/absolute/OmniFlow-exp/.venv/bin/python"
-args = ["-m", "src.integrations.gui_agent_mcp", "--device", "DEVICE_SERIAL", "--store", "/absolute/memory/store.json", "--evidence-root", "/absolute/OmniFlow-exp/data/runtime/gui_agent/codex"]
-env = { PYTHONPATH = "/absolute/OmniFlow-exp" }
-tool_timeout_sec = 600
-```
+    .venv/bin/python -m pip install -e '.[mcp]'
+    .venv/bin/python -m src.integrations.gui_agent_mcp --device DEVICE_SERIAL --store /absolute/memory/store.json
 
-宿主超时要覆盖一个 Function 的调用；内核仍共享最多 600 秒的整任务预算，模型请求
-最多 30 秒。默认 Python 环境不会自动携带远端设备工具；需要时显式设 `--adb-path`。
-服务进程持有本机同 serial 的 MCP 排他锁；此锁不控制未采用本协议的其他工具或机器。
-不要让原生 computer use 与此服务同时操作同一 Android 会话。
+省略 --store 表示空 Memory；召回返回空候选，不扫描历史、不隐式编译 Store。
+默认后端仍是已安装的 OOB，不重新构建或安装 APK。截图和 step fact 调试日志默认在
+当前工作区 data/runtime/gui_agent/ 下；在其他目录启动时显式传 --evidence-root。
 
-把仓库中的 `skills/omniflow-gui/` 目录复制到宿主的技能目录即可分发。Skill 只描述
-发现、执行、反馈与停止，不携带设备驱动、Memory、模型权重或硬编码任务。服务端随项目
-安装，Skill 本身不能替代 MCP 服务。
+Codex MCP 配置（替换为实际路径和 serial）：
 
-## 工具协议
+    [mcp_servers.omniflow]
+    command = "/absolute/OmniFlow-exp/.venv/bin/python"
+    args = ["-m", "src.integrations.gui_agent_mcp", "--device", "DEVICE_SERIAL", "--store", "/absolute/memory/store.json", "--evidence-root", "/absolute/OmniFlow-exp/data/runtime/gui_agent/codex"]
+    env = { PYTHONPATH = "/absolute/OmniFlow-exp" }
+    tool_timeout_sec = 600
 
-1. `omniflow_tools` 返回实时可用的 canonical action / Function input schemas。
-   `omniflow_status` 返回当前 `session_id`、剩余时间、执行计数、in-flight 状态。
-2. `omniflow_observe` 返回一份当前 UI 信息和一张 MCP image；调用文本去掉 base64，
-   原图仍保留在证据目录。坐标沿用 canonical action schema 的语义和原始 display。
-3. `omniflow_execute` 输入 `session_id`、唯一 `request_id`、`tool_name`、`arguments`。
-   外层与工具参数均按 schema 校验；它调用现有原始动作或 Function，返回 invocation v1。
-4. 传输超时后先查询 status；重取已完成结果时只能重用同一 request id 和参数。若状态
-   为 unknown/in-flight，不生成新 id 重试同一副作用。Function 内部失败不是 transport
-   重试；宿主根据当前状态恢复，不从头盲目重发。
-5. `omniflow_finish(session_id, content)` 调用配置的 verifier。独立 Android 服务默认
-   没有官方 task verifier，返回 `task_status=unknown` 并关闭会话；宿主应报告其观察
-   证据，不把它称为 official success。嵌入 AndroidWorld 时仍由官方 lifecycle 验证。
-6. `omniflow_cancel(session_id)` 阻止后续动作；已发出的动作收尾前 `in_flight=true`。
-   旧任务关闭并且没有在途操作后，才可用 `omniflow_start(session_id)` 明确开始新任务。
+Python 宿主可直接使用 OmniFlow.arecall / aexecute_function，也可调用
+GuiAgentToolRuntime.call_function_tool 获得与 MCP 相同的 schema 校验、会话与请求去重。
+GUI-Owl 和 V-Droid 的既有工具分发可以接这两个服务；Mobilerun 的
+build_omniflow_custom_tools 只暴露这两个。正式实验的 native-action adapter 仍可用
+build_runtime_custom_tools 组合原有 OOB 原始动作和这两个服务。
 
-MCP 为 `execute` 返回 `isError=true` 时仍可能带有成功执行的前缀与最新观察；宿主必须
-读取反馈。服务重启会产生新 session id，旧请求拒绝续接。没有持久 resume token。
+## 后端接入
 
-默认从 canonical checkout 启动，证据目录为当前工作区的 `data/runtime/gui_agent/<id>/`。
-从其他目录或安装包启动时显式传 `--evidence-root`，避免向安装目录写入数据。
-`events.ndjson` 是已有 step fact 的流式调试记录，不是官方 RunLog，不能直接冒充成功
-source 输入。原始 PNG 按内容去重。数据不随 Git 或 Skill 分发。
+Python 通过 build_runtime(host_factory=...) 注入后端；命令行使用
+--host-factory package.module:factory。factory 接收 device、evidence_root、
+source_states，返回实现 observe、act、get_state 的 Host，方法可同步或异步。
+工厂是由部署者明确选择的 Python 代码，不接受模型工具调用中的任意代码路径。
+source_states 来自显式 Memory 的 canonical loader，不是另一套 mapper。
 
-## 验证状态
+执行 open_app 的 Host 还可提供 installed_apps()，同步或异步返回标签到包名的
+字典。显式传入 OmniFlow 的清单优先；否则在受 deadline/取消控制的首次执行中
+读取并缓存 Host 清单。OOB 后端从当前设备只读查询已安装包，应用启动仍走 OOB。
+没有清单或包未安装时明确失败，不推测安装状态。设备或安装集合改变后重建 runtime。
 
-已验证真实 MCP stdio 子进程的 initialize、list、status、cancel、start 和过期 session
-拒绝；fake Host 用于验证执行去重和参数拒绝。随后在 9207 / emulator-45562 上经实际
-OOB 0.6.1 验证截图、一个 wait 动作、重复请求零新增设备 I/O、取消后的动作拒绝和
-会话重建。测试使用本地协议代码与 SSH 承载的 OOB 命令，没有部署第二个远端 checkout。
-证据：`data/runtime/validation/20260907-oob-protocol/summary.json`。
-Android 真机端到端、跨设备 Function 映射和 Codex 实际使用验收仍为**待真机验证**。
+这只替换物理后端；Function compiler、recall、Checker、OmniTransfer 和执行反馈不替换。
+AndroidWorld 的正式入口和 OOB-only 合同不受该独立宿主接口影响。
 
-官方宿主参考：[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp)、
-[Codex computer use](https://learn.chatgpt.com/docs/computer-use)、
-[Reusable Codex skills](https://learn.chatgpt.com/use-cases/reusable-codex-skills)。
-接入 Android 是本项目 MCP 的能力，不表示 Codex 自带 CUA 已暴露 Android 后端。
+## 生命周期与恢复
+
+同一逻辑任务始终复用 task_id。首次 recall 建立会话并返回 session_id；
+同任务再次 recall 不重置 deadline。新的 task_id 明确开始新任务，在途执行期间拒绝切换。
+旧 task id 退役，旧 session id 不能续接到新任务。
+
+execute 的传输重试必须保持 request_id 和参数相同，以获取已保存的结果。不要把
+Function 部分失败当作 transport retry：读取成功前缀、失败位置和当前状态，再由宿主
+决定如何恢复。v1 没有持久化 resume API，不能从失败 index 直接授权重放。
+
+宿主负责整个任务的规划、完成判定、用户输入、原始动作与取消。嵌入式宿主通过
+runtime.cancel() / flow.cancel() 取消；MCP 宿主使用协议请求取消通道。正在执行的
+I/O 先收尾，之后禁止新增动作。状态和当前反馈包含在结果中，不另加 model-visible
+status、observe、finish、start 或 cancel 工具。进程重启不恢复旧 session。
+
+若 Codex 只有桌面 CUA，没有 Android 原始动作通道，则不能宣称具备 Android 的任意
+fallback 能力。两工具服务仍可召回与执行 Function；失败后交还宿主或报告阻塞。
+不能为隐藏这一接入缺口偷偷启动内置 Planner。
+
+## 验证范围
+
+协议测试覆盖真实 stdio initialize/list、严格两工具发现、过期 session 拒绝；
+适配矩阵覆盖 MCP、GUI-Owl、V-Droid、Mobilerun 与同步 Host、异步 Host、OOB Host
+适配器的组合，检查召回零 act、Function 执行、部分失败、请求去重和宿主控制权。
+
+这些矩阵使用受控 Host 与编码器测试替身，只证明接入合同。真实 canonical 模型、
+真实上游 harness 运行及物理设备仍需要独立验证，不能拿矩阵通过代替。
+旧版七工具的 OOB 模拟器 smoke 仅为旧协议证据，不能冒充当前两工具验收。
+
+当前已验证 dev1 隔离 wheel 的导入、两工具发现和 Skill 打包；真实 canonical
+1024D 召回在 9207/OOB 模拟器上通过。完整执行与真机验收分别记录，详见发布说明。
+本机 Droidrun 0.5.6 的上游 SDK 接入暂受依赖阻塞：它导入 mobilerun，但当前
+mobilerun-sdk 5.1.0 提供 mobilerun_sdk。不要把适配器测试通过解释为该 SDK 已能运行，
+也不要直接安装同名新框架覆盖现有 MCP/实验依赖；应在独立环境验证完整依赖组合。
+
+[内核协议](HARNESS_PROTOCOL.md) · [Skill](../skills/omniflow-gui/SKILL.md)

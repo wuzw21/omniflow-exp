@@ -18,6 +18,8 @@ from threading import Lock
 from typing import Any
 import uuid
 
+from jsonschema import validate
+
 from omniflow.core.model import ActionResult, Function, Observation, RunResult
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
 from omniflow.runtime.control import (
@@ -51,7 +53,7 @@ class GuiAgentTool:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "strict": True,
+                "strict": self.kind != "service",
                 "parameters": _json_copy(self.input_schema),
             },
         }
@@ -101,6 +103,8 @@ class GuiAgentToolRuntime:
         self.session_id = uuid.uuid4().hex
         self._checker_trigger_counts: dict[str, int] = {}
         self._requests: dict[str, tuple[str, GuiAgentToolResult | None]] = {}
+        self._task_id: str | None = None
+        self._retired_task_ids: set[str] = set()
         self.experiment = str(experiment or "").strip()
         if not self.experiment:
             raise ValueError("gui_agent_experiment_required")
@@ -145,12 +149,16 @@ class GuiAgentToolRuntime:
         self,
         name: str,
         arguments: dict[str, Any],
+        *,
+        _registered_only: bool = False,
     ) -> GuiAgentToolResult:
+        if not _registered_only and name in {tool.name for tool in self.function_tools()}:
+            return await self.call_function_tool(name, arguments)
         action_offset = self._control.actions_executed if self._control else 0
         trace_offset = len(self._control.trace) if self._control else 0
         try:
             with self._session():
-                result = await self._dispatch_tool(name, arguments)
+                result = await self._dispatch_tool(name, arguments, registered_only=_registered_only)
                 self._control.check()
                 if self._control.effect_unknown:
                     raise ExecutionStopped("effect_unknown")
@@ -164,8 +172,13 @@ class GuiAgentToolRuntime:
                 {"feedback": invocation_feedback(self._control.stopped_result(
                     error.reason, action_offset=action_offset, trace_offset=trace_offset))}, error.reason)
 
-    async def _dispatch_tool(self, name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
+    async def _dispatch_tool(self, name: str, arguments: dict[str, Any], *, registered_only=False) -> GuiAgentToolResult:
         normalized_name = str(name or "").strip()
+        if registered_only:
+            function = self.flow.store.get_function(normalized_name)
+            if function is None or not function.agent_visible:
+                raise ValueError("function_not_registered")
+            return await self._call_function(normalized_name, arguments, registered_only=True)
         tools = {tool.name: tool for tool in self.list_tools()}
         tool = tools.get(normalized_name)
         if tool is None:
@@ -173,7 +186,7 @@ class GuiAgentToolRuntime:
         if tool.kind == "action":
             return await self._call_action(normalized_name, arguments)
         if tool.kind == "function":
-            return await self._call_function(normalized_name, arguments)
+            return await self._call_function(normalized_name, arguments, registered_only=registered_only)
         raise ValueError(f"gui_agent_tool_kind_unsupported:{tool.kind}")
 
     def call_tool_sync(
@@ -184,7 +197,7 @@ class GuiAgentToolRuntime:
         return asyncio.run(self.call_tool(name, arguments))
 
     async def execute_request(self, *, session_id: str, request_id: str,
-                              tool_name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
+                              tool_name: str, arguments: dict[str, Any], function_only=False) -> GuiAgentToolResult:
         """Deduplicate transport retries inside one live session.
 
         A restarted process has a different session id. It cannot claim that
@@ -194,7 +207,7 @@ class GuiAgentToolRuntime:
             raise ValueError("gui_agent_session_mismatch")
         if not request_id or len(request_id) > 128:
             raise ValueError("gui_agent_request_id_required_max_128")
-        signature = json.dumps([tool_name, arguments], sort_keys=True)
+        signature = json.dumps([tool_name, arguments, function_only], sort_keys=True)
         if request_id in self._requests:
             previous, result = self._requests[request_id]
             if previous != signature:
@@ -205,7 +218,7 @@ class GuiAgentToolRuntime:
         if len(self._requests) >= 128:
             raise ValueError("gui_agent_session_request_budget_exhausted")
         self._requests[request_id] = (signature, None)
-        result = await self.call_tool(tool_name, arguments)
+        result = await self.call_tool(tool_name, arguments, _registered_only=function_only)
         self._requests[request_id] = (signature, result)
         # A session retains compact replies for transport deduplication, not a
         # second copy of the complete invocation history and XML trace.
@@ -247,16 +260,21 @@ class GuiAgentToolRuntime:
         arguments: dict[str, Any],
         *,
         kind: str = "function",
+        registered_only: bool = False,
     ) -> GuiAgentToolResult:
         acall_tool = getattr(self.flow, "acall_tool", None)
-        if not callable(acall_tool):
+        if not registered_only and not callable(acall_tool):
             raise TypeError("gui_agent_function_runtime_required")
-        raw_result = acall_tool(
-            {"name": name, "arguments": dict(arguments or {})},
-            experiment=self.experiment,
-            **({"checker_trigger_counts": self._checker_trigger_counts}
-               if hasattr(self.flow, "checker_library") else {}),
-        )
+        if registered_only:
+            raw_result = self.flow.aexecute_function(name, dict(arguments or {}),
+                checker_trigger_counts=self._checker_trigger_counts)
+        else:
+            raw_result = acall_tool(
+                {"name": name, "arguments": dict(arguments or {})},
+                experiment=self.experiment,
+                **({"checker_trigger_counts": self._checker_trigger_counts}
+                   if hasattr(self.flow, "checker_library") else {}),
+            )
         if inspect.isawaitable(raw_result):
             raw_result = await raw_result
         if isinstance(raw_result, RunResult):
@@ -296,11 +314,13 @@ class GuiAgentToolRuntime:
         )
 
     @contextmanager
-    def _session(self):
+    def _session(self, *, task_id: str | None = None):
         if not self._session_lock.acquire(blocking=False):
             raise ValueError("gui_agent_session_busy")
         token = None
         try:
+            if task_id is not None:
+                self._select_task(task_id)
             if self._closed:
                 raise ValueError("gui_agent_session_closed")
             if self._control is None:
@@ -371,6 +391,67 @@ class GuiAgentToolRuntime:
         if not all(isinstance(function, Function) for function in functions):
             raise TypeError("gui_agent_function_must_be_canonical")
         return tuple(function for function in functions if function.agent_visible)
+
+    @staticmethod
+    def function_tools() -> tuple[GuiAgentTool, ...]:
+        """The entire model-visible OmniFlow service: recall and execute."""
+        string = {"type": "string", "minLength": 1, "maxLength": 128}
+        def schema(properties):
+            return {"type": "object", "properties": properties,
+                    "required": list(properties), "additionalProperties": False}
+        return (
+            GuiAgentTool("omniflow_recall",
+                "Recall registered Functions for the current page and goal. Use one task_id per logical task; a new id explicitly starts a new task. Returns parameter schemas and session_id without executing device actions.",
+                schema({"task_id": string, "goal": {"type": "string", "minLength": 1},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 32}}), "service"),
+            GuiAgentTool("omniflow_execute",
+                "Execute one registered Function using its input schema. Returns partial progress and current state to the host. Reuse request_id only for identical transport retries; never replay a successful prefix blindly.",
+                schema({"session_id": string, "request_id": string, "function_id": string,
+                        "arguments": {"type": "object"}}), "service"),
+        )
+
+    def harness_tools(self) -> tuple[GuiAgentTool, ...]:
+        """Legacy native-action adapters add only the two Function service tools."""
+        return (*_canonical_action_tools(), *self.function_tools())
+
+    def _select_task(self, task_id: str) -> None:
+        """Called only while holding the session lock through the whole recall."""
+        if task_id == self._task_id:
+            return
+        if task_id in self._retired_task_ids:
+            raise ValueError("gui_agent_task_id_retired")
+        if len(self._retired_task_ids) >= 128:
+            raise ValueError("gui_agent_connection_task_budget_exhausted")
+        if self._task_id is not None:
+            self._retired_task_ids.add(self._task_id)
+        self._task_id = task_id
+        self._control = ExecutionControl(self.timeout_seconds)
+        self._closed = False
+        self.session_id = uuid.uuid4().hex
+        self._requests.clear()
+        self._checker_trigger_counts.clear()
+
+    async def call_function_tool(self, name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
+        definitions = {tool.name: tool for tool in self.function_tools()}
+        if name not in definitions:
+            raise ValueError("function_service_tool_unknown")
+        validate(arguments, definitions[name].input_schema)
+        if self.flow is None:
+            raise TypeError("gui_agent_function_runtime_required")
+        if name == "omniflow_execute":
+            return await self.execute_request(session_id=arguments["session_id"],
+                request_id=arguments["request_id"], tool_name=arguments["function_id"],
+                arguments=arguments["arguments"], function_only=True)
+        with self._session(task_id=arguments["task_id"]):
+            result = await self.flow.arecall(arguments["goal"], limit=arguments["limit"])
+            feedback = invocation_feedback(result)
+            if feedback["control"]["next"] == "stop":
+                self._closed = True
+            return GuiAgentToolResult(name, "service", result.success, {
+                "session_id": self.session_id, "task_id": self._task_id,
+                **result.detail.get("recall", {}), "feedback": feedback,
+                "observation": observation_payload(result.final_state),
+            }, result.error)
 
 
 def _canonical_action_tools() -> tuple[GuiAgentTool, ...]:

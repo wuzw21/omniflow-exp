@@ -179,6 +179,7 @@ class OmniFlow:
                 False,
                 error="host_not_set",
             )
+        await self._ensure_installed_apps()
         profile = _experiment(experiment)
         actions_executed = 0
         model_calls = 0
@@ -930,12 +931,33 @@ class OmniFlow:
             return refreshed
         return _with_observation_extra(refreshed, **preserved)
 
+    async def _ensure_installed_apps(self) -> None:
+        """Resolve optional Host inventory under the invocation's cancellation/deadline."""
+        inventory = getattr(self.host, "installed_apps", None)
+        if self.installed_packages is not None or not callable(inventory):
+            return
+        apps = await invoke(inventory)
+        if apps is None:
+            return
+        if not isinstance(apps, dict) or any(
+            not isinstance(label, str) or not label.strip()
+            or not isinstance(package, str) or not package.strip()
+            for label, package in apps.items()
+        ):
+            raise ValueError("host_installed_apps_invalid")
+        self.installed_apps = {label.strip(): package.strip() for label, package in apps.items()}
+        self.installed_packages = frozenset(self.installed_apps.values())
+        setter = getattr(self.function_router, "set_installed_apps", None)
+        if callable(setter):
+            await invoke(setter, dict(self.installed_apps))
+
     async def _invoke_tool(
         self,
         tool_call: ToolCall | dict[str, Any],
         *,
         experiment: Experiment | str | None = None,
         checker_trigger_counts: dict[str, int] | None = None,
+        function_only: bool = False,
     ) -> RunResult:
         """Execute one invocation and return to its caller, including on failure.
 
@@ -946,6 +968,9 @@ class OmniFlow:
         if self.host is None:
             return RunResult(False, function_id=call.name, error="host_not_set")
         function = self.store.get_function(call.name)
+        if function_only and function is None:
+            return RunResult(False, function_id=call.name, error="function_not_registered")
+        await self._ensure_installed_apps()
         observation = await self._observe(screenshot=False)
         counts = checker_trigger_counts if checker_trigger_counts is not None else {}
         if function is not None:
@@ -1006,6 +1031,33 @@ class OmniFlow:
             self._invoke_tool, tool_call, experiment=experiment,
             checker_trigger_counts=checker_trigger_counts,
         )
+
+    async def aexecute_function(self, function_id: str, arguments: dict[str, Any], *,
+                                checker_trigger_counts=None) -> RunResult:
+        """Execute a registered Function; primitives and task control stay with the host."""
+        return await self._controlled(self._invoke_tool, ToolCall(function_id, arguments),
+                                      function_only=True, checker_trigger_counts=checker_trigger_counts)
+
+    async def arecall(self, goal: str, *, limit: int = 8) -> RunResult:
+        """Read current state and recall through the same owner as the built-in Planner."""
+        if not str(goal).strip() or not 1 <= limit <= 32:
+            raise ValueError("recall_goal_and_limit_required_1_to_32")
+        return await self._controlled(self._recall_invocation, str(goal), limit=limit)
+
+    async def _recall_invocation(self, goal: str, *, limit: int) -> RunResult:
+        observation = await self._observe(screenshot=False)
+        # Empty Memory has a useful empty result, without requiring model weights.
+        if not any(f.agent_visible and f.steps for f in self.store.functions.values()):
+            recalled = RecallResult((), {"candidate_function_ids": [], "reason": "empty_memory"})
+        else:
+            recalled = await self._recall(goal, observation=observation, source_states={}, limit=limit)
+        return RunResult(True, final_state=observation, detail={
+            "done_reason": "functions_recalled", "recall": {
+                "functions": [{"function_id": f.id, "name": f.name, "description": f.description,
+                               "input_schema": f.input_schema} for f in recalled.functions],
+                "audit": recalled.audit,
+            },
+        })
 
     def cancel(self) -> bool:
         control = self._active_control
@@ -1069,7 +1121,7 @@ class OmniFlow:
                 get_state = getattr(self.host, "get_state", None)
                 if callable(get_state):
                     try:
-                        value = await _await(get_state(source_state_id))
+                        value = await invoke(get_state, source_state_id)
                         source_state = (
                             Observation.from_value(value) if value is not None else None
                         )
@@ -1086,7 +1138,7 @@ class OmniFlow:
             functions=self.store.functions,
             source_states=source_states,
             limit=max(0, int(resolved_limit)),
-            page_encoder=self._get_page_encoder(),
+            page_encoder=await invoke(self._get_page_encoder),
             transfer=self.plugins.transfer,
             exclude_function_ids=exclude_function_ids,
         )

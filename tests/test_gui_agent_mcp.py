@@ -9,7 +9,14 @@ pytest.importorskip('mcp')
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
-from omniflow.core.model import ActionResult, Observation
+from omniflow.core.model import (
+    Action,
+    ActionResult,
+    Function,
+    FunctionStep,
+    Observation,
+)
+from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
 from src.integrations.gui_agent_mcp import GuiAgentMcp, device_lease
 from src.integrations.gui_agent_tools import GuiAgentToolRuntime
@@ -26,9 +33,14 @@ def test_mcp_invocation_schema_and_retry_without_second_dispatch(tmp_path):
             return ActionResult(True)
     async def scenario():
         host = Host()
+        store = FunctionStore(tmp_path/'store.json')
+        store.put_function(Function('pause', 'Pause', 'Pause briefly',
+            (FunctionStep(0, Action('wait', {'duration_ms': 1}), 'source'),),
+            schema_version='omniflow.function.v2',
+            input_schema={'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}))
         runtime = GuiAgentToolRuntime(host=host, flow=OmniFlow(tmp_path/'store.json', host=host))
         transport = GuiAgentMcp(runtime)
-        args = dict(session_id=runtime.session_id, request_id='one', tool_name='wait', arguments={'duration_ms': 1})
+        args = {'session_id': runtime.session_id, 'request_id': 'one', 'function_id': 'pause', 'arguments': {}}
         request = types.CallToolRequestParams(name='omniflow_execute', arguments=args)
         first = await transport.call_tool(None, request)
         second = await transport.call_tool(None, request)
@@ -43,7 +55,7 @@ def test_mcp_invocation_schema_and_retry_without_second_dispatch(tmp_path):
     asyncio.run(scenario())
 
 
-def test_stdio_initialize_discover_cancel_and_explicit_new_session(tmp_path):
+def test_stdio_exposes_only_recall_and_function_execution(tmp_path):
     async def scenario():
         params = StdioServerParameters(command=sys.executable,
             args=['-m', 'src.integrations.gui_agent_mcp', '--device', 'protocol-test-no-device',
@@ -52,16 +64,10 @@ def test_stdio_initialize_discover_cancel_and_explicit_new_session(tmp_path):
             async with ClientSession(read, write) as client:
                 await client.initialize()
                 names = {tool.name for tool in (await client.list_tools()).tools}
-                assert {'omniflow_execute', 'omniflow_cancel', 'omniflow_finish'} <= names
-                state = json.loads((await client.call_tool('omniflow_status', {})).content[0].text)
-                old_id = state['session_id']
-                cancelled = await client.call_tool('omniflow_cancel', {'session_id': old_id})
-                assert not cancelled.is_error
-                started = await client.call_tool('omniflow_start', {'session_id': old_id})
-                assert not started.is_error
-                assert json.loads(started.content[0].text)['session_id'] != old_id
-                stale = await client.call_tool('omniflow_cancel', {'session_id': old_id})
-                assert stale.is_error
+                assert names == {'omniflow_recall', 'omniflow_execute'}
+                rejected = await client.call_tool('omniflow_execute', {
+                    'session_id': 'stale', 'request_id': 'one', 'function_id': 'wait', 'arguments': {}})
+                assert rejected.is_error
     asyncio.run(scenario())
     assert not list(tmp_path.glob('*.json'))  # no implicit Memory compilation
 

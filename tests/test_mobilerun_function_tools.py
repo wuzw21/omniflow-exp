@@ -83,40 +83,23 @@ class MobilerunFunctionToolsTest(unittest.TestCase):
         self.assertEqual(tools, {})
 
     def test_omniflow_adapter_routes_through_runtime(self) -> None:
-        class Store:
-            def list_functions(self, *, include_hidden: bool) -> list[Function]:
-                self.include_hidden = include_hidden
-                return [_function()]
-
         class Flow:
             def __init__(self) -> None:
-                self.store = Store()
-                self.calls: list[tuple[dict, str]] = []
-
-            async def acall_tool(self, tool_call: dict, *, experiment: str):
-                self.calls.append((tool_call, experiment))
-                return "runtime completed"
+                self.host = object()
+                self.calls = []
+            async def arecall(self, goal, *, limit):
+                self.calls.append((goal, limit))
+                return RunResult(True, detail={'recall': {'functions': []}})
+            async def aexecute_function(self, *args, **kwargs):
+                raise AssertionError('recall executed a Function')
 
         flow = Flow()
         tools = build_omniflow_custom_tools(flow)
-        result = asyncio.run(
-            tools["search_records"]["function"](search_query="calendar")
-        )
-
-        self.assertEqual(result, "runtime completed")
-        self.assertEqual(
-            flow.calls,
-            [
-                (
-                    {
-                        "name": "search_records",
-                        "arguments": {"search.query": "calendar"},
-                    },
-                    "mobilerun",
-                )
-            ],
-        )
-        self.assertFalse(flow.store.include_hidden)
+        self.assertEqual(set(tools), {'omniflow_recall', 'omniflow_execute'})
+        result = asyncio.run(tools['omniflow_recall']['function'](
+            task_id='task-one', goal='Find calendar records', limit=8))
+        self.assertTrue(result.startswith('Completed:'))
+        self.assertEqual(flow.calls, [('Find calendar records', 8)])
 
     def test_failed_run_result_is_visible_as_tool_failure(self) -> None:
         async def invoker(

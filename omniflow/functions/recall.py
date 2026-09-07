@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-import inspect
 import re
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
 from omniflow.core.model import Action, Function, Observation, Transfer, TransferResult
+from omniflow.runtime.control import checkpoint, invoke
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
 from omniflow.transfer.runtime import requires_contextual_mapping
 
@@ -36,14 +37,16 @@ async def recall_functions(
 ) -> RecallResult:
     """Rank Functions, admitting package recovery to run before entry Transfer."""
 
-    encoder = page_encoder or PageEncoder()
-    current_page = _embed_page(encoder, observation)
+    checkpoint()
+    encoder = page_encoder or await invoke(PageEncoder)
+    current_page = await invoke(_embed_page, encoder, observation)
     values = functions.values() if isinstance(functions, dict) else functions
     candidates: list[tuple[float, Function, dict[str, Any]]] = []
     decisions: list[dict[str, Any]] = []
 
     for function in values:
-        decision = _score_function(
+        checkpoint()
+        decision = await invoke(_score_function,
             str(goal),
             function,
             current_observation=observation,
@@ -93,12 +96,11 @@ async def recall_functions(
             continue
         else:
             try:
-                mapped = await _await(
-                    transfer(
-                        function.steps[0].action,
-                        observation,
-                        source_observation,
-                    )
+                mapped = await invoke(
+                    transfer,
+                    function.steps[0].action,
+                    observation,
+                    source_observation,
                 )
                 transfer_result = (
                     mapped
@@ -289,10 +291,6 @@ def _recoverable_package_mismatch(
     )
 
 
-async def _await(value: Any) -> Any:
-    return await value if inspect.isawaitable(value) else value
-
-
 def match_function_page(
     *,
     source_observation: Observation | None,
@@ -402,8 +400,8 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 
 
 __all__ = [
-    "GOAL_LEXICAL_WEIGHT",
     "FUNCTION_PAGE_SIMILARITY_THRESHOLD",
+    "GOAL_LEXICAL_WEIGHT",
     "PAGE_SIMILARITY_WEIGHT",
     "RECALL_AUDIT_VERSION",
     "RecallResult",

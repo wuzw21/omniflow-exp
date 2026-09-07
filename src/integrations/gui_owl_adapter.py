@@ -41,7 +41,7 @@ class GuiOwlAdapter:
     def tool_definitions(self) -> list[dict[str, Any]]:
         """Return the canonical MCP/OpenAI-compatible tools for prompting."""
 
-        return [tool.to_openai_tool() for tool in self.runtime.list_tools()]
+        return [tool.to_openai_tool() for tool in self.runtime.harness_tools()]
 
     async def execute_output(self, output_text: str) -> GuiOwlOutcome:
         tool_call = parse_gui_owl_tool_call(output_text)

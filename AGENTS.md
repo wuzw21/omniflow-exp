@@ -6,6 +6,9 @@
   harness 可替换；允许调整模块边界和宿主协议。详细合同见 `docs/HARNESS_PROTOCOL.md`。
 - 任务级循环必须有唯一 owner：内置模式由 `OmniFlow.arun` 负责，外部宿主模式由
   Codex/其他 Agent 负责；`acall_tool` 只执行一次调用，失败不得启动第二个 Planner。
+- 当前用户目标：通用对外能力收敛到 Function 召回与 Function 执行两个服务。
+  MCP/Function 插件只暴露 `omniflow_recall`、`omniflow_execute`；原始动作和任务控制
+  属于 harness/后端，不能通过 Function id 偷渡原始动作。不同接入形式共用这些 owner。
 - 保留 Function 的 Check → Transfer → Act → Observe 闭环、canonical OmniTransfer、
   显式 Memory 和 AndroidWorld 官方实验入口、OOB 物理层、时间与统计合同。
 - 用户允许删除历史归档，但先保护当前资产引用的文件和缺少替代品的高质量成功经验，

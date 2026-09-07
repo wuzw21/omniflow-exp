@@ -99,6 +99,18 @@ class OobControlClient:
         # back to coordinates or native AndroidWorld actions.
         self._last_state: dict[str, Any] | None = None
 
+    def installed_apps(self) -> dict[str, str]:
+        """Read device package inventory; application execution still uses OOB."""
+        checkpoint()
+        result = self._run(["shell", "pm", "list", "packages"], timeout=self.timeout_seconds)
+        if result.returncode:
+            raise RuntimeError("oob_installed_apps_query_failed")
+        packages = [line.removeprefix("package:").strip()
+                    for line in result.stdout.splitlines() if line.startswith("package:")]
+        if not packages:
+            raise RuntimeError("oob_installed_apps_inventory_empty")
+        return {package: package for package in packages if package}
+
     def observe(self, *, wait_to_stabilize: bool = False) -> dict[str, Any]:
         for attempt in range(OBSERVE_XML_ATTEMPTS):
             result = self._observe_request(wait_to_stabilize=wait_to_stabilize)

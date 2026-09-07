@@ -4,6 +4,16 @@
 已有执行内核中分离，保留论文的核心机制：从成功轨迹提取显式参数化 Function，
 利用 canonical OmniTransfer 适应目标设备，每步观察并验证，失败交还 Agent。
 
+当前 `1.1.0.dev1` 将对外服务收敛为 **Function Recall + Function Execute**：
+`omniflow_recall(task_id, goal, limit)` 调用 `OmniFlow.arecall`，
+`omniflow_execute(session_id, request_id, function_id, arguments)` 调用同一执行内核。
+`aexecute_function` 拒绝未注册的 Function，原始动作不能借此入口执行。MCP 默认仅有这
+两个工具；取消由宿主控制通道或 SDK 负责，任务完成由宿主判断。dev0 的七工具接口已移除。
+
+同一逻辑任务复用 `task_id`，Recall 返回此次会话的 `session_id`。新的 `task_id` 明确
+表示开始新任务；在途操作未结束时不能切换。旧 task id 被退役，旧 session id 不能重发
+到新任务上。不能用更换 task id 绕过任务预算或未知副作用处置。
+
 ## 1. 一个任务只有一个外层循环
 
 ```mermaid
@@ -27,7 +37,8 @@ flowchart TD
 | Function 作者与编译 | 既有 `compile_runlog_to_store` | 显式 stable/task_parameter/online_observation；v2 连续步骤不改 |
 | 内核执行 | `runtime/execution.py`、`core.py` | 同一 Checker → Transfer → Act → Observe；映射失败绝不重放 source 坐标 |
 | 内置任务 Harness | `OmniFlow.arun` | 唯一内置 Planner/Router 循环；官方完成判定、预算、停止 |
-| 外部调用 | `OmniFlow.acall_tool` | 一次 primitive 或 Function 调用；失败返回宿主，不启动内部 Planner |
+| 对外核心 | `OmniFlow.arecall` / `aexecute_function` | 召回不 act；执行仅限注册的 Function，失败返回宿主 |
+| 原始动作适配 | 既有 `acall_tool` / GUI-agent adapters | harness 的 OOB 原始动作接入，不进入两工具服务 |
 | 会话 | `GuiAgentToolRuntime` | 同一控制预算、串行执行、请求去重、显式关闭和新任务 |
 | 设备 | AndroidWorldHost / OobGuiAgentHost | 复用 OobControlClient；宿主决策与设备传输分别替换 |
 | 证据 | 既有 recorder/state owner | 无损 PNG 内容寻址、紧凑索引、必要时才转 base64 |
@@ -112,6 +123,10 @@ Function、bindings、source states 和 OmniTransfer 不依赖宿主的 Planner 
 宿主通过同一反馈协议更换，设备通过 Host 合同更换；两种变化不应互相牵连。
 当前真正实现的设备适配是 Android OOB；不能把接口可插拔表述为已经完成 iOS/Windows
 跨平台 Transfer。新增设备必须提供真实 Observe/Act/状态与坐标语义，并验证映射模型覆盖。
+
+两工具服务不是完整的 Android Agent。需要原始动作 fallback 的宿主必须另有适用于当前
+设备的动作通道，并协调同一设备 owner。Codex 自带桌面 CUA 不能被默认为 Android
+动作通道；缺少该能力时，Function 失败必须交还宿主或报告阻塞，不能暗中恢复内置 Planner。
 
 Codex 可通过 MCP 调用 Android OOB，而 Codex 自带 computer use 处理其支持的桌面。
 两者由 Codex 宿主协同，不接管或替换 Codex 的私有 CUA 后端。Codex 主观上响应快不等于

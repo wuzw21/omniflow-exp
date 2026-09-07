@@ -1,5 +1,41 @@
 # Releases
 
+## 1.1.0.dev1 — two Function services, 2026-09-07
+
+The public MCP surface now consists of `omniflow_recall` and `omniflow_execute`.
+Both use the existing recall and Check → Transfer → Act → Observe owners.
+The host owns planning, primitive fallback, completion and cancellation; a
+Function result never implicitly starts another Planner. Task identity keeps
+repeated recall within one deadline; request identity deduplicates execution.
+The development seven-tool MCP surface is superseded; invocation v1 and stored
+Function/RunLog schemas are unchanged.
+
+MCP, GUI-Owl, V-Droid and Mobilerun adapters share the two input definitions.
+An explicit Host factory supports synchronous and asynchronous backends, while
+formal AndroidWorld remains OOB-only. Optional Host application inventory is
+resolved under the invocation deadline. The OOB backend queries real installed
+packages before executing open_app; absent inventory and absent packages still
+fail explicitly. This addresses a live integration failure, **待真机验证**.
+
+The full suite passes 169 tests, with two optional upstream Droidrun registry
+checks skipped because its dependency cannot import. The installed Droidrun
+0.5.6 imports `mobilerun`, while installed mobilerun-sdk 5.1.0 exposes
+`mobilerun_sdk`. Contract fixtures cover four harness adapters × three Host
+forms × success/partial failure, plus application inventory, cancellation,
+task retirement, request deduplication and real MCP stdio discovery. These
+fixtures do not establish upstream LLM-driven or physical-device acceptance.
+
+The dev1 wheel imports from an isolated installation outside the repository,
+discovers exactly two tools and contains the distributable Skill. It excludes
+screenshots, APKs and model weights. No physical device is available; 9207
+and 4090 inventories contain emulators. Memory ON/OFF timing remains pending.
+
+Live evidence under `data/runtime/validation/20260907-two-tools-live*` records
+canonical 1024D OmniTransfer recall of the explicit Bluetooth Function on
+9207/emulator-45562 with OOB 0.6.1 (versionCode 7). The first execution exposed
+the missing inventory; subsequent runs encountered SSH timeouts. Preserve these
+failed attempts as integration evidence, not benchmark success or latency.
+
 ## 1.1.0.dev0 — host protocol refactor, 2026-09-07
 
 Observation evidence now uses immutable, content-addressed PNG files within
