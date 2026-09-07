@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from omniflow.runtime.timing import timed
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 import re
@@ -11,6 +13,7 @@ from omniflow.core.model import Action, Function, Observation, Transfer, Transfe
 from omniflow.runtime.control import checkpoint, invoke
 from omniflow.transfer.embedding import PageEncoder, TreeEmbedding
 from omniflow.transfer.runtime import requires_contextual_mapping
+from omniflow.transfer.errors import attempt_transfer
 
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
 PAGE_SIMILARITY_WEIGHT = 0.30
@@ -96,11 +99,12 @@ async def recall_functions(
             continue
         else:
             try:
-                mapped = await invoke(
+                mapped = await attempt_transfer(
                     transfer,
                     function.steps[0].action,
                     observation,
                     source_observation,
+                    phase="recall.entry",
                 )
                 transfer_result = (
                     mapped
@@ -340,6 +344,7 @@ def _page_match_failure(reason: str, **detail: Any) -> dict[str, Any]:
     }
 
 
+@timed("page_encoding")
 def _embed_page(
     encoder: PageEncoder,
     observation: Observation | None,

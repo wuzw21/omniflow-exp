@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from omniflow.core.config import Experiment
 from omniflow.core.model import RunResult
 from omniflow.runtime.protocol import review_completion
+from omniflow.runtime.timing import timed
 from src.integrations.gui_agent_mcp import runtime_socket
 from src.integrations.gui_agent_tools import GuiAgentToolRuntime
 
@@ -109,6 +110,7 @@ def _host_report(name: str, path: Path) -> dict[str, Any]:
 class CliHarness:
     name: str
 
+    @timed("host.external_unattributed")
     async def arun(self, context: HarnessContext) -> RunResult:
         root = context.evidence_root / "harness"
         root.mkdir(parents=True, exist_ok=True)

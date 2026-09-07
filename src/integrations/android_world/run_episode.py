@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 
 from omniflow import Action, RunResult
 from omniflow.core.trajectory import observation_xml
+from omniflow.runtime.timing import TimingLedger
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
@@ -940,6 +941,7 @@ class _ExperimentAgentAdapter:
         self._prepare_after_reset = prepare_after_reset
         self._completed_steps = 0
         self.execution_duration_ms = 0.0
+        self.execution_timing = TimingLedger()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)
@@ -947,6 +949,7 @@ class _ExperimentAgentAdapter:
     def reset(self, go_home: bool = False) -> None:
         self._completed_steps = 0
         self.execution_duration_ms = 0.0
+        self.execution_timing = TimingLedger()
         reset = self._agent.reset
         reset_parameters = inspect.signature(reset).parameters.values()
         supports_go_home = any(
@@ -994,7 +997,8 @@ class _ExperimentAgentAdapter:
             effective_goal = f"{effective_goal}\n\n{self._goal_hint}"
         execution_started = perf_counter()
         try:
-            result = self._agent.step(effective_goal)
+            with self.execution_timing.span("execution.other"):
+                result = self._agent.step(effective_goal)
         finally:
             self.execution_duration_ms += max(
                 0.0,
@@ -6604,6 +6608,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     diagnostics = {
                         "method": selected_agent,
+                        "wall_accounting": instrumented_agent.execution_timing.report(),
                         "official_validator_conclusion": bool(
                             official_validator_used
                         ),

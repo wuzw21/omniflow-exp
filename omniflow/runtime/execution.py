@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from omniflow.runtime.timing import timed, measure
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
@@ -42,7 +44,6 @@ from omniflow.runtime.core import (
 from omniflow.runtime.core import (
     prepare_action as prepare_core_action,
 )
-from omniflow.transfer.errors import record_transfer_error
 from omniflow.transfer.runtime import (
     transfer_action,
 )
@@ -58,6 +59,7 @@ _SWIPE_CONTAINER_EDGE_TOLERANCE_PX = 1.0
 StateLoader = Callable[[str], Any]
 
 
+@timed("function")
 async def execute_function(
     function: Function,
     *,
@@ -288,9 +290,10 @@ async def execute_robust_action(
     checker = plugins.checker
     if recovery_action is None and checker is not None:
         try:
-            recovery_value = await _await(
-                checker(CheckerContext(source_state, observation, action))
-            )
+            with measure("checker.plugin"):
+                recovery_value = await _await(
+                    checker(CheckerContext(source_state, observation, action))
+                )
             recovery_action = (
                 Action.from_value(recovery_value)
                 if recovery_value is not None
@@ -420,6 +423,7 @@ async def execute_robust_action(
     )
 
 
+@timed("checker.shared")
 async def _run_shared_checker_phase(
     phase: str,
     *,
@@ -919,6 +923,7 @@ async def record_step(
     return {"step_index": int(fallback_step_index), **fact}
 
 
+@timed("evidence")
 async def record_execution(
     host: Host,
     step: StepResult,
@@ -950,23 +955,8 @@ def default_transfer(
     observation: Observation,
     source_state: Observation | None = None,
 ) -> TransferResult:
-    """Transfer an action and record failed page pairs in the shared pool.
-
-    The matcher may reject a candidate, but that rejection is still evidence
-    about a concrete source page and target page.  Record it at this single
-    runtime boundary so fail-closed fallbacks keep their original return shape
-    and the Planner never receives page-pair diagnostics.
-    """
-
-    result = _default_transfer_impl(action, observation, source_state)
-    if result.action is None:
-        record_transfer_error(
-            action=action,
-            result=result,
-            source_page=source_state,
-            target_page=observation,
-        )
-    return result
+    """Canonical mapper; attempt_transfer owns shared failure recording."""
+    return _default_transfer_impl(action, observation, source_state)
 
 
 def _default_transfer_impl(

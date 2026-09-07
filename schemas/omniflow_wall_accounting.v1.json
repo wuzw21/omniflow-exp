@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OmniFlow non-overlapping wall accounting",
+  "type": "object",
+  "required": ["schema_version", "covered_wall_ms", "accounted_wall_ms", "components", "semantics"],
+  "properties": {
+    "schema_version": {"const": "omniflow.wall-accounting.v1"},
+    "covered_wall_ms": {"type": "number", "minimum": 0},
+    "accounted_wall_ms": {"type": "number", "minimum": 0},
+    "semantics": {"type": "string"},
+    "components": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["calls", "failed_calls", "inclusive_ms", "exclusive_ms"],
+        "properties": {
+          "calls": {"type": "integer", "minimum": 0},
+          "failed_calls": {"type": "integer", "minimum": 0},
+          "inclusive_ms": {"type": "number", "minimum": 0},
+          "exclusive_ms": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

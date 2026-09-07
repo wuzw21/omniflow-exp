@@ -60,7 +60,7 @@ dev = [
 include-package-data = false
 
 [tool.setuptools.data-files]
-"schemas" = ["schemas/omniflow_invocation.v1.json"]
+"schemas" = ["schemas/omniflow_invocation.v1.json", "schemas/omniflow_wall_accounting.v1.json", "schemas/omniflow_failure_pair.v1.json"]
 "share/omniflow/skills/omniflow-gui" = ["skills/omniflow-gui/SKILL.md"]
 "schemas/oob" = [
     "schemas/oob/README.md",

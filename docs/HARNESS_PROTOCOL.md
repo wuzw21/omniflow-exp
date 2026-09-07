@@ -4,6 +4,37 @@
 已有执行内核中分离，保留论文的核心机制：从成功轨迹提取显式参数化 Function，
 利用 canonical OmniTransfer 适应目标设备，每步观察并验证，失败交还 Agent。
 
+设计权威是 `mobicom27_gui_agent/design.tex` 和 `implementation.tex`。本地 Skymark 的
+`SYSTEM_ARCHITECTURE_CONTRACT.md` 仅用于指导局部测试：保存真实输入，在原有决策边界
+比较修改前后结果，再运行短闭环和官方端到端验证；局部命中率不能替代任务成功率。
+[Artemis](https://github.com/google/artemis) 仅作为执行反馈与进程生命周期测试参考：
+区分动作派发前拒绝、派发失败和结果未知，由原宿主收到反馈后决策；测试真实 MCP
+启动、关闭和标准输入输出隔离。两者都不替代 Function、canonical OmniTransfer 或
+既有 AndroidWorld owner，也不引入第二个任务入口。
+
+## 执行诊断（开发中）
+
+AndroidWorld 的公共 `agent.step` 适配器创建执行账本，所有 method/Harness 使用同一
+计时边界；重置任务时重置账本，抛出异常的 step 也保留时间。RunLog 的
+`diagnostics.wall_accounting` 使用 `omniflow.wall-accounting.v1`：
+`covered_wall_ms` 是被 span 覆盖的时间，`accounted_wall_ms` 是各 component 的
+`exclusive_ms` 之和，两者应相等。`inclusive_ms` 包含子调用，不可相加。
+并行叶节点重叠的部分归入 `concurrent`，不重复归给两方。
+
+当前拆分包括 Router/Planner、Recall、page encoding、Transfer、共享/插件 Checker、
+Host act、普通/稳定/动作后观察、完成检查和证据写入。Transfer 在共同调用边界计时，
+自定义 adapter 也计入。`host.external_unattributed` 是外部 CLI 中尚未拆开的时间，
+不能当作纯模型推理耗时；`execution.other` 是其他执行工作。当前账本尚未包含完整
+lifecycle 的 setup/最终官方 validator 分账，也尚未拆开 Host 内部 UI stabilization。
+
+失败池使用 `omniflow.failure-pair.v1`，每次失败追加一条记录。`pair_id` 根据 source、
+target 和 source action 内容计算，同一 pair 的 fast/stable/recall 尝试可以聚合。
+`phase` 区分 `execute.fast`、`execute.stable`、`recall.entry`；原始坐标仅作为
+source action 证据，不是目标动作。记录保存页面 hash/引用、有限候选（最多 8 个）、
+数值分数和短原因；不复制 XML、图片或大段上下文。`page_pair.complete` 仅表示尝试时
+两边都有 XML，不表示本记录可独立回放；局部回放仍需显式提供原始 pair 资产。
+这些诊断不改变原 Planner fallback，不作为运行时 Memory 来源。
+
 当前 `1.1.0.dev1` 将对外服务收敛为 **Function Recall + Function Execute**：
 `omniflow_recall(task_id, goal, limit)` 调用 `OmniFlow.arecall`，
 `omniflow_execute(session_id, request_id, function_id, arguments)` 调用同一执行内核。

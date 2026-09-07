@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from omniflow.runtime.timing import timed
+
 from typing import Any
 
 from omniflow.core.model import Observation, RunResult
@@ -9,6 +11,7 @@ from omniflow.core.model import Observation, RunResult
 PROTOCOL_VERSION = "omniflow.invocation.v1"
 
 
+@timed("completion_checker")
 async def review_completion(checker) -> dict[str, Any] | None:
     """One completion judgment for built-in and external task harnesses."""
     if checker is None:

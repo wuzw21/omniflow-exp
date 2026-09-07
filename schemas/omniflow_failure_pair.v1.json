@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OmniFlow compact mapping failure pair",
+  "type": "object",
+  "required": ["schema_version", "pair_id", "phase", "recorded_at", "pid", "context", "tool", "action", "reason", "page_pair", "transfer_detail"],
+  "properties": {
+    "schema_version": {"const": "omniflow.failure-pair.v1"},
+    "pair_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "phase": {"type": "string"},
+    "recorded_at": {"type": "string"},
+    "pid": {"type": "integer"},
+    "context": {"type": "object"},
+    "tool": {"type": "string"},
+    "action": {
+      "type": "object", "required": ["tool", "sha256", "args"],
+      "properties": {
+        "tool": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "args": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "reason": {"type": "string", "maxLength": 256},
+    "page_pair": {
+      "type": "object", "required": ["source_page", "target_page", "complete"],
+      "properties": {
+        "source_page": {"type": ["object", "null"]},
+        "target_page": {"type": ["object", "null"]},
+        "complete": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "transfer_detail": {"type": "object"}
+  },
+  "additionalProperties": false
+}

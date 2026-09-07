@@ -11,10 +11,28 @@ import tempfile
 from typing import Any
 
 from omniflow.core.model import Action, Observation, TransferResult
+from omniflow.runtime.control import invoke
+from omniflow.runtime.timing import measure
 
 
 ERROR_POOL_ENV = "OMNIFLOW_TRANSFER_ERROR_POOL"
 ERROR_POOL_FILENAME = "transfer_errors.jsonl"
+
+
+async def attempt_transfer(transfer, action, target, source, *, phase):
+    """One mapping boundary for recall, fast execution and stable retry."""
+    try:
+        with measure("transfer"):
+            result = await invoke(transfer, action, target, source)
+        if not isinstance(result, TransferResult):
+            result = TransferResult(None, reason="transfer_result_invalid")
+    except Exception as error:
+        result = TransferResult(None, reason=f"transfer_exception:{type(error).__name__}",
+                                detail={"exception_type": type(error).__name__})
+    if result.action is None:
+        record_transfer_error(action=action, result=result, source_page=source,
+                              target_page=target, phase=phase)
+    return result
 
 
 def record_transfer_error(
@@ -23,6 +41,7 @@ def record_transfer_error(
     result: TransferResult,
     source_page: Observation | None,
     target_page: Observation | None,
+    phase: str = "mapping",
 ) -> None:
     """Append one failed mapping and its page pair to the shared error pool."""
 
@@ -31,13 +50,22 @@ def record_transfer_error(
     try:
         source = _page_descriptor(source_page)
         target = _page_descriptor(target_page)
+        action_identity = hashlib.sha256(json.dumps(action.to_dict(), sort_keys=True).encode()).hexdigest()
+        pair_identity = {"source": (source or {}).get("identity_sha256"),
+                         "target": (target or {}).get("identity_sha256"), "action": action_identity}
         record = {
+            "schema_version": "omniflow.failure-pair.v1",
+            "pair_id": hashlib.sha256(json.dumps(pair_identity, sort_keys=True).encode()).hexdigest(),
+            "phase": phase,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "pid": os.getpid(),
             "context": _error_context(),
             "tool": action.tool,
-            "action": action.to_dict(),
-            "reason": result.reason or "transfer_failed",
+            "action": {"tool": action.tool, "sha256": action_identity,
+                       "args": {k: v if isinstance(v, (int, float, bool)) or v is None
+                                else {"sha256": hashlib.sha256(str(v).encode()).hexdigest(), "length": len(str(v))}
+                                for k, v in action.args.items()}},
+            "reason": str(result.reason or "transfer_failed")[:256],
             "page_pair": {
                 "source_page": source,
                 "target_page": target,
@@ -48,7 +76,7 @@ def record_transfer_error(
                     and target.get("xml_present")
                 ),
             },
-            "transfer_detail": result.detail or {},
+            "transfer_detail": _compact_detail(result.detail or {}),
         }
         payload = (json.dumps(record, ensure_ascii=False, default=str) + "\n").encode(
             "utf-8"
@@ -62,6 +90,22 @@ def record_transfer_error(
             os.close(descriptor)
     except Exception:  # noqa: BLE001 - diagnostics must never alter execution
         return
+
+
+def _compact_detail(detail, depth=0):
+    if not isinstance(detail, dict):
+        return {}
+    allowed = {"reason", "mapped", "score", "confidence", "page_similarity", "pair_confidence",
+               "absolute_contextual_confidence", "target_candidate_id", "target_execution_candidate_id",
+               "target_bbox", "bbox", "execution_bbox", "executable", "exception_type"}
+    result = {k: v for k, v in detail.items() if k in allowed and
+              (v is None or isinstance(v, (bool, int, float)) or isinstance(v, str) and len(v) <= 256
+               or isinstance(v, (list, tuple)) and len(v) <= 4 and all(isinstance(x, (int, float)) for x in v))}
+    candidates = detail.get("candidates")
+    if isinstance(candidates, list) and depth < 1:
+        result["candidates"] = [_compact_detail(c, depth+1) for c in candidates[:8] if isinstance(c, dict)]
+        result["candidate_count"] = len(candidates)
+    return result
 
 
 def _error_pool_path() -> Path:
@@ -82,8 +126,15 @@ def _error_context() -> dict[str, Any]:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError:
-        return {"raw": raw}
-    return value if isinstance(value, dict) else {"raw": raw}
+        value = None
+    # Context is an audit label, never a second payload store.
+    labels = {"task", "method", "device", "run_id", "function_id", "step_index"}
+    result = {key: item for key, item in (value.items() if isinstance(value, dict) else ())
+              if key in labels and (item is None or isinstance(item, (bool, int, float))
+                                    or isinstance(item, str) and len(item) <= 256)}
+    if value != result:
+        result["context_sha256"] = hashlib.sha256(raw.encode()).hexdigest()
+    return result
 
 
 def _page_descriptor(observation: Observation | None) -> dict[str, Any] | None:
@@ -109,14 +160,19 @@ def _page_descriptor(observation: Observation | None) -> dict[str, Any] | None:
         state_id = "state_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
     display = extra.get("display")
     return {
+        "identity_sha256": hashlib.sha256(json.dumps({"xml": xml,
+            "package_name": observation.package_name, "activity_name": observation.activity_name,
+            "display": display or {}}, sort_keys=True, default=str).encode()).hexdigest(),
         "state_id": state_id,
         "package_name": str(observation.package_name or ""),
         "activity_name": str(observation.activity_name or ""),
-        "display": dict(display) if isinstance(display, dict) else {},
+        "display": {key: value for key, value in (display.items() if isinstance(display, dict) else ())
+                    if key in {"width", "height", "rotation", "density", "density_dpi"}
+                    and isinstance(value, (int, float)) and not isinstance(value, bool)},
         "xml_present": bool(xml),
         "xml_sha256": hashlib.sha256(xml.encode("utf-8")).hexdigest() if xml else "",
         "screenshot_path": str(extra.get("screenshot_path") or ""),
     }
 
 
-__all__ = ["ERROR_POOL_ENV", "ERROR_POOL_FILENAME", "record_transfer_error"]
+__all__ = ["ERROR_POOL_ENV", "ERROR_POOL_FILENAME", "record_transfer_error", "attempt_transfer"]

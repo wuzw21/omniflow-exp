@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from omniflow.runtime.timing import measure
+
 import inspect
 import os
 import time
@@ -23,6 +25,7 @@ from omniflow.runtime.control import (
     invoke,
 )
 from omniflow.transfer.runtime import requires_contextual_mapping
+from omniflow.transfer.errors import attempt_transfer
 
 
 async def execute_action(
@@ -63,7 +66,8 @@ async def execute_action(
     control = CURRENT_CONTROL.get()
     if control is not None:
         control.effect_unknown = True
-    action_result = ActionResult.from_value(await invoke(host.act, decision.action))
+    with measure("host.act"):
+        action_result = ActionResult.from_value(await invoke(host.act, decision.action))
     if control is not None:
         control.effect_unknown = not action_result.success
         control.actions_executed += int(action_result.success)
@@ -108,11 +112,12 @@ async def execute_action(
         else None
     )
     observation_started_ns = time.perf_counter_ns()
-    after = Observation.from_value(
-        cached_after
-        if cached_after is not None
-        else await invoke(host.observe, xml=True, screenshot=False, app_info=True)
-    )
+    with measure("observe.post_action"):
+        after = Observation.from_value(
+            cached_after
+            if cached_after is not None
+            else await invoke(host.observe, xml=True, screenshot=False, app_info=True)
+        )
     if control is not None:
         control.observation = after
     observation_duration_ms = (
@@ -166,7 +171,7 @@ async def prepare_action(
     if plugins.transfer is None:
         return ActionDecision("block", reason="transfer_not_configured")
     transfer_started_ns = time.perf_counter_ns()
-    transfer = await invoke(plugins.transfer, action, observation, source_state)
+    transfer = await attempt_transfer(plugins.transfer, action, observation, source_state, phase="execute.fast")
     transfer_fast_ms = (time.perf_counter_ns() - transfer_started_ns) / 1_000_000.0
     if transfer.action is not None:
         detail = {
@@ -185,14 +190,15 @@ async def prepare_action(
     stable_observe = getattr(host, "observe_stable", None) if host is not None else None
     if callable(stable_observe):
         stable_observe_started_ns = time.perf_counter_ns()
-        stable_observation = Observation.from_value(
-            await invoke(stable_observe, xml=True, screenshot=False, app_info=True)
-        )
+        with measure("observe.stable"):
+            stable_observation = Observation.from_value(
+                await invoke(stable_observe, xml=True, screenshot=False, app_info=True)
+            )
         stable_observe_ms = (
             time.perf_counter_ns() - stable_observe_started_ns
         ) / 1_000_000.0
         stable_transfer_started_ns = time.perf_counter_ns()
-        stable_transfer = await invoke(plugins.transfer, action, stable_observation, source_state)
+        stable_transfer = await attempt_transfer(plugins.transfer, action, stable_observation, source_state, phase="execute.stable")
         stable_transfer_ms = (
             time.perf_counter_ns() - stable_transfer_started_ns
         ) / 1_000_000.0

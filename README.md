@@ -26,6 +26,9 @@ RunLog 的 `diagnostics.harness` 保存宿主实际报告的模型与用量；�
 请求次数时，结果 `model_calls` / `vlm_calls` 为 null，表示未知，不计作零次调用。
 恢复策略可用 `--checker on|off` 配置，默认 on；off 不关闭官方完成验证，
 结果标记为 Checker 消融并单独归档。SDK 使用 `RuntimeSettings(checker_enabled=False)`。
+RunLog 的 `diagnostics.wall_accounting` 保存公共执行边界内的非重叠耗时分账；映射
+失败池保存紧凑 pair/hash 和有限候选。字段与当前覆盖限制见
+[执行诊断](docs/HARNESS_PROTOCOL.md#执行诊断开发中)，不得将未归因时间当成模型耗时。
 
 对外提供的是可复用的跨设备 Function Memory 服务：宿主决定做什么，OmniFlow
 负责召回已有操作片段，并在当前设备上用共享闭环执行、返回事实。交付物包含

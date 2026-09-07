@@ -15,6 +15,7 @@ import tempfile
 import uuid
 
 from omniflow.core.model import Observation
+from omniflow.runtime.timing import timed
 from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.runtime.control import ExecutionStopped
 from omniflow.runtime.engine import OmniFlow
@@ -34,6 +35,7 @@ class GuiAgentMcp:
             name=tool.name, description=tool.description, input_schema=tool.input_schema)
             for tool in self.runtime.function_tools()])
 
+    @timed("mcp.request")
     async def call_tool(self, _context, params):
         from mcp import types
         name, args = params.name, params.arguments or {}

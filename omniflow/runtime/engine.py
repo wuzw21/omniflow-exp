@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from omniflow.runtime.timing import timed, measure
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -495,7 +497,8 @@ class OmniFlow:
                 cache_audit["status"] = "router_unavailable"
             else:
                 try:
-                    routed_value = await invoke(self.function_router.route_function, goal, cache_functions)
+                    with measure("model.router"):
+                        routed_value = await invoke(self.function_router.route_function, goal, cache_functions)
                     checkpoint()
                     routed_call = (
                         ToolCall.from_value(routed_value)
@@ -647,15 +650,16 @@ class OmniFlow:
                     ),
                 )
             try:
-                planned_call = ToolCall.from_value(
-                    await invoke(
-                        self.planner.one_step_tool_call,
-                        goal,
-                        planner_observation,
-                        planner_functions,
-                        dict(self.installed_apps),
+                with measure("model.planner"):
+                    planned_call = ToolCall.from_value(
+                        await invoke(
+                            self.planner.one_step_tool_call,
+                            goal,
+                            planner_observation,
+                            planner_functions,
+                            dict(self.installed_apps),
+                        )
                     )
-                )
             except Exception as error:  # noqa: BLE001
                 planner_metadata = _take_planner_metadata(self.planner)
                 _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
@@ -884,6 +888,7 @@ class OmniFlow:
             planner_diagnostics=planner_diagnostics,
         )
 
+    @timed("observe")
     async def _observe(self, *, screenshot: bool) -> Observation:
         checkpoint()
         observation = Observation.from_value(
@@ -1087,6 +1092,7 @@ class OmniFlow:
         return replace(result, detail={**result.detail, "feedback": invocation_feedback(result),
             "runtime_policy": {"checker_enabled": self.config.runtime.checker_enabled}})
 
+    @timed("recall")
     async def _recall(
         self,
         goal: str,
