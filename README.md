@@ -170,7 +170,8 @@ Online Planner 仅通过 canonical 工具 Schema 输出一个动作；`finished`
 不发送 `answer` 动作，任务成功仍只由 AndroidWorld 官方 validator 判定。
 
 Function 是一种普通 Action；它的 action list 和返回结果写入统一 action history，作为
-Planner 的判断证据。Function replay 成功或失败都回到同一条 Planner 主线。Planner
+Planner 的判断证据。完整 Function 通过当前 task 的官方完成检查后立即终止；未通过
+或 replay 失败时回到同一条 Planner 主线。Planner
 模型输出带非空内容的 `finished` 后，Engine 立即结束 OmniFlow 生命周期并把终止结果
 交给 AndroidWorld；任务是否成功只由 AndroidWorld 官方 validator 判定。`observation`
 只表示当前状态，`finished` 只表示终止结果，二者不与同一轮设备动作混合。

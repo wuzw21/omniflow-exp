@@ -1,5 +1,32 @@
 # Releases
 
+## 2026-09-08 Harness refactor acceptance
+
+The paper remains the design authority. The shared engine owns Recall/Execute,
+control and Host access; `builtin_harness.py` owns the original native planning
+loop. External hosts use the same Function runtime through two MCP tools.
+The latest code checkpoint is `7945b101`; the project suite has 217 passing tests.
+
+| Requested capability | Verification |
+|---|---|
+| One AndroidWorld entry, interchangeable Harness | `run_androidworld.sh run --harness builtin/codex/claude/module:factory`; official success in `data/runtime/validation/20260908-unified-harness/summary.json`, newer Codex/Claude RunLog hashes rechecked from `20260908-state-consistency/summary.json` |
+| Simple public interface | `omniflow_recall` / `omniflow_execute`, Python SDK and packaged GUI Skill; real MCP tests and model-driven host evidence above |
+| Local Harness iteration without a second runner | Factory capability provisioning tests; temporary fault-injection factories use the same episode and are preserved as evidence strings, not production task scripts |
+| Configurable, measured recovery | Checker ON/OFF tests and `20260908-checker-policy/summary.json`; bounded native model retries in `20260908-model-request-recovery/evidence.json` |
+| Complete execution/lifecycle accounting | Shared non-overlapping ledgers, failed-call and concurrency regression tests; native and external RunLogs reconcile with owner clocks |
+| Failure pairs and original Planner fallback | Mapping rejection followed by official success in `20260908-model-request-recovery/evidence.json`; binding failure followed by official success in `20260908-binding-failure/evidence.json` |
+| Faithful local mapping replay | Deduplicated, bounded, hash-verified failure assets; masked target input verified on emulator in `20260908-masked-pair/evidence.json`; preprocessing failures explicitly report unavailable replay |
+| Stop and completion semantics | Shared cancellation/closed-session/deduplication tests, real in-flight OOB cancellation in `20260907-oob-inflight-cancel-003/summary.json`; no further Planner call after verified Function completion |
+
+All abbreviated evidence directories above are beneath `data/runtime/validation/`.
+Acceptance is on Android emulators as requested. It proves these integration and
+recovery paths, not all 116 AndroidWorld tasks, physical-phone acceptance, or a
+speed advantage. External CLI internals remain `host.external_unattributed`;
+OOB RPC time includes transport and device work. Neither is reported as pure
+model latency. Codex/Claude's two-tool integration requires the host to supply
+its own primitive-action recovery channel; it does not secretly run the native
+Planner. Historical releases and older evidence below retain their original scope.
+
 ## 1.1.0.dev1 — two Function services, 2026-09-07
 
 Actual model-driven host acceptance now covers Codex CLI 0.153.4 and Claude
