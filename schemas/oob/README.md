@@ -76,7 +76,9 @@ Canonical action constraints include:
   canonical action converter before persistence.
 - The converter keeps only arguments whose schema entry does not set
   `persisted: false`. Node ids, resource ids, screenshots, target descriptions,
-  and target evidence are never saved.
+  and target evidence are never saved. Required action coordinates remain
+  persisted when the canonical schema requires them, because OmniTransfer
+  needs the recorded source point for state-aware Function replay.
 - There is no separate forbidden-field list or compiler cleanup list.
 - Unsupported tools, invalid persisted values, and missing required persisted
   arguments fail conversion; all other non-persisted input is omitted.
