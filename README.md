@@ -24,6 +24,8 @@ AndroidWorld setup/reset、同一 OOB Host、Function 闭环、官方 validator 
 不同宿主的接入结果作为外部 Harness 证据保存，不晋升为冻结模型的论文结果。
 RunLog 的 `diagnostics.harness` 保存宿主实际报告的模型与用量；宿主不提供 API
 请求次数时，结果 `model_calls` / `vlm_calls` 为 null，表示未知，不计作零次调用。
+恢复策略可用 `--checker on|off` 配置，默认 on；off 不关闭官方完成验证，
+结果标记为 Checker 消融并单独归档。SDK 使用 `RuntimeSettings(checker_enabled=False)`。
 
 对外提供的是可复用的跨设备 Function Memory 服务：宿主决定做什么，OmniFlow
 负责召回已有操作片段，并在当前设备上用共享闭环执行、返回事实。交付物包含

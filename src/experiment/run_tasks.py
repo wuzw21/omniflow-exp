@@ -64,7 +64,8 @@ def _experimental_omniflow_enabled(method: str) -> bool:
     return (
         str(method or "").strip() == "omniflow"
         and (bool(str(os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or "").strip())
-             or os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin")
+             or os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
+             or os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on")
     )
 
 
@@ -1038,7 +1039,8 @@ def _run_command(
                 task=args.task,
                 method=method,
                 device=device,
-                archive_kind=("external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
+                archive_kind=("checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
+                              else "external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
                               else "experimental_gpt55"),
             )
         else:
@@ -1189,6 +1191,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory", default="")
     parser.add_argument("--harness", default=os.environ.get("OMNIFLOW_HARNESS", "builtin"),
                         help="OmniFlow task harness: builtin, codex, claude, or module:factory")
+    parser.add_argument("--checker", choices=("on", "off"), default=os.environ.get("OMNIFLOW_CHECKER_MODE", "on"),
+                        help="Shared recovery Checker policy; official completion validation always remains enabled")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument(
         "--evaluation-seed",
@@ -1235,6 +1239,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.checker != "on" and (args.action != "run" or args.method != "omniflow"):
+        raise ValueError("checker_ablation_requires_run_method_omniflow")
+    os.environ["OMNIFLOW_CHECKER_MODE"] = args.checker
     if args.harness != "builtin" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("external_harness_requires_run_method_omniflow")
     os.environ["OMNIFLOW_HARNESS"] = args.harness

@@ -170,6 +170,18 @@ OOB 0.6.1 / versionCode 7。实际 OOB 截图和一个 wait 动作成功；重�
 避免在没有实测前引入第二套执行循环。
 ## 统一 AndroidWorld Harness 接口
 
+局部迭代参考本地 SkyMark 的 `SYSTEM_ARCHITECTURE_CONTRACT.md`：真实保存状态上的
+局部调用只能证明局部行为，候选必须返回相同运行入口做官方 E2E；缺少状态转移或
+oracle 的样本保留 unknown，不能把局部通过率相乘当任务成功。版本由 Git commit
+固定，测试输入显式传入，不复制 SkyMark 的 registry 或历史索引到运行时。
+
+恢复 Checker 通过 `OmniFlowConfig.runtime.checker_enabled` 配置；AndroidWorld
+统一入口使用 `--checker on|off`，独立 MCP 使用相同参数。默认 on。off 同时关闭
+共享恢复规则和默认/自定义恢复 Checker，但不会关闭官方完成验证、参数校验、
+OmniTransfer admission 或设备错误检查。结果 `runtime_policy.checker_enabled` 与
+原有 checker trigger counts 一起保存；off 结果归档为 checker_ablation，不晋升为
+默认论文结果。连接现有运行时的 MCP 字节桥不接受第二份 Checker 配置。
+
 AndroidWorld `agent.step` 只调用 `TaskHarness.arun(HarnessContext)`；默认适配器调用
 现有 `flow.arun`，CLI 适配器把同一 `flow` 的两工具服务交给外部宿主。其他宿主以
 `package.module:factory` 接入这个接口，不复制 episode、Host 或 Function 执行。

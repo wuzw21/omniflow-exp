@@ -6678,6 +6678,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "llm_usage",
                             "planner_diagnostics",
                             "harness",
+                            "runtime_policy",
                         ):
                             detail_value = runtime_detail.get(detail_name)
                             if isinstance(detail_value, dict):

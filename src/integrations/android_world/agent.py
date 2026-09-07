@@ -209,6 +209,7 @@ def build_agent(
             runtime=RuntimeSettings(
                 max_steps=configured_max_steps,
                 max_fallback_steps=max_fallback_steps,
+                checker_enabled=os.environ.get("OMNIFLOW_CHECKER_MODE", "on") == "on",
             ),
         ),
     )

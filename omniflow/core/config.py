@@ -57,6 +57,7 @@ class RuntimeSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
     max_function_tools: int = DEFAULT_MAX_FUNCTION_TOOLS
+    checker_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,6 @@ class OmniFlowConfig:
 
         configured = self.plugins
         return PluginSet(
-            checker=configured.checker or default_checker,
+            checker=(configured.checker or default_checker) if self.runtime.checker_enabled else None,
             transfer=configured.transfer or default_transfer,
         )

@@ -15,6 +15,7 @@ import tempfile
 import uuid
 
 from omniflow.core.model import Observation
+from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.runtime.control import ExecutionStopped
 from omniflow.runtime.engine import OmniFlow
 from omniflow.transfer.runtime import load_transfer_state_catalog
@@ -195,7 +196,7 @@ def device_lease(device: str):
 
 def build_runtime(*, device: str, store: Path | None = None, adb_path: str = "",
                   evidence_root: Path | None = None, timeout_seconds: float = 600,
-                  host_factory=None):
+                  host_factory=None, checker_enabled: bool = True):
     root = evidence_root or Path.cwd() / "data/runtime/gui_agent" / uuid.uuid4().hex
     if store is not None and not store.is_file():
         raise ValueError("explicit_function_store_not_found")
@@ -210,7 +211,8 @@ def build_runtime(*, device: str, store: Path | None = None, adb_path: str = "",
     # No Memory means an empty in-process store. This path is never saved or
     # populated by the runtime; no compiler, discovery scan, or catalog runs.
     empty_path = root / f"unused-empty-store-{uuid.uuid4().hex}.json"
-    flow = OmniFlow(store or empty_path, host=host)
+    flow = OmniFlow(store or empty_path, host=host,
+        config=OmniFlowConfig(runtime=RuntimeSettings(checker_enabled=checker_enabled)))
     if flow.store.load_errors:
         raise ValueError(f"function_store_invalid:{flow.store.load_errors}")
     return GuiAgentToolRuntime(host=host, flow=flow, timeout_seconds=timeout_seconds)
@@ -225,10 +227,11 @@ def main():
     parser.add_argument("--adb-path", default="")
     parser.add_argument("--evidence-root", type=Path)
     parser.add_argument("--timeout-seconds", type=float, default=600)
+    parser.add_argument("--checker", choices=("on", "off"), default=None)
     parser.add_argument("--host-factory", help="Explicit Python module:callable implementing Host; default is OOB")
     args = parser.parse_args()
     if args.connect:
-        if args.store or args.host_factory:
+        if args.store or args.host_factory or args.checker is not None:
             parser.error("--connect uses the owner's Store and Host")
         connect_stdio(args.connect)
         return
@@ -245,7 +248,7 @@ def main():
                 raise TypeError("host_factory_not_callable")
         runtime = build_runtime(device=args.device, store=args.store, adb_path=args.adb_path,
                                 evidence_root=args.evidence_root, timeout_seconds=args.timeout_seconds,
-                                host_factory=factory)
+                                host_factory=factory, checker_enabled=args.checker != "off")
         server = create_server(runtime)
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())

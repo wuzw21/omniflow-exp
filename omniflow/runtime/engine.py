@@ -127,7 +127,7 @@ class OmniFlow:
         # Checkers are runtime-wide recovery policy, not Function-local data.
         # Keep one shared library so every Function sees the same rules and
         # trigger budgets; a Memory package must not carry a private copy.
-        self.checker_library = CheckerLibrary.load()
+        self.checker_library = CheckerLibrary.load() if self.config.runtime.checker_enabled else CheckerLibrary()
         self.host = host
         self.planner = planner
         self.function_router = function_router
@@ -1084,7 +1084,8 @@ class OmniFlow:
             self._active_control = None
             CURRENT_CONTROL.reset(token)
             self._operation_lock.release()
-        return replace(result, detail={**result.detail, "feedback": invocation_feedback(result)})
+        return replace(result, detail={**result.detail, "feedback": invocation_feedback(result),
+            "runtime_policy": {"checker_enabled": self.config.runtime.checker_enabled}})
 
     async def _recall(
         self,
