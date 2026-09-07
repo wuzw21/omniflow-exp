@@ -33,6 +33,18 @@ requires observation before recovery. No Function kernel or schema changed.
 Evidence: `data/runtime/validation/20260907-model-empty-memory/summary.json`
 and `data/runtime/validation/20260907-model-stop-acceptance/summary.json`.
 
+A subsequent real OOB/MCP check cancels while the act broadcast subprocess is
+still running, after Android am announces the request. The shared operation
+lock stays held at cancellation; the current OOB call drains and records one
+action before release. No second act is broadcast, the original request returns
+cached cancellation facts, and a new request is rejected by the closed session.
+Bluetooth stays on. Instrumentation records actual subprocess I/O without
+delaying actions or replacing results, Functions, or the execution kernel.
+Evidence: `data/runtime/validation/20260907-oob-inflight-cancel-003/summary.json`.
+This verifies pending OOB I/O, not the exact Android gesture dispatch instant
+or physical-device acceptance. An earlier diagnostic found no window after
+broadcast return and completed the OFF Function; the same service restored ON.
+
 The public MCP surface now consists of `omniflow_recall` and `omniflow_execute`.
 Both use the existing recall and Check → Transfer → Act → Observe owners.
 The host owns planning, primitive fallback, completion and cancellation; a

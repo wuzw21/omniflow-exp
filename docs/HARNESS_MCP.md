@@ -142,6 +142,17 @@ Codex 退出码为 1，未返回 execute 结果；Claude 退出码为 0，却返
 桌面应用停止按钮、断电恢复或跨进程 exactly-once。Skill 明确要求缺少 invocation
 反馈时将副作用视为未知，恢复前核验当前设备；真机验收仍待完成。
 
+真实 OOB 调用在途取消补测通过：在 Android `am broadcast` 宣告 act 请求、且该
+子进程仍运行时，通过真实 MCP ClientSession 发送取消。服务收到取消时仍持有执行锁，
+当前 OOB 调用完成、回执读取和动作记录收尾后才释放；只派发一个 act，后续新请求
+被关闭会话拒绝，相同 request_id 返回缓存的取消事实，蓝牙保持开启。测试使用既有
+Function、OOB 与内核，只在 subprocess 注入点记录真实 I/O 并触发取消，没有人为
+延长动作或伪造结果。记录：
+`data/runtime/validation/20260907-oob-inflight-cancel-003/summary.json`。
+该证据覆盖同步 OOB I/O 在途时的协议取消，不测定 Android 手势的精确派发时点，
+也不替代真实模型宿主的桌面停止按钮或真机验收。此前返回广播后再检查回执的尝试
+未捕获到在途窗口，Function 完整执行后已经通过原有 Function 服务恢复蓝牙。
+
 协议测试覆盖真实 stdio initialize/list、严格两工具发现、过期 session 拒绝；
 适配矩阵覆盖 MCP、GUI-Owl、V-Droid、Mobilerun 与同步 Host、异步 Host、OOB Host
 适配器的组合，检查召回零 act、Function 执行、部分失败、请求去重和宿主控制权。
