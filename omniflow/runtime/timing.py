@@ -3,6 +3,7 @@
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
+from dataclasses import replace
 from functools import wraps
 import inspect
 from threading import Lock
@@ -35,7 +36,7 @@ class TimingLedger:
             span["end"] = self.clock()
             _CURRENT.reset(token)
 
-    def report(self):
+    def report(self, *, owner_wall_ms=None):
         with self._lock:
             spans = [dict(span) for span in self._spans]
         if any(s["end"] is None for s in spans):
@@ -66,15 +67,32 @@ class TimingLedger:
                 else:
                     active.discard(index)
             previous = tick
-        return {"schema_version": "omniflow.wall-accounting.v1", "covered_wall_ms": total,
+        report = {"schema_version": "omniflow.wall-accounting.v1", "covered_wall_ms": total,
                 "accounted_wall_ms": sum(v["exclusive_ms"] for v in components.values()),
                 "components": dict(components),
                 "semantics": "exclusive partitions wall time; inclusive spans overlap and must not be summed"}
+        if owner_wall_ms is not None:
+            report["owner_wall_ms"] = float(owner_wall_ms)
+            report["owner_delta_ms"] = float(owner_wall_ms) - total
+        return report
 
 
 def measure(name):
     current = _CURRENT.get()
     return current[0].span(name) if current else nullcontext()
+
+
+def account_invocation(callback):
+    """Give standalone SDK calls a ledger; reuse an enclosing task ledger."""
+    @wraps(callback)
+    async def accounted(*args, **kwargs):
+        if _CURRENT.get() is not None:
+            return await callback(*args, **kwargs)
+        ledger = TimingLedger()
+        with ledger.span("invocation.other"):
+            result = await callback(*args, **kwargs)
+        return replace(result, detail={**result.detail, "wall_accounting": ledger.report()})
+    return accounted
 
 
 def timed(name):

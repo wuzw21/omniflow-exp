@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from omniflow.runtime.timing import timed, measure
+from omniflow.runtime.timing import timed, measure, account_invocation
 
 import asyncio
 from collections.abc import Callable
@@ -1060,6 +1060,7 @@ class OmniFlow:
         control.cancelled.set()
         return True
 
+    @account_invocation
     async def _controlled(self, callback, *args, **kwargs) -> RunResult:
         if not self._operation_lock.acquire(blocking=False):
             result = RunResult(False, error="execution_busy", detail={"done_reason": "execution_busy"})

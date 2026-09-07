@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 
 from omniflow import Action, RunResult
 from omniflow.core.trajectory import observation_xml
-from omniflow.runtime.timing import TimingLedger
+from omniflow.runtime.timing import TimingLedger, measure, timed
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from omniflow.vlm.usage import token_usage_status
 from src.experiment.observation_evidence import (
@@ -942,10 +942,12 @@ class _ExperimentAgentAdapter:
         self._completed_steps = 0
         self.execution_duration_ms = 0.0
         self.execution_timing = TimingLedger()
+        self.execution_active = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)
 
+    @timed("setup.agent_reset")
     def reset(self, go_home: bool = False) -> None:
         self._completed_steps = 0
         self.execution_duration_ms = 0.0
@@ -996,10 +998,13 @@ class _ExperimentAgentAdapter:
         if self._goal_hint:
             effective_goal = f"{effective_goal}\n\n{self._goal_hint}"
         execution_started = perf_counter()
+        self.execution_active = True
         try:
-            with self.execution_timing.span("execution.other"):
-                result = self._agent.step(effective_goal)
+            with measure("lifecycle.execution"):
+                with self.execution_timing.span("execution.other"):
+                    result = self._agent.step(effective_goal)
         finally:
+            self.execution_active = False
             self.execution_duration_ms += max(
                 0.0,
                 (perf_counter() - execution_started) * 1000.0,
@@ -6453,7 +6458,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # the official VLC fixture before AndroidWorld initializes the task.
         _ensure_androidworld_vlc_fixture(task, env)
         original_task_initialize = task.initialize_task
+        original_task_validator = task.is_successful
 
+        @timed("setup.task_initialize")
         def initialize_task_with_official_ui(
             initialization_env: Any,
             *initialization_args: Any,
@@ -6519,33 +6526,45 @@ def main(argv: Sequence[str] | None = None) -> int:
                 adb_path=str(args.adb_path or ""),
             ),
         )
+        def measured_task_validator(*validation_args, **validation_kwargs):
+            # In-loop completion checking is already owned by execution timing.
+            if instrumented_agent.execution_active:
+                return original_task_validator(*validation_args, **validation_kwargs)
+            with measure("official_validator"):
+                return original_task_validator(*validation_args, **validation_kwargs)
+
+        task.is_successful = measured_task_validator
+        lifecycle_timing = TimingLedger()
         print(
             "Starting official AndroidWorld runner with "
             f"agent={mainline_name} and writing to {checkpoint_dir}"
         )
         try:
-            _prepare_official_harness_episode(
-                env,
-                selected_agent=selected_agent,
-            )
-            file_utils = importlib.import_module("android_world.utils.file_utils")
-            original_clear_directory = _patch_androidworld_directory_clear(
-                file_utils,
-                aw_setup.adb_utils,
-            )
-            try:
-                results = suite_utils.run(
-                    suite,
-                    instrumented_agent,
-                    checkpointer=checkpointer,
-                    demo_mode=False,
-                    return_full_episode_data=True,
+            with lifecycle_timing.span("lifecycle.other"):
+                with measure("setup.harness"):
+                    _prepare_official_harness_episode(
+                        env,
+                        selected_agent=selected_agent,
+                    )
+                file_utils = importlib.import_module("android_world.utils.file_utils")
+                original_clear_directory = _patch_androidworld_directory_clear(
+                    file_utils,
+                    aw_setup.adb_utils,
                 )
-            finally:
-                file_utils.clear_directory = original_clear_directory
-            result = results[0] if results else None
+                try:
+                    results = suite_utils.run(
+                        suite,
+                        instrumented_agent,
+                        checkpointer=checkpointer,
+                        demo_mode=False,
+                        return_full_episode_data=True,
+                    )
+                finally:
+                    file_utils.clear_directory = original_clear_directory
+                result = results[0] if results else None
         finally:
             task.initialize_task = original_task_initialize
+            task.is_successful = original_task_validator
             lifecycle_finished_perf = perf_counter()
             lifecycle_duration_ms = max(
                 0.0,
@@ -6608,7 +6627,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     diagnostics = {
                         "method": selected_agent,
-                        "wall_accounting": instrumented_agent.execution_timing.report(),
+                        "wall_accounting": instrumented_agent.execution_timing.report(
+                            owner_wall_ms=execution_duration_ms),
+                        "lifecycle_wall_accounting": lifecycle_timing.report(
+                            owner_wall_ms=lifecycle_duration_ms),
                         "official_validator_conclusion": bool(
                             official_validator_used
                         ),

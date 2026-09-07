@@ -44,6 +44,29 @@ def test_nested_wall_time_reconciles_without_double_counting():
     assert report['components']['execution.other']['exclusive_ms'] == 5
 
 
+def test_lifecycle_and_execution_are_separate_accounting_scopes():
+    clock = [0]
+    lifecycle = TimingLedger(clock=lambda: clock[0] * 1_000_000)
+    execution = TimingLedger(clock=lambda: clock[0] * 1_000_000)
+    with lifecycle.span('lifecycle.other'):
+        with measure('setup'):
+            clock[0] = 2
+        with measure('lifecycle.execution'):
+            with execution.span('execution.other'):
+                with measure('completion_checker'):
+                    clock[0] = 5
+                clock[0] = 7
+        with measure('official_validator'):
+            clock[0] = 9
+        clock[0] = 10
+    report = lifecycle.report(owner_wall_ms=10.1)
+    assert report['covered_wall_ms'] == report['accounted_wall_ms'] == 10
+    assert report['owner_delta_ms'] == pytest.approx(.1)
+    assert report['components']['lifecycle.execution']['exclusive_ms'] == 5
+    assert 'completion_checker' not in report['components']
+    assert execution.report()['covered_wall_ms'] == 5
+
+
 def test_parallel_tasks_and_cancelled_span_remain_accounted():
     async def scenario():
         clock = [0]

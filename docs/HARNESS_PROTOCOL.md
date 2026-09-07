@@ -20,12 +20,26 @@ AndroidWorld 的公共 `agent.step` 适配器创建执行账本，所有 method/
 `covered_wall_ms` 是被 span 覆盖的时间，`accounted_wall_ms` 是各 component 的
 `exclusive_ms` 之和，两者应相等。`inclusive_ms` 包含子调用，不可相加。
 并行叶节点重叠的部分归入 `concurrent`，不重复归给两方。
+独立 SDK 的 `arecall`、`aexecute_function`、`acall_tool` 和 `arun` 也在共同调用
+边界创建账本，返回 `detail.wall_accounting`；已有外层任务账本时直接复用，避免嵌套
+调用各自重新统计。SDK 范围是内核调用，不包含 MCP 序列化或宿主进程启动。
 
 当前拆分包括 Router/Planner、Recall、page encoding、Transfer、共享/插件 Checker、
 Host act、普通/稳定/动作后观察、完成检查和证据写入。Transfer 在共同调用边界计时，
 自定义 adapter 也计入。`host.external_unattributed` 是外部 CLI 中尚未拆开的时间，
-不能当作纯模型推理耗时；`execution.other` 是其他执行工作。当前账本尚未包含完整
-lifecycle 的 setup/最终官方 validator 分账，也尚未拆开 Host 内部 UI stabilization。
+不能当作纯模型推理耗时；`execution.other` 是其他执行工作。
+
+`diagnostics.lifecycle_wall_accounting` 使用同一 schema，但范围是既有 lifecycle
+计时边界：`setup.harness`、`setup.agent_reset`、`setup.task_initialize`、
+`lifecycle.execution`、`official_validator` 和 `lifecycle.other`。执行中的完成检查
+只进入执行账本，不再计入 lifecycle 的最终官方 validator。两个账本分别对账，不能
+相加。`owner_wall_ms` 保留现有计时器值，`owner_delta_ms` 为该值减 span 覆盖时间；
+差额保留符号，不截零掩盖重复统计。进程启动及既有 lifecycle 之前的环境准备不在此范围。
+
+Host 内进一步拆分 `oob.observe_rpc`、`oob.act_rpc`、`oob.retry_wait`、
+`ui.app_ready` 与 `ui.stabilization.local`。RPC 包含传输和设备处理，设备端稳定采样
+尚未独立拆分；只有 Python 端的显式等待可以计入 local stabilization。不得把整个
+RPC 时长称为纯设备执行、纯网络或纯稳定等待。
 
 失败池使用 `omniflow.failure-pair.v1`，每次失败追加一条记录。`pair_id` 根据 source、
 target 和 source action 内容计算，同一 pair 的 fast/stable/recall 尝试可以聚合。

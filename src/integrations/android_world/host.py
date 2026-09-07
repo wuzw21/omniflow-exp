@@ -14,6 +14,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow import Action, ActionResult, Observation
+from omniflow.runtime.timing import measure, timed
 from omniflow.core.androidworld_accessibility import (
     androidworld_forest_xml,
     forest_has_complete_active_application_window,
@@ -1056,7 +1057,8 @@ class AndroidWorldHost:
                             return state
                         transition_seconds = self._fast_post_action_transition_seconds()
                         if transition_seconds > 0.0:
-                            time.sleep(transition_seconds)
+                            with measure("ui.stabilization.local"):
+                                time.sleep(transition_seconds)
                         state = oob_state_from_payload(
                             self.control_client.observe(wait_to_stabilize=False),
                             fallback_screen_size=tuple(
@@ -1080,6 +1082,7 @@ class AndroidWorldHost:
         except Exception as error:
             return ActionResult(False, str(error))
 
+    @timed("ui.app_ready")
     def _observe_open_app_ready(self, identifier: str) -> Any:
         """Return the first post-launch OOB state owned by the target app.
 
@@ -1118,7 +1121,8 @@ class AndroidWorldHost:
                 )
             if time.monotonic() >= deadline:
                 return last_state
-            time.sleep(0.25)
+            with measure("ui.stabilization.local"):
+                time.sleep(0.25)
 
     def reset(self, go_home: bool = False) -> None:
         if self.control_client is not None:

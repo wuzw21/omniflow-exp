@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from omniflow.runtime.timing import measure, timed
+
 import base64
 import binascii
 from collections.abc import Callable
@@ -111,6 +113,7 @@ class OobControlClient:
             raise RuntimeError("oob_installed_apps_inventory_empty")
         return {package: package for package in packages if package}
 
+    @timed("oob.observe_rpc")
     def observe(self, *, wait_to_stabilize: bool = False) -> dict[str, Any]:
         for attempt in range(OBSERVE_XML_ATTEMPTS):
             result = self._observe_request(wait_to_stabilize=wait_to_stabilize)
@@ -119,9 +122,11 @@ class OobControlClient:
             if str(result.get("xml") or "").strip():
                 return result
             if attempt < OBSERVE_XML_ATTEMPTS - 1:
-                time.sleep(OBSERVE_XML_RETRY_DELAY_SECONDS)
+                with measure("oob.retry_wait"):
+                    time.sleep(OBSERVE_XML_RETRY_DELAY_SECONDS)
         raise RuntimeError("oob_control_observe_xml_missing")
 
+    @timed("oob.act_rpc")
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
         checkpoint()
         # The caller has just observed the state used for transfer.  The OOB

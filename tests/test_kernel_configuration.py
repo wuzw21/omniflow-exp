@@ -62,6 +62,10 @@ def test_checker_switch_preserves_function_execution_and_official_checker(tmp_pa
     assert result.success and len(actions) == 1 and completed == [True]
     assert bool(checked) == enabled
     assert result.output['detail']['runtime_policy']['checker_enabled'] == enabled
+    timing = result.output['detail']['wall_accounting']
+    assert timing['covered_wall_ms'] > 0
+    assert timing['accounted_wall_ms'] == pytest.approx(timing['covered_wall_ms'])
+    assert timing['components']['host.act']['calls'] == 1
     assert result.output['feedback']['task']['status'] == 'verified_success'
     if not enabled:
         assert flow.checker_library.rules == () and flow.plugins.checker is None
