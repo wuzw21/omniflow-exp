@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import binascii
 import dataclasses
+import hashlib
 import io
 import math
-import uuid
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +44,8 @@ def _screenshot_reference(
         raise ValueError("androidworld_state_evidence_root_required")
     image_bytes, width, height = _png_bytes(pixels)
     root = Path(evidence_root).expanduser().resolve()
-    destination = root / "observations" / "objects" / f"{uuid.uuid4().hex}.png"
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    destination = root / "observations" / "objects" / f"{digest}.png"
     destination.parent.mkdir(parents=True, exist_ok=True)
     _write_immutable(destination, image_bytes)
     return {
@@ -54,6 +57,7 @@ def _screenshot_reference(
 
 
 def _png_bytes(pixels: Any) -> tuple[bytes, int, int]:
+    raw = None
     if isinstance(pixels, str):
         encoded = pixels.split(",", 1)[-1]
         try:
@@ -62,12 +66,15 @@ def _png_bytes(pixels: Any) -> tuple[bytes, int, int]:
             raise ValueError("androidworld_state_pixels_base64_invalid") from error
         image = Image.open(io.BytesIO(raw))
     elif isinstance(pixels, (bytes, bytearray)):
-        image = Image.open(io.BytesIO(bytes(pixels)))
+        raw = bytes(pixels)
+        image = Image.open(io.BytesIO(raw))
     elif isinstance(pixels, Image.Image):
         image = pixels
     else:
         image = Image.fromarray(pixels)
     image.load()
+    if raw is not None and image.format == "PNG":
+        return raw, int(image.width), int(image.height)
     output = io.BytesIO()
     image.save(output, format="PNG")
     width, height = image.size
@@ -119,12 +126,25 @@ def _json_value(value: Any) -> Any:
 
 
 def _write_immutable(path: Path, content: bytes) -> None:
-    try:
-        with path.open("xb") as handle:
-            handle.write(content)
-    except FileExistsError:
+    if path.exists():
         if path.read_bytes() != content:
             raise ValueError(f"androidworld_state_screenshot_hash_collision:{path}")
+        return
+    # Publish only a complete file. Concurrent captures of the same frame can
+    # share its content address without reading another writer's partial PNG.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".frame-", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != content:
+                raise ValueError(f"androidworld_state_screenshot_hash_collision:{path}")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 __all__ = [

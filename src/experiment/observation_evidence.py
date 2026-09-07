@@ -71,7 +71,7 @@ class AndroidWorldEpisodeRecorder:
         # stale accessibility snapshot.
         self._latest_host_state: Any | None = None
         self._latest_observation: dict[str, Any] | None = None
-        self._observations: list[dict[str, Any]] = []
+        self._observation_index: list[dict[str, Any]] = []
         self._steps: list[dict[str, Any]] = []
         self._recording_action = False
         self.performance_metrics = performance_metrics
@@ -118,10 +118,15 @@ class AndroidWorldEpisodeRecorder:
                     success=success,
                 )
 
-    def record_host_observation(self, state: Any) -> None:
+    @property
+    def latest_observation(self) -> dict[str, Any] | None:
+        return _json_copy(self._latest_observation)
+
+    def record_host_observation(self, state: Any) -> dict[str, Any] | None:
         if self._active:
             self._latest_host_state = state
-            self._capture_state(state)
+            return self._capture_state(state)
+        return None
 
     def _capture_state_with_retry(
         self,
@@ -390,14 +395,7 @@ class AndroidWorldEpisodeRecorder:
         # RunLog observations already contain the screenshot path and XML.
         # Return the compact summary for result reporting without writing a
         # second observation index beside run_log.json.
-        return [
-            _observation_index_record(
-                item,
-                observation_index=index,
-                evidence_root=self._evidence_root,
-            )
-            for index, item in enumerate(self._observations)
-        ]
+        return _json_copy(self._observation_index)
 
     def _capture_state(self, state: Any) -> dict[str, Any]:
         observation = snapshot_androidworld_state(
@@ -406,8 +404,11 @@ class AndroidWorldEpisodeRecorder:
         )
         observation = canonicalize_run_log_observation(observation)
         self._latest_observation = observation
-        self._observations.append(_json_copy(observation))
-        return observation
+        self._observation_index.append(_observation_index_record(
+            observation, observation_index=len(self._observation_index),
+            evidence_root=self._evidence_root,
+        ))
+        return _json_copy(observation)
 
 
 def androidworld_json_action_dict(value: Any) -> dict[str, Any]:

@@ -93,7 +93,7 @@ async def execute_action(
     after = Observation.from_value(
         cached_after
         if cached_after is not None
-        else await _await(host.observe(xml=True, screenshot=True, app_info=True))
+        else await _await(host.observe(xml=True, screenshot=False, app_info=True))
     )
     observation_duration_ms = (
         time.perf_counter_ns() - observation_started_ns

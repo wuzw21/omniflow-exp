@@ -1,5 +1,14 @@
 # Releases
 
+## Harness refactor — in progress
+
+Observation evidence now uses immutable, content-addressed PNG files within
+each existing bundle. Host and recorder share one capture; the post-action
+Fast Pass reads the recorder's canonical XML rather than an undefined Host
+attribute. The observation reporting index holds compact references. Raw
+image resolution and the RunLog schema are unchanged. The evidence, Checker,
+completion, and AppAgent focused regressions pass (33 tests); **待真机验证**.
+
 ## 1.0.0 — 2026-09-07
 
 Preserved the pre-refactor working version, including Function semantic

@@ -593,18 +593,19 @@ class AndroidWorldHost:
                 state = self.env.get_state(
                     wait_to_stabilize=wait_to_stabilize
                 )
+        recorded_observation = None
         if self.control_client is not None:
             record_observation = getattr(
                 self.recorder, "record_host_observation", None
             )
             if callable(record_observation):
-                record_observation(state)
+                recorded_observation = record_observation(state)
         with (
             metrics.timed("observe_snapshot")
             if metrics is not None
             else nullcontext()
         ):
-            official_state = snapshot_androidworld_state(
+            official_state = recorded_observation or snapshot_androidworld_state(
                 state,
                 evidence_root=self.evidence_root,
             )
@@ -750,8 +751,14 @@ class AndroidWorldHost:
             if metrics is not None
             else nullcontext()
         ):
+            screenshot_reference = official_state.get("screenshot") or official_state.get("pixels")
+            screenshot_path = (
+                str(screenshot_reference.get("path") or "")
+                if isinstance(screenshot_reference, dict) else ""
+            )
             image_base64 = (
-                _image_base64(getattr(state, "pixels", None)) if screenshot else None
+                _image_base64(Path(screenshot_path).read_bytes())
+                if screenshot and screenshot_path else None
             )
         return Observation(
             xml=xml_text or None if xml else None,
@@ -761,6 +768,7 @@ class AndroidWorldHost:
             extra={
                 "observe_backend": self.observe_backend,
                 "androidworld_state": official_state,
+                "screenshot_path": screenshot_path,
                 "ui_element_count": len(elements),
                 "ui_graph_source": graph_source,
                 "ui_graph_complete": bool(xml_text) and graph_complete,
@@ -941,7 +949,7 @@ class AndroidWorldHost:
         # the recorder's already-materialized XML/screenshot record and add
         # the OOB identity fields; this is an in-process normalization only,
         # not another device observation.
-        recorded = self._latest_observation
+        recorded = getattr(self.recorder, "latest_observation", None)
         auxiliaries = getattr(state, "auxiliaries", None)
         if isinstance(recorded, dict) and isinstance(auxiliaries, dict):
             payload = dict(recorded)
