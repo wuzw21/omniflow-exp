@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from omniflow.core.model import Function, ToolCall
 from omniflow.functions.artifact import validate_arguments
 from omniflow.runtime.control import bounded_timeout, checkpoint, invoke
+from omniflow.runtime.timing import measure
 from omniflow.vlm.usage import LLMUsageTracker
 
 REJECT_FUNCTION_TOOL = "reject_recalled_function"
@@ -123,26 +124,27 @@ class VLMFunctionRouter:
             self._client = self._build_client()
         self._usage.start_call()
         try:
-            response = await invoke(self._client.chat.completions.create,
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            user_context,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                    },
-                ],
-                tools=tools,
-                tool_choice="required",
-                parallel_tool_calls=False,
-                extra_body={"parallel_tool_calls": False},
-                temperature=0,
-                timeout=bounded_timeout(min(self.timeout or 30.0, 30.0)),
-            )
+            with measure("model.router.request_until_response"):
+                response = await invoke(self._client.chat.completions.create,
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                user_context,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        },
+                    ],
+                    tools=tools,
+                    tool_choice="required",
+                    parallel_tool_calls=False,
+                    extra_body={"parallel_tool_calls": False},
+                    temperature=0,
+                    timeout=bounded_timeout(min(self.timeout or 30.0, 30.0)),
+                )
         except Exception:
             self._usage.record_failure()
             raise

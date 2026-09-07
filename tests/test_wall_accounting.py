@@ -113,3 +113,28 @@ def test_async_cached_observation_is_awaited_and_included_in_post_action_timing(
             observation=Observation(xml='<before/>'), host=Host(), plugins=PluginSet()))
     assert result.after is after
     assert ledger.report()['components']['observe.post_action']['exclusive_ms'] == 5
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_model_stream_first_event_and_later_processing_are_distinct(fails):
+    from omniflow.vlm.planner import normalize_openai_model_turn_response
+    clock = [0]
+    ledger = TimingLedger(clock=lambda: clock[0] * 1_000_000)
+    def stream():
+        clock[0] = 5
+        if fails:
+            raise TimeoutError('first event timeout')
+        yield {'model': 'test', 'choices': []}
+        clock[0] = 9
+    with ledger.span('model.planner'):
+        if fails:
+            with pytest.raises(TimeoutError):
+                normalize_openai_model_turn_response(stream(), requested_model='test')
+        else:
+            assert normalize_openai_model_turn_response(stream(), requested_model='test')['tool_calls'] == []
+    report = ledger.report()
+    components = report['components']
+    assert components['model.planner.first_stream_event']['exclusive_ms'] == 5
+    assert components['model.planner.first_stream_event']['failed_calls'] == int(fails)
+    assert components['model.planner.stream']['exclusive_ms'] == (0 if fails else 4)
+    assert report['accounted_wall_ms'] == report['covered_wall_ms']

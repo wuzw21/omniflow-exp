@@ -29,6 +29,20 @@ Host act、普通/稳定/动作后观察、完成检查和证据写入。Transfe
 自定义 adapter 也计入。`host.external_unattributed` 是外部 CLI 中尚未拆开的时间，
 不能当作纯模型推理耗时；`execution.other` 是其他执行工作。
 
+内置模型进一步记录 `model.planner.request_until_response`（SDK 请求到返回响应）、
+`model.planner.first_stream_event`（首个流事件）和 `model.planner.stream`（流消费）；
+Router 记录 `model.router.request_until_response`。首事件不等于首 token，SDK 请求等待
+包含网络与服务端工作，不能仅凭这些 span 再细分。流消费的 inclusive 包含首事件等待，
+仍只对 exclusive 求和；超时请求也保留 failed_calls 和耗时。
+
+内置 Harness 可通过 `RuntimeSettings(planner_error_retries=N)` 启用请求恢复。
+默认 0 保持正式策略；N 必须为 0–3 的整数，是整个任务共享的额外重试预算。
+仅连接错误和超时可重试，参数/模型权限错误不重试；失败调用照常计入用量，重试前
+重新观察当前页面，不派发动作，也不重置 task deadline、步数或 Function 恢复状态。
+`planner_diagnostics.request_retry_budget` 与 `request_retries` 记录预算、发生轮次和
+错误类型。工厂 Harness 可配置此策略用于局部迭代，仍由原内置循环执行；正式入口不
+增设任务专用重试参数。SDK transport timeout 仍最多 30 秒，完整任务最多 600 秒。
+
 `diagnostics.lifecycle_wall_accounting` 使用同一 schema，但范围是既有 lifecycle
 计时边界：`setup.harness`、`setup.agent_reset`、`setup.task_initialize`、
 `lifecycle.execution`、`official_validator` 和 `lifecycle.other`。执行中的完成检查

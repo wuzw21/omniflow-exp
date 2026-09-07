@@ -58,6 +58,11 @@ class RuntimeSettings:
     max_fallback_steps: int | None = None
     max_function_tools: int = DEFAULT_MAX_FUNCTION_TOOLS
     checker_enabled: bool = True
+    planner_error_retries: int = 0
+
+    def __post_init__(self):
+        if type(self.planner_error_retries) is not int or not 0 <= self.planner_error_retries <= 3:
+            raise ValueError("planner_error_retries_must_be_integer_0_to_3")
 
 
 @dataclass(frozen=True)

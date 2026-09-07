@@ -253,7 +253,11 @@ async def run_builtin(
         last_error if function_session.failed else None
     )
     pending_user_input: str | None = None
-    planner_diagnostics: dict[str, Any] = {}
+    request_retries: list[dict[str, Any]] = []
+    planner_diagnostics: dict[str, Any] = {
+        "request_retry_budget": self.config.runtime.planner_error_retries,
+        "request_retries": request_retries,
+    }
     repeated_decisions: dict[str, int] = {}
 
     def admit_decision(call: ToolCall) -> None:
@@ -577,6 +581,14 @@ async def run_builtin(
             planner_usage = _take_llm_usage(self.planner)
             merge_usage(llm_usage, planner_usage, component="planner")
             model_calls += _usage_model_calls(planner_usage, fallback=1)
+            if (len(request_retries) < self.config.runtime.planner_error_retries
+                    and _retryable_request_error(error)):
+                request_retries.append({"turn_index": runtime_steps_used - 1,
+                                        "error_type": type(error).__name__})
+                checkpoint()
+                with measure("planner.retry_observe"):
+                    observation = await self._observe(screenshot=True)
+                continue
             return finish(
                 False,
                 profile=profile,
@@ -1556,6 +1568,16 @@ def _take_planner_metadata(planner: Planner) -> dict[str, Any]:
         return {}
     value = take_metadata()
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _retryable_request_error(error: Exception) -> bool:
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return True
+    try:
+        from openai import APIConnectionError
+    except ImportError:
+        return False
+    return isinstance(error, APIConnectionError)
 
 
 def _merge_planner_diagnostics(

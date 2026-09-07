@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 from omniflow.core.config import OmniFlowConfig, PluginSet, RuntimeSettings
-from omniflow.core.model import Action, ActionResult, Function, FunctionStep, Observation
+from omniflow.core.model import Action, ActionResult, Function, FunctionStep, Observation, ToolCall
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
 from src.integrations.gui_agent_tools import GuiAgentToolRuntime
@@ -69,3 +69,43 @@ def test_checker_switch_preserves_function_execution_and_official_checker(tmp_pa
     assert result.output['feedback']['task']['status'] == 'verified_success'
     if not enabled:
         assert flow.checker_library.rules == () and flow.plugins.checker is None
+
+
+@pytest.mark.parametrize('budget,error_type,always_fail,calls,success', [
+    (0, TimeoutError, False, 1, False),
+    (1, TimeoutError, False, 2, True),
+    (2, TimeoutError, True, 3, False),
+    (1, ValueError, False, 1, False),
+])
+def test_native_request_retry_is_bounded_and_refreshes_observation(
+        tmp_path, budget, error_type, always_fail, calls, success):
+    observations, requests = [], []
+    class Host:
+        async def observe(self, **kwargs):
+            value = Observation(xml=f'<page n="{len(observations)}"/>', image_base64='present')
+            observations.append(value)
+            return value
+        async def act(self, action):
+            raise AssertionError('failed model calls must not dispatch actions')
+    class Planner:
+        async def one_step_tool_call(self, goal, observation, *args):
+            requests.append(observation.xml)
+            if always_fail or len(requests) == 1:
+                raise error_type('model probe')
+            return ToolCall('finished', {'content': 'done'})
+    store = FunctionStore(tmp_path/'empty.json');store.save()
+    flow = OmniFlow(store.path, host=Host(), planner=Planner(), completion_checker=lambda: True,
+        config=OmniFlowConfig(runtime=RuntimeSettings(checker_enabled=False, planner_error_retries=budget)))
+    result = asyncio.run(flow.arun('goal'))
+    assert result.success == success and len(requests) == calls
+    assert len(set(requests)) == calls
+    diagnostics = result.detail['planner_diagnostics']
+    assert diagnostics['request_retry_budget'] == budget
+    assert len(diagnostics['request_retries']) == calls - 1
+    assert result.actions_executed == 0 and result.model_calls == calls
+
+
+@pytest.mark.parametrize('budget', [-1, 4, True, 1.5])
+def test_request_retry_policy_rejects_unbounded_or_ambiguous_budgets(budget):
+    with pytest.raises(ValueError, match='planner_error_retries'):
+        RuntimeSettings(planner_error_retries=budget)

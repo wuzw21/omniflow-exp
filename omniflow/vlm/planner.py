@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from itertools import chain
 import os
 from typing import Any
 from urllib.parse import urlsplit
@@ -8,6 +9,7 @@ from urllib.parse import urlsplit
 from omniflow.core.config import DEFAULT_MAX_STEPS, DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, Observation, ToolCall
 from omniflow.runtime.control import bounded_timeout, checkpoint, invoke
+from omniflow.runtime.timing import measure, timed
 from omniflow.vlm.gui import (
     ModelToolCallError,
     PlannerContextProjector,
@@ -197,9 +199,10 @@ class VLMPlanner:
         request["extra_body"] = extra_body
         if self._client is None:
             self._client = self._build_client()
-        response = self._client.chat.completions.create(
-            **request, timeout=bounded_timeout(min(self.timeout or 30.0, 30.0))
-        )
+        with measure("model.planner.request_until_response"):
+            response = self._client.chat.completions.create(
+                **request, timeout=bounded_timeout(min(self.timeout or 30.0, 30.0))
+            )
         return normalize_openai_model_turn_response(
             response,
             requested_model=self.model,
@@ -339,6 +342,7 @@ def _normalize_completion(response: Any, *, requested_model: str) -> dict[str, A
     }
 
 
+@timed("model.planner.stream")
 def _normalize_stream(
     chunks: Iterable[Any],
     *,
@@ -348,7 +352,11 @@ def _normalize_stream(
     reasoning_parts: list[str] = []
     usage: dict[str, int] = {}
     resolved_model = requested_model
-    for chunk in chunks:
+    iterator = iter(chunks)
+    sentinel = object()
+    with measure("model.planner.first_stream_event"):
+        first = next(iterator, sentinel)
+    for chunk in chain(() if first is sentinel else (first,), iterator):
         resolved_model = str(_field(chunk, "model") or resolved_model)
         chunk_usage = _usage_dict(_field(chunk, "usage"))
         if chunk_usage:
