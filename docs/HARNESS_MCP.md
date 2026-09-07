@@ -31,6 +31,23 @@ Codex MCP 配置（替换为实际路径和 serial）：
     env = { PYTHONPATH = "/absolute/OmniFlow-exp" }
     tool_timeout_sec = 600
 
+宿主必须允许所需 MCP 工具经过正常审批。Codex CLI 0.153.4 的本次测试中，
+`read-only` 加 `approval_policy="never"` 在模型首次调用 recall 时返回
+`MCP tool call requires approval, but approval policy is never`，没有执行设备动作。
+用户明确授权本次测试后，临时会话使用 `approval_policy="on-request"` 和
+`approvals_reviewer="auto_review"`，保留只读沙箱并通过审批。
+不要把权限错误当作 Function 失败重试，也不要修改全局权限来掩盖接入问题。
+自动审批的配置与边界见 [Codex 官方说明](https://learn.chatgpt.com/docs/sandboxing/auto-review)。
+
+Claude Code 使用相同的 stdio server，配置格式为：
+
+    {"mcpServers":{"omniflow":{"command":"/absolute/OmniFlow-exp/.venv/bin/python","args":["-m","src.integrations.gui_agent_mcp","--device","DEVICE_SERIAL","--store","/absolute/memory/store.json","--evidence-root","/absolute/OmniFlow-exp/data/runtime/gui_agent/claude"],"env":{"PYTHONPATH":"/absolute/OmniFlow-exp"}}}}
+
+测试时通过 `--strict-mcp-config --mcp-config <file>` 只加载该服务，
+`--tools ""` 关闭内置工具；用户授权后用 `--allowedTools`
+`mcp__omniflow__omniflow_recall,mcp__omniflow__omniflow_execute` 限定允许的工具。
+`--no-session-persistence` 避免留下可恢复的测试会话。以上配置不需要第二套内核。
+
 Python 宿主可直接使用 OmniFlow.arecall / aexecute_function，也可调用
 GuiAgentToolRuntime.call_function_tool 获得与 MCP 相同的 schema 校验、会话与请求去重。
 GUI-Owl 和 V-Droid 的既有工具分发可以接这两个服务；Mobilerun 的
@@ -78,6 +95,37 @@ fallback 能力。两工具服务仍可召回与执行 Function；失败后交�
 不能为隐藏这一接入缺口偷偷启动内置 Planner。
 
 ## 验证范围
+
+必须区分模型驱动的完整宿主、框架工具分发、模型输出适配器和物理后端。
+GUI-Owl/V-Droid 在本仓库的接入是输出适配器，不能以适配测试通过宣称两个完整
+上游 Harness 已经验收。Standard/Fold/Tablet 是同一 OOB 后端的不同设备，
+同步/异步测试 Host 也不是已经落地的独立操作系统后端。
+
+| 路径 | 实际已验证层级 | 尚不能推出的结论 |
+|---|---|---|
+| Codex CLI 0.153.4 | 模型自主 recall → execute；本机五步 OOB 关闭蓝牙，模型观察与系统状态均确认关闭 | Codex 自带 Android 原始动作 fallback、模型驱动失败恢复 |
+| Claude Code 2.1.237 | 模型自主 recall → execute；同一模拟器五步 OOB 开启蓝牙，模型观察与系统状态均确认开启 | 其他任务、模型驱动取消与失败恢复 |
+| 通用 MCP stdio 客户端 | 本机模拟器真实召回、执行、取消、重启隔离、去重、空 Memory | Codex/Claude 模型自主使用工具 |
+| Droidrun 0.5.6 | 实际 ToolRegistry 分发；Tablet 上五步 OOB 执行并核验蓝牙开启 | 完整 DroidAgent 模型循环 E2E |
+| GUI-Owl 适配器 | Fold 上真实 OOB 执行并核验蓝牙开启 | 上游模型自主规划与恢复 |
+| V-Droid 适配器 | 受控 Host 上的成功与部分失败合同 | 上游模型或真实设备 E2E |
+| Minitap | 保留既有适配代码 | 上游框架接入验收 |
+| OOB 后端 | 本机及远端 Android 模拟器，canonical OmniTransfer | 物理手机验收、其他操作系统后端 |
+
+完整宿主验收必须留下模型实际工具调用、返回事实和独立设备状态证据；进程退出码
+为零或工具可发现都不足以判定通过。性能比较另需冻结配对任务与组件时延，当前
+接入诊断不能支撑“比原生 Computer Use 更快”的结论。
+
+2026-09-07 的两个真实模型宿主测试使用同一 MCP 服务和 canonical OmniTransfer，
+没有替换 Store、增加专用动作或启动内置 Planner。Codex 先关闭蓝牙，Claude 再恢复
+开启；两者各自主调用一次 recall 和一次 execute，各完成五个动作。服务返回
+`task.status=unknown`、`control.next=host`，由宿主根据返回 XML/截图判断目标，
+并由测试主机只读查询系统状态独立核验 1→0→1。测试运行在现有本机 Pixel 6 Pro
+模拟器（Android 13、1440×3120、OOB 0.6.0.3/versionCode 10），不安装 APK。
+记录位于 `data/runtime/validation/20260907-model-harness-acceptance/summary.json`，
+包含首次审批阻塞、成功调用链、五步事实及 checkpoint/event SHA-256。
+这补齐了两工具成功路径的真实模型宿主证据，仍不代表模型驱动故障恢复、论文结果或
+真机验收；服务的取消/去重/重启证据来自独立的 MCP 客户端测试。
 
 协议测试覆盖真实 stdio initialize/list、严格两工具发现、过期 session 拒绝；
 适配矩阵覆盖 MCP、GUI-Owl、V-Droid、Mobilerun 与同步 Host、异步 Host、OOB Host

@@ -10,6 +10,12 @@ Recall 和 Function 闭环。外部失败返回当前状态和失败
 位置，交还宿主决策。协议与迁移说明见 [Harness 协议](docs/HARNESS_PROTOCOL.md)。
 AndroidWorld 正式入口不变。
 
+对外提供的是可复用的跨设备 Function Memory 服务：宿主决定做什么，OmniFlow
+负责召回已有操作片段，并在当前设备上用共享闭环执行、返回事实。交付物包含
+Function Store、执行内核、Python SDK、MCP 服务和使用 Skill。Skill 是宿主使用说明，
+不是独立执行引擎；接上 MCP 也不自动获得宿主的 Android 原始动作或任务恢复能力。
+各接入路径的实际验收层级见 [验证范围](docs/HARNESS_MCP.md#验证范围)。
+
 Codex/其他 MCP 宿主通过 [OmniFlow GUI Skill](skills/omniflow-gui/SKILL.md) 接入，
 服务启动和配置见 [MCP 接入](docs/HARNESS_MCP.md)。它复用 OOB 和同一 Function 内核。
 宿主负责原始动作、任务完成判断和任务级循环；两工具服务不再对外注册每个 Function

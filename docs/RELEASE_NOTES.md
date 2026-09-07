@@ -2,6 +2,24 @@
 
 ## 1.1.0.dev1 — two Function services, 2026-09-07
 
+Actual model-driven host acceptance now covers Codex CLI 0.153.4 and Claude
+Code 2.1.237 on the local Pixel 6 Pro emulator. Each autonomously calls recall
+and execute once, completing five OOB actions using canonical OmniTransfer:
+Codex turns Bluetooth off; Claude turns it back on. Returned XML and independent
+OS state agree on 1→0→1. The kernel returns task unknown and control to the host;
+the host assesses the goal from observation. No kernel or adapter code changed.
+Codex's initial read-only/never attempt stopped before recall execution because
+MCP approval was required. After explicit user authorization, the temporary
+session used on-request/auto-review with the read-only sandbox retained;
+Claude allowed only the two MCP tools and disabled built-in tools. Neither test
+changed global configuration or created a persistent host session.
+
+Evidence: `data/runtime/validation/20260907-model-harness-acceptance/summary.json`.
+These are successful-path model tests, not model-driven cancellation/recovery
+acceptance or comparative performance measurements. Droidrun remains verified
+at actual ToolRegistry dispatch; GUI-Owl/V-Droid are output adapters, not fully
+validated upstream harnesses. All device bug acceptance remains **待真机验证**.
+
 The public MCP surface now consists of `omniflow_recall` and `omniflow_execute`.
 Both use the existing recall and Check → Transfer → Act → Observe owners.
 The host owns planning, primitive fallback, completion and cancellation; a
