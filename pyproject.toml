@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bmoca = ["droidrun==0.5.6"]
+bmoca = ["droidrun==0.5.6", "mobilerun-sdk==2.1.0"]
 llm = []
 mcp = ["mcp>=2.0.0,<3"]
 

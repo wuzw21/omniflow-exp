@@ -18,7 +18,7 @@ from omniflow.core.model import (
 )
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
-from src.integrations.gui_agent_mcp import GuiAgentMcp, device_lease
+from src.integrations.gui_agent_mcp import GuiAgentMcp, create_server, device_lease
 from src.integrations.gui_agent_tools import GuiAgentToolRuntime
 
 
@@ -77,3 +77,59 @@ def test_mcp_device_lease_excludes_second_owner():
         with pytest.raises(RuntimeError, match='already_owned'):
             with device_lease('protocol-lease-test'):
                 raise AssertionError('two owners admitted')
+
+
+def test_real_mcp_cancellation_drains_action_and_closes_function_session(tmp_path):
+    import anyio
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+        actions = []
+        class Host:
+            async def observe(self, **kwargs):
+                return Observation(xml='<hierarchy/>')
+            async def get_state(self, state_id):
+                return await self.observe()
+            async def act(self, action):
+                actions.append(action)
+                entered.set()
+                await release.wait()
+                return ActionResult(True)
+        host = Host()
+        store = FunctionStore(tmp_path/'store.json')
+        store.put_function(Function('pause_twice', 'Pause twice', 'Two waits',
+            tuple(FunctionStep(i, Action('wait', {'duration_ms': 1}), 'source') for i in range(2)),
+            schema_version='omniflow.function.v2',
+            input_schema={'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}))
+        runtime = GuiAgentToolRuntime(host=host, flow=OmniFlow(store.path, host=host))
+        server = create_server(runtime)
+        client_write, server_read = anyio.create_memory_object_stream(16)
+        server_write, client_read = anyio.create_memory_object_stream(16)
+        async with anyio.create_task_group() as group:
+            group.start_soon(server.run, server_read, server_write, server.create_initialization_options())
+            async with ClientSession(client_read, client_write) as client:
+                await client.initialize()
+                args = {'session_id': runtime.session_id, 'request_id': 'cancelled-call',
+                        'function_id': 'pause_twice', 'arguments': {}}
+                task = asyncio.create_task(client.call_tool('omniflow_execute', args))
+                await asyncio.wait_for(entered.wait(), 3)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                with anyio.fail_after(3):
+                    while not runtime._control.cancelled.is_set():
+                        await asyncio.sleep(.01)
+                assert runtime.flow._operation_lock.locked()
+                release.set()
+                with anyio.fail_after(3):
+                    while runtime.flow._operation_lock.locked():
+                        await asyncio.sleep(.01)
+                repeated = await client.call_tool('omniflow_execute', args)
+                feedback = json.loads(repeated.content[0].text)['feedback']
+                assert feedback['control']['reason'] == 'cancelled'
+                assert feedback['execution']['actions_executed'] == 1
+                rejected = await client.call_tool('omniflow_execute', {**args, 'request_id': 'new'})
+                assert rejected.is_error and 'session_closed' in rejected.content[0].text
+                assert len(actions) == 1
+            group.cancel_scope.cancel()
+    asyncio.run(scenario())

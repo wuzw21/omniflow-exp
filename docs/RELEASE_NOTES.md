@@ -36,6 +36,16 @@ canonical 1024D OmniTransfer recall of the explicit Bluetooth Function on
 the missing inventory; subsequent runs encountered SSH timeouts. Preserve these
 failed attempts as integration evidence, not benchmark success or latency.
 
+Follow-up acceptance pins the optional Droidrun SDK dependency to
+`mobilerun-sdk==2.1.0`, whose actual module exports match Droidrun 0.5.6.
+The upstream ToolRegistry now passes both success and partial-failure calls;
+no shim or vendor source modification is used. A real MCP ClientSession/Server
+cancellation test verifies draining the first action, suppressing the second,
+returning cached cancellation facts and rejecting new execution in the closed
+session. Full suite: **172 passed**, including the two previously skipped SDK
+checks. This covers actual protocol/SDK dispatch with controlled device facts,
+not upstream model-driven or physical-device E2E.
+
 ## 1.1.0.dev0 — host protocol refactor, 2026-09-07
 
 Observation evidence now uses immutable, content-addressed PNG files within

@@ -84,8 +84,13 @@ fallback 能力。两工具服务仍可召回与执行 Function；失败后交�
 
 当前已验证 dev1 隔离 wheel 的导入、两工具发现和 Skill 打包；真实 canonical
 1024D 召回在 9207/OOB 模拟器上通过。完整执行与真机验收分别记录，详见发布说明。
-本机 Droidrun 0.5.6 的上游 SDK 接入暂受依赖阻塞：它导入 mobilerun，但当前
-mobilerun-sdk 5.1.0 提供 mobilerun_sdk。不要把适配器测试通过解释为该 SDK 已能运行，
-也不要直接安装同名新框架覆盖现有 MCP/实验依赖；应在独立环境验证完整依赖组合。
+上游 Droidrun 0.5.6 的 ToolRegistry 已验证成功与部分失败两条分发路径，使用
+mobilerun-sdk 2.1.0；该约束已加入 bmoca 可选依赖。5.x SDK 将模块名改为
+mobilerun_sdk，不能满足这个旧版 Droidrun 的 mobilerun 导入。安装时使用项目的
+可选依赖组合 `.[bmoca,mcp]`，不要用同名 mobilerun 新框架替代 SDK。
+这项验证调用真实上游 registry，设备和编码器仍是合同测试替身，不是上游 LLM E2E。
+
+取消测试通过真实 MCP ClientSession/Server 的 JSON-RPC 取消通知，确认在途动作
+收尾、下一步不执行、原请求重试返回取消事实、会话关闭后拒绝新执行。
 
 [内核协议](HARNESS_PROTOCOL.md) · [Skill](../skills/omniflow-gui/SKILL.md)
