@@ -1,5 +1,8 @@
 # OmniFlow-exp
 
+Version **1.0.0** is the preserved baseline before the host-harness refactor.
+Release scope and validation are recorded in [release notes](docs/RELEASE_NOTES.md).
+
 AndroidWorld 和 B-MoCA 实验仓库。AndroidWorld 只有一个公开入口：
 
 论文评测冻结边界、可变项、证据要求和失败归因见

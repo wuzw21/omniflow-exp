@@ -56,7 +56,8 @@ class GuiAgentToolRuntimeTest(unittest.TestCase):
             tools["search_records"].input_schema["properties"],
             {"query": {"type": "string"}},
         )
-        self.assertNotIn("wait", tools)
+        self.assertIn("wait", tools)
+        self.assertNotIn("finished", tools)
         self.assertFalse(runtime.flow.store.include_hidden)
 
     def test_executes_canonical_action_only_through_host(self) -> None:

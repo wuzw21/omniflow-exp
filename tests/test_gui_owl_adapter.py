@@ -81,6 +81,17 @@ class GuiOwlAdapterTest(unittest.TestCase):
         self.assertTrue(outcome.success)
         self.assertEqual(host.actions, [])
 
+    def test_swipe_preserves_endpoints_in_canonical_wire_contract(self) -> None:
+        adapter, host = self._adapter()
+        outcome = asyncio.run(adapter.execute_output(_response("mobile_use", {
+            "action": "swipe", "coordinate": [500, 800],
+            "coordinate2": [500, 200], "time": 0.5,
+        })))
+        self.assertTrue(outcome.success)
+        self.assertEqual(host.actions, [{"tool": "swipe", "args": {
+            "x1": 500, "y1": 800, "x2": 500, "y2": 200, "duration_ms": 500,
+        }}])
+
     def test_parser_rejects_trailing_or_ambiguous_tool_calls(self) -> None:
         text = _response("mobile_use", {"action": "click", "coordinate": [1, 2]})
         with self.assertRaisesRegex(ValueError, "gui_owl_tool_call_count_invalid"):

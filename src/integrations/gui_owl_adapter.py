@@ -105,10 +105,10 @@ class GuiOwlAdapter:
         if action in {"scroll", "swipe"}:
             x1, y1 = _coordinate(arguments, "coordinate")
             x2, y2 = _coordinate(arguments, "coordinate2")
+            _swipe_direction(x1, y1, x2, y2)
             result = await self.runtime.call_tool(
                 "swipe",
                 {
-                    "direction": _swipe_direction(x1, y1, x2, y2),
                     "x1": x1,
                     "y1": y1,
                     "x2": x2,

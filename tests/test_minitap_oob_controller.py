@@ -61,7 +61,6 @@ class MinitapOobControllerTest(unittest.TestCase):
                 {
                     "tool": "swipe",
                     "args": {
-                        "direction": "up",
                         "x1": 500,
                         "y1": 801,
                         "x2": 500,

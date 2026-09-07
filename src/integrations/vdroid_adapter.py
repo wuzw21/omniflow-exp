@@ -231,11 +231,7 @@ def _scroll_arguments(
     y1 = round(center_y / height * 1000)
     x2 = round(end_x / width * 1000)
     y2 = round(end_y / height * 1000)
-    physical_direction = (
-        "right" if x2 > x1 else "left" if x2 != x1 else "down" if y2 > y1 else "up"
-    )
     return {
-        "direction": physical_direction,
         "x1": x1,
         "y1": y1,
         "x2": x2,

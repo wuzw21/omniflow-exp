@@ -70,7 +70,6 @@ class VDroidAdapterTest(unittest.TestCase):
                 {
                     "tool": "swipe",
                     "args": {
-                        "direction": "up",
                         "x1": 500,
                         "y1": 500,
                         "x2": 500,

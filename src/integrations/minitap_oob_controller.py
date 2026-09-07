@@ -102,11 +102,10 @@ class MinitapOobController:
         try:
             x1, y1 = self._normalized_point(start)
             x2, y2 = self._normalized_point(end)
-            direction = _swipe_direction(x1, y1, x2, y2)
+            _swipe_direction(x1, y1, x2, y2)
             result = await self.runtime.call_tool(
                 "swipe",
                 {
-                    "direction": direction,
                     "x1": x1,
                     "y1": y1,
                     "x2": x2,

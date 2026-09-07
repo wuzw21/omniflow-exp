@@ -78,7 +78,9 @@ Canonical action constraints include:
   `persisted: false`. Node ids, resource ids, screenshots, target descriptions,
   and target evidence are never saved. Required action coordinates remain
   persisted when the canonical schema requires them, because OmniTransfer
-  needs the recorded source point for state-aware Function replay.
+  needs the recorded source point for state-aware Function replay. Canonical
+  swipes carry endpoints; upstream scroll direction is converted into those
+  endpoints by the agent adapter, not forwarded as an extra wire argument.
 - There is no separate forbidden-field list or compiler cleanup list.
 - Unsupported tools, invalid persisted values, and missing required persisted
   arguments fail conversion; all other non-persisted input is omitted.
