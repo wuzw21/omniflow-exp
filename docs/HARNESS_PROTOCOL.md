@@ -97,6 +97,12 @@ AndroidWorld 保持原来的 shell → run_tasks → run_task → run_episode �
 结果的 id 返回明确状态。每会话最多 128 个请求，缓存紧凑结果，不无限积累完整 trace。
 进程重启后 session id 改变，旧请求不能续接。协议不承诺跨进程 exactly-once。
 
+宿主中断可能只产生通用工具错误，甚至没有返回 invocation。此时副作用未知，不能
+根据“工具被拒绝”或 CLI 退出码推断零动作。2026-09-07 的真实 CLI 测试中，Codex
+中断后没有 execute 返回，Claude 返回通用拒绝消息；两者的首步 open_app 都已完成。
+恢复前必须通过宿主观察通道核验当前设备，无观察能力则报告未知并停止；不能盲目
+重发 Function 或换 task_id 绕过未知副作用。原始事实与测试范围见 MCP 接入文档。
+
 同一 runtime 同时只执行一个 observe/act/Function；并发调用返回 busy。
 取消是协作式的：不会撤回已经发生的点击，也不会在旧调用仍运行时把设备锁交给下一调用。
 OOB/模型传输有 timeout；任意第三方插件若永久卡住，Python 线程不能被安全强杀。

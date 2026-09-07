@@ -20,6 +20,19 @@ acceptance or comparative performance measurements. Droidrun remains verified
 at actual ToolRegistry dispatch; GUI-Owl/V-Droid are output adapters, not fully
 validated upstream harnesses. All device bug acceptance remains **待真机验证**.
 
+Follow-up model tests cover empty Memory and CLI interruption. Codex recalls
+twice and Claude once with empty Memory, then both stop without execute or
+device actions. In the interruption case, SIGINT after the first completed
+open_app stops both CLIs; a five-second observation window adds no step facts,
+the device lease can be reacquired, and OOB still shows Settings home with
+Bluetooth unchanged. This is a completed-step boundary check, not proof of
+draining an in-flight Android action. Codex returns no execute result; Claude
+returns a generic rejected-tool error despite the completed first action.
+The Skill now treats missing invocation feedback as unknown effects and
+requires observation before recovery. No Function kernel or schema changed.
+Evidence: `data/runtime/validation/20260907-model-empty-memory/summary.json`
+and `data/runtime/validation/20260907-model-stop-acceptance/summary.json`.
+
 The public MCP surface now consists of `omniflow_recall` and `omniflow_execute`.
 Both use the existing recall and Check → Transfer → Act → Observe owners.
 The host owns planning, primitive fallback, completion and cancellation; a

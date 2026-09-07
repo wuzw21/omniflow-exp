@@ -42,6 +42,13 @@ For a transport retry, reuse exactly the same request_id and arguments.
 Do not generate a new request id to repeat an action with an unknown effect.
 A restarted process has a different session; it cannot safely resume old ids.
 
+If an interrupted tool call has no OmniFlow invocation feedback, treat its
+effects as unknown. A host's generic "tool rejected" message or process exit
+code does not prove that no device action ran. Inspect the current device
+through the host's observation channel before considering recovery; if that
+channel is unavailable, report the uncertainty and stop. Do not infer a safe
+retry or begin a new task from the generic error alone.
+
 ## Host responsibilities
 
 You own the task loop, completion judgment, user input, primitive actions, and

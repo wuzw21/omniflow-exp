@@ -127,6 +127,21 @@ GUI-Owl/V-Droid 在本仓库的接入是输出适配器，不能以适配测试�
 这补齐了两工具成功路径的真实模型宿主证据，仍不代表模型驱动故障恢复、论文结果或
 真机验收；服务的取消/去重/重启证据来自独立的 MCP 客户端测试。
 
+后续真实模型空 Memory 测试中，Codex 召回两次、Claude 召回一次，均收到
+`empty_memory` 后停止，没有调用 execute、创建 Store 或改变蓝牙状态；Codex 的
+两次请求复用相同 task_id，没有重置任务预算。记录：
+`data/runtime/validation/20260907-model-empty-memory/summary.json`。
+
+两种真实 CLI 还完成了步骤边界中断检查：模型开始执行五步 Function，在首步
+open_app 的完成事实出现后发出 SIGINT，CLI 退出后观察五秒，没有新增动作记录；
+随后重新取得设备锁，OOB 确认仍在设置首页，系统蓝牙仍开启。
+Codex 退出码为 1，未返回 execute 结果；Claude 退出码为 0，却返回
+`error_during_execution` 和通用工具拒绝消息。两者均不能据此推断任务成功或零动作。
+记录：`data/runtime/validation/20260907-model-stop-acceptance/summary.json`。
+这只证明本次步骤边界的 CLI 停止行为，不证明 Android 动作在途时的收尾，也不证明
+桌面应用停止按钮、断电恢复或跨进程 exactly-once。Skill 明确要求缺少 invocation
+反馈时将副作用视为未知，恢复前核验当前设备；真机验收仍待完成。
+
 协议测试覆盖真实 stdio initialize/list、严格两工具发现、过期 session 拒绝；
 适配矩阵覆盖 MCP、GUI-Owl、V-Droid、Mobilerun 与同步 Host、异步 Host、OOB Host
 适配器的组合，检查召回零 act、Function 执行、部分失败、请求去重和宿主控制权。
