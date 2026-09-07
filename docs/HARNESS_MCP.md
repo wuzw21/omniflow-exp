@@ -118,6 +118,25 @@ fallback 能力。两工具服务仍可召回与执行 Function；失败后交�
 
 ## 验证范围
 
+2026-09-08 统一入口验收：同一 `SystemBluetoothTurnOn`、evaluation seed 113、
+同一显式 Store、Pixel 6 Pro 模拟器（Android 13 / 1440×3120）、OOB 0.6.0.3 (10)。
+依次切换 `--harness codex`、`claude`、`builtin`，均通过 AndroidWorld 官方 validator，
+各有 5 个 Function 物理动作。注册的 checker 通过后返回终止事实。
+
+本次原始 execution 时延为 builtin 21.590 秒、Codex 60.268 秒、Claude 31.076 秒。
+宿主模型与调用方式不同、只有一个任务且未做配对重复实验，不能用于论文速度比较。
+Codex CLI 未报告实际模型名和 API 调用次数；Claude 报告 claude-sonnet-5，但未报告
+API 调用次数；未知值保留 null。GUI-Owl/V-Droid/Droidrun 的既有验证层级不因此升级。
+
+证据汇总：`data/runtime/validation/20260908-unified-harness/summary.json`；可安装包：
+`data/runtime/releases/b207e256/`。183 项项目测试通过，wheel 隔离安装通过。
+本次按用户要求在本机模拟器验收，不代表真机或全量 AndroidWorld 已验收。
+
+统一入口还发现并修正：任务参数提示越过 Function schema、MCP 内容类型标签缺失、
+大截图触发宿主文本截断、精简历史丢失 Function 来源，以及归档保留临时截图路径。
+当前 MCP 主页预览为 65,752 个 base64 字符；完整原图继续留在原有证据目录，
+归档 RunLog 的图片引用已核对可解析。
+
 必须区分模型驱动的完整宿主、框架工具分发、模型输出适配器和物理后端。
 GUI-Owl/V-Droid 在本仓库的接入是输出适配器，不能以适配测试通过宣称两个完整
 上游 Harness 已经验收。Standard/Fold/Tablet 是同一 OOB 后端的不同设备，
