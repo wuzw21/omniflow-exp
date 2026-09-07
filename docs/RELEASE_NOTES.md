@@ -38,6 +38,19 @@ Local historical archive cleanup removed approximately 16.72 GB after protecting
 731 dependency/unique-success files. The deduplicated deletion journal and audit
 remain under `data/runtime/archive_cleanup/20260907/`, outside Git releases.
 
+Follow-up cleanup removed the entire remaining local `.archive` directory
+(790 files, 11.41 MB). The only live reference was an obsolete registry search
+root, which was removed. The previously presumed unique source was proven
+equivalent to its ordinary-directory copy after path normalization, with
+byte-identical screenshots; ordinary evidence was unchanged. Final audit:
+`data/runtime/archive_cleanup/20260907-final/`.
+
+A subsequent live OOB protocol smoke passed on 9207 / emulator-45562 with OOB
+0.6.1 (versionCode 7): capture, one wait action, request deduplication without
+additional device I/O, post-cancel rejection, and session restart. This remains
+supplemental emulator evidence; it does not validate physical-device behavior
+or comparative performance.
+
 ## 1.0.0 — 2026-09-07
 
 Preserved the pre-refactor working version, including Function semantic

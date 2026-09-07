@@ -98,10 +98,13 @@ OOB/模型传输有 timeout；任意第三方插件若永久卡住，Python 线�
 仍保留原始分辨率，避免损害 Transfer。模型传输只发送当前一张图；长期历史保存引用。
 这降低重复磁盘写入和 Python 对象保留，尚未测量真机 RSS 或整个系统的加速比例。
 
-本次历史清理仅作用于本地 `data/androidworld/.archive`。先扫描当前 JSON/符号链接依赖，
-保护被引用的 bundle，并保留普通目录没有替代成功证据的 TasksDueNextWeek。删除约
-16.72 GB；保留 731 个依赖/成功经验文件。完整清单和 SHA-256 删除日志在
-`data/runtime/archive_cleanup/20260907/`；审计属于本地数据，不提交 Git。
+历史清理仅作用于本地 `data/androidworld/.archive`。首轮删除约 16.72 GB，保守保留
+731 个引用/经验文件。用户随后授权清空历史目录：确认唯一现存引用是过时的 result
+registry 搜索根；TasksDueNextWeek 的归档轨迹与正常目录中的轨迹在路径归一化后相同，
+截图逐字节一致，并非真正独有的经验。因此移除旧搜索根并删除剩余 790 个文件（含重建
+的 Finder 元数据，约 11.41 MB），整个 `.archive` 目录已删除。当前经验没有被改写。
+两阶段清单、原始时间和 SHA-256 日志分别在 `data/runtime/archive_cleanup/20260907/`
+与 `20260907-final/`；审计属于本地数据，不提交 Git。
 
 ## 6. 跨设备与 Codex 接入边界
 
@@ -120,6 +123,25 @@ Codex 可通过 MCP 调用 Android OOB，而 Codex 自带 computer use 处理其
 先验证取消等待中的模型/动作、重复取消、预算到期、成功后零新增动作、Function 部分失败、
 请求重发、会话重启和相同页面重复决策；再做同任务 Memory OFF/ON 的交替真机测试。
 记录设备、APK 版本、动作、结果、重启恢复与证据路径。没有真机不做已验收结论。
+
+2026-09-07 补充联调已在 9207 的 `emulator-45562`（1440×3120）完成，使用已安装的
+OOB 0.6.1 / versionCode 7。实际 OOB 截图和一个 wait 动作成功；重复 request id 没有
+新增设备 I/O；取消后新动作被拒绝；新会话和未配置 verifier 的 finish 语义符合协议。
+证据在 `data/runtime/validation/20260907-oob-protocol/`。这不是物理设备、Function
+跨设备映射或模型性能验收，也不能将包含 SSH 传输的 smoke wall time 计入论文时延。
+
+下一阶段的真机验收顺序与通过条件：
+
+| 顺序 | 验证项 | 必须观察到的结果 |
+|---|---|---|
+| 1 | 模型等待与动作在途时取消、重复取消 | 收尾前不释放设备 owner，之后零新增动作；未知副作用明确报告 |
+| 2 | Function 完成、checker 拒绝与异常 | 通过即停止；拒绝反馈宿主；异常不触发盲目纠正动作 |
+| 3 | Transfer 失败与部分执行恢复 | 保留已执行前缀和当前页面，不重发前缀或 source 坐标 |
+| 4 | 会话断开、重连与进程重启 | 同会话重发不重复动作；过期 session id 拒绝续接 |
+| 5 | Memory OFF/ON 交替运行 | 同任务/参数/设备/seed/模型/endpoint，两组均通过官方验证才组成时延配对 |
+
+以上真机项尚未验收。冻结配对设置后再采集结果，不为得到成功样本临时更换模型；
+若模型权限、设备或 validator 不可用，保留环境失败证据并排除出有效时延配对。
 
 性能结论保持现有论文合同：主文只用 paired official-success 的 `execution_duration_ms`，
 完整系统必须纳入 Function 失败但 fallback 恢复成功的成本。当前还不能宣称完整系统更快。

@@ -62,8 +62,11 @@ source 输入。原始 PNG 按内容去重。数据不随 Git 或 Skill 分发�
 ## 验证状态
 
 已验证真实 MCP stdio 子进程的 initialize、list、status、cancel、start 和过期 session
-拒绝；fake Host 用于验证执行去重和参数拒绝。当前可见设备均为模拟器或未连接；
-Android 真机端到端、跨设备 Function 映射和 Codex 实际使用验收均为**待真机验证**。
+拒绝；fake Host 用于验证执行去重和参数拒绝。随后在 9207 / emulator-45562 上经实际
+OOB 0.6.1 验证截图、一个 wait 动作、重复请求零新增设备 I/O、取消后的动作拒绝和
+会话重建。测试使用本地协议代码与 SSH 承载的 OOB 命令，没有部署第二个远端 checkout。
+证据：`data/runtime/validation/20260907-oob-protocol/summary.json`。
+Android 真机端到端、跨设备 Function 映射和 Codex 实际使用验收仍为**待真机验证**。
 
 官方宿主参考：[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp)、
 [Codex computer use](https://learn.chatgpt.com/docs/computer-use)、
