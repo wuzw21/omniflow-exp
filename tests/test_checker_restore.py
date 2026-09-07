@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from omniflow.core.config import OmniFlowConfig
 from omniflow.core.model import Action, CheckerContext, Observation
 from omniflow.runlog import import_run_log_evidence
@@ -154,3 +156,18 @@ def test_default_checker_recovers_from_xml_only_package_identity() -> None:
 
 def test_default_checker_is_injected_for_every_action_path() -> None:
     assert OmniFlowConfig().resolved_plugins().checker is default_checker
+
+
+@pytest.mark.parametrize(('action', 'should_restore'), [
+    (Action('open_app', {'package_name': 'com.android.settings'}), False),
+    (Action('press_key', {'key': 'home'}), False),
+    (Action('click', {'x': 500, 'y': 500}), True),
+])
+def test_shared_package_restore_preserves_explicit_navigation(action, should_restore):
+    rule = {'id': 'any_package_restore_rule', 'phase': 'pre_action',
+            'condition': {'package_mismatch': True}, 'action': {'action': 'open_app'}}
+    source = Observation(package_name='com.google.android.apps.nexuslauncher')
+    current = Observation(package_name='com.android.settings')
+    assert checker_rule_matches(rule, current=current, source=source,
+        function_id='any_function', step_index=0, action=action) is should_restore
+    assert (default_checker(CheckerContext(source, current, action)) is not None) is should_restore

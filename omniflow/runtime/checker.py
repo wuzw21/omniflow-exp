@@ -214,6 +214,11 @@ def checker_rule_matches(
     if kind == "ui_unstable":
         return _ui_is_unstable(current)
     if kind == "package_mismatch":
+        # Explicit navigation does not require returning to the source app.
+        # Match default_checker: launching an app from a different page must
+        # not first try to launch the historical source (often Launcher).
+        if action.tool in {"open_app", "press_key"}:
+            return False
         source_package = _observation_package(source)
         current_package = _observation_package(current)
         return bool(
