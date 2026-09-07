@@ -626,3 +626,213 @@ def test_incomplete_local_function_can_route_to_second_local_function(
     assert router.calls == 2
     assert checker.calls == 2
     assert host.actions == 2
+
+
+def test_router_does_not_repeat_same_function_from_same_gui_state(
+    tmp_path,
+) -> None:
+    class RepeatingRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def route_function(
+            self,
+            _goal: object,
+            _functions: object,
+        ) -> ToolCall:
+            self.calls += 1
+            return ToolCall("search_note", {})
+
+    class FinishingPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def one_step_tool_call(self, *_: object, **__: object) -> ToolCall:
+            self.calls += 1
+            return ToolCall("finished", {"content": "The note was inspected."})
+
+    class StaticStateHost:
+        def __init__(self) -> None:
+            self.actions = 0
+
+        async def observe(self, **_: object) -> Observation:
+            return Observation(
+                xml='<hierarchy width="720" height="1280" />',
+                extra={
+                    "display": {"width": 720, "height": 1280},
+                    "state_id": "same-search-page",
+                },
+            )
+
+        async def get_state(self, _state_id: str) -> Observation:
+            return await self.observe()
+
+        async def act(self, _action: object) -> ActionResult:
+            self.actions += 1
+            return ActionResult(True)
+
+    class CompletionChecker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 1.0 if self.calls == 2 else 0.0
+
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    store.put_function(
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "search_note",
+                "name": "Search for a note",
+                "description": "Search for the requested note title.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "bindings": [],
+                "render_bindings": [],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "search-state",
+                        "action": {
+                            "tool": "wait",
+                            "args": {"duration_ms": 1},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
+    )
+
+    router = RepeatingRouter()
+    planner = FinishingPlanner()
+    checker = CompletionChecker()
+    host = StaticStateHost()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=planner,
+        function_router=router,
+        completion_checker=checker,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    )
+
+    result = asyncio.run(flow.arun("Read the Team Weekly Sync note."))
+
+    assert result.success is True
+    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.fallback_steps == 0
+    assert router.calls == 2
+    assert planner.calls == 1
+    assert checker.calls == 2
+    assert host.actions == 1
+    events = result.detail["function_resolution"]["recall"]["events"]
+    assert events[1]["function_cache"]["status"] == (
+        "repeated_invocation_without_progress"
+    )
+
+
+def test_router_can_repeat_same_function_after_gui_state_changes(tmp_path) -> None:
+    class RepeatingRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def route_function(
+            self,
+            _goal: object,
+            _functions: object,
+        ) -> ToolCall:
+            self.calls += 1
+            return ToolCall("delete_item", {})
+
+    class UnusedPlanner:
+        async def one_step_tool_call(self, *_: object, **__: object) -> ToolCall:
+            raise AssertionError("changed GUI state should admit the Function again")
+
+    class ChangingStateHost:
+        def __init__(self) -> None:
+            self.actions = 0
+
+        async def observe(self, **_: object) -> Observation:
+            return Observation(
+                xml='<hierarchy width="720" height="1280" />',
+                extra={
+                    "display": {"width": 720, "height": 1280},
+                    "state_id": f"item-list-{self.actions}",
+                },
+            )
+
+        async def get_state(self, _state_id: str) -> Observation:
+            return await self.observe()
+
+        async def act(self, _action: object) -> ActionResult:
+            self.actions += 1
+            return ActionResult(True)
+
+    class CompletionChecker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 1.0 if self.calls == 2 else 0.0
+
+    store_path = tmp_path / "store.json"
+    store = FunctionStore(store_path)
+    store.put_function(
+        parse_function_artifact(
+            {
+                "schema_version": "omniflow.function.v2",
+                "function_id": "delete_item",
+                "name": "Delete one item",
+                "description": "Delete the requested item from the visible list.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "bindings": [],
+                "render_bindings": [],
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "source_state_id": "item-list",
+                        "action": {
+                            "tool": "wait",
+                            "args": {"duration_ms": 1},
+                        },
+                    }
+                ],
+                "agent_visible": True,
+            }
+        )
+    )
+
+    router = RepeatingRouter()
+    checker = CompletionChecker()
+    host = ChangingStateHost()
+    flow = OmniFlow(
+        store_path,
+        host=host,
+        planner=UnusedPlanner(),
+        function_router=router,
+        completion_checker=checker,
+        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+    )
+
+    result = asyncio.run(flow.arun("Delete two items."))
+
+    assert result.success is True
+    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.fallback_steps == 0
+    assert router.calls == 2
+    assert checker.calls == 2
+    assert host.actions == 2

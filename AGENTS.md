@@ -94,6 +94,10 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   Function Store 和设备环境；Planner 从 Function `input_schema` 生成参数，runtime
   通过 `bindings` 绑定后执行。禁止 direct Function id、Function 序列、预绑定参数、
   source qualification replay 或任务专用执行脚本。
+- 完整 Function 重放成功后，runtime 必须先调用当前 task 的官方 completion checker；
+  checker 通过就立即生成 `function_completed_verified` 终止结果，不再进入 Planner，
+  也不追加设备动作。checker 未通过才进入既有 Planner fallback。`observation` 只作为
+  checker/Planner 的状态输入，`finished` 只作为终止结果，不得与设备动作混在同一轮。
 
 ## OmniTransfer 合同
 
@@ -108,6 +112,46 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 
 - 4090 长期部署规则：OmniFlow-exp 的唯一权威工作区固定为 `/home/zewen/Projects/OmniFlow-exp`。代码、`.git`、`.venv`、`data/current.json`、实验资产和结果都在这一工作区内直接修改、验证和运行；Git commit 是唯一版本历史。禁止再创建或从 `local-authoritative`、`current-snapshot`、按日期/任务命名的 checkout、`/data/omniflow-4090/OmniFlow-exp` 或其他复制目录部署和启动实验。旧目录只可作为只读历史证据，不得成为运行入口。所有 4090 命令必须先解析并校验 canonical workspace，路径不一致立即失败。
 - AndroidWorld 时间合同：一个完整 task 的默认和最大 wall deadline 都是 600 秒；正式 OmniFlow Planner 单次模型请求默认最多 30 秒。禁止通过实验命令把整任务放宽到 10 分钟以上。
+- AndroidWorld 论文时间统计长期规则（2026-09-02）：正文的方法时延只使用
+  `execution_duration_ms`，其范围是 `agent.step`，排除 setup 和官方 validator；
+  `duration_ms` 是完整 AndroidWorld lifecycle wall time，只用于系统审计，禁止与前者
+  混为一个 latency 指标。主文的平均执行时间只统计 official task success，并同时给出
+  success 样本数；official failure/unreached 的耗时不混入 success latency，可另报为
+  recovery/system-cost 指标。
+- 成功时延必须同时保留两种口径：对齐常见 benchmark 的“每个方法各自 success set”均值，
+  以及用于公平方法比较的“相同 task+device 上双方都 official success”的 paired
+  intersection。前者可能因各方法成功任务难度不同而产生 selection bias，不能单独支撑
+  更快的因果结论；后者是主要 latency 对比。Accuracy/SR 仍以全部正式实验格及官方
+  validator 为准，禁止只在成功集计算 accuracy。
+- `actions_failed` 表示 Function replay 路径失败，不等于 official task failure；如果它
+  后续通过 Planner fallback 达到 official success，则必须计入“完整 OmniFlow 的成功
+  时延”。只有在明确分析“Function 成功快路径本身”时，才可另取 official success 且
+  `actions_succeeded` 的子集；该机制子集不能冒充完整系统时延。
+- 2026-09-02 的 12-cell 快照时间审计不是最终论文结果：各自 success set 上 OmniFlow
+  为 63.60 秒（n=163），Zero-Shot 为 46.63 秒（n=129），但任务集合不同；双方都成功的
+  110 个配对格为 58.60/42.58 秒，说明当前完整 OmniFlow 的成功时延尚未证明更快。机制
+  分层中，双方成功且 replay `actions_succeeded` 的 42 格为 29.61/44.56 秒
+  （OmniFlow -33.5%，model calls 3.02/5.79）；双方成功但 replay `actions_failed` 后
+  fallback 恢复的 65 格为 76.34/41.97 秒（OmniFlow +81.9%）。论文应表述为“成功快路径
+  明显加速，但失败后恢复成本抵消了完整系统的成功时延收益”，不能删除恢复成功样本后
+  宣称整个 OmniFlow 更快。
+- 当前快照的 `performance_metrics_json` 没有 component timing，OmniFlow
+  `vlm_latency_sec` 也为零占位，因此不能声称模型思考、OmniTransfer、observe/act、
+  checker 或 UI stabilization 各自占用多少时间。正式时延实验必须逐 episode 记录并
+  校验 `llm/router/planner`、Function recall、page encoding、OmniTransfer mapping、
+  OOB observe、OOB act、UI stabilization、checker、fallback 和 official validator
+  的非重叠 wall-time 分解；分解总和要与 execution/lifecycle owner 对账。
+- Memory latency 的正式验证固定采用同一 task、task parameters、device、evaluation
+  seed、模型和 endpoint 的 Memory ON/OFF 配对；两组都必须 official success，主指标是
+  paired `execution_duration_ms`，同时报告 model calls、tokens 和各 component wall time。
+  单任务诊断按 OFF/ON 或 ABBA 交替以控制模型/设备 warm-up；论文结论应在预先冻结的多
+  task 集合上复现并按 task 聚类 bootstrap。完整 OmniFlow、official-success 交集和
+  official-success + `actions_succeeded` 快路径三层结果必须分开，禁止用快路径子集替代
+  完整系统。
+- 2026-09-02 在 4090 对 `ContactsAddContact` Standard 发起的隔离 Memory-OFF latency
+  smoke 因正式 `Qwen3.6-Plus` 返回 `team_model_access_denied` 403 而无效；该次
+  execution=7.661 秒、actions=0、official validator fail 只属于环境失败证据，禁止进入
+  latency 统计。恢复同一正式模型权限前不得换模型后与既有正式结果混算。
 - Function v2 按成功 RunLog 动作顺序保存；步骤通过 `source_state_id` 引用 sibling `transfer_states.json`。新跑的正式 AndroidWorld source 默认使用 seed 111。
 - B-MoCA env100 必须先通过 official success、method success、`model_calls=0`、`fallback_steps=0`，才可创建/运行其他环境。
 - 所有 Python/Torch 命令使用 `~/Projects/Omni/OmniFlow-exp/.venv/bin/python`；正式执行不使用邻近环境。

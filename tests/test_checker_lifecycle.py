@@ -14,7 +14,11 @@ from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
 from omniflow.runtime.checker import CheckerLibrary, checker_rule_matches
-from omniflow.runtime.execution import _transfer_page_package, execute_robust_action
+from omniflow.runtime.execution import (
+    _observe_ready,
+    _transfer_page_package,
+    execute_robust_action,
+)
 
 
 def _observation(name: str, *, keyboard_visible: bool = False) -> Observation:
@@ -149,6 +153,43 @@ class _CheckerHost:
         if action == Action("press_key", {"key": "back"}):
             self.state = "dialog"
         return ActionResult(True)
+
+
+def test_observe_ready_waits_for_hierarchy_after_package_transition(monkeypatch) -> None:
+    class Host:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def observe(self, **_: object) -> Observation:
+            self.calls += 1
+            if self.calls == 1:
+                return Observation(
+                    package_name="com.xingin.xhs",
+                    activity_name="android.widget.FrameLayout",
+                    extra={"display": {"width": 1080, "height": 2376}},
+                )
+            return Observation(
+                xml=(
+                    '<hierarchy width="1080" height="2376">'
+                    '<node package="com.xingin.xhs" bounds="[0,0][1080,2376]" />'
+                    "</hierarchy>"
+                ),
+                package_name="com.xingin.xhs",
+                activity_name="android.widget.FrameLayout",
+                extra={"display": {"width": 1080, "height": 2376}},
+            )
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("omniflow.runtime.execution.asyncio.sleep", no_sleep)
+    host = Host()
+
+    result = asyncio.run(_observe_ready(host))
+
+    assert host.calls == 2
+    assert result.package_name == "com.xingin.xhs"
+    assert result.xml.startswith("<hierarchy")
 
 
 def test_plugin_checker_retries_original_action_after_fresh_observation() -> None:

@@ -162,5 +162,63 @@ def test_save_function_bridge_accepts_canonical_runlog_without_function_draft(
     )
 
     assert result["success"] is True
+    assert result["registered"] is True
     assert result["function_ids"] == ["complete_source_workflow"]
     assert result["functions"][0]["agent_visible"] is False
+    assert result["function"]["function_id"] == "complete_source_workflow"
+
+
+def test_save_function_bridge_enhances_and_registers_the_same_function(
+    tmp_path,
+) -> None:
+    run_log = _run_log()
+    compiled_root = tmp_path / "source-compiled"
+    compile_runlog_to_store(
+        run_log,
+        compiled_root,
+        source_states=import_run_log_evidence(run_log)[1],
+    )
+    function = json.loads(
+        (compiled_root / "store.json").read_text()
+    )["functions"]["complete_source_workflow"]
+    bridge = JsonLineBridge(
+        tmp_path / "store.json",
+        reader=StringIO(),
+        writer=StringIO(),
+    )
+    model_calls: list[dict] = []
+
+    def fake_host_call(request_id: str, method: str, payload: dict) -> dict:
+        assert method == "complete_json"
+        model_calls.append(payload)
+        return {
+            "content": json.dumps(
+                {
+                    "name": "增强后的点击流程",
+                    "description": "增强后的可复用点击流程",
+                    "parameters": [],
+                },
+                ensure_ascii=False,
+            )
+        }
+
+    bridge.host_call = fake_host_call  # type: ignore[method-assign]
+    result = bridge._save_function(
+        "request-enhance",
+        {
+            "run_id": run_log["run_id"],
+            "run_log": run_log,
+            "functions": [function],
+            "enhance": True,
+            "instruction": "让名称更清楚",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["registered"] is True
+    assert result["function_id"] == "complete_source_workflow"
+    assert result["function"]["function_id"] == "complete_source_workflow"
+    assert result["function"]["name"] == "增强后的点击流程"
+    assert result["functions"] == [result["function"]]
+    assert len(model_calls) == 1
+    assert model_calls[0]["max_tokens"] == 512

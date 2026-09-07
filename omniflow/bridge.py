@@ -21,6 +21,7 @@ from omniflow.core.model import (
 from omniflow.core.trajectory import canonicalize_run_log
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import compile_runlog_to_store
+from omniflow.functions.management import enhance_function
 from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
@@ -43,11 +44,11 @@ _MANAGEMENT_TOOL_NAMES = frozenset(
         "list_run_logs",
         "get_run_log",
         "get_run_log_state",
+        "run_function",
     }
 )
 
 _RUN_GUI_TOOL = "run_gui"
-
 
 class JsonLineBridge:
     def __init__(
@@ -158,6 +159,10 @@ class JsonLineBridge:
             metadata = body.get("_meta")
             run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
             return self._run(request_id, {**args, **run_metadata})
+        if tool == "run_function":
+            metadata = body.get("_meta")
+            run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            return self._run_function(request_id, {**args, **run_metadata})
         if tool not in _MANAGEMENT_TOOL_NAMES:
             raise ValueError(f"tool_not_exposed:{tool}")
 
@@ -227,6 +232,53 @@ class JsonLineBridge:
             "UNKNOWN_FUNCTION_MANAGEMENT_TOOL",
             f"Unknown Function management tool: {tool}",
         )
+
+    def _run_function(
+        self,
+        request_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        _require_contract(
+            body,
+            {"function_id"},
+            {
+                "function_id",
+                "arguments",
+                "goal",
+                "defer_user_input",
+                "run_id",
+                "started_at_ms",
+                "model",
+            },
+        )
+        function_id = str(body.get("function_id") or "").strip()
+        if not function_id:
+            return _run_error(body, code="FUNCTION_ID_EMPTY", message="function_id_required")
+        arguments = body.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return _run_error(
+                body,
+                code="FUNCTION_ARGUMENTS_INVALID",
+                message="function_arguments_must_be_object",
+            )
+        host = _BridgeHost(
+            self,
+            request_id,
+            defer_user_input=body.get("defer_user_input") is True,
+        )
+        installed_apps = host.installed_apps()
+        flow = OmniFlow(
+            self.flow.store.path,
+            host=host,
+            installed_apps=installed_apps,
+            config=OmniFlowConfig(runtime=RuntimeSettings()),
+            catalog=self.catalog,
+        )
+        function = flow.store.get_function(function_id)
+        result = flow.call_tool(
+            ToolCall(function_id, dict(arguments)),
+        )
+        return _run_result(result, body=body, function=function)
 
     def _run(
         self,
@@ -360,18 +412,44 @@ class JsonLineBridge:
                 "run_id",
                 "run_log",
                 "function",
+                "functions",
                 "arguments",
                 "agent_visible",
+                "enhance",
+                "instruction",
             },
         )
         supplied_function = body.get("function")
+        supplied_functions = body.get("functions")
         run_id = str(body.get("run_id") or "").strip()
         supplied_run_log = body.get("run_log")
+        enhance = body.get("enhance") is True
         if supplied_function is not None and not isinstance(supplied_function, dict):
             return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
+        if supplied_functions is not None:
+            if not isinstance(supplied_functions, list) or not supplied_functions:
+                return _save_error("FUNCTIONS_INVALID", "functions must be a non-empty array")
+            if not all(isinstance(value, dict) for value in supplied_functions):
+                return _save_error("FUNCTIONS_INVALID", "functions must contain objects")
+            if supplied_function is not None:
+                return _save_error(
+                    "FUNCTION_INPUT_AMBIGUOUS",
+                    "pass either function or functions, not both",
+                )
+            supplied_function = supplied_functions[0]
+            if len(supplied_functions) != 1:
+                return _save_error(
+                    "FUNCTIONS_INVALID",
+                    "this save path accepts exactly one Function",
+                )
         supplied_arguments = body.get("arguments")
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
+        if enhance and supplied_function is None:
+            return _save_error(
+                "FUNCTION_ENHANCEMENT_INPUT_REQUIRED",
+                "functions is required when enhance=true",
+            )
         if supplied_run_log is not None:
             try:
                 run_log = _load_run_log_input(supplied_run_log)
@@ -411,6 +489,31 @@ class JsonLineBridge:
 
         try:
             with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
+                if enhance:
+                    def complete_json(prompt: str) -> str:
+                        response = self.host_call(
+                            request_id,
+                            "complete_json",
+                            {
+                                "prompt": prompt,
+                                "max_tokens": 512,
+                                "temperature": 0,
+                            },
+                        )
+                        if not isinstance(response, dict):
+                            raise ValueError("function_enhancer_response_invalid")
+                        content = response.get("content")
+                        if not isinstance(content, str) or not content.strip():
+                            raise ValueError("function_enhancer_response_invalid")
+                        return content
+
+                    enhanced, _, _ = enhance_function(
+                        supplied_function,
+                        run_log,
+                        complete_json,
+                        instruction=str(body.get("instruction") or ""),
+                    )
+                    supplied_function = enhanced
                 function_bundle = None
                 if supplied_function is not None:
                     function_id = str(supplied_function.get("function_id") or "").strip()
@@ -656,18 +759,37 @@ def _require_contract(
 
 
 def _management_tool_definition(name: str) -> dict[str, Any]:
+    if name == "run_function":
+        return {
+            "name": name,
+            "description": (
+                "Replay one registered Function through the canonical OmniFlow "
+                "execution path. The Function id and semantic arguments are resolved "
+                "by Python; every action still uses the configured OmniTransfer "
+                "mapping and the host fallback contract."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "function_id": {"type": "string"},
+                    "arguments": {"type": "object"},
+                    "goal": {"type": "string"},
+                    "defer_user_input": {"type": "boolean"},
+                },
+                "required": ["function_id"],
+                "additionalProperties": False,
+            },
+        }
     if name != "save_function":
         return {"name": name, "inputSchema": {"type": "object"}}
     return {
         "name": name,
         "description": (
-            "Save one reusable Function. Pass run_id, a RunLog object, or an absolute "
-            "RunLog JSON path to mechanically preserve the complete successful action "
-            "sequence without a model call. For optional "
-            "semantic authoring, first inspect the RunLog with get_run_log, then pass "
-            "run_id plus one complete Function and its source arguments. Preserve recorded "
-            "actions in order; do not invent actions, UI evidence, or checker rules. "
-            "Parameterize only action values supported by the RunLog."
+            "Save one reusable Function. Pass run_id or a RunLog object for deterministic "
+            "registration. For official semantic enhancement, pass the existing Function "
+            "in functions, set enhance=true, and optionally provide instruction. The "
+            "enhancer may change only semantic metadata and evidence-backed parameters; "
+            "actions, coordinates, source states, and function_id remain immutable."
         ),
         "inputSchema": {
             "type": "object",
@@ -677,14 +799,23 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
                     "anyOf": [{"type": "object"}, {"type": "string"}]
                 },
                 "function": {"type": "object"},
+                "functions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "items": {"type": "object"},
+                },
                 "arguments": {"type": "object"},
                 "agent_visible": {"type": "boolean"},
+                "enhance": {"type": "boolean"},
+                "instruction": {"type": "string"},
             },
             "additionalProperties": False,
             "anyOf": [
                 {"required": ["run_id"]},
                 {"required": ["run_log"]},
                 {"required": ["function"]},
+                {"required": ["functions"]},
             ],
         },
     }
@@ -729,8 +860,10 @@ def _save_compile_error(error: ValueError) -> dict[str, Any]:
 def _save_success(function: Function) -> dict[str, Any]:
     return {
         "success": True,
+        "registered": True,
         "function_id": function.function_id,
         "function": function.to_dict(),
+        "functions": [function.to_dict()],
         "error": None,
     }
 
@@ -738,8 +871,11 @@ def _save_success(function: Function) -> dict[str, Any]:
 def _save_many_success(functions: list[Function]) -> dict[str, Any]:
     return {
         "success": True,
+        "registered": True,
+        "function_id": functions[0].function_id if len(functions) == 1 else "",
         "function_ids": [function.function_id for function in functions],
         "functions": [function.to_dict() for function in functions],
+        "function": functions[0].to_dict() if len(functions) == 1 else None,
         "error": None,
     }
 
@@ -747,8 +883,11 @@ def _save_many_success(functions: list[Function]) -> dict[str, Any]:
 def _save_error(code: str, message: str) -> dict[str, Any]:
     return {
         "success": False,
+        "registered": False,
         "function_id": "",
+        "function_ids": [],
         "function": None,
+        "functions": [],
         "error": {"code": code, "message": message},
     }
 
@@ -879,6 +1018,7 @@ def _run_result(
         "recalled_function_id": recalled_function_id or None,
         "post_run_actions": post_run_actions or None,
         "runtime_limits": result.detail.get("runtime_limits") or None,
+        "timing": result.detail.get("timing") or None,
         "missing_required_arguments": (
             [
                 value

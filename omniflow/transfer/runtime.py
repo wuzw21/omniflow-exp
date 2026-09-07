@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any
 import xml.etree.ElementTree as ET
 
@@ -17,6 +18,19 @@ V10_MATCHER_MODE = "omnitransfer_point_conditioned_sparse_graph_v10"
 V10_MATCHER_RELEASE = "omnitransfer-point-conditioned-sparse-graph-v10"
 V10_MATCHER_CHECKPOINT_SHA256 = (
     "3b783ed113fc37397e2f092d133e970ec36bdbf0d26e262d9273389e4729d16f"
+)
+V10_MATCHER_NUMPY_CHECKPOINT_SHA256 = (
+    "5dbf5e895dbb0867f052ded625da673b6be95c278541e76a9d3486d7c7664b51"
+)
+V10_MATCHER_EXPORTED_NUMPY_CHECKPOINT_SHA256 = (
+    "d1700845f599b9854b29a435166dfb18ce6a141fb4ab76bce7687c88188637a4"
+)
+V10_MATCHER_ALLOWED_CHECKPOINT_SHA256S = frozenset(
+    {
+        V10_MATCHER_CHECKPOINT_SHA256,
+        V10_MATCHER_NUMPY_CHECKPOINT_SHA256,
+        V10_MATCHER_EXPORTED_NUMPY_CHECKPOINT_SHA256,
+    }
 )
 _TRANSFER_STATE_FIELDS = {
     "state_id",
@@ -720,14 +734,20 @@ def _legacy_node_can_contain(element: ET.Element) -> bool:
 
 
 def transfer_action(**kwargs: Any) -> dict[str, Any]:
+    transfer_started_ns = time.perf_counter_ns()
     kwargs = dict(kwargs)
+    normalize_started_ns = time.perf_counter_ns()
     for field in ("source_xml", "target_xml"):
         value = kwargs.get(field)
         if isinstance(value, str) and value:
             kwargs[field] = _normalize_legacy_flat_xml(value)
+    normalize_ms = _elapsed_ms(normalize_started_ns)
+    load_started_ns = time.perf_counter_ns()
     module = load_omnitransfer()
+    load_ms = _elapsed_ms(load_started_ns)
     rank_candidates = getattr(module, "rank_action_candidates", None)
     if callable(rank_candidates):
+        rank_started_ns = time.perf_counter_ns()
         ranking = rank_candidates(
             **{
                 key: value
@@ -738,6 +758,16 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
         if not isinstance(ranking, dict):
             raise RuntimeError("omnitransfer_result_invalid")
         ranking = _enforce_v10_result(ranking)
+        timing = dict(ranking.get("timing") or {})
+        timing.update(
+            {
+                "omnitransfer_call_ms": _elapsed_ms(rank_started_ns),
+                "omnitransfer_load_ms": load_ms,
+                "omniflow_transfer_normalize_ms": normalize_ms,
+                "omniflow_transfer_action_ms": _elapsed_ms(transfer_started_ns),
+            }
+        )
+        ranking = {**ranking, "timing": timing}
         return _select_transfer_candidate(ranking, kwargs)
     action_transfer = getattr(module, "action_transfer", None)
     if not callable(action_transfer):
@@ -746,6 +776,10 @@ def transfer_action(**kwargs: Any) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise RuntimeError("omnitransfer_result_invalid")
     return _enforce_v10_result(result)
+
+
+def _elapsed_ms(started_ns: int) -> float:
+    return round((time.perf_counter_ns() - started_ns) / 1_000_000.0, 3)
 
 
 def _enforce_v10_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -757,7 +791,8 @@ def _enforce_v10_result(result: dict[str, Any]) -> dict[str, Any]:
     if (
         mode == V10_MATCHER_MODE
         and release == V10_MATCHER_RELEASE
-        and checkpoint == V10_MATCHER_CHECKPOINT_SHA256
+        and checkpoint
+        in V10_MATCHER_ALLOWED_CHECKPOINT_SHA256S
     ):
         return result
     return {
@@ -768,6 +803,9 @@ def _enforce_v10_result(result: dict[str, Any]) -> dict[str, Any]:
             "required_mode": V10_MATCHER_MODE,
             "required_release": V10_MATCHER_RELEASE,
             "required_checkpoint_sha256": V10_MATCHER_CHECKPOINT_SHA256,
+            "allowed_checkpoint_sha256s": sorted(
+                V10_MATCHER_ALLOWED_CHECKPOINT_SHA256S
+            ),
             "actual_mode": mode,
             "actual_release": release,
             "actual_checkpoint_sha256": checkpoint,

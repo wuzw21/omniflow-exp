@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -186,6 +187,8 @@ class OmniFlow:
         planner_function_catalog: dict[str, Function] = {}
         recall_events: list[dict[str, Any]] = []
         recall_source_states: dict[str, Observation | None] = {}
+        successful_router_invocations: set[str] = set()
+        execution_timing: dict[str, Any] = {}
         completion_gate: dict[str, Any] | None = None
         function_resolution: dict[str, Any] = {
             "candidate_count": 0,
@@ -229,6 +232,10 @@ class OmniFlow:
                     "schema_version": "omniflow.function-recall-events.v1",
                     "events": [dict(event) for event in recall_events],
                 }
+            if execution_timing:
+                terminal_detail = dict(kwargs.get("terminal_detail") or {})
+                terminal_detail.setdefault("timing", dict(execution_timing))
+                kwargs["terminal_detail"] = terminal_detail
             evidence_function = function_session.completed or (
                 function_session.bound if function_session.failed else None
             )
@@ -337,6 +344,10 @@ class OmniFlow:
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
                 )
+                replay_timing = replay.detail.get("timing")
+                if isinstance(replay_timing, dict):
+                    execution_timing.clear()
+                    execution_timing.update(replay_timing)
             actions_executed += replay.actions_executed
             trace.extend(replay.detail.get("trace") or ())
             if replay.success:
@@ -632,7 +643,29 @@ class OmniFlow:
                 selected_function = {
                     function.id: function for function in cache_functions
                 }.get(routed_call.name)
-                if selected_function is None:
+                repeated_invocation = False
+                invocation_signature = ""
+                if selected_function is not None:
+                    invocation_signature = _function_invocation_signature(
+                        selected_function.id,
+                        routed_call.arguments,
+                        observation,
+                    )
+                    repeated_invocation = (
+                        invocation_signature in successful_router_invocations
+                    )
+                if repeated_invocation:
+                    cache_audit["status"] = (
+                        "repeated_invocation_without_progress"
+                    )
+                    cache_audit["selected_function_id"] = selected_function.id
+                    cache_audit["arguments"] = dict(routed_call.arguments)
+                    previous_action_error = (
+                        "function_invocation_already_succeeded_from_current_state:"
+                        f"{selected_function.id}"
+                    )
+                    selected_function = None
+                elif selected_function is None:
                     cache_audit["status"] = "unknown_selection"
                     cache_audit["selected_function_id"] = routed_call.name
                     previous_action_error = (
@@ -691,11 +724,16 @@ class OmniFlow:
                             checker_rules=self.checker_library.rules,
                             checker_trigger_counts=shared_checker_trigger_counts,
                         )
+                        replay_timing = replay.detail.get("timing")
+                        if isinstance(replay_timing, dict):
+                            execution_timing.clear()
+                            execution_timing.update(replay_timing)
                         actions_executed += replay.actions_executed
                         replay_trace = list(replay.detail.get("trace") or ())
                         trace.extend(replay_trace)
                         observation = replay.final_state or observation
                         if replay.success:
+                            successful_router_invocations.add(invocation_signature)
                             cache_audit["status"] = "executed"
                             function_resolution["replay_status"] = "succeeded"
                             function_session.mark_completed()
@@ -850,6 +888,10 @@ class OmniFlow:
                     checker_rules=self.checker_library.rules,
                     checker_trigger_counts=shared_checker_trigger_counts,
                 )
+                replay_timing = replay.detail.get("timing")
+                if isinstance(replay_timing, dict):
+                    execution_timing.clear()
+                    execution_timing.update(replay_timing)
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)
@@ -2057,6 +2099,39 @@ def _function_cache_candidates(
         if admitted:
             candidates.append(function)
     return tuple(candidates), audit
+
+
+def _function_invocation_signature(
+    function_id: str,
+    arguments: dict[str, Any],
+    observation: Observation,
+) -> str:
+    """Identify one successful call at one concrete GUI entry state."""
+
+    state_id = str(observation.extra.get("state_id") or "").strip()
+    if not state_id:
+        observation_payload = {
+            "package_name": str(observation.package_name or ""),
+            "activity_name": str(observation.activity_name or ""),
+            "xml": str(observation.xml or ""),
+            "image_base64": str(observation.image_base64 or ""),
+        }
+        state_id = hashlib.sha256(
+            json.dumps(
+                observation_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    argument_key = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return f"{function_id}\n{argument_key}\n{state_id}"
 
 
 def _bounded_confidence(value: Any) -> float:

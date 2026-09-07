@@ -1126,6 +1126,7 @@ def build_appagent_teacher_source(
 
     source_app_packages: set[str] = set()
     actions: list[dict[str, Any]] = []
+    skipped_actions: list[dict[str, int | str]] = []
     for step_index, step in enumerate(_source_run_log_steps(payload)):
         result = step.get("result")
         if isinstance(result, dict) and result.get("success") is not True:
@@ -1142,6 +1143,15 @@ def build_appagent_teacher_source(
                 if _looks_like_android_package(package_name):
                     source_app_packages.add(package_name)
             if action_type in _NON_PRIMITIVE_SOURCE_TYPES:
+                continue
+            if action_type == "paste":
+                skipped_actions.append(
+                    {
+                        "source_step_index": step_index,
+                        "source_action_index": action_index,
+                        "reason": "official_appagent_action_unsupported:paste",
+                    }
+                )
                 continue
             if action_type not in APPAGENT_SUPPORTED_SOURCE_TYPES:
                 raise ValueError(
@@ -1161,29 +1171,69 @@ def build_appagent_teacher_source(
             if action_type == "press_key":
                 key = str(params.get("key") or "").strip().casefold()
                 if key != "back":
-                    raise ValueError(
-                        "appagent_official_press_key_unsupported:"
-                        f"{step_index}:{action_index}:{key or 'missing'}"
+                    skipped_actions.append(
+                        {
+                            "source_step_index": step_index,
+                            "source_action_index": action_index,
+                            "reason": (
+                                "official_appagent_action_unsupported:press_key:"
+                                f"{key or 'missing'}"
+                            ),
+                        }
                     )
+                    continue
                 params["key"] = "back"
             params = _source_semantic_params(step, params, action_type=action_type)
+            adapted_params = _adapter_params(action_type, params)
+            if action_type in {"click", "long_press"} and not any(
+                adapted_params.get(key)
+                for key in (
+                    "target_description",
+                    "target_evidence",
+                    "source_context",
+                    "source_appagent_tag",
+                )
+            ):
+                skipped_actions.append(
+                    {
+                        "source_step_index": step_index,
+                        "source_action_index": action_index,
+                        "reason": "appagent_target_identity_missing",
+                    }
+                )
+                continue
+            if action_type == "swipe" and not any(
+                adapted_params.get(key)
+                for key in (
+                    "target_description",
+                    "target_evidence",
+                    "source_context",
+                    "source_appagent_tag",
+                )
+            ):
+                skipped_actions.append(
+                    {
+                        "source_step_index": step_index,
+                        "source_action_index": action_index,
+                        "reason": "appagent_swipe_target_identity_missing",
+                    }
+                )
+                continue
             actions.append(
                 {
                     "source_step_index": step_index,
                     "source_action_index": action_index,
                     "action": {
                         "type": action_type,
-                        "params": _adapter_params(action_type, params),
+                        "params": adapted_params,
                     },
                 }
             )
     actions = _propagate_same_step_input_targets(actions)
     actions, skipped_route_actions = _drop_unaddressable_route_dismissals(actions)
+    skipped_actions.extend(skipped_route_actions)
     if not actions:
         raise ValueError("appagent_official_teacher_actions_required")
-    if len(source_app_packages) > 1:
-        raise ValueError("appagent_multi_app_demonstration_unsupported")
-
     return {
         "schema_version": APPAGENT_SOURCE_SCHEMA,
         "task_name": normalized_task_name,
@@ -1207,7 +1257,10 @@ def build_appagent_teacher_source(
         "requires_native_source_episode": False,
         "target_inputs_read": False,
         "coordinate_replay": False,
+        "source_app_packages": sorted(source_app_packages),
         "skipped_route_actions": skipped_route_actions,
+        "skipped_actions": skipped_actions,
+        "skipped_action_count": len(skipped_actions),
     }
 
 
@@ -1717,15 +1770,14 @@ def ground_appagent_teacher_action(
         raise ValueError("appagent_current_screen_has_no_interactive_elements")
     source_tag = params.get("source_appagent_tag")
     if isinstance(source_tag, int) and not isinstance(source_tag, bool):
-        if source_tag < 1 or source_tag > len(elements):
-            raise ValueError("appagent_teacher_source_tag_invalid")
-        element = elements[source_tag - 1]
-        return GroundedAppAgentAction(
-            tag=source_tag,
-            uid=element.uid,
-            bbox=element.bbox,
-            match_reason="source_appagent_tag",
-        )
+        if 1 <= source_tag <= len(elements):
+            element = elements[source_tag - 1]
+            return GroundedAppAgentAction(
+                tag=source_tag,
+                uid=element.uid,
+                bbox=element.bbox,
+                match_reason="source_appagent_tag",
+            )
     root = ET.fromstring(xml_text)
     matching_nodes = _identity_nodes(root, params)
     match_reason = "exact_visible_identity"

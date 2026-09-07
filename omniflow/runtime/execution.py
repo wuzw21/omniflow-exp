@@ -7,6 +7,7 @@ import inspect
 import json
 import math
 import re
+import time
 from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
@@ -83,6 +84,7 @@ async def execute_function(
     resume_metadata_pending = dict(resume_metadata or {})
     for step_offset, function_step in enumerate(steps):
         action = function_step.action
+        function_step_started_ns = time.perf_counter_ns()
         source_state = await _load_state(
             host,
             function_step.source_state_id,
@@ -130,6 +132,17 @@ async def execute_function(
             checker_trigger_counts=checker_trigger_counts,
             function_step_index=function_step.step_index,
         )
+        step_timing = {
+            **dict(step.detail.get("timing") or {}),
+            "function_step_ms": round(
+                (time.perf_counter_ns() - function_step_started_ns) / 1_000_000.0,
+                3,
+            ),
+        }
+        step = replace(
+            step,
+            detail={**dict(step.detail), "timing": step_timing},
+        )
 
         after_observation = step.after or step.before or current
         executed += step.actions_executed
@@ -138,7 +151,10 @@ async def execute_function(
                 host,
                 step,
                 trace_start_index=int(trace_start_index) + len(trace),
-                metadata={"function_step_index": function_step.step_index},
+                metadata={
+                    "function_step_index": function_step.step_index,
+                    "execution_timing": dict(step_timing),
+                },
                 first_metadata=(
                     {"function_alignment": dict(resume_metadata_pending)}
                     if resume_metadata_pending
@@ -168,6 +184,20 @@ async def execute_function(
         final_state=current,
         detail={
             "trace": trace,
+            "timing": {
+                "function_steps": [
+                    {
+                        "step_index": int(item.get("metadata", {}).get("function_step_index", index)),
+                        **dict(
+                            item.get("metadata", {}).get("execution_timing")
+                            or item.get("metadata", {}).get("transfer", {}).get("timing")
+                            or {}
+                        ),
+                    }
+                    for index, item in enumerate(trace)
+                    if isinstance(item, dict)
+                ],
+            },
             "next_step_index": (
                 max((step.step_index for step in steps), default=start_step_index - 1)
                 + 1
@@ -363,10 +393,18 @@ async def execute_robust_action(
         host=host,
         installed_packages=installed_packages,
     )
+    merged_detail = {
+        **dict(result.detail or {}),
+        **dict(decision.detail or {}),
+        "timing": {
+            **dict(result.detail.get("timing") or {}),
+            **dict(decision.detail.get("timing") or {}),
+        },
+    }
     result = replace(
         result,
         function_id=function_id,
-        detail=decision.detail,
+        detail=merged_detail,
     )
     executed_steps.append(result)
     return replace(
@@ -591,7 +629,15 @@ async def _observe_ready(host: Host) -> Observation:
         after = Observation.from_value(
             await _await(host.observe(xml=True, screenshot=True, app_info=True))
         )
-        if not _observation_window_outside_display(after):
+        # A foreground package/activity is not sufficient evidence that the
+        # new page is available.  Some hosts publish the package transition
+        # first and the hierarchy a few frames later.  Returning that partial
+        # observation makes the next canonical Transfer call fail with
+        # ``missing_target_page`` even though the app is already visible.
+        if (
+            str(after.xml or "").strip()
+            and not _observation_window_outside_display(after)
+        ):
             return after
         if attempt + 1 < _OBSERVATION_READY_MAX_ATTEMPTS:
             await asyncio.sleep(_OBSERVATION_READY_POLL_SECONDS)
@@ -1440,6 +1486,8 @@ def _transfer_detail(result: dict[str, Any]) -> dict[str, Any]:
         "target": target,
         "candidates": candidates,
     }
+    if isinstance(result.get("timing"), dict):
+        detail["timing"] = dict(result["timing"])
     if result.get("mapped") is True:
         for key in (
             "score",

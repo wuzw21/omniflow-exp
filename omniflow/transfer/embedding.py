@@ -30,6 +30,16 @@ V10_PAGE_EMBEDDING_RELATIVE_PATH = Path(
 V10_PAGE_EMBEDDING_SHA256 = (
     "3b783ed113fc37397e2f092d133e970ec36bdbf0d26e262d9273389e4729d16f"
 )
+# The phone uses the deterministic, pickle-free export of the same V10 model.
+# Keep both hashes explicit so the architecture contract remains fail-closed.
+V10_PAGE_EMBEDDING_NUMPY_SHA256 = (
+    "5dbf5e895dbb0867f052ded625da673b6be95c278541e76a9d3486d7c7664b51"
+)
+# The packaged phone runtime uses the canonical pickle-free V10 export.
+# It is the same model contract, with a distinct artifact hash.
+V10_PAGE_EMBEDDING_EXPORTED_NUMPY_SHA256 = (
+    "d1700845f599b9854b29a435166dfb18ce6a141fb4ab76bce7687c88188637a4"
+)
 
 
 @dataclass(frozen=True)
@@ -82,7 +92,11 @@ class PageEncoder:
                 "omnitransfer_page_embedding_architecture_mismatch:"
                 f"{self.architecture}"
             )
-        if self.checkpoint_sha256 != V10_PAGE_EMBEDDING_SHA256:
+        if self.checkpoint_sha256 not in {
+            V10_PAGE_EMBEDDING_SHA256,
+            V10_PAGE_EMBEDDING_NUMPY_SHA256,
+            V10_PAGE_EMBEDDING_EXPORTED_NUMPY_SHA256,
+        }:
             raise ValueError(
                 "omnitransfer_page_embedding_checkpoint_sha256_mismatch:"
                 f"{self.checkpoint_sha256}"

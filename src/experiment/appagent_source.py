@@ -700,6 +700,8 @@ def convert_runlog_to_appagent_memory(
                 key=lambda package: (observed_packages.count(package), package),
             )
     packages = []
+    package_counts: dict[str, int] = {}
+    package_last_index: dict[str, int] = {}
     for record in all_demo_records:
         observation = _appagent_source_observation(
             source,
@@ -709,17 +711,21 @@ def convert_runlog_to_appagent_memory(
         package_name = _appagent_demo_package(observation, source_package)
         if package_name and package_name not in packages:
             packages.append(package_name)
-    package_name = (
-        source_package
-        if source_package in packages
-        else next(
-            (
-                package
-                for package in packages
-                if package and not _is_appagent_launcher_package(package)
-            ),
-            next((value for value in packages if value), ""),
-        )
+        if package_name and not _is_appagent_launcher_package(package_name):
+            package_counts[package_name] = package_counts.get(package_name, 0) + 1
+            package_last_index[package_name] = int(record["source_step_index"])
+    package_name = max(
+        package_counts,
+        key=lambda package: (
+            package_counts[package],
+            package_last_index[package],
+            package,
+        ),
+        default=(
+            source_package
+            if source_package in packages
+            else next((value for value in packages if value), "")
+        ),
     )
     if not package_name:
         raise ValueError("appagent_source_package_missing")
