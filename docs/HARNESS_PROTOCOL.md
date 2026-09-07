@@ -168,3 +168,15 @@ OOB 0.6.1 / versionCode 7。实际 OOB 截图和一个 wait 动作成功；重�
 完整系统必须纳入 Function 失败但 fallback 恢复成功的成本。当前还不能宣称完整系统更快。
 下一阶段再根据组件计时决定是否需要独立可中断 worker、持久 resume 或新的设备后端；
 避免在没有实测前引入第二套执行循环。
+## 统一 AndroidWorld Harness 接口
+
+AndroidWorld `agent.step` 只调用 `TaskHarness.arun(HarnessContext)`；默认适配器调用
+现有 `flow.arun`，CLI 适配器把同一 `flow` 的两工具服务交给外部宿主。其他宿主以
+`package.module:factory` 接入这个接口，不复制 episode、Host 或 Function 执行。
+统一入口是 `run_androidworld.sh run ... --harness builtin|codex|claude|package.module:factory`。
+
+独立服务允许宿主显式开始新任务；在 AndroidWorld episode 内锁定一个逻辑任务，
+新 task_id 不能重置预算或完成状态。注册的官方 checker 在 Function 成功后由共享
+判定函数调用，通过则立即返回终止事实；没有 checker 的独立服务仍返回未知任务状态。
+外部 CLI 的请求次数若未报告，RunLog 与 task result 保留 null，不能把宿主 turn 数
+或工具数当作模型调用数。CLI 的接入结果不进入冻结模型的正式结果晋升。

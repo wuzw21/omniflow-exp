@@ -1,9 +1,11 @@
 import json
+import pytest
 
-from src.experiment.run_tasks import _promote_golden_run
+from src.experiment.run_tasks import _promote_golden_run, _archive_failed_run
 
 
-def test_promoted_evidence_paths_follow_immutable_destination(tmp_path) -> None:
+@pytest.mark.parametrize('archive', [False, True])
+def test_promoted_evidence_paths_follow_immutable_destination(tmp_path, archive) -> None:
     candidate = tmp_path / "candidate"
     destination = tmp_path / "golden" / "runlog" / "current"
     screenshot = candidate / "observations" / "objects" / "screen.png"
@@ -30,7 +32,13 @@ def test_promoted_evidence_paths_follow_immutable_destination(tmp_path) -> None:
         json.dumps({"path": str(screenshot)}) + "\n", encoding="utf-8"
     )
 
-    assert _promote_golden_run(candidate=candidate, destination=destination)
+    if archive:
+        destination = _archive_failed_run(candidate=candidate, output_root=tmp_path,
+            task='task', method='omniflow', device=('device', 'serial', 1),
+            archive_kind='external_harness')
+        assert destination is not None
+    else:
+        assert _promote_golden_run(candidate=candidate, destination=destination)
 
     promoted = json.loads((destination / "run_log.json").read_text())
     promoted_path = promoted["steps"][0]["observation"]["screenshot"]["path"]

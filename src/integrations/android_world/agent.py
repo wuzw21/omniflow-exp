@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import asyncio
 import importlib
 import json
 import os
@@ -16,7 +17,6 @@ from omniflow import (
     RunResult,
     RuntimeSettings,
 )
-from omniflow.core.config import Experiment
 from omniflow.core.trajectory import state_id
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
@@ -129,6 +129,7 @@ def build_agent(
     evidence_root: str | Path | None = None,
     performance_metrics: PerformanceMetrics | None = None,
     allow_empty_store: bool = False,
+    harness: Any | None = None,
 ) -> OmniFlow | SimpleNamespace:
     if env is None:
         raise TypeError("build_agent requires env parameter")
@@ -156,7 +157,7 @@ def build_agent(
         ),
     )
     empty_store_tempdir: tempfile.TemporaryDirectory[str] | None = None
-    if not store_path and planner is None:
+    if not store_path and planner is None and harness is None:
         # Fixed replay owns its action sequence in _apply_fixed_replay.  It
         # still needs the canonical AndroidWorld Host and lifecycle wrapper,
         # but it has no Function Store to load.  Keep the adapter object small
@@ -289,7 +290,12 @@ def build_agent(
             goal_text,
             state.get("task_parameters"),
         )
-        result = flow.run(planner_goal, experiment=Experiment(name="androidworld"))
+        from src.integrations.gui_agent_harness import HarnessContext, build_harness
+        task_harness = harness or build_harness("builtin")
+        result = asyncio.run(task_harness.arun(HarnessContext(
+            flow=flow, goal=planner_goal, max_steps=int(state["max_steps"]),
+            evidence_root=Path(evidence_root or resolved_store_path.parent),
+        )))
         planner_steps = int(result.detail.get("planner_steps") or 0)
         finished_content = str(result.detail.get("finished_content") or "").strip()
         done_reason = str(result.detail.get("done_reason") or "").strip()
@@ -299,6 +305,7 @@ def build_agent(
             done_reason = "planner_failed"
         elif budget_exhausted and done_reason not in {
             "finished",
+            "function_completed_verified",
             "abort",
             "waiting_input",
         }:
@@ -365,8 +372,10 @@ def _goal_with_task_parameters(goal: str, task_parameters: Any) -> str:
     encoded = json.dumps(public_parameters, ensure_ascii=False, sort_keys=True)
     return (
         f"{str(goal or '').strip()}\n"
-        "Known task parameters are public Function API values. Copy each value "
-        "verbatim into the Function arguments; do not translate, approximate, "
+        "Known task parameters are public task values. For parameters declared "
+        "by the selected Function input_schema, copy the corresponding value "
+        "verbatim into its arguments; omit fields absent from that schema. "
+        "Do not translate, approximate, "
         "calculate, normalize, or substitute another representation:\n"
         f"{encoded}"
     ).strip()

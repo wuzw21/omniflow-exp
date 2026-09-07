@@ -285,20 +285,9 @@ class OmniFlow:
             if checker is None:
                 return None
             completion_review_calls += 1
-            try:
-                reward = await invoke(checker)
-                verified = float(reward) > 0.5
-            except Exception as error:  # noqa: BLE001
-                completion_gate = {
-                    "status": "error",
-                    "error": f"{type(error).__name__}:{error}",
-                }
-                return False
-            completion_gate = {
-                "status": "verified" if verified else "rejected",
-                "reward": float(reward),
-            }
-            return verified
+            from omniflow.runtime.protocol import review_completion
+            completion_gate = await review_completion(checker)
+            return completion_gate["status"] == "verified"
 
         def mark_completion_rejected() -> None:
             # A successfully executed local Function may complete only one

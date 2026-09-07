@@ -9,6 +9,18 @@ from omniflow.core.model import Observation, RunResult
 PROTOCOL_VERSION = "omniflow.invocation.v1"
 
 
+async def review_completion(checker) -> dict[str, Any] | None:
+    """One completion judgment for built-in and external task harnesses."""
+    if checker is None:
+        return None
+    from omniflow.runtime.control import invoke
+    try:
+        reward = float(await invoke(checker))
+    except Exception as error:
+        return {"status": "error", "error": f"{type(error).__name__}:{error}"}
+    return {"status": "verified" if reward > .5 else "rejected", "reward": reward}
+
+
 def observation_payload(observation: Observation | None) -> dict[str, Any] | None:
     if observation is None:
         return None

@@ -10,6 +10,19 @@ Recall 和 Function 闭环。外部失败返回当前状态和失败
 位置，交还宿主决策。协议与迁移说明见 [Harness 协议](docs/HARNESS_PROTOCOL.md)。
 AndroidWorld 正式入口不变。
 
+Android 验收与对外 Harness 接入使用同一条运行链，只替换决策宿主：
+
+```bash
+bash scripts/exp/run_androidworld.sh run --task SystemBluetoothTurnOn \
+  --method omniflow --device standard45562 --memory /absolute/memory/store.json \
+  --harness codex
+```
+
+`--harness builtin`（默认）、`codex`、`claude` 或 `package.module:factory` 共用
+AndroidWorld setup/reset、同一 OOB Host、Function 闭环、官方 validator 和 RunLog。
+外部 CLI 通过 MCP 连接当前 episode 的运行时，不再启动第二份设备运行时。
+不同宿主的接入结果作为外部 Harness 证据保存，不晋升为冻结模型的论文结果。
+
 对外提供的是可复用的跨设备 Function Memory 服务：宿主决定做什么，OmniFlow
 负责召回已有操作片段，并在当前设备上用共享闭环执行、返回事实。交付物包含
 Function Store、执行内核、Python SDK、MCP 服务和使用 Skill。Skill 是宿主使用说明，

@@ -14,6 +14,25 @@ GuiAgentToolRuntime.function_tools()，MCP 和 Python harness 不各自复制 sc
 
 ## 安装与连接
 
+AndroidWorld 验收统一使用：
+
+```bash
+bash scripts/exp/run_androidworld.sh run --task SystemBluetoothTurnOn \
+  --method omniflow --device standard45562 --memory /absolute/memory/store.json \
+  --harness codex
+```
+
+替换最后一个值为 `builtin` 或 `claude` 即可。其他 Harness 由部署者提供
+`--harness package.module:factory`，工厂返回实现异步 `arun(HarnessContext)` 的对象。
+context 提供当前 flow、goal、预算和 evidence_root；适配器只能使用该 flow 的 Host、
+Store 与内核，不自行初始化设备或复制 validator。测试与产品接入使用相同的两工具分发。
+
+内置 CLI 适配通过私有 Unix socket 连接 episode 持有的 GuiAgentToolRuntime；
+子进程 `--connect` 是 stdio 字节桥。官方 completion checker 通过后返回 stop，
+当前 episode 禁止通过新 task_id 重开任务。进程退出时先取消并收尾在途调用。
+接入结果保留在现有外部 Harness 归档中，不能混入固定模型论文结果；未知模型调用次数
+记为 null。下面的独立服务配置用于由外部应用持有设备生命周期的部署场景。
+
 在 canonical checkout 中运行：
 
     .venv/bin/python -m pip install -e '.[mcp]'
@@ -22,6 +41,9 @@ GuiAgentToolRuntime.function_tools()，MCP 和 Python harness 不各自复制 sc
 省略 --store 表示空 Memory；召回返回空候选，不扫描历史、不隐式编译 Store。
 默认后端仍是已安装的 OOB，不重新构建或安装 APK。截图和 step fact 调试日志默认在
 当前工作区 data/runtime/gui_agent/ 下；在其他目录启动时显式传 --evidence-root。
+MCP 仅发送最长边 1280 的 JPEG 预览，原图和 OmniTransfer 输入保持原样；文本反馈不
+携带 base64 副本。预览失败仍返回已执行动作的事实。会话只保留动作、结果与来源的
+精简历史，截图/XML 证据由原有记录 owner 保存。
 
 Codex MCP 配置（替换为实际路径和 serial）：
 

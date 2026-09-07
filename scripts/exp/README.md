@@ -117,3 +117,16 @@ time；论文中的方法执行时间使用 `execution_duration_ms`，它只累�
 OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置、manifest
 和 SHA256。`install` 更新 canonical checkout 与明确的 runtime 资产。API key 只保存
 在被 Git 忽略的 `config/runtime.secrets.env`，不进入 release archive。
+# 可替换 Harness 的统一验收
+
+`run --task TASK --method omniflow --device DEVICE --memory STORE --harness HARNESS`
+是所有 Android Harness 的同一验收入口；HARNESS 可为 `builtin`（默认）、`codex`、
+`claude` 或部署者显式提供的 `package.module:factory`。不为各宿主建立专项 runner。
+task 初始化、OOB 观察与动作、官方 validator、时间边界和 RunLog 均由现有 episode 管理。
+外部宿主使用自己的登录与模型，仅通过两个 Function 工具访问当前运行时。
+没有适用 Function 或原始动作恢复通道时如实失败，不隐式启动内置 Planner。
+
+外部 Harness 不参与固定模型的论文结果晋升；完整证据保存在现有归档路径中，
+RunLog 的 `diagnostics.harness` 记录宿主报告的模型与 usage，`harness/` 保存 CLI 事件。
+CLI 不提供 API 请求次数时，结果中的 `model_calls` / `vlm_calls` 为 null（未知）。
+不使用 tool count 或 turn count 代替模型请求次数。

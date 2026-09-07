@@ -27,3 +27,12 @@ scheduler summary、离线回归或重复索引的文件不保留。
 不要新增第二 launcher、第二 scheduler、第二 Function writer、第二结果注册器或路径
 校验层。task、method、device 和显式 Memory 是唯一运行输入；seed、步数、fallback、
 deadline、模型和 retry policy 固定在协议 owner 中，正式模型固定为 `Qwen3.6-Plus`。
+
+## Harness 接入 owner
+
+- `src/integrations/gui_agent_harness.py`：统一 `TaskHarness.arun(HarnessContext)`，内置
+  Planner 与外部 CLI 的决策宿主适配；外部工厂实现此接口即可接入同一 AndroidWorld 入口。
+- `src/integrations/gui_agent_mcp.py`：两个工具的唯一 MCP 分发；`--connect` 只转发字节到
+  episode 已持有的运行时，不创建 Host、Store 或新的执行循环。
+- `src/integrations/android_world/agent.py`：在既有 step 中调用选定 Harness，仍由
+  `run_episode.py` 管理环境、记录、预算和官方判定。

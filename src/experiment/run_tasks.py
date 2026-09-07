@@ -63,7 +63,8 @@ def _experimental_omniflow_enabled(method: str) -> bool:
 
     return (
         str(method or "").strip() == "omniflow"
-        and bool(str(os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or "").strip())
+        and (bool(str(os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or "").strip())
+             or os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin")
     )
 
 
@@ -428,6 +429,9 @@ def _archive_failed_run(
         destination = archive_root / f"{archive_kind}_{index:03d}"
         if not destination.exists():
             shutil.copytree(candidate, destination)
+            _relocate_promoted_evidence_paths(
+                destination, source_root=candidate, destination_root=destination,
+            )
             return destination
         index += 1
 
@@ -1034,7 +1038,8 @@ def _run_command(
                 task=args.task,
                 method=method,
                 device=device,
-                archive_kind="experimental_gpt55",
+                archive_kind=("external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
+                              else "experimental_gpt55"),
             )
         else:
             promoted = _promote_golden_run(
@@ -1182,6 +1187,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method", default=DEFAULT_METHOD)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--memory", default="")
+    parser.add_argument("--harness", default=os.environ.get("OMNIFLOW_HARNESS", "builtin"),
+                        help="OmniFlow task harness: builtin, codex, claude, or module:factory")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument(
         "--evaluation-seed",
@@ -1228,6 +1235,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.harness != "builtin" and (args.action != "run" or args.method != "omniflow"):
+        raise ValueError("external_harness_requires_run_method_omniflow")
+    os.environ["OMNIFLOW_HARNESS"] = args.harness
     if args.method == "omniflow":
         require_runtime_model("omniflow", omniflow_model())
     else:

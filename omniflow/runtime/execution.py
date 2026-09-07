@@ -156,6 +156,7 @@ async def execute_function(
                 step,
                 trace_start_index=int(trace_start_index) + len(trace),
                 metadata={
+                    "function_id": function.id,
                     "function_step_index": function_step.step_index,
                     "execution_timing": dict(step_timing),
                 },

@@ -362,6 +362,9 @@ def _build_autodroid(context: MethodAdapterContext) -> Any:
 
 
 def _build_omniflow(context: MethodAdapterContext) -> Any:
+    from src.integrations.gui_agent_harness import build_harness
+    harness_name = os.environ.get("OMNIFLOW_HARNESS", "builtin").strip() or "builtin"
+    external_harness = context.selector == "omniflow" and harness_name != "builtin"
     build_agent = _required_dependency(
         context.build_omniflow_agent,
         "build_omniflow_agent",
@@ -394,6 +397,7 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
             or _read_env_bool("OMNIFLOW_ENABLE_ONLINE_PLANNER", False)
         )
             and context.selector != "fixed_replay"
+            and not external_harness
     ):
         from omniflow.vlm.planner import VLMPlanner
 
@@ -434,6 +438,8 @@ def _build_omniflow(context: MethodAdapterContext) -> Any:
         "evidence_root": context.evidence_root or None,
         "performance_metrics": context.performance_metrics,
     }
+    if context.selector == "omniflow":
+        build_kwargs["harness"] = build_harness(harness_name)
     if context.selector == "fixed_replay" or not str(
         context.store_path
     ).strip():

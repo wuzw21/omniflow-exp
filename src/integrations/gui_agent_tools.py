@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import inspect
 import json
 from threading import Lock
@@ -28,7 +28,7 @@ from omniflow.runtime.control import (
     ExecutionStopped,
     invoke,
 )
-from omniflow.runtime.protocol import invocation_feedback, observation_payload
+from omniflow.runtime.protocol import invocation_feedback, observation_payload, review_completion
 
 
 @dataclass(frozen=True)
@@ -89,6 +89,8 @@ class GuiAgentToolRuntime:
         flow: Any | None = None,
         experiment: str = "external_gui_agent",
         timeout_seconds: float = 600.0,
+        max_service_calls: int | None = None,
+        allow_task_switch: bool = True,
     ) -> None:
         if host is None:
             raise TypeError("gui_agent_host_required")
@@ -97,6 +99,12 @@ class GuiAgentToolRuntime:
         if getattr(flow, "host", host) is not host:
             raise ValueError("gui_agent_host_must_match_function_host")
         self.timeout_seconds = timeout_seconds
+        if max_service_calls is not None and max_service_calls < 1:
+            raise ValueError("max_service_calls_must_be_positive")
+        self.max_service_calls = max_service_calls
+        self.allow_task_switch = allow_task_switch
+        self._service_calls = 0
+        self._execution_trace: list[dict[str, Any]] = []
         self._session_lock = Lock()
         self._control: ExecutionControl | None = None
         self._closed = False
@@ -223,6 +231,10 @@ class GuiAgentToolRuntime:
         # A session retains compact replies for transport deduplication, not a
         # second copy of the complete invocation history and XML trace.
         if self._control is not None:
+            self._execution_trace.extend(
+                {key: _json_copy(step[key]) for key in ("step_index", "action", "result", "metadata") if key in step}
+                for step in self._control.trace
+            )
             self._control.trace.clear()
         return result
 
@@ -278,6 +290,16 @@ class GuiAgentToolRuntime:
         if inspect.isawaitable(raw_result):
             raw_result = await raw_result
         if isinstance(raw_result, RunResult):
+            if registered_only and raw_result.success:
+                gate = await review_completion(getattr(self.flow, "completion_checker", None))
+                if gate is not None:
+                    reason = ("function_completed_verified" if gate["status"] == "verified"
+                              else "verifier_error" if gate["status"] == "error"
+                              else "function_completed")
+                    raw_result = replace(raw_result,
+                        success=gate["status"] != "error",
+                        error=("completion_verifier_error:" + gate["error"]) if gate["status"] == "error" else raw_result.error,
+                        detail={**raw_result.detail, "completion_gate": gate, "done_reason": reason})
             output = {
                 "function_id": raw_result.function_id,
                 "actions_executed": raw_result.actions_executed,
@@ -348,6 +370,7 @@ class GuiAgentToolRuntime:
             self._control = ExecutionControl(self.timeout_seconds)
             self._checker_trigger_counts.clear()
             self._requests.clear()
+            self._execution_trace.clear()
             self._closed = False
             self.session_id = uuid.uuid4().hex
         finally:
@@ -364,17 +387,32 @@ class GuiAgentToolRuntime:
             "effect_unknown": self._control.effect_unknown if self._control else False,
         }
 
+    def execution_result(self) -> RunResult:
+        """Read accumulated invocation facts for a host-owned task result."""
+        completed = [result for _, result in self._requests.values() if result is not None]
+        last = completed[-1] if completed else None
+        output = last.output if last else {}
+        control = self._control
+        return RunResult(
+            bool(last and last.success),
+            function_id=output.get("function_id"),
+            actions_executed=control.actions_executed if control else 0,
+            error=last.error if last else None,
+            final_state=control.observation if control else None,
+            detail={**_json_copy(output.get("detail") or {}),
+                    "trace": _json_copy(self._execution_trace + (control.trace if control else [])),
+                    "service_calls": self._service_calls,
+                    "checker_trigger_counts": dict(self._checker_trigger_counts)},
+        )
+
     async def finish(self, content: str) -> dict[str, Any]:
         if not str(content).strip():
             raise ValueError("finished_content_required")
         with self._session():
             checker = getattr(self.flow, "completion_checker", None)
-            status = "unknown"
-            if checker is not None:
-                try:
-                    status = "verified_success" if float(await invoke(checker)) > 0.5 else "verified_incomplete"
-                except Exception:  # noqa: BLE001 -- verifier errors are terminal facts
-                    status = "verifier_error"
+            gate = await review_completion(checker)
+            status = {"verified": "verified_success", "rejected": "verified_incomplete",
+                      "error": "verifier_error"}.get((gate or {}).get("status"), "unknown")
             self._closed = status != "verified_incomplete"
             self._control.check()
             return {"session_id": self.session_id, "task_status": status,
@@ -418,6 +456,8 @@ class GuiAgentToolRuntime:
         """Called only while holding the session lock through the whole recall."""
         if task_id == self._task_id:
             return
+        if not self.allow_task_switch and (self._task_id is not None or self._closed):
+            raise ValueError("gui_agent_episode_task_fixed")
         if task_id in self._retired_task_ids:
             raise ValueError("gui_agent_task_id_retired")
         if len(self._retired_task_ids) >= 128:
@@ -429,6 +469,7 @@ class GuiAgentToolRuntime:
         self._closed = False
         self.session_id = uuid.uuid4().hex
         self._requests.clear()
+        self._execution_trace.clear()
         self._checker_trigger_counts.clear()
 
     async def call_function_tool(self, name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
@@ -438,6 +479,10 @@ class GuiAgentToolRuntime:
         validate(arguments, definitions[name].input_schema)
         if self.flow is None:
             raise TypeError("gui_agent_function_runtime_required")
+        if self.max_service_calls is not None and self._service_calls >= self.max_service_calls:
+            self.cancel()
+            raise ExecutionStopped("step_budget_exceeded")
+        self._service_calls += 1
         if name == "omniflow_execute":
             return await self.execute_request(session_id=arguments["session_id"],
                 request_id=arguments["request_id"], tool_name=arguments["function_id"],
