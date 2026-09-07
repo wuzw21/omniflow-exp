@@ -84,6 +84,20 @@ suite: **175 passed**. Skill validation also passes. These are actual adapter/
 SDK-to-OOB runs, without upstream LLM planning or an official task validator.
 All device bug acceptance remains **待真机验证**.
 
+User-requested local emulator verification also passes on
+OmniFlowTargetPixel6Pro / emulator-45562 (Android 13, 1440×3120), reusing the
+installed OOB 0.6.0.3 / versionCode 10 after enabling its accessibility service.
+The real MCP stdio client/server recalls and executes the explicit OFF and ON
+Bluetooth Functions, five actions each, with read-only OS state verification
+of 1→0→1. Mid-Function cancellation stops after one completed action, rejects
+new execution in the closed session, and permits an explicitly new task.
+Restarted MCP rejects the prior process's session id; identical request retries
+add no actions. Real empty-Memory recall returns no candidates and creates no
+Store. All mappings use the same canonical OmniTransfer checkpoint. Evidence:
+`data/runtime/validation/20260907-local-emulator/summary.json`. This remains
+emulator integration evidence, without physical-device or official benchmark
+acceptance; no APK was built or reinstalled. The emulator remains open.
+
 ## 1.1.0.dev0 — host protocol refactor, 2026-09-07
 
 Observation evidence now uses immutable, content-addressed PNG files within
