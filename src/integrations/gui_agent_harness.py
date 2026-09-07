@@ -34,6 +34,8 @@ class TaskHarness(Protocol):
 
 
 class BuiltinHarness:
+    requires_builtin_planner = True
+
     async def arun(self, context: HarnessContext) -> RunResult:
         return await context.flow.arun(context.goal, experiment=Experiment(name="androidworld"))
 
@@ -50,6 +52,8 @@ def build_harness(name: str = "builtin") -> TaskHarness:
     harness = getattr(importlib.import_module(module), attribute)()
     if not callable(getattr(harness, "arun", None)):
         raise TypeError("harness_factory_must_return_arun")
+    if not isinstance(getattr(harness, "requires_builtin_planner", False), bool):
+        raise TypeError("harness_requires_builtin_planner_must_be_boolean")
     return harness
 
 

@@ -54,3 +54,27 @@ def test_task_parameters_do_not_override_function_schema():
     prompt = _goal_with_task_parameters('goal', {'seed': 1, 'value': 'literal'})
     assert 'omit fields absent from that schema' in prompt
     assert '"value": "literal"' in prompt and '"seed"' not in prompt
+
+
+@pytest.mark.parametrize('requires_planner', [True, False])
+def test_factory_harness_declares_planner_dependency(monkeypatch, tmp_path, requires_planner):
+    import sys
+    from types import SimpleNamespace
+    from src.integrations.android_world import methods
+    from omniflow.vlm import planner, function_router
+    harness = SimpleNamespace(arun=lambda context: None, requires_builtin_planner=requires_planner)
+    monkeypatch.setitem(sys.modules, 'test_harness_factory', SimpleNamespace(build=lambda: harness))
+    monkeypatch.setenv('OMNIFLOW_HARNESS', 'test_harness_factory:build')
+    monkeypatch.setattr(methods, 'resolve_openai_compatible_config', lambda **kwargs: ('key', 'http://localhost'))
+    monkeypatch.setattr(planner, 'VLMPlanner', lambda **kwargs: 'planner')
+    monkeypatch.setattr(function_router, 'VLMFunctionRouter', lambda **kwargs: 'router')
+    captured = {}
+    store = tmp_path/'store.json'
+    def build(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(store=SimpleNamespace(path=store))
+    methods._build_omniflow(methods.MethodAdapterContext(selector='omniflow', env=None,
+        store_path=str(store), adb_serial='test', planner_model='test', build_omniflow_agent=build))
+    assert captured['harness'] is harness
+    assert ('planner' in captured) == requires_planner
+    assert ('function_router' in captured) == requires_planner
