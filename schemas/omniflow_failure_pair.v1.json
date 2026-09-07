@@ -7,6 +7,16 @@
     "schema_version": {"const": "omniflow.failure-pair.v1"},
     "pair_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "phase": {"type": "string"},
+    "replay": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["ready", "unavailable"]},
+        "path": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "recorded_at": {"type": "string"},
     "pid": {"type": "integer"},
     "context": {"type": "object"},

@@ -5,6 +5,8 @@
 `src/integrations/gui_agent_tools.py` 管外部会话和重试去重。
 `gui_agent_mcp.py` 只提供 MCP 传输；`gui_agent_oob_host.py` 复用 OOB。
 不得在宿主适配器内新增 Planner 或 action mapper。协议见 `docs/HARNESS_PROTOCOL.md`。
+映射失败记录统一由 `omniflow/transfer/errors.py` 的 `attempt_transfer` 边界负责；
+`failure_inputs.py` 只保存、校验并加载显式失败输入，回放仍调用原 Transfer，不控制设备。
 
 真实运行 owner：
 

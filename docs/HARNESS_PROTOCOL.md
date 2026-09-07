@@ -41,19 +41,54 @@ Host 内进一步拆分 `oob.observe_rpc`、`oob.act_rpc`、`oob.retry_wait`、
 尚未独立拆分；只有 Python 端的显式等待可以计入 local stabilization。不得把整个
 RPC 时长称为纯设备执行、纯网络或纯稳定等待。
 
+AndroidWorld 的 `_TaskHost` 必须透传 `observe_stable` 和
+`take_after_action_observation`，两者都经过同一状态标识/证据捕获逻辑。缓存后态必须
+包含 recorder 的官方状态快照；缺少该快照时走普通 observe，不能传递不完整状态。
+只在底层 Host 实现优化而漏掉包装层能力，会使稳定重试失效并重复观察。
+
 失败池使用 `omniflow.failure-pair.v1`，每次失败追加一条记录。`pair_id` 根据 source、
 target 和 source action 内容计算，同一 pair 的 fast/stable/recall 尝试可以聚合。
 `phase` 区分 `execute.fast`、`execute.stable`、`recall.entry`；原始坐标仅作为
 source action 证据，不是目标动作。记录保存页面 hash/引用、有限候选（最多 8 个）、
-数值分数和短原因；不复制 XML、图片或大段上下文。`page_pair.complete` 仅表示尝试时
-两边都有 XML，不表示本记录可独立回放；局部回放仍需显式提供原始 pair 资产。
+数值分数和短原因；JSONL 不复制 XML、图片或大段上下文。`page_pair.complete` 仅表示
+尝试时两边都有 XML。新增 `replay` 独立报告输入是否保存成功；`ready` 的相对路径指向
+错误池旁 `<pool_stem>_assets/` 中的 gzip JSON manifest。失败输入单独按 SHA-256
+寻址：完整 source/target Observation 压缩保存，截图去重保存，不复制整段 RunLog。
+同一输入多次失败不重复写资产；每个 blob（含解压后 JSON/编码图片）上限 32 MiB。
+资产缺失、过大或不可序列化时保留原失败，`replay.status=unavailable`，不伪造可回放输入。
 这些诊断不改变原 Planner fallback，不作为运行时 Memory 来源。
+
+局部回放只接受一个明确的 manifest，不扫描历史、不派发设备动作：
+
+```python
+import asyncio
+from omniflow.transfer.failure_inputs import replay_failure_inputs
+
+result = asyncio.run(replay_failure_inputs("/absolute/pairs_assets/<sha256>.json.gz"))
+```
+
+它默认调用原 canonical Transfer，经同一个 `attempt_transfer` 边界返回结果；测试候选
+adapter 时可显式传 `transfer=callable`，不创建第二个 mapper。加载校验所有资产 hash，
+原截图删除后仍能从保存的输入恢复。它只复现映射决定，不证明目标点正确或 task 成功。
+自定义 mapper 的代码、模型和外部配置仍需由调用方固定；该 manifest 不打包依赖环境。
+失败 pair 没有已确认的 target 标签，不能直接进入要求双向正确对应的 `TransferPairStore`。
+
+新执行证据的 `metadata.transfer.transfer_attempts` 显式保存每次 fast/stable 的
+`mapped` 布尔值和原因。执行汇总按这些尝试计数：重试单独计一次，open_app/wait 等
+未请求映射的动作是零次；映射成功后设备动作失败也不改写为映射失败。旧证据缺少这一
+字段时仍走历史汇总兼容逻辑，不据此回填不存在的尝试。此处统计的是动作准备路径，
+Recall admission 的调用另在执行账本 `transfer.calls` 和错误池 phase 中保留。
 
 当前 `1.1.0.dev1` 将对外服务收敛为 **Function Recall + Function Execute**：
 `omniflow_recall(task_id, goal, limit)` 调用 `OmniFlow.arecall`，
 `omniflow_execute(session_id, request_id, function_id, arguments)` 调用同一执行内核。
 `aexecute_function` 拒绝未注册的 Function，原始动作不能借此入口执行。MCP 默认仅有这
 两个工具；取消由宿主控制通道或 SDK 负责，任务完成由宿主判断。dev0 的七工具接口已移除。
+
+工厂 Harness 的最小接口是 `arun(HarnessContext)`。默认由宿主提供决策；需要委托原
+内置 Planner/Router 时，显式声明 `requires_builtin_planner = True`。AndroidWorld
+根据这一依赖声明创建 Planner，不根据模块名字猜测；自定义 Harness 的结果仍作为
+独立接入证据归档，不变成正式模型结果。内核和 OOB Host 始终为同一实例。
 
 同一逻辑任务复用 `task_id`，Recall 返回此次会话的 `session_id`。新的 `task_id` 明确
 表示开始新任务；在途操作未结束时不能切换。旧 task id 被退役，旧 session id 不能重发

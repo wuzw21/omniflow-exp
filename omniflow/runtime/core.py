@@ -167,15 +167,17 @@ async def prepare_action(
         source_state is None
         or not requires_contextual_mapping(action.tool, action.args)
     ):
-        return ActionDecision("ready", action=action)
+        return ActionDecision("ready", action=action, detail={"transfer_attempts": []})
     if plugins.transfer is None:
-        return ActionDecision("block", reason="transfer_not_configured")
+        return ActionDecision("block", reason="transfer_not_configured", detail={"transfer_attempts": []})
     transfer_started_ns = time.perf_counter_ns()
     transfer = await attempt_transfer(plugins.transfer, action, observation, source_state, phase="execute.fast")
+    attempts = [{"path": "fast", "mapped": transfer.action is not None, "reason": transfer.reason}]
     transfer_fast_ms = (time.perf_counter_ns() - transfer_started_ns) / 1_000_000.0
     if transfer.action is not None:
         detail = {
             **dict(transfer.detail),
+            "transfer_attempts": attempts,
             "timing": {
                 **dict(transfer.detail.get("timing") or {}),
                 "transfer_ms": round(transfer_fast_ms, 3),
@@ -199,12 +201,15 @@ async def prepare_action(
         ) / 1_000_000.0
         stable_transfer_started_ns = time.perf_counter_ns()
         stable_transfer = await attempt_transfer(plugins.transfer, action, stable_observation, source_state, phase="execute.stable")
+        attempts.append({"path": "stable", "mapped": stable_transfer.action is not None,
+                         "reason": stable_transfer.reason})
         stable_transfer_ms = (
             time.perf_counter_ns() - stable_transfer_started_ns
         ) / 1_000_000.0
         if stable_transfer.action is not None:
             detail = {
                 **dict(stable_transfer.detail),
+                "transfer_attempts": attempts,
                 "timing": {
                     **dict(stable_transfer.detail.get("timing") or {}),
                     "transfer_fast_ms": round(transfer_fast_ms, 3),
@@ -228,27 +233,15 @@ async def prepare_action(
                     },
                 },
             )
-        fast_failure = {
-            "path": "fast",
-            "reason": transfer.reason or "transfer_failed",
-        }
-        stable_failure = {
-            "path": "stable",
-            "reason": stable_transfer.reason or "transfer_failed",
-        }
         transfer = stable_transfer
-    else:
-        fast_failure = None
-        stable_failure = None
     failure_detail = {
         **dict(transfer.detail),
+        "transfer_attempts": attempts,
         "timing": {
             **dict(transfer.detail.get("timing") or {}),
             "transfer_fast_ms": round(transfer_fast_ms, 3),
         },
     }
-    if fast_failure is not None and stable_failure is not None:
-        failure_detail["transfer_attempts"] = [fast_failure, stable_failure]
     return ActionDecision(
         "block",
         reason=transfer.reason or "transfer_failed",

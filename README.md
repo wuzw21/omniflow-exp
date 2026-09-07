@@ -29,6 +29,9 @@ RunLog 的 `diagnostics.harness` 保存宿主实际报告的模型与用量；�
 RunLog 的 `diagnostics.wall_accounting` 保存公共执行边界内的非重叠耗时分账；映射
 失败池保存紧凑 pair/hash 和有限候选。字段与当前覆盖限制见
 [执行诊断](docs/HARNESS_PROTOCOL.md#执行诊断开发中)，不得将未归因时间当成模型耗时。
+失败输入可按显式 manifest 调用 `replay_failure_inputs` 在原 Transfer 边界回放；只保存
+失败 pair 的压缩页面和去重截图，不复制整个任务历史，也不把失败候选当作正确目标标签。
+工厂 Harness 可声明 `requires_builtin_planner=True`，复用原 Planner/Router 做局部迭代。
 
 对外提供的是可复用的跨设备 Function Memory 服务：宿主决定做什么，OmniFlow
 负责召回已有操作片段，并在当前设备上用共享闭环执行、返回事实。交付物包含

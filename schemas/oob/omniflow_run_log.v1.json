@@ -284,7 +284,27 @@
         "action": {"$ref": "#/$defs/action"},
         "result": {"$ref": "#/$defs/result"},
         "next_observation": {"$ref": "#/$defs/state"},
-        "metadata": {"$ref": "#/$defs/object"}
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "transfer": {
+              "type": "object",
+              "properties": {
+                "transfer_attempts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {"type": "string"},
+                      "mapped": {"type": "boolean"},
+                      "reason": {"type": ["string", "null"]}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

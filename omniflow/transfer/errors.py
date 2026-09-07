@@ -13,6 +13,7 @@ from typing import Any
 from omniflow.core.model import Action, Observation, TransferResult
 from omniflow.runtime.control import invoke
 from omniflow.runtime.timing import measure
+from omniflow.transfer.failure_inputs import save_failure_inputs
 
 
 ERROR_POOL_ENV = "OMNIFLOW_TRANSFER_ERROR_POOL"
@@ -30,8 +31,9 @@ async def attempt_transfer(transfer, action, target, source, *, phase):
         result = TransferResult(None, reason=f"transfer_exception:{type(error).__name__}",
                                 detail={"exception_type": type(error).__name__})
     if result.action is None:
-        record_transfer_error(action=action, result=result, source_page=source,
-                              target_page=target, phase=phase)
+        with measure("evidence.failure_pair"):
+            await invoke(record_transfer_error, action=action, result=result, source_page=source,
+                         target_page=target, phase=phase)
     return result
 
 
@@ -48,6 +50,13 @@ def record_transfer_error(
     if result.action is not None:
         return
     try:
+        path = _error_pool_path()
+        assets = path.parent / (path.stem + "_assets")
+        try:
+            reference = save_failure_inputs(assets, action, source_page, target_page)
+            replay = {"status": "ready", "path": str(Path(assets.name) / reference)}
+        except Exception as error:
+            replay = {"status": "unavailable", "reason": type(error).__name__}
         source = _page_descriptor(source_page)
         target = _page_descriptor(target_page)
         action_identity = hashlib.sha256(json.dumps(action.to_dict(), sort_keys=True).encode()).hexdigest()
@@ -57,6 +66,7 @@ def record_transfer_error(
             "schema_version": "omniflow.failure-pair.v1",
             "pair_id": hashlib.sha256(json.dumps(pair_identity, sort_keys=True).encode()).hexdigest(),
             "phase": phase,
+            "replay": replay,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "pid": os.getpid(),
             "context": _error_context(),
@@ -81,7 +91,6 @@ def record_transfer_error(
         payload = (json.dumps(record, ensure_ascii=False, default=str) + "\n").encode(
             "utf-8"
         )
-        path = _error_pool_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
@@ -97,7 +106,8 @@ def _compact_detail(detail, depth=0):
         return {}
     allowed = {"reason", "mapped", "score", "confidence", "page_similarity", "pair_confidence",
                "absolute_contextual_confidence", "target_candidate_id", "target_execution_candidate_id",
-               "target_bbox", "bbox", "execution_bbox", "executable", "exception_type"}
+               "target_bbox", "bbox", "execution_bbox", "executable", "exception_type",
+               "matcher_release", "matcher_checkpoint_sha256", "mapping_mode"}
     result = {k: v for k, v in detail.items() if k in allowed and
               (v is None or isinstance(v, (bool, int, float)) or isinstance(v, str) and len(v) <= 256
                or isinstance(v, (list, tuple)) and len(v) <= 4 and all(isinstance(x, (int, float)) for x in v))}

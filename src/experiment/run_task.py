@@ -2396,7 +2396,12 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
             planner_action_details.append(detail)
         transfer = metadata_value.get("transfer")
         if isinstance(transfer, dict):
-            transfer_rows.append(row)
+            attempts = transfer.get("transfer_attempts")
+            if isinstance(attempts, list) and all(isinstance(item, dict)
+                    and isinstance(item.get("mapped"), bool) for item in attempts):
+                transfer_rows.extend(attempts)
+            else:
+                transfer_rows.append(row)
         if not function_id or success:
             continue
         step_index = metadata_value.get("function_step_index")
@@ -2436,6 +2441,9 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
     )
     transfer_success = 0
     for row in transfer_rows:
+        if isinstance(row.get("mapped"), bool):
+            transfer_success += int(row["mapped"])
+            continue
         result = row.get("result")
         result_value = result if isinstance(result, dict) else {}
         error = str(result_value.get("error") or "").strip()
