@@ -123,6 +123,30 @@ def test_render_binding_fails_closed_when_source_literal_is_missing() -> None:
         )
 
 
+@pytest.mark.parametrize('side', ['source', 'target'])
+def test_binding_failure_records_pair_without_claiming_mapper_replay(tmp_path, monkeypatch, side):
+    pool = tmp_path / 'pairs.jsonl'
+    monkeypatch.setenv('OMNIFLOW_TRANSFER_ERROR_POOL', str(pool))
+    function = bind_function(_function(), {'file_name': 'new_name'})
+    source = Observation(xml=SOURCE_XML if side == 'target' else SOURCE_XML.replace('yMkm_calm_umbrella', 'other'))
+    target = Observation(xml=SOURCE_XML)
+    class Host:
+        async def act(self, action):
+            raise AssertionError('binding failure must not dispatch')
+    def mapper(*args):
+        raise AssertionError('binding failure must not reach mapper')
+    result = asyncio.run(execute_function(function, host=Host(), plugins=PluginSet(transfer=mapper),
+        observation=target, state_loader=lambda _: source))
+    assert not result.success and result.actions_executed == 0
+    records = [json.loads(line) for line in pool.read_text().splitlines()]
+    assert records and all(r['replay'] == {'status': 'unavailable',
+        'reason': 'preprocessing_context_required'} for r in records)
+    assert all(r['page_pair']['complete'] for r in records)
+    if side == 'source':
+        assert records[0]['phase'] == 'execute.source_binding'
+    assert not (tmp_path / 'pairs_assets').exists()
+
+
 def test_compiler_extracts_task_value_from_clicked_node() -> None:
     evidence = _source_node_parameter_evidence(
         source_step={"observation": {"xml": SOURCE_XML}},

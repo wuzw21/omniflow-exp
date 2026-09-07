@@ -47,6 +47,7 @@ from omniflow.runtime.core import (
 from omniflow.transfer.runtime import (
     transfer_action,
 )
+from omniflow.transfer.errors import record_transfer_error
 
 _OPEN_APP_READY_POLL_SECONDS = 0.5
 _OPEN_APP_READY_MAX_ATTEMPTS = 30
@@ -102,6 +103,11 @@ async def execute_function(
                 step_index=function_step.step_index,
             )
         except ValueError as error:
+            with measure("evidence.failure_pair"):
+                await invoke(record_transfer_error, action=action,
+                    result=TransferResult(None, reason=f"function_render_binding_failed:{error}",
+                                          detail={"replay_unavailable": True}),
+                    source_page=source_state, target_page=current, phase="execute.source_binding")
             return RunResult(
                 False,
                 function.id,
@@ -235,6 +241,7 @@ def _render_target_before_transfer(
             return TransferResult(
                 None,
                 reason=f"function_render_target_binding_failed:{error}",
+                detail={"replay_unavailable": True},
             )
         result = await invoke(transfer, action, rendered_target, source)
         return (

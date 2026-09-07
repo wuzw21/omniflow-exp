@@ -75,6 +75,12 @@ source action 证据，不是目标动作。记录保存页面 hash/引用、有
 资产缺失、过大或不可序列化时保留原失败，`replay.status=unavailable`，不伪造可回放输入。
 这些诊断不改变原 Planner fallback，不作为运行时 Memory 来源。
 
+源页面绑定校验失败也写入同一 pair 池，phase 为 `execute.source_binding`；目标绑定
+失败仍属于 fast/stable 尝试。两者需要 Function 参数绑定上下文才能复现，不能仅凭
+Action 和页面送入 mapper 声称回放了原错误，因此标记
+`replay.status=unavailable, reason=preprocessing_context_required`，只留紧凑 pair。
+此记录不执行动作、不改变失败返回或 Planner 恢复顺序。
+
 局部回放只接受一个明确的 manifest，不扫描历史、不派发设备动作：
 
 ```python

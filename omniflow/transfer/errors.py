@@ -53,10 +53,14 @@ def record_transfer_error(
         path = _error_pool_path()
         assets = path.parent / (path.stem + "_assets")
         try:
+            if result.detail.get("replay_unavailable"):
+                raise ValueError("preprocessing_context_required")
             reference = save_failure_inputs(assets, action, source_page, target_page)
             replay = {"status": "ready", "path": str(Path(assets.name) / reference)}
         except Exception as error:
-            replay = {"status": "unavailable", "reason": type(error).__name__}
+            replay = {"status": "unavailable", "reason":
+                      "preprocessing_context_required" if result.detail.get("replay_unavailable")
+                      else type(error).__name__}
         source = _page_descriptor(source_page)
         target = _page_descriptor(target_page)
         action_identity = hashlib.sha256(json.dumps(action.to_dict(), sort_keys=True).encode()).hexdigest()
