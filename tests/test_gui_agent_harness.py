@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,11 @@ def test_host_usage_does_not_invent_api_request_count(tmp_path):
     report = _host_report('codex', events)
     assert report['model_calls'] is None and report['model'] is None
     assert report['total_tokens'] == 15 and report['token_usage_status'] == 'reported'
+    from jsonschema import validate, ValidationError
+    schema = json.loads((Path(__file__).parents[1]/'schemas/oob/omniflow_run_log.v1.json').read_text())
+    validate({'harness': report}, schema['properties']['diagnostics'])
+    with pytest.raises(ValidationError):
+        validate({'harness': {**report, 'model_calls': -1}}, schema['properties']['diagnostics'])
 
 
 def test_task_parameters_do_not_override_function_schema():

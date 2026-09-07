@@ -6647,6 +6647,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             **dict(execution_summary),
                             "execution_duration_ms": execution_duration_ms,
                         }
+                        host_report = (getattr(runtime_result, "detail", {}) or {}).get("harness")
+                        if isinstance(host_report, dict):
+                            diagnostics["execution_summary"]["model_calls"] = host_report.get("model_calls")
                     execution_trace = _runtime_execution_trace(runtime_result)
                     if execution_trace:
                         diagnostics["execution_trace"] = execution_trace
@@ -6674,6 +6677,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "function_resolution",
                             "llm_usage",
                             "planner_diagnostics",
+                            "harness",
                         ):
                             detail_value = runtime_detail.get(detail_name)
                             if isinstance(detail_value, dict):
@@ -6869,6 +6873,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     model_base_url = (
                         str(llm_usage.get("base_url") or "").strip() or None
                     )
+                harness_report = ((canonical_run or {}).get("diagnostics") or {}).get("harness")
+                if isinstance(harness_report, dict):
+                    llm_usage = dict(harness_report)
+                    model_calls = harness_report.get("model_calls")
+                    model_name = harness_report.get("model")
+                    model_base_url = None
+                    prompt_tokens = int(harness_report.get("prompt_tokens") or 0)
+                    completion_tokens = int(harness_report.get("completion_tokens") or 0)
+                    total_tokens = int(harness_report.get("total_tokens") or 0)
+                    token_usage_state = harness_report.get("token_usage_status", "unavailable")
                 artifact_kind = "none"
                 artifact_ref = None
                 if canonical_run_id:

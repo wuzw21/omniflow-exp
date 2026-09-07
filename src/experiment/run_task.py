@@ -2812,7 +2812,7 @@ def format_omniflow_result_block(
                 f"Function successful physical reuse={function_actions}/"
                 f"{function_denominator}；"
                 f"reuse={_percentage_text(reuse.get('reuse_rate'))}；"
-                f"fallback={fallback_steps}；model_calls={model_calls}"
+                f"fallback={fallback_steps}；model_calls={model_calls if task_result.get('model_calls') is not None else 'unknown'}"
             ),
             "",
             (
