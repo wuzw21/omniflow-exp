@@ -1,6 +1,8 @@
 # File edit guide
 
-宿主重构 owner：`omniflow/runtime/engine.py` 管任务循环与单次调用；
+宿主重构 owner：`omniflow/runtime/engine.py` 管共享调用与兼容入口；
+`omniflow/runtime/builtin_harness.py` 独占内置 Router/Planner 任务循环、恢复上下文、
+执行历史整理和内置任务结果；`OmniFlow.arun` 在同一控制边界内委托该循环。
 `control.py` 管共享预算和取消；`protocol.py` 生成调用反馈；
 `src/integrations/gui_agent_tools.py` 管外部会话和重试去重。
 `gui_agent_mcp.py` 只提供 MCP 传输；`gui_agent_oob_host.py` 复用 OOB。

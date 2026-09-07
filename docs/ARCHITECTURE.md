@@ -5,6 +5,12 @@ Function 内部仍走原有 Checker / OmniTransfer / OOB / post-observation 路�
 对外调用、完成判定、取消、预算、传输重试与证据的合同见
 [HARNESS_PROTOCOL.md](HARNESS_PROTOCOL.md)。此文以下的 AndroidWorld 链仍为正式实验链。
 
+共享入口与内置循环分别位于 `omniflow/runtime/engine.py` 和
+`omniflow/runtime/builtin_harness.py`。前者管理 Recall/Execute、共享控制、Host 和
+Store；`arun` 作为兼容入口委托后者。内置 Harness 持有 Router/Planner 的任务策略、
+Function 恢复状态和历史提示，继续调用同一 Function/Checker/Transfer 执行内核。
+拆分不改变主线顺序；外部 Harness 通过既有接口接入，不复制内置任务循环。
+
 AndroidWorld 只有一条运行链：
 
 ```text

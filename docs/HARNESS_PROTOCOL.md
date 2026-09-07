@@ -116,7 +116,7 @@ flowchart TD
 |---|---|---|
 | Function 作者与编译 | 既有 `compile_runlog_to_store` | 显式 stable/task_parameter/online_observation；v2 连续步骤不改 |
 | 内核执行 | `runtime/execution.py`、`core.py` | 同一 Checker → Transfer → Act → Observe；映射失败绝不重放 source 坐标 |
-| 内置任务 Harness | `OmniFlow.arun` | 唯一内置 Planner/Router 循环；官方完成判定、预算、停止 |
+| 内置任务 Harness | `runtime/builtin_harness.py`，由 `OmniFlow.arun` 委托 | 唯一内置 Planner/Router 循环；官方完成判定、预算、停止 |
 | 对外核心 | `OmniFlow.arecall` / `aexecute_function` | 召回不 act；执行仅限注册的 Function，失败返回宿主 |
 | 原始动作适配 | 既有 `acall_tool` / GUI-agent adapters | harness 的 OOB 原始动作接入，不进入两工具服务 |
 | 会话 | `GuiAgentToolRuntime` | 同一控制预算、串行执行、请求去重、显式关闭和新任务 |

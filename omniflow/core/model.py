@@ -358,3 +358,9 @@ def _coerce_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+class InputRequired(RuntimeError):
+    def __init__(self, question: str):
+        self.question = str(question).strip()
+        super().__init__(self.question or "input_required")

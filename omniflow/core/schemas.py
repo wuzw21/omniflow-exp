@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from omniflow.core.model import Action, ToolCall
+
 import json
 import hashlib
 import math
@@ -278,6 +280,7 @@ __all__ = [
     "canonical_action_schema_path",
     "omniflow_run_log_schema_path",
     "canonicalize_action",
+    "action_from_tool_call",
     "checker_rule_schema_path",
     "load_canonical_action_schema",
     "load_omniflow_run_log_schema",
@@ -285,3 +288,16 @@ __all__ = [
     "openai_action_tools",
     "vlm_action_tools",
 ]
+
+
+def action_from_tool_call(tool_call: ToolCall) -> Action:
+    return Action.from_value(
+        canonicalize_action(
+            {
+                "tool": tool_call.name,
+                "args": tool_call.arguments,
+            },
+            persisted_only=False,
+            allow_non_action=True,
+        )
+    )

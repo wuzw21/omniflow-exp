@@ -1,0 +1,1691 @@
+"""Default task-level Router/Planner loop; delegates execution to the shared kernel."""
+
+from __future__ import annotations
+
+from omniflow.runtime.timing import measure
+
+from dataclasses import dataclass, field, replace
+import hashlib
+import inspect
+import json
+import re
+from typing import Any
+import xml.etree.ElementTree as ET
+
+from omniflow.core.config import Experiment
+from omniflow.core.model import (
+    Action, Function, Host, InputRequired, Observation, Planner, RunResult, ToolCall,
+)
+from omniflow.core.schemas import action_from_tool_call
+from omniflow.functions.artifact import bind_function
+from omniflow.functions.recall import RecallResult
+from omniflow.runtime.checker import DEFAULT_CHECKER_LIBRARY_PATH
+from omniflow.runtime.control import ExecutionStopped, checkpoint, invoke
+from omniflow.runtime.execution import (
+    execute_function,
+    execute_robust_action,
+    record_execution,
+)
+from omniflow.runtime.protocol import invocation_feedback
+from omniflow.vlm.usage import merge_usage, token_usage_status
+from omniflow.vlm_coordinates import display_size
+
+_FUNCTION_CACHE_CONFIDENCE_THRESHOLD = 0.95
+
+@dataclass
+class _FunctionSession:
+    selected_id: str | None = None
+    bound: Function | None = None
+    failed: bool = False
+    failed_step_index: int | None = None
+    fallback_context: dict[str, Any] | None = None
+    recovery_pending: bool = False
+    completed: Function | None = None
+    completion_rejected: bool = False
+    invocation_summary: str = ""
+    excluded_ids: set[str] = field(default_factory=set)
+
+    @property
+    def failed_id(self) -> str | None:
+        return self.selected_id if self.failed else None
+
+    def mark_completed(self) -> None:
+        self.completed = self.bound
+        if (
+            self.bound is not None
+            and self.bound.steps
+            and self.bound.steps[0].action.tool == "open_app"
+        ):
+            self.excluded_ids.add(self.bound.id)
+        self.failed = False
+        self.failed_step_index = None
+        self.fallback_context = None
+        self.recovery_pending = False
+        self.completion_rejected = False
+
+    def mark_failed(self, replay: RunResult, observation: Observation) -> None:
+        if self.selected_id is not None:
+            self.excluded_ids.add(self.selected_id)
+        self.failed = True
+        self.completion_rejected = False
+        self.recovery_pending = True
+        self.failed_step_index = _optional_step_index(
+            replay.detail.get("failed_step_index")
+        )
+        self.fallback_context = _function_fallback_context(
+            replay.detail.get("trace"),
+            function=self.bound,
+            failed_step_index=self.failed_step_index,
+        )
+
+
+async def run_builtin(
+    self,
+    goal: str,
+    *,
+    experiment: Experiment | str | None = None,
+    checker_trigger_counts: dict[str, int] | None = None,
+) -> RunResult:
+    goal = str(goal).strip()
+    if self.host is None:
+        return RunResult(
+            False,
+            error="host_not_set",
+        )
+    await self._ensure_installed_apps()
+    profile = _experiment(experiment)
+    actions_executed = 0
+    model_calls = 0
+    fallback_steps = 0
+    completion_review_calls = 0
+    trace: list[dict[str, Any]] = []
+    last_error = "tool_not_selected"
+    llm_usage: dict[str, Any] = {}
+    function_session = _FunctionSession()
+    shared_checker_trigger_counts = (
+        checker_trigger_counts if checker_trigger_counts is not None else {}
+    )
+    observation = await self._observe(screenshot=False)
+    planner_functions: tuple[Function, ...] = ()
+    planner_function_catalog: dict[str, Function] = {}
+    recall_events: list[dict[str, Any]] = []
+    recall_source_states: dict[str, Observation | None] = {}
+    successful_router_invocations: set[str] = set()
+    execution_timing: dict[str, Any] = {}
+    completion_gate: dict[str, Any] | None = None
+    function_resolution: dict[str, Any] = {
+        "candidate_count": 0,
+        "candidate_function_ids": [],
+        # Keep the executable asset identity in every sealed RunLog.  The
+        # launcher accepts an explicit Store path; recording the resolved
+        # path and the loaded ids makes it possible to prove that replay
+        # used that asset instead of an ambient/current Store.
+        "store_path": str(self.store.path.expanduser().resolve()),
+        "registered_function_ids": [
+            function.id
+            for function in self.store.list_functions(
+                limit=max(1, len(self.store.functions)),
+                include_hidden=False,
+            )
+        ],
+        "store_load_errors": dict(self.store.load_errors),
+        "checker_library": {
+            "path": str(DEFAULT_CHECKER_LIBRARY_PATH.expanduser().resolve()),
+            "rule_names": [
+                str(rule.get("id") or "")
+                for rule in self.checker_library.rules
+                if isinstance(rule, dict)
+            ],
+        },
+        "function_cache_threshold": _FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+        "router_configured": self.function_router is not None,
+        "status": "planner_tool_space",
+        "binding_status": "not_attempted",
+        "replay_status": "not_started",
+    }
+
+    def finish(success: bool, **kwargs: Any) -> RunResult:
+        kwargs.setdefault("completion_review_calls", completion_review_calls)
+        kwargs.setdefault(
+            "checker_trigger_counts",
+            dict(shared_checker_trigger_counts),
+        )
+        if recall_events:
+            function_resolution["recall"] = {
+                "schema_version": "omniflow.function-recall-events.v1",
+                "events": [dict(event) for event in recall_events],
+            }
+        if execution_timing:
+            terminal_detail = dict(kwargs.get("terminal_detail") or {})
+            terminal_detail.setdefault("timing", dict(execution_timing))
+            kwargs["terminal_detail"] = terminal_detail
+        evidence_function = function_session.completed or (
+            function_session.bound if function_session.failed else None
+        )
+        final_observation = kwargs.get("final_state")
+        if evidence_function is not None and isinstance(
+            final_observation, Observation
+        ):
+            terminal_detail = dict(kwargs.get("terminal_detail") or {})
+            function_execution = _function_execution_evidence(
+                trace,
+                function=evidence_function,
+                final_observation=final_observation,
+                succeeded=function_session.completed is not None,
+                invocation_summary=function_session.invocation_summary,
+            )
+            if completion_gate is not None:
+                function_execution["task_completion_status"] = str(
+                    completion_gate["status"]
+                )
+                function_execution["official_validator_status"] = str(
+                    completion_gate["status"]
+                )
+                function_execution["completion_gate"] = dict(completion_gate)
+            terminal_detail["function_execution"] = function_execution
+            kwargs["terminal_detail"] = terminal_detail
+        return _result(self,
+            success,
+            function_resolution=function_resolution,
+            **kwargs,
+        )
+
+    async def review_function_completion() -> bool | None:
+        """Ask the benchmark checker before trusting Function completion."""
+
+        nonlocal completion_gate, completion_review_calls
+        checker = self.completion_checker
+        if checker is None:
+            return None
+        completion_review_calls += 1
+        from omniflow.runtime.protocol import review_completion
+        completion_gate = await review_completion(checker)
+        return completion_gate["status"] == "verified"
+
+    def mark_completion_rejected() -> None:
+        # A successfully executed local Function may complete only one
+        # subtask. Keep this distinct from replay failure so the next
+        # page-matched Function can still use the Router fast path.
+        function_session.recovery_pending = False
+        function_session.completion_rejected = True
+        function_session.fallback_context = {"completion_rejected": True}
+
+    async def resolve_completion(*, claimed: bool = False, content: str = "") -> RunResult | None:
+        """One task-completion gate for Router, Planner, and terminal claims."""
+        nonlocal previous_action_error
+        verified = await review_function_completion()
+        verifier_error = completion_gate is not None and completion_gate["status"] == "error"
+        if verified is True or verifier_error or (claimed and verified is None):
+            return finish(
+                not verifier_error, profile=profile, trace=trace,
+                function_id=function_session.selected_id or function_session.failed_id,
+                actions_executed=actions_executed, model_calls=model_calls,
+                llm_usage=llm_usage, fallback_steps=fallback_steps,
+                final_state=observation, planner_diagnostics=planner_diagnostics,
+                error=("completion_verifier_error:" + str(completion_gate.get("error"))) if verifier_error else None,
+                terminal_detail={
+                    "done_reason": "verifier_error" if verifier_error else "function_completed_verified" if verified is True else "finished",
+                    "finished_content": content,
+                    "completion_gate": dict(completion_gate or {}),
+                },
+            )
+        previous_action_error = None
+        if verified is False:
+            previous_action_error = "official_completion_checker_rejected_function_result"
+            mark_completion_rejected()
+        return None
+
+    if self.planner is None:
+        return finish(
+            False,
+            profile=profile,
+            trace=trace,
+            function_id=function_session.selected_id or function_session.failed_id,
+            actions_executed=actions_executed,
+            model_calls=model_calls,
+            llm_usage=llm_usage,
+            error=last_error,
+            final_state=observation,
+        )
+
+    runtime_steps_used = 0
+    previous_action_error: str | None = (
+        last_error if function_session.failed else None
+    )
+    pending_user_input: str | None = None
+    planner_diagnostics: dict[str, Any] = {}
+    repeated_decisions: dict[str, int] = {}
+
+    def admit_decision(call: ToolCall) -> None:
+        # Ignore volatile capture ids: the same decision on the same GUI
+        # state must not obtain a new budget merely by taking a screenshot.
+        key = json.dumps([call.name, call.arguments, observation.package_name,
+                          observation.activity_name, observation.xml], sort_keys=True)
+        repeated_decisions[key] = repeated_decisions.get(key, 0) + 1
+        if repeated_decisions[key] > 3:
+            raise ExecutionStopped("no_progress")
+
+    while runtime_steps_used < self.config.runtime.max_steps:
+        checkpoint()
+        # Router-only iterations and entry-state retries consume the same
+        # task budget as Planner turns; neither may loop without a bound.
+        runtime_steps_used += 1
+        max_fallback_steps = self.config.runtime.max_fallback_steps
+        fallback_this_turn = function_session.recovery_pending
+        if (
+            fallback_this_turn
+            and max_fallback_steps is not None
+            and fallback_steps >= max(
+                0, int(max_fallback_steps)
+            )
+        ):
+            return finish(
+                False,
+                profile=profile,
+                trace=trace,
+                function_id=function_session.selected_id or function_session.failed_id,
+                actions_executed=actions_executed,
+                model_calls=model_calls,
+                llm_usage=llm_usage,
+                fallback_steps=fallback_steps,
+                error="fallback_budget_exhausted",
+                final_state=observation,
+                planner_diagnostics=planner_diagnostics,
+            )
+        execution_history = (
+            _execution_history(
+                trace,
+                completed_function=function_session.completed,
+                failed_function=(
+                    function_session.bound
+                    if function_session.failed
+                    else None
+                ),
+                failed_step_index=function_session.failed_step_index,
+                invocation_summary=function_session.invocation_summary,
+            )
+            if trace
+            else None
+        )
+        if (
+            previous_action_error
+            or pending_user_input
+            or execution_history
+        ):
+            observation = Observation(
+                xml=observation.xml,
+                package_name=observation.package_name,
+                activity_name=observation.activity_name,
+                image_base64=observation.image_base64,
+                extra={
+                    **dict(observation.extra),
+                    "previous_action_error": previous_action_error,
+                    **(
+                        {"execution_history": execution_history}
+                        if execution_history
+                        else {}
+                    ),
+                    **(
+                        {"user_input": pending_user_input}
+                        if pending_user_input
+                        else {}
+                    ),
+                },
+            )
+        pending_user_input = None
+        recall_result = await self._recall(
+            goal,
+            observation=observation,
+            source_states=recall_source_states,
+            limit=len(self.store.functions),
+            exclude_function_ids=frozenset(function_session.excluded_ids),
+        )
+        recalled_functions = recall_result.functions
+        continuation_function_id = (
+            function_session.selected_id
+            if (
+                function_session.failed
+                and not function_session.recovery_pending
+                and function_session.failed_step_index is not None
+            )
+            else None
+        )
+        planner_functions = tuple(
+            function
+            for function in self.store.list_functions(
+                limit=max(1, len(self.store.functions)),
+                include_hidden=False,
+            )
+            if (
+                function.id not in function_session.excluded_ids
+                or function.id == continuation_function_id
+            )
+        )
+        planner_function_catalog = {
+            function.id: function for function in planner_functions
+        }
+        recall_event = {
+            "planner_turn": runtime_steps_used,
+            **recall_result.audit,
+            "registered_candidate_function_ids": [
+                function.id for function in planner_functions
+            ],
+            "recalled_candidate_function_ids": [
+                function.id for function in recalled_functions
+            ],
+            "planner_function_ids": [
+                function.id for function in planner_functions
+            ],
+        }
+        recall_events.append(recall_event)
+        function_resolution["candidate_count"] = len(recalled_functions)
+        function_resolution["candidate_function_ids"] = [
+            function.id for function in recalled_functions
+        ]
+        function_resolution["planner_candidate_count"] = len(planner_functions)
+        function_resolution["planner_candidate_function_ids"] = [
+            function.id for function in planner_functions
+        ]
+        cache_functions, cache_decisions = _function_cache_candidates(
+            recall_result,
+            threshold=_FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+        )
+        cache_audit: dict[str, Any] = {
+            "threshold": _FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
+            "candidate_function_ids": [
+                function.id for function in cache_functions
+            ],
+            "decisions": cache_decisions,
+            "status": "not_attempted",
+        }
+        recall_event["function_cache"] = cache_audit
+        routed_call: ToolCall | None = None
+        if fallback_this_turn:
+            cache_audit["status"] = "bypassed_after_function_failure"
+        elif not cache_functions:
+            cache_audit["status"] = "below_threshold"
+        elif self.function_router is None:
+            cache_audit["status"] = "router_unavailable"
+        else:
+            try:
+                with measure("model.router"):
+                    routed_value = await invoke(self.function_router.route_function, goal, cache_functions)
+                checkpoint()
+                routed_call = (
+                    ToolCall.from_value(routed_value)
+                    if routed_value is not None
+                    else None
+                )
+                cache_audit["status"] = (
+                    "selected" if routed_call is not None else "rejected"
+                )
+            except Exception as error:  # noqa: BLE001
+                cache_audit["status"] = "error"
+                cache_audit["error"] = f"{type(error).__name__}:{error}"
+            router_usage = _take_llm_usage(self.function_router)
+            merge_usage(llm_usage, router_usage, component="function_router")
+            model_calls += _usage_model_calls(router_usage, fallback=1)
+        if routed_call is not None:
+            admit_decision(routed_call)
+            selected_function = {
+                function.id: function for function in cache_functions
+            }.get(routed_call.name)
+            repeated_invocation = False
+            invocation_signature = ""
+            if selected_function is not None:
+                invocation_signature = _function_invocation_signature(
+                    selected_function.id,
+                    routed_call.arguments,
+                    observation,
+                )
+                repeated_invocation = (
+                    invocation_signature in successful_router_invocations
+                )
+            if repeated_invocation:
+                cache_audit["status"] = (
+                    "repeated_invocation_without_progress"
+                )
+                cache_audit["selected_function_id"] = selected_function.id
+                cache_audit["arguments"] = dict(routed_call.arguments)
+                previous_action_error = (
+                    "function_invocation_already_succeeded_from_current_state:"
+                    f"{selected_function.id}"
+                )
+                selected_function = None
+            elif selected_function is None:
+                cache_audit["status"] = "unknown_selection"
+                cache_audit["selected_function_id"] = routed_call.name
+                previous_action_error = (
+                    f"function_router_tool_not_visible:{routed_call.name}"
+                )
+            else:
+                function_session.selected_id = selected_function.id
+                cache_audit["selected_function_id"] = selected_function.id
+                cache_audit["arguments"] = dict(routed_call.arguments)
+                function_resolution["status"] = "cache_selected"
+                function_resolution["selected_function_id"] = (
+                    selected_function.id
+                )
+                function_resolution["arguments"] = dict(
+                    routed_call.arguments
+                )
+                try:
+                    function_session.bound = bind_function(
+                        selected_function,
+                        routed_call.arguments,
+                    )
+                except ValueError as error:
+                    cache_audit["status"] = "binding_failed"
+                    cache_audit["error"] = str(error)
+                    function_resolution["binding_status"] = "failed"
+                    function_resolution["binding_error"] = str(error)
+                    previous_action_error = str(error)
+                else:
+                    function_resolution["binding_status"] = "succeeded"
+                    current_entry_observation = await self._observe(
+                        screenshot=True
+                    )
+                    if not _same_entry_observation(
+                        observation,
+                        current_entry_observation,
+                    ):
+                        observation = current_entry_observation
+                        cache_audit["status"] = "entry_state_changed"
+                        previous_action_error = (
+                            "function_entry_state_changed_after_mapping"
+                        )
+                        continue
+                    observation = current_entry_observation
+                    replay = await execute_function(
+                        function_session.bound,
+                        host=self.host,
+                        plugins=self.plugins,
+                        observation=observation,
+                        trace_start_index=len(trace),
+                        installed_packages=self.installed_packages,
+                        state_loader=(
+                            self.catalog.get_state
+                            if self.catalog is not None
+                            else None
+                        ),
+                        checker_rules=self.checker_library.rules,
+                        checker_trigger_counts=shared_checker_trigger_counts,
+                    )
+                    replay_timing = replay.detail.get("timing")
+                    if isinstance(replay_timing, dict):
+                        execution_timing.setdefault("function_steps", []).extend(replay_timing.get("function_steps") or [])
+                    actions_executed += replay.actions_executed
+                    replay_trace = list(replay.detail.get("trace") or ())
+                    trace.extend(replay_trace)
+                    observation = replay.final_state or observation
+                    if replay.success:
+                        successful_router_invocations.add(invocation_signature)
+                        cache_audit["status"] = "executed"
+                        function_resolution["replay_status"] = "succeeded"
+                        function_session.mark_completed()
+                        completion = await resolve_completion()
+                        if completion is not None:
+                            return completion
+                    else:
+                        cache_audit["status"] = "execution_failed"
+                        cache_audit["error"] = (
+                            replay.error or "function_replay_failed"
+                        )
+                        function_resolution["replay_status"] = "failed"
+                        function_resolution["replay_error"] = (
+                            replay.error or "function_replay_failed"
+                        )
+                        function_session.mark_failed(replay, observation)
+                        previous_action_error = (
+                            replay.error or "function_replay_failed"
+                        )
+                    continue
+        observation = await _ensure_planner_screenshot(self,observation)
+        planner_feedback = (
+            _function_fallback_feedback(
+                function_session.bound,
+                function_session.fallback_context,
+            )
+            if fallback_this_turn or function_session.completion_rejected
+            else ""
+        )
+        planner_observation = observation
+        if fallback_this_turn or planner_feedback:
+            planner_observation = _with_observation_extra(
+                observation,
+                planner_feedback=planner_feedback,
+                **(
+                    {"forbid_finished": True}
+                    if function_session.completion_rejected
+                    else {}
+                ),
+            )
+        try:
+            with measure("model.planner"):
+                planned_call = ToolCall.from_value(
+                    await invoke(
+                        self.planner.one_step_tool_call,
+                        goal,
+                        planner_observation,
+                        planner_functions,
+                        dict(self.installed_apps),
+                    )
+                )
+        except Exception as error:  # noqa: BLE001
+            planner_metadata = _take_planner_metadata(self.planner)
+            _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
+            planner_usage = _take_llm_usage(self.planner)
+            merge_usage(llm_usage, planner_usage, component="planner")
+            model_calls += _usage_model_calls(planner_usage, fallback=1)
+            return finish(
+                False,
+                profile=profile,
+                trace=trace,
+                function_id=function_session.selected_id or function_session.failed_id,
+                actions_executed=actions_executed,
+                model_calls=model_calls,
+                llm_usage=llm_usage,
+                fallback_steps=fallback_steps,
+                error=f"vlm_planner_failed:{error}",
+                final_state=observation,
+                planner_diagnostics=planner_diagnostics,
+            )
+        planner_usage = _take_llm_usage(self.planner)
+        merge_usage(llm_usage, planner_usage, component="planner")
+        model_calls += _usage_model_calls(planner_usage, fallback=1)
+        if fallback_this_turn:
+            fallback_steps += 1
+        checkpoint()
+        admit_decision(planned_call)
+        planner_metadata = _take_planner_metadata(self.planner)
+        _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
+        planner_diagnostics.setdefault("planner_calls", []).append(
+            {
+                "turn_index": runtime_steps_used - 1,
+                "tool": planned_call.name,
+                "arguments": dict(planned_call.arguments),
+            }
+        )
+        selected_function = planner_function_catalog.get(planned_call.name)
+        if selected_function is not None:
+            resume_step_index = (
+                function_session.failed_step_index
+                if (
+                    selected_function.id == continuation_function_id
+                    and function_session.bound is not None
+                )
+                else None
+            )
+            function_session.selected_id = selected_function.id
+            function_session.invocation_summary = str(
+                planner_metadata.get("summary") or ""
+            ).strip()
+            try:
+                bound = bind_function(
+                    selected_function,
+                    planned_call.arguments,
+                )
+                if resume_step_index is not None and bound != function_session.bound:
+                    previous_action_error = "function_resume_arguments_changed"
+                    continue
+                function_session.bound = bound
+            except ValueError as error:
+                previous_action_error = str(error)
+                continue
+            if resume_step_index is None:
+                current_entry_observation = await self._observe(screenshot=True)
+                if not _same_entry_observation(
+                    observation,
+                    current_entry_observation,
+                ):
+                    observation = current_entry_observation
+                    previous_action_error = (
+                        "function_entry_state_changed_after_mapping"
+                    )
+                    continue
+                observation = current_entry_observation
+            replay = await execute_function(
+                function_session.bound,
+                host=self.host,
+                plugins=self.plugins,
+                observation=observation,
+                start_step_index=(resume_step_index or 0),
+                trace_start_index=len(trace),
+                installed_packages=self.installed_packages,
+                state_loader=(
+                    self.catalog.get_state if self.catalog is not None else None
+                ),
+                checker_rules=self.checker_library.rules,
+                checker_trigger_counts=shared_checker_trigger_counts,
+            )
+            replay_timing = replay.detail.get("timing")
+            if isinstance(replay_timing, dict):
+                execution_timing.setdefault("function_steps", []).extend(replay_timing.get("function_steps") or [])
+            actions_executed += replay.actions_executed
+            replay_trace = list(replay.detail.get("trace") or ())
+            trace.extend(replay_trace)
+            observation = replay.final_state or observation
+            if replay.success:
+                function_session.mark_completed()
+                completion = await resolve_completion()
+                if completion is not None:
+                    return completion
+            else:
+                function_session.mark_failed(replay, observation)
+                previous_action_error = replay.error or "function_replay_failed"
+            continue
+        try:
+            planned = action_from_tool_call(planned_call)
+        except ValueError as error:
+            previous_action_error = str(error)
+            continue
+        if planned.tool == "finished":
+            finished_content = str(planned.args.get("content") or "").strip()
+            if not finished_content:
+                previous_action_error = "finished_content_required"
+                continue
+            completion = await resolve_completion(claimed=True, content=finished_content)
+            if completion is not None:
+                return completion
+            continue
+        if planned.tool == "abort":
+            message = str(planned.args.get("value") or "").strip() or "vlm_aborted"
+            return finish(
+                False,
+                profile=profile,
+                trace=trace,
+                function_id=function_session.selected_id or function_session.failed_id,
+                actions_executed=actions_executed,
+                model_calls=model_calls,
+                llm_usage=llm_usage,
+                fallback_steps=fallback_steps,
+                error=message,
+                final_state=observation,
+                planner_diagnostics=planner_diagnostics,
+                terminal_detail={"done_reason": "abort"},
+            )
+        if planned.tool == "info":
+            question = str(planned.args.get("value") or "").strip()
+            if not question:
+                previous_action_error = "info_question_required"
+                continue
+            try:
+                pending_user_input = str(
+                    await _await(_request_input(self.host, question))
+                )
+            except InputRequired as error:
+                return finish(
+                    False,
+                    profile=profile,
+                    trace=trace,
+                    function_id=function_session.selected_id or function_session.failed_id,
+                    actions_executed=actions_executed,
+                    model_calls=model_calls,
+                    llm_usage=llm_usage,
+                    fallback_steps=fallback_steps,
+                    error="input_required",
+                    final_state=observation,
+                    planner_diagnostics=planner_diagnostics,
+                    terminal_detail={
+                        "done_reason": "waiting_input",
+                        "finished_content": error.question,
+                    },
+                )
+            except Exception as error:  # noqa: BLE001
+                return finish(
+                    False,
+                    profile=profile,
+                    trace=trace,
+                    function_id=function_session.selected_id or function_session.failed_id,
+                    actions_executed=actions_executed,
+                    model_calls=model_calls,
+                    llm_usage=llm_usage,
+                    fallback_steps=fallback_steps,
+                    error=f"request_input_failed:{error}",
+                    final_state=observation,
+                    planner_diagnostics=planner_diagnostics,
+                )
+            previous_action_error = None
+            continue
+        if planned.tool == "get_state":
+            observation = await self._observe(screenshot=True)
+            previous_action_error = None
+            continue
+        step = await execute_robust_action(
+            planned,
+            observation=observation,
+            host=self.host,
+            plugins=self.plugins,
+            installed_packages=self.installed_packages,
+            checker_rules=self.checker_library.rules,
+            checker_trigger_counts=shared_checker_trigger_counts,
+        )
+        trace.extend(
+            await record_execution(
+                self.host,
+                step,
+                trace_start_index=len(trace),
+                metadata=planner_metadata,
+            )
+        )
+        actions_executed += step.actions_executed
+        if not step.success:
+            previous_action_error = step.error or "fallback_action_failed"
+            continue
+        observation = step.after or observation
+        previous_action_error = (
+            "action_completed_without_observed_state_change"
+            if _same_observation(step.before, observation)
+            else None
+        )
+        if function_session.recovery_pending:
+            function_session.recovery_pending = False
+        if function_session.completion_rejected:
+            function_session.completion_rejected = False
+            function_session.fallback_context = None
+
+    return finish(
+        False,
+        profile=profile,
+        trace=trace,
+        function_id=function_session.selected_id or function_session.failed_id,
+        actions_executed=actions_executed,
+        model_calls=model_calls,
+        llm_usage=llm_usage,
+        fallback_steps=fallback_steps,
+        error=previous_action_error or "max_steps_exceeded",
+        final_state=observation,
+        terminal_detail={"done_reason": "step_budget_exceeded"},
+        planner_diagnostics=planner_diagnostics,
+    )
+
+
+async def _ensure_planner_screenshot(
+    self,
+    observation: Observation,
+) -> Observation:
+    if observation.image_base64:
+        return observation
+    screenshot_path = str(observation.extra.get("screenshot_path") or "").strip()
+    if screenshot_path:
+        return observation
+    refreshed = await self._observe(screenshot=True)
+    preserved = {
+        key: observation.extra[key]
+        for key in (
+            "forbid_finished",
+            "previous_action_error",
+            "previous_action",
+            "recent_actions",
+            "execution_history",
+            "user_input",
+        )
+        if observation.extra.get(key) is not None
+    }
+    if not preserved:
+        return refreshed
+    return _with_observation_extra(refreshed, **preserved)
+
+
+def _result(
+    self,
+    success: bool,
+    *,
+    profile: Experiment,
+    trace: list[dict[str, Any]],
+    function_id: str | None = None,
+    actions_executed: int = 0,
+    model_calls: int = 0,
+    llm_usage: dict[str, Any] | None = None,
+    fallback_steps: int = 0,
+    completion_review_calls: int = 0,
+    error: str | None = None,
+    final_state: Observation | None = None,
+    planner_diagnostics: dict[str, Any] | None = None,
+    function_resolution: dict[str, Any] | None = None,
+    terminal_detail: dict[str, Any] | None = None,
+    checker_trigger_counts: dict[str, int] | None = None,
+) -> RunResult:
+    detail: dict[str, Any] = {
+        "experiment": profile.name,
+        "trace": list(trace),
+        "runtime_limits": {
+            "max_steps": int(self.config.runtime.max_steps),
+            "max_fallback_steps": (
+                int(self.config.runtime.max_fallback_steps)
+                if self.config.runtime.max_fallback_steps is not None
+                else None
+            ),
+        },
+    }
+    usage = dict(llm_usage or {})
+    tracked_model_calls = _usage_model_calls(usage, fallback=0)
+    if tracked_model_calls < model_calls:
+        usage["untracked_model_calls"] = model_calls - tracked_model_calls
+        usage["model_calls"] = model_calls
+    usage["token_usage_status"] = token_usage_status(usage)
+    detail["llm_usage"] = usage
+    detail["completion_review_calls"] = max(0, int(completion_review_calls))
+    detail["checker_trigger_counts"] = dict(checker_trigger_counts or {})
+    detail["checker_trigger_total"] = sum(
+        int(value)
+        for value in (checker_trigger_counts or {}).values()
+        if isinstance(value, (int, float))
+    )
+    if planner_diagnostics:
+        detail["planner_diagnostics"] = dict(planner_diagnostics)
+    if function_resolution is not None:
+        detail["function_resolution"] = dict(function_resolution)
+    if terminal_detail:
+        detail.update(terminal_detail)
+    result = RunResult(
+        success,
+        function_id,
+        actions_executed,
+        model_calls,
+        fallback_steps,
+        error,
+        final_state,
+        detail,
+    )
+    return replace(result, detail={**detail, "feedback": invocation_feedback(result)})
+
+
+def _experiment(value: Experiment | str | None) -> Experiment:
+    if isinstance(value, Experiment):
+        return value
+    return Experiment.for_method(str(value or "ours"))
+
+
+
+
+def _with_observation_extra(
+    observation: Observation,
+    **updates: Any,
+) -> Observation:
+    return Observation(
+        xml=observation.xml,
+        package_name=observation.package_name,
+        activity_name=observation.activity_name,
+        image_base64=observation.image_base64,
+        extra={**dict(observation.extra), **updates},
+    )
+
+
+def _function_fallback_feedback(
+    function: Function | None,
+    context: dict[str, Any] | None,
+) -> str:
+    details = dict(context or {})
+    function_name = function.name if function is not None else "selected Function"
+    if details.get("completion_rejected") is True:
+        return (
+            f'Function "{function_name}" executed all recorded actions, but the '
+            "official completion checker rejected the resulting task state. "
+            "The task is not complete. Inspect the current UI, correct the "
+            "remaining state with online actions, and only finish after the "
+            "official checker can pass."
+        )
+    lines = [
+        f'Function "{function_name}" stopped at one transition.',
+        "The shared Checker Store has handled any configured recovery for this transition. Inspect the current UI before continuing.",
+    ]
+    expected_action = str(details.get("expected_action") or "").strip()
+    if expected_action:
+        lines.append(f"Expected action: {expected_action}")
+    transfer_error = str(details.get("transfer_error") or "").strip()
+    ambiguous_transfer = any(
+        marker in transfer_error
+        for marker in (
+            "target_semantics_mismatch",
+            "ambiguous_target_identity",
+        )
+    )
+    if ambiguous_transfer:
+        lines.append(
+            "The ranked Transfer candidates are not reliable for this step; "
+            "ignore them and choose the target from the current visible text "
+            "and action capability."
+        )
+        if expected_action == "click":
+            lines.append(
+                "For an ambiguous list row, click the visible row/text first; "
+                "do not click its inline delete icon before the row is selected."
+            )
+    source_target = details.get("source_target")
+    if isinstance(source_target, dict) and source_target:
+        lines.append(
+            "Source target: "
+            + json.dumps(source_target, ensure_ascii=False, separators=(",", ":"))
+        )
+    candidates = details.get("candidates")
+    if isinstance(candidates, list) and candidates and not ambiguous_transfer:
+        lines.append(
+            "Likely current targets (ranked; verify against the current screenshot): "
+            + json.dumps(candidates, ensure_ascii=False, separators=(",", ":"))
+        )
+    return "\n".join(lines)
+
+
+def _function_fallback_context(
+    trace: Any,
+    *,
+    function: Function | None = None,
+    failed_step_index: int | None = None,
+    limit: int = 5,
+) -> dict[str, Any] | None:
+    expected_action = ""
+    if (
+        function is not None
+        and failed_step_index is not None
+        and 0 <= failed_step_index < len(function.steps)
+    ):
+        expected_action = function.steps[failed_step_index].action.tool
+    context: dict[str, Any] = {}
+    if expected_action:
+        context["expected_action"] = expected_action
+    for item in reversed(trace if isinstance(trace, list) else ()):
+        if not isinstance(item, dict):
+            continue
+        action = item.get("action")
+        if not expected_action and isinstance(action, dict):
+            expected_action = str(action.get("tool") or "").strip()
+        metadata = item.get("metadata")
+        transfer = metadata.get("transfer") if isinstance(metadata, dict) else None
+        if not isinstance(transfer, dict):
+            continue
+        result = item.get("result")
+        transfer_error = (
+            str(result.get("error") or "").strip()
+            if isinstance(result, dict)
+            else ""
+        )
+        source = transfer.get("source")
+        source_target = (
+            {
+                key: source[key]
+                for key in ("text", "content_desc", "class", "resource_id")
+                if source.get(key) not in (None, "", [])
+            }
+            if isinstance(source, dict)
+            else {}
+        )
+        candidates = transfer.get("candidates")
+        target = transfer.get("target")
+        target_display = (
+            target.get("display")
+            if isinstance(target, dict) and isinstance(target.get("display"), dict)
+            else None
+        )
+        hint_candidates: list[dict[str, Any]] = []
+        for candidate in (
+            candidates[: max(1, int(limit))]
+            if isinstance(candidates, list)
+            else ()
+        ):
+            if not isinstance(candidate, dict):
+                continue
+            hint = {
+                key: candidate[key]
+                for key in (
+                    "rank",
+                    "text",
+                    "content_desc",
+                    "class",
+                    "resource_id",
+                    "execution_candidate_id",
+                    "executable",
+                    "score",
+                )
+                if candidate.get(key) is not None
+            }
+            bounds_0_1000 = _fallback_bounds_0_1000(
+                candidate.get("bounds"),
+                target_display,
+            )
+            if bounds_0_1000:
+                hint["bounds_0_1000"] = bounds_0_1000
+            execution_bounds_0_1000 = _fallback_bounds_0_1000(
+                candidate.get("execution_bounds"),
+                target_display,
+            )
+            if execution_bounds_0_1000:
+                hint["execution_bounds_0_1000"] = execution_bounds_0_1000
+            hint_candidates.append(hint)
+        context.update(
+            {
+                "source_target": source_target,
+                "candidates": hint_candidates,
+                "transfer_error": transfer_error,
+            }
+        )
+        break
+    return {key: value for key, value in context.items() if value}
+
+
+def _fallback_bounds_0_1000(
+    bounds: Any,
+    display: dict[str, Any] | None,
+) -> str:
+    if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+        return ""
+    try:
+        width, height = display_size(display)
+        left, top, right, bottom = (float(value) for value in bounds)
+    except (TypeError, ValueError):
+        return ""
+    normalized = (
+        round(min(1000, max(0, left / width * 1000))),
+        round(min(1000, max(0, top / height * 1000))),
+        round(min(1000, max(0, right / width * 1000))),
+        round(min(1000, max(0, bottom / height * 1000))),
+    )
+    return f"[{normalized[0]},{normalized[1]}][{normalized[2]},{normalized[3]}]"
+
+
+def _execution_history(
+    trace: list[dict[str, Any]],
+    *,
+    completed_function: Function | None = None,
+    failed_function: Function | None = None,
+    failed_step_index: int | None = None,
+    invocation_summary: str = "",
+) -> str:
+    lines = ["Action execution history on the target device:"]
+    history_index = 1
+    function = completed_function or failed_function
+    if function is not None:
+        total_actions = len(function.steps)
+        if completed_function is not None:
+            completed_count = total_actions
+            status = "succeeded"
+            failed_index = None
+        else:
+            failed_index = (
+                max(0, int(failed_step_index))
+                if failed_step_index is not None
+                else 0
+            )
+            completed_count = min(failed_index, total_actions)
+            status = "failed"
+        description = " ".join(str(function.description or "").split()).strip()
+        if not description:
+            description = f"Complete {function.name}."
+        trace_by_step: dict[int, dict[str, Any]] = {}
+        for raw_step in trace:
+            if not isinstance(raw_step, dict):
+                continue
+            metadata = raw_step.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            if str(metadata.get("function_id") or "").strip() != function.id:
+                continue
+            if str(metadata.get("origin") or "").strip() != "action":
+                continue
+            try:
+                trace_by_step[
+                    int(
+                        metadata.get(
+                            "function_step_index",
+                            raw_step.get("step_index"),
+                        )
+                    )
+                ] = raw_step
+            except (TypeError, ValueError):
+                continue
+        action_details: list[str] = []
+        for index, step in enumerate(function.steps):
+            if index < completed_count:
+                result_text = _describe_completed_action(step.action)
+                action_details.append(
+                    f"step {index + 1} {step.action.tool} succeeded: {result_text}"
+                )
+            elif failed_index is not None and index == failed_index:
+                raw_step = trace_by_step.get(index) or {}
+                raw_result = raw_step.get("result")
+                error = (
+                    str(raw_result.get("error") or "unknown execution error")
+                    if isinstance(raw_result, dict)
+                    else "unknown execution error"
+                )
+                action_details.append(
+                    f"step {index + 1} {step.action.tool} failed: {error}"
+                )
+                break
+        action_list = "; ".join(action_details) or "none"
+        function_line = (
+            f"{history_index}. Action: {function.id} | result: {status} | "
+            f"progress: {completed_count}/{total_actions} internal actions | "
+            f"action_list: {action_list} | intent: {description}."
+        )
+        last_attempt_index = (
+            failed_index
+            if failed_index is not None
+            else completed_count - 1
+        )
+        last_attempt = trace_by_step.get(last_attempt_index) or {}
+        last_result = last_attempt.get("result")
+        last_metadata = last_attempt.get("metadata")
+        last_succeeded = (
+            isinstance(last_result, dict)
+            and last_result.get("success") is True
+        )
+        last_effect = (
+            last_metadata.get("action_effect")
+            if isinstance(last_metadata, dict)
+            else None
+        )
+        compact_last_effect = (
+            _compact_history_effect(last_effect)
+            if isinstance(last_effect, dict)
+            else {}
+        )
+        if last_attempt:
+            function_line += (
+                " Last internal action outcome: "
+                f"executed={'yes' if last_succeeded else 'no'}"
+                + (
+                    "; observed UI facts: "
+                    + json.dumps(
+                        compact_last_effect,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    if compact_last_effect
+                    else ""
+                )
+                + "."
+            )
+        if completed_function is not None:
+            function_line += (
+                " This Function completed its recorded action sequence. "
+                "Inspect the current UI and the last action outcome. Output "
+                "`finished` only when they are consistent with the goal; "
+                "otherwise take the next corrective device action without "
+                "blindly repeating completed steps."
+            )
+        if failed_function is not None and failed_step_index is not None:
+            next_step = (
+                function.steps[failed_step_index]
+                if 0 <= failed_step_index < total_actions
+                else None
+            )
+            if next_step is not None:
+                function_line += (
+                    f" Next action candidate: {failed_step_index + 1}."
+                    f"{next_step.action.tool}; resume only if the current UI "
+                    "supports that direction."
+                )
+        lines.append(function_line)
+        if invocation_summary:
+            lines[-1] += f' Invocation: "{invocation_summary}".'
+        history_index += 1
+    for step in trace:
+        if not isinstance(step, dict):
+            continue
+        metadata = step.get("metadata")
+        if isinstance(metadata, dict) and str(
+            metadata.get("function_id") or ""
+        ).strip():
+            continue
+        try:
+            action = Action.from_value(step.get("action"))
+        except (TypeError, ValueError):
+            continue
+        result = step.get("result")
+        success = isinstance(result, dict) and result.get("success") is True
+        if success:
+            description = _describe_completed_action(action)
+        else:
+            error = (
+                str(result.get("error") or "unknown execution error")
+                if isinstance(result, dict)
+                else "unknown execution error"
+            )
+            description = f"Action `{action.tool}` failed: {error}."
+        summary = (
+            str(metadata.get("summary") or "").strip()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if summary:
+            description = f'{description} Planner intent: "{summary}".'
+        action_effect = (
+            metadata.get("action_effect") if isinstance(metadata, dict) else None
+        )
+        if isinstance(action_effect, dict):
+            compact_effect = _compact_history_effect(action_effect)
+            if compact_effect:
+                description = (
+                    f"{description} Observed UI facts: "
+                    f"{json.dumps(compact_effect, ensure_ascii=False, separators=(',', ':'))}."
+                )
+        lines.append(f"{history_index}. Action: {action.tool} | result: {description}")
+        history_index += 1
+    return "\n".join(lines)
+
+
+def _compact_history_effect(value: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    if "state_changed" in value:
+        compact["state_changed"] = value.get("state_changed") is True
+
+    changed_values: list[dict[str, str]] = []
+    seen_changes: set[tuple[str, str]] = set()
+    changed = value.get("changed")
+    for item in changed if isinstance(changed, list) else ():
+        if not isinstance(item, dict):
+            continue
+        after = " ".join(str(item.get("after") or "").split())
+        if not after:
+            continue
+        target = str(item.get("target") or "").split("@", 1)[0].rsplit("/", 1)[-1]
+        key = (target, after)
+        if key in seen_changes:
+            continue
+        seen_changes.add(key)
+        changed_values.append(
+            {
+                **({"target": target} if target else {}),
+                "value": after,
+            }
+        )
+    if changed_values:
+        compact["changed"] = changed_values
+
+    appeared = value.get("appeared")
+    if isinstance(appeared, list):
+        appeared_values = list(
+            dict.fromkeys(
+                text
+                for item in appeared
+                if (text := " ".join(str(item or "").split()))
+            )
+        )
+        if appeared_values:
+            compact["appeared"] = appeared_values
+    return compact
+
+
+def _function_execution_evidence(
+    trace: list[dict[str, Any]],
+    *,
+    function: Function,
+    final_observation: Observation,
+    succeeded: bool,
+    invocation_summary: str = "",
+) -> dict[str, Any]:
+    steps: list[dict[str, Any]] = []
+    for raw_step in trace:
+        if not isinstance(raw_step, dict):
+            continue
+        metadata = raw_step.get("metadata")
+        if not isinstance(metadata, dict) or str(
+            metadata.get("function_id") or ""
+        ).strip() != function.id:
+            continue
+        try:
+            action = Action.from_value(raw_step.get("action"))
+        except (TypeError, ValueError):
+            continue
+        result = raw_step.get("result")
+        success = isinstance(result, dict) and result.get("success") is True
+        step = {
+            "step_index": int(raw_step.get("step_index") or len(steps)),
+            "before_state_id": str(raw_step.get("before_state_id") or ""),
+            "after_state_id": str(raw_step.get("after_state_id") or ""),
+            "tool": action.tool,
+            "action_summary": _describe_completed_action(action),
+            "success": success,
+        }
+        if not success and isinstance(result, dict) and str(
+            result.get("error") or ""
+        ).strip():
+            step["error"] = str(result["error"])
+        steps.append(step)
+    final_state_id = str(final_observation.extra.get("state_id") or "").strip()
+    if not final_state_id and steps:
+        final_state_id = str(steps[-1]["after_state_id"] or "").strip()
+    core_description = _function_core_description(function)
+    evidence = {
+        "schema_version": "omniflow.function-execution-evidence.v1",
+        "function_id": function.id,
+        "function_name": function.name,
+        "core_description": core_description,
+        "replay_status": "actions_succeeded" if succeeded else "actions_failed",
+        "task_completion_status": "unverified",
+        "completion_summary": (
+            f"Completed Function: {core_description} "
+            f"All {len(steps)} actions succeeded."
+            if succeeded
+            else "Function actions did not complete; Planner fallback is required."
+        ),
+        "official_validator_status": "pending",
+        "steps": steps,
+        "final_observation": {
+            "state_id": final_state_id,
+            "package_name": str(final_observation.package_name or ""),
+            "activity_name": str(final_observation.activity_name or ""),
+        },
+    }
+    if invocation_summary:
+        evidence["invocation_summary"] = invocation_summary
+    return evidence
+
+
+def _function_core_description(function: Function) -> str:
+    description = " ".join(str(function.description or "").split()).strip()
+    if description:
+        return description[:1200]
+    return f"Complete {function.name}."
+
+
+def _describe_completed_action(action: Action) -> str:
+    args = action.args
+    if action.tool == "open_app":
+        package_name = str(args.get("package_name") or "").strip()
+        return f'Opened app package "{package_name}" successfully.'
+    if action.tool == "click":
+        return "Clicked the recorded target position successfully."
+    if action.tool == "long_press":
+        return "Long-pressed the recorded screen position successfully."
+    if action.tool == "input_text":
+        return "Entered the required text successfully."
+    if action.tool == "swipe":
+        direction = str(args.get("direction") or "").strip()
+        return (
+            f"Swiped {direction} successfully."
+            if direction
+            else "Completed the recorded swipe successfully."
+        )
+    if action.tool == "press_key":
+        key = str(args.get("key") or "").strip()
+        return f'Pressed key "{key}" successfully.'
+    if action.tool == "wait":
+        return f"Waited for {args.get('duration_ms')} ms successfully."
+    return f"Completed action `{action.tool}` successfully."
+
+
+def _same_observation(
+    before: Observation | None,
+    after: Observation | None,
+) -> bool:
+    if before is None or after is None:
+        return False
+    if (
+        before.package_name,
+        before.activity_name,
+    ) != (
+        after.package_name,
+        after.activity_name,
+    ):
+        return False
+    before_xml = str(before.xml or "")
+    after_xml = str(after.xml or "")
+    if before_xml or after_xml:
+        return before_xml == after_xml
+    return before.image_base64 == after.image_base64
+
+
+def _same_entry_observation(
+    before: Observation | None,
+    after: Observation | None,
+) -> bool:
+    """Check the semantic state at the Function mapping/execution boundary.
+
+    The entry gate must reject a real UI-state change, but AndroidWorld's
+    screenshot and volatile accessibility labels can change while the
+    interaction structure remains the same (for example, a running timer).
+    Exact state identity remains the fast path; otherwise compare a stable
+    accessibility signature before rejecting the selected Function.
+    """
+    if before is None or after is None:
+        return False
+    before_state_id = str(before.extra.get("state_id") or "").strip()
+    after_state_id = str(after.extra.get("state_id") or "").strip()
+    if before_state_id and before_state_id == after_state_id:
+        return True
+    before_signature = _entry_observation_signature(before)
+    after_signature = _entry_observation_signature(after)
+    if before_signature is not None and after_signature is not None:
+        return before_signature == after_signature
+    return _same_observation(before, after)
+
+
+_ENTRY_TIME_VALUE = re.compile(
+    r"(?<!\d)[+\-]?\d{1,3}(?::[+\-]?\d{1,3}){1,2}(?:[.,]\d{1,3})?(?!\d)"
+)
+_ENTRY_NUMERIC_VALUE = re.compile(r"^[+\-]?\d+(?:[.,]\d+)?%?$")
+_ENTRY_NODE_ATTRIBUTES = (
+    "class",
+    "package",
+    "resource-id",
+    "bounds",
+    "clickable",
+    "editable",
+    "scrollable",
+    "long-clickable",
+    "checkable",
+    "checked",
+    "selected",
+    "enabled",
+    "focused",
+)
+
+
+def _entry_observation_signature(
+    observation: Observation,
+) -> tuple[Any, ...] | None:
+    xml_text = str(observation.xml or "").strip()
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    nodes: list[tuple[Any, ...]] = []
+    for element in root.iter():
+        attributes = element.attrib
+        if str(attributes.get("package") or "").strip() == "com.android.systemui":
+            continue
+        actionable = any(
+            str(attributes.get(name) or "").strip().lower() == "true"
+            for name in (
+                "clickable",
+                "editable",
+                "scrollable",
+                "long-clickable",
+            )
+        )
+        text_label = _stable_entry_label(
+            attributes.get("text"),
+            actionable=actionable,
+        )
+        content_label = _stable_entry_label(
+            attributes.get("content-desc"),
+            actionable=actionable,
+        )
+        volatile_time_label = "<time>" in {text_label, content_label}
+        nodes.append(
+            (
+                element.tag,
+                *(
+                    (
+                        "<time-bounds>"
+                        if name == "bounds" and volatile_time_label
+                        else str(attributes.get(name) or "").strip()
+                    )
+                    for name in _ENTRY_NODE_ATTRIBUTES
+                ),
+                text_label,
+                content_label,
+            )
+        )
+    return (
+        str(observation.package_name or "").strip(),
+        str(observation.activity_name or "").strip(),
+        tuple(nodes),
+    )
+
+
+def _stable_entry_label(value: Any, *, actionable: bool) -> str:
+    label = " ".join(str(value or "").split()).strip()
+    if not label:
+        return ""
+    normalized = _ENTRY_TIME_VALUE.sub("<time>", label)
+    if not actionable and _ENTRY_NUMERIC_VALUE.fullmatch(normalized):
+        return "<number>"
+    return normalized
+
+
+def _optional_step_index(value: Any) -> int | None:
+    try:
+        step_index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return step_index if step_index >= 0 else None
+
+
+async def _await(value: Any) -> Any:
+    return await value if inspect.isawaitable(value) else value
+
+
+def _take_planner_metadata(planner: Planner) -> dict[str, Any]:
+    take_metadata = getattr(planner, "take_metadata", None)
+    if not callable(take_metadata):
+        return {}
+    value = take_metadata()
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _merge_planner_diagnostics(
+    diagnostics: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    rejected_calls = metadata.get("rejected_tool_calls")
+    if not isinstance(rejected_calls, list):
+        return
+    accumulated = diagnostics.setdefault("rejected_tool_calls", [])
+    for value in rejected_calls:
+        if not isinstance(value, dict):
+            continue
+        error = str(value.get("error") or "").strip()
+        if not error:
+            continue
+        item: dict[str, Any] = {"error": error}
+        try:
+            turn_index = int(value.get("turn_index"))
+        except (TypeError, ValueError):
+            turn_index = -1
+        if turn_index >= 0:
+            item["turn_index"] = turn_index
+        tool = str(value.get("tool") or "").strip()
+        if tool:
+            item["tool"] = tool
+        if "arguments" in value:
+            item["arguments"] = value.get("arguments")
+        if item not in accumulated:
+            accumulated.append(item)
+
+
+def _take_llm_usage(component: Any) -> dict[str, Any] | None:
+    take_usage = getattr(component, "take_usage", None)
+    if not callable(take_usage):
+        return None
+    value = take_usage()
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _usage_model_calls(
+    usage: dict[str, Any] | None,
+    *,
+    fallback: int,
+) -> int:
+    if usage is None:
+        return max(0, int(fallback))
+    try:
+        return max(0, int(usage.get("model_calls") or 0))
+    except (TypeError, ValueError):
+        return max(0, int(fallback))
+
+
+def _function_cache_candidates(
+    recall_result: RecallResult,
+    *,
+    threshold: float,
+) -> tuple[tuple[Function, ...], list[dict[str, Any]]]:
+    decisions_by_id = {
+        str(decision.get("function_id") or ""): decision
+        for decision in recall_result.audit.get("decisions") or ()
+        if isinstance(decision, dict)
+    }
+    candidates: list[Function] = []
+    audit: list[dict[str, Any]] = []
+    for function in recall_result.functions:
+        decision = decisions_by_id.get(function.id, {})
+        page_similarity = _bounded_confidence(decision.get("page_similarity"))
+        mapping_confidence = _bounded_confidence(
+            decision.get("mapping_confidence")
+        )
+        confidence = min(page_similarity, mapping_confidence)
+        admitted = confidence >= float(threshold)
+        audit.append(
+            {
+                "function_id": function.id,
+                "page_similarity": page_similarity,
+                "mapping_confidence": mapping_confidence,
+                "confidence": confidence,
+                "admitted": admitted,
+            }
+        )
+        if admitted:
+            candidates.append(function)
+    return tuple(candidates), audit
+
+
+def _function_invocation_signature(
+    function_id: str,
+    arguments: dict[str, Any],
+    observation: Observation,
+) -> str:
+    """Identify one successful call at one concrete GUI entry state."""
+
+    state_id = str(observation.extra.get("state_id") or "").strip()
+    if not state_id:
+        observation_payload = {
+            "package_name": str(observation.package_name or ""),
+            "activity_name": str(observation.activity_name or ""),
+            "xml": str(observation.xml or ""),
+            "image_base64": str(observation.image_base64 or ""),
+        }
+        state_id = hashlib.sha256(
+            json.dumps(
+                observation_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    argument_key = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return f"{function_id}\n{argument_key}\n{state_id}"
+
+
+def _bounded_confidence(value: Any) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(1.0, max(0.0, confidence))
+
+
+async def _request_input(host: Host, question: str) -> str:
+    request_input = getattr(host, "request_input", None)
+    if not callable(request_input):
+        raise RuntimeError("request_input_not_supported")
+    return str(await _await(request_input(question)))
