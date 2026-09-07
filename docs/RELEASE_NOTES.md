@@ -46,6 +46,44 @@ session. Full suite: **172 passed**, including the two previously skipped SDK
 checks. This covers actual protocol/SDK dispatch with controlled device facts,
 not upstream model-driven or physical-device E2E.
 
+Two additional live attempts use an SSH-forwarded existing ADB server instead
+of one SSH shell per device command. Standard recall and the real 226-package
+inventory succeed, but the next OOB observation times out before any action;
+Tablet times out while preparing observation. Both return failure facts and
+do not claim task completion. Evidence: live attempts 005 and 006. No remote
+working-tree changes were overwritten and no APK was rebuilt or installed.
+
+Live attempts 007–009 complete their Function actions on 4090 Standard (1440×3120), Fold (1768×2208)
+and Tablet (1280×800), using the same explicit Bluetooth Store and canonical
+OmniTransfer checkpoint. Each recalls `turn_bluetooth_on`, completes five OOB
+actions, and serves the repeated request without device I/O. Final OOB XML shows
+the Bluetooth switch checked only on Standard; Fold and Tablet remain unchecked,
+so those runs do not establish target-goal success. MCP keeps task status `unknown`:
+no official validator runs in this supplemental integration check. OOB is
+0.6.1 / versionCode 7 on all three devices. Physical acceptance and formal
+Memory ON/OFF latency are still pending. The machine-readable consolidated
+evidence is `data/runtime/validation/20260907-harness-acceptance/cross_device.json`.
+
+Step facts explain the Fold/Tablet goal failures: the stored toggle action
+changed `checked=true` to `false`. This is not an idempotent "ensure on"
+operation. The Skill now instructs the host to assess goal completion and
+state-sensitive starting conditions before invocation.
+
+Attempts 010–011 start with the switch observed off, using GUI-Owl and the
+actual Droidrun ToolRegistry. They expose a shared Checker bug: package
+restoration ran before explicit `open_app` and tried to launch the historical
+source Launcher. The fix stays in `checker_rule_matches`, aligning the shared
+package-mismatch condition with default_checker for open_app/press_key;
+contextual actions still restore their expected source app. No mapper, Store
+or action sequence is replaced. Three focused cases cover this distinction.
+
+Attempts 012–013 pass with this fix: GUI-Owl/Fold and Droidrun/Tablet each
+observe `checked=false`, recall and execute the same five-step Function, then
+observe `checked=true`; transport retries do not repeat device actions. Full
+suite: **175 passed**. Skill validation also passes. These are actual adapter/
+SDK-to-OOB runs, without upstream LLM planning or an official task validator.
+All device bug acceptance remains **待真机验证**.
+
 ## 1.1.0.dev0 — host protocol refactor, 2026-09-07
 
 Observation evidence now uses immutable, content-addressed PNG files within

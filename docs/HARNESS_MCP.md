@@ -63,6 +63,11 @@ execute 的传输重试必须保持 request_id 和参数相同，以获取已保
 Function 部分失败当作 transport retry：读取成功前缀、失败位置和当前状态，再由宿主
 决定如何恢复。v1 没有持久化 resume API，不能从失败 index 直接授权重放。
 
+Function 名称不是幂等承诺。蓝牙 live 检查表明，同一份“turn on”历史动作在开关已经
+开启时仍会点击并关闭它。宿主应在调用前判断目标是否已满足，并核对状态敏感操作的
+起始条件；不确定时使用自己的观察通道。完成后继续核验目标，不以 actions completed
+代替目标达成。当前 Function v2 没有额外的条件动作/持久化 resume schema。
+
 宿主负责整个任务的规划、完成判定、用户输入、原始动作与取消。嵌入式宿主通过
 runtime.cancel() / flow.cancel() 取消；MCP 宿主使用协议请求取消通道。正在执行的
 I/O 先收尾，之后禁止新增动作。状态和当前反馈包含在结果中，不另加 model-visible
@@ -82,8 +87,16 @@ fallback 能力。两工具服务仍可召回与执行 Function；失败后交�
 真实上游 harness 运行及物理设备仍需要独立验证，不能拿矩阵通过代替。
 旧版七工具的 OOB 模拟器 smoke 仅为旧协议证据，不能冒充当前两工具验收。
 
-当前已验证 dev1 隔离 wheel 的导入、两工具发现和 Skill 打包；真实 canonical
-1024D 召回在 9207/OOB 模拟器上通过。完整执行与真机验收分别记录，详见发布说明。
+当前已验证 dev1 隔离 wheel 的导入、两工具发现和 Skill 打包。同一份蓝牙 Function
+在 4090 Standard、Fold、Tablet 上经真实 canonical 1024D 召回与 OmniTransfer 映射，
+各完成五步 OOB 执行；重复请求不产生设备 I/O。最终 XML 中只有 Standard 的蓝牙开关
+已开启，Fold 与 Tablet 仍关闭，不能把动作执行完成当作目标达成；宿主必须核验目标。
+这是真实模拟器上的 Function 接入检查，没有调用官方 task validator，不是论文结果；
+真机验收仍待完成。完整记录见发布说明。
+后续由宿主先观察确认关闭状态，GUI-Owl/Fold 和真实 Droidrun ToolRegistry/Tablet
+分别完成五步执行并观察到开启。该复测还修复了共享 Checker 在 open_app 前错误恢复
+source Launcher 的问题；原始 Store 和统一映射器未变。这些接入路径由测试驱动调用，
+尚不代表上游 LLM 端到端或真机验收。
 上游 Droidrun 0.5.6 的 ToolRegistry 已验证成功与部分失败两条分发路径，使用
 mobilerun-sdk 2.1.0；该约束已加入 bmoca 可选依赖。5.x SDK 将模块名改为
 mobilerun_sdk，不能满足这个旧版 Droidrun 的 mobilerun 导入。安装时使用项目的

@@ -22,6 +22,12 @@ Memory or no suitable candidate is a valid result; do not invent a Function.
 
 ## Execute
 
+Assess the current goal and the Function's starting conditions before invoking
+it. A stored click on a toggle reverses its state; a name such as "turn on"
+does not make it idempotent. If current evidence already satisfies the goal,
+stop without executing. If a state-sensitive precondition is unknown, inspect
+it through the host's device channel before choosing that Function.
+
 Call omniflow_execute with the returned session_id, a unique request_id,
 function_id, and arguments matching that Function's input schema.
 This executes one registered Function through the shared
