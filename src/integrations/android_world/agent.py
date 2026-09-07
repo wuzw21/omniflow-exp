@@ -80,7 +80,17 @@ class _TaskHost:
         return self.host.env
 
     def observe(self, **kwargs: Any) -> Observation:
-        observation = Observation.from_value(self.host.observe(**kwargs))
+        return self._capture_observation(self.host.observe(**kwargs))
+
+    def observe_stable(self, **kwargs: Any) -> Observation:
+        return self._capture_observation(self.host.observe_stable(**kwargs))
+
+    def take_after_action_observation(self) -> Observation | None:
+        observation = self.host.take_after_action_observation()
+        return self._capture_observation(observation) if observation is not None else None
+
+    def _capture_observation(self, value: Any) -> Observation:
+        observation = Observation.from_value(value)
         official_state = observation.extra.get("androidworld_state")
         valid_fields = (
             {"screenshot", "xml"},

@@ -67,7 +67,30 @@ def test_host_and_recorder_share_capture_and_post_action_state(tmp_path, monkeyp
     assert after.xml == observation.xml
     assert after.package_name == 'com.example'
     assert after.extra['screenshot_path'] == observation.extra['screenshot_path']
+    assert after.extra['androidworld_state'] == recorder.latest_observation
     assert host.take_after_action_observation() is None
     assert len(captures) == 1
     assert len(recorder.persist_observations()) == 1
     assert 'xml' not in recorder.persist_observations()[0]
+
+
+def test_task_host_preserves_stable_observation_and_canonical_capture(tmp_path):
+    from omniflow.core.model import Observation
+    from src.integrations.android_world.agent import _TaskHost
+    calls = []
+    snapshot = state_module.snapshot_androidworld_state(_state(), evidence_root=tmp_path)
+    observation = Observation(xml=_state().forest, package_name='com.example',
+        extra={'androidworld_state': snapshot, 'display': {'width': 12, 'height': 16}})
+    def stable(**kwargs):
+        calls.append(kwargs)
+        return observation
+    state = {'captured_transfer_states': {}}
+    pending = [observation, None]
+    host = _TaskHost(SimpleNamespace(observe_stable=stable,
+        take_after_action_observation=lambda: pending.pop(0)), state, {})
+    result = host.observe_stable(xml=True, screenshot=False, app_info=True)
+    assert calls == [{'xml': True, 'screenshot': False, 'app_info': True}]
+    assert result.xml == observation.xml
+    assert result.extra['state_id'] in state['captured_transfer_states']
+    assert host.take_after_action_observation() == result
+    assert host.take_after_action_observation() is None

@@ -967,13 +967,14 @@ class AndroidWorldHost:
             extra.update(
                 {
                     "observe_backend": "oob_control",
+                    "androidworld_state": dict(recorded),
                     "ui_graph_source": "oob_control_forest",
                     "ui_graph_complete": True,
                 }
             )
             payload["extra"] = extra
             return Observation.from_value(payload)
-        return state
+        return None
 
     @staticmethod
     def _fast_post_action_transition_seconds() -> float:
