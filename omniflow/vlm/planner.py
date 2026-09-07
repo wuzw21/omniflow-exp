@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from omniflow.core.config import DEFAULT_MAX_STEPS, DEFAULT_PLANNER_SYSTEM_PROMPT
 from omniflow.core.model import Function, Observation, ToolCall
+from omniflow.runtime.control import bounded_timeout, checkpoint, invoke
 from omniflow.vlm.gui import (
     ModelToolCallError,
     PlannerContextProjector,
@@ -81,6 +82,7 @@ class VLMPlanner:
         metadata: dict[str, Any] = {}
 
         for attempt in range(_MODEL_TOOL_CALL_ATTEMPTS):
+            checkpoint()
             self._turn_index += 1
             request = build_model_turn_request(
                 goal=str(goal),
@@ -104,7 +106,7 @@ class VLMPlanner:
             }
             self._usage.start_call()
             try:
-                response = self._call_transport(envelope)
+                response = await invoke(self._call_transport, envelope)
             except Exception:
                 self._usage.record_failure()
                 raise
@@ -193,8 +195,11 @@ class VLMPlanner:
             # latter to the underlying model endpoint.
             extra_body["parallel_tool_calls"] = False
         request["extra_body"] = extra_body
-        client = self._client or self._build_client()
-        response = client.chat.completions.create(**request, timeout=self.timeout)
+        if self._client is None:
+            self._client = self._build_client()
+        response = self._client.chat.completions.create(
+            **request, timeout=bounded_timeout(min(self.timeout or 30.0, 30.0))
+        )
         return normalize_openai_model_turn_response(
             response,
             requested_model=self.model,

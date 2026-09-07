@@ -1,5 +1,11 @@
 # File edit guide
 
+宿主重构 owner：`omniflow/runtime/engine.py` 管任务循环与单次调用；
+`control.py` 管共享预算和取消；`protocol.py` 生成调用反馈；
+`src/integrations/gui_agent_tools.py` 管外部会话和重试去重。
+`gui_agent_mcp.py` 只提供 MCP 传输；`gui_agent_oob_host.py` 复用 OOB。
+不得在宿主适配器内新增 Planner 或 action mapper。协议见 `docs/HARNESS_PROTOCOL.md`。
+
 真实运行 owner：
 
 | 需求 | 唯一 owner |

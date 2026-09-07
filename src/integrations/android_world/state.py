@@ -7,8 +7,8 @@ import hashlib
 import io
 import math
 import os
-import tempfile
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from PIL import Image
@@ -26,14 +26,14 @@ def snapshot_androidworld_state(
         raise ValueError("androidworld_state_fields_missing:" + ",".join(missing))
     pixels = getattr(state, "pixels")
     return {
-        "pixels": _screenshot_reference(pixels, evidence_root=evidence_root),
+        "pixels": store_screenshot(pixels, evidence_root=evidence_root),
         "forest": _json_value(getattr(state, "forest")),
         "ui_elements": _json_value(list(getattr(state, "ui_elements") or ())),
         "auxiliaries": _json_value(getattr(state, "auxiliaries")),
     }
 
 
-def _screenshot_reference(
+def store_screenshot(
     pixels: Any,
     *,
     evidence_root: str | Path | None,

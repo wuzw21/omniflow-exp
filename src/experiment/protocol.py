@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
-from omniflow.core.config import ANDROIDWORLD_PROTOCOL, DEFAULT_MAX_STEPS
+_ANDROIDWORLD_CONFIG_PATH = Path(
+    os.environ.get("OMNIFLOW_ANDROIDWORLD_CONFIG")
+    or Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
+).expanduser()
+ANDROIDWORLD_PROTOCOL = dict(json.loads(
+    _ANDROIDWORLD_CONFIG_PATH.read_text(encoding="utf-8")
+)["protocol"])
 
 METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["methods"])
 ENABLED_METHODS = tuple(str(value) for value in ANDROIDWORLD_PROTOCOL["enabled_methods"])
@@ -43,7 +51,7 @@ EMULATOR_AVD_SPECS = tuple(
 SOURCE_SEED = int(ANDROIDWORLD_PROTOCOL["source_seed"])
 TASK_SEED = int(ANDROIDWORLD_PROTOCOL["evaluation_seed"])
 SOURCE_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["source_max_steps"])
-MAX_STEPS = DEFAULT_MAX_STEPS
+MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
 MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
 FUNCTION_ENHANCEMENT_TIMEOUT_SEC = int(
     ANDROIDWORLD_PROTOCOL["function_enhancement_timeout_sec"]

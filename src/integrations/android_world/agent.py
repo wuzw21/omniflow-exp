@@ -16,17 +16,20 @@ from omniflow import (
     RunResult,
     RuntimeSettings,
 )
-from omniflow.core.config import DEFAULT_MAX_STEPS, Experiment
+from omniflow.core.config import Experiment
 from omniflow.core.trajectory import state_id
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
     TRANSFER_STATE_CATALOG_FILENAME,
-    capture_transfer_state as _transfer_state,
     load_transfer_state_catalog,
     transfer_state_coverage,
 )
+from omniflow.transfer.runtime import (
+    capture_transfer_state as _transfer_state,
+)
 from src.experiment.observation_evidence import canonicalize_run_log_observation
 from src.experiment.performance_metrics import PerformanceMetrics
+from src.experiment.protocol import MAX_STEPS
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
@@ -118,7 +121,7 @@ def build_agent(
     runtime: Any | None = None,
     planner: Any | None = None,
     function_router: Any | None = None,
-    max_steps: int = DEFAULT_MAX_STEPS,
+    max_steps: int = MAX_STEPS,
     adb_serial: str = "",
     adb_path: str = "",
     post_action_wait_seconds: float = 0.0,

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omniflow-exp"
-version = "1.0.0"
-description = "Paper-only AndroidWorld evaluation for OmniFlow"
+version = "1.1.0.dev0"
+description = "OmniFlow closed-loop execution kernel, host adapters, and AndroidWorld evaluation"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
@@ -43,6 +43,10 @@ dependencies = [
 [project.optional-dependencies]
 bmoca = ["droidrun==0.5.6"]
 llm = []
+mcp = ["mcp>=2.0.0,<3"]
+
+[project.scripts]
+omniflow-mcp = "src.integrations.gui_agent_mcp:main"
 
 [dependency-groups]
 dev = [
@@ -56,6 +60,8 @@ dev = [
 include-package-data = false
 
 [tool.setuptools.data-files]
+"schemas" = ["schemas/omniflow_invocation.v1.json"]
+"share/omniflow/skills/omniflow-gui" = ["skills/omniflow-gui/SKILL.md"]
 "schemas/oob" = [
     "schemas/oob/README.md",
     "schemas/oob/oob_canonical_actions.v1.json",

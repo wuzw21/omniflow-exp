@@ -3,6 +3,14 @@
 Version **1.0.0** is the preserved baseline before the host-harness refactor.
 Release scope and validation are recorded in [release notes](docs/RELEASE_NOTES.md).
 
+当前开发版将内核与宿主控制分开：内置 Planner 调用 `OmniFlow.arun`，外部 Agent
+调用 `OmniFlow.acall_tool`；两者共用同一 Function 闭环。外部失败返回当前状态和失败
+位置，交还宿主决策。协议与迁移说明见 [Harness 协议](docs/HARNESS_PROTOCOL.md)。
+AndroidWorld 正式入口不变。
+
+Codex/其他 MCP 宿主通过 [OmniFlow GUI Skill](skills/omniflow-gui/SKILL.md) 接入，
+服务启动和配置见 [MCP 接入](docs/HARNESS_MCP.md)。它复用 OOB 和同一 Function 内核。
+
 AndroidWorld 和 B-MoCA 实验仓库。AndroidWorld 只有一个公开入口：
 
 论文评测冻结边界、可变项、证据要求和失败归因见

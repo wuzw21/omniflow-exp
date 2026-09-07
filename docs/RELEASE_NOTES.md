@@ -1,13 +1,42 @@
 # Releases
 
-## Harness refactor — in progress
+## 1.1.0.dev0 — host protocol refactor, 2026-09-07
 
 Observation evidence now uses immutable, content-addressed PNG files within
 each existing bundle. Host and recorder share one capture; the post-action
 Fast Pass reads the recorder's canonical XML rather than an undefined Host
 attribute. The observation reporting index holds compact references. Raw
-image resolution and the RunLog schema are unchanged. The evidence, Checker,
-completion, and AppAgent focused regressions pass (33 tests); **待真机验证**.
+image resolution and the RunLog schema are unchanged.
+
+The outer Planner loop and one-invocation execution now have separate entry
+methods and reuse the same Function kernel. Completion checks, cooperative
+cancellation, shared deadlines, Router iteration limits, and no-progress
+stops use one control contract. External Function failure returns execution
+facts and the current observation without starting another Planner.
+
+The MCP stdio adapter and distributable `omniflow-gui` Skill expose canonical
+tools, explicit Memory, session identity, request deduplication, cancellation,
+and completion. Kernel import no longer loads AndroidWorld's experiment file.
+An isolated wheel installation outside the checkout can import the kernel,
+construct the MCP server, discover tools, and find the packaged Skill/schema.
+No screenshots, APKs, or model weights are included in that wheel.
+
+Focused lifecycle/protocol/packaging regression: 28 passed. The full repository
+suite passes **131 tests** with `python -m pytest -q tests`; bare pytest additionally collects
+an unrelated, untracked AutoDroid vendor RL suite whose optional `gym` dependency
+is absent. Transport checks include a real MCP stdio subprocess, but its test
+device is deliberately synthetic and does not validate Android execution.
+
+All device behavior remains **待真机验证**. Local devices were disconnected at
+the final inventory; 4090 and 9207 inventories contained emulators only. No
+physical-device acceptance or comparative speed/RSS result is claimed. The
+protocol is cooperative, has no durable public resume API, and does not yet
+provide an HTTP service. Details: [protocol](HARNESS_PROTOCOL.md),
+[MCP installation](HARNESS_MCP.md).
+
+Local historical archive cleanup removed approximately 16.72 GB after protecting
+731 dependency/unique-success files. The deduplicated deletion journal and audit
+remain under `data/runtime/archive_cleanup/20260907/`, outside Git releases.
 
 ## 1.0.0 — 2026-09-07
 

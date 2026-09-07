@@ -10,13 +10,23 @@ Functions through the initialized runtime.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass
 import inspect
 import json
+from threading import Lock
 from typing import Any
+import uuid
 
 from omniflow.core.model import ActionResult, Function, Observation, RunResult
 from omniflow.core.schemas import canonicalize_action, load_canonical_action_schema
+from omniflow.runtime.control import (
+    CURRENT_CONTROL,
+    ExecutionControl,
+    ExecutionStopped,
+    invoke,
+)
+from omniflow.runtime.protocol import invocation_feedback, observation_payload
 
 
 @dataclass(frozen=True)
@@ -76,11 +86,21 @@ class GuiAgentToolRuntime:
         host: Any,
         flow: Any | None = None,
         experiment: str = "external_gui_agent",
+        timeout_seconds: float = 600.0,
     ) -> None:
         if host is None:
             raise TypeError("gui_agent_host_required")
         self.host = host
         self.flow = flow
+        if getattr(flow, "host", host) is not host:
+            raise ValueError("gui_agent_host_must_match_function_host")
+        self.timeout_seconds = timeout_seconds
+        self._session_lock = Lock()
+        self._control: ExecutionControl | None = None
+        self._closed = False
+        self.session_id = uuid.uuid4().hex
+        self._checker_trigger_counts: dict[str, int] = {}
+        self._requests: dict[str, tuple[str, GuiAgentToolResult | None]] = {}
         self.experiment = str(experiment or "").strip()
         if not self.experiment:
             raise ValueError("gui_agent_experiment_required")
@@ -104,19 +124,47 @@ class GuiAgentToolRuntime:
         return tuple(tools)
 
     def observe(self) -> dict[str, Any]:
+        return asyncio.run(self.aobserve())
+
+    async def aobserve(self) -> dict[str, Any]:
+        with self._session():
+            observation = await self._observe()
+            self._control.check()
+            return observation
+
+    async def _observe(self) -> dict[str, Any]:
         observe = getattr(self.host, "observe", None)
         if not callable(observe):
             raise TypeError("gui_agent_host_observe_required")
-        raw_observation = observe(xml=True, screenshot=True, app_info=True)
-        if inspect.isawaitable(raw_observation):
-            raise TypeError("gui_agent_host_observe_must_be_synchronous")
-        return Observation.from_value(raw_observation).to_dict()
+        raw_observation = await invoke(observe, xml=True, screenshot=True, app_info=True)
+        observation = Observation.from_value(raw_observation)
+        self._control.observation = observation
+        return observation.to_dict()
 
     async def call_tool(
         self,
         name: str,
         arguments: dict[str, Any],
     ) -> GuiAgentToolResult:
+        action_offset = self._control.actions_executed if self._control else 0
+        trace_offset = len(self._control.trace) if self._control else 0
+        try:
+            with self._session():
+                result = await self._dispatch_tool(name, arguments)
+                self._control.check()
+                if self._control.effect_unknown:
+                    raise ExecutionStopped("effect_unknown")
+                feedback = result.output.get("feedback") or {}
+                if (feedback.get("control") or {}).get("next") == "stop":
+                    self._closed = True
+                return result
+        except ExecutionStopped as error:
+            self._closed = True
+            return GuiAgentToolResult(name, "control", False,
+                {"feedback": invocation_feedback(self._control.stopped_result(
+                    error.reason, action_offset=action_offset, trace_offset=trace_offset))}, error.reason)
+
+    async def _dispatch_tool(self, name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
         normalized_name = str(name or "").strip()
         tools = {tool.name: tool for tool in self.list_tools()}
         tool = tools.get(normalized_name)
@@ -135,6 +183,36 @@ class GuiAgentToolRuntime:
     ) -> GuiAgentToolResult:
         return asyncio.run(self.call_tool(name, arguments))
 
+    async def execute_request(self, *, session_id: str, request_id: str,
+                              tool_name: str, arguments: dict[str, Any]) -> GuiAgentToolResult:
+        """Deduplicate transport retries inside one live session.
+
+        A restarted process has a different session id. It cannot claim that
+        an interrupted side effect did or did not happen on the device.
+        """
+        if session_id != self.session_id:
+            raise ValueError("gui_agent_session_mismatch")
+        if not request_id or len(request_id) > 128:
+            raise ValueError("gui_agent_request_id_required_max_128")
+        signature = json.dumps([tool_name, arguments], sort_keys=True)
+        if request_id in self._requests:
+            previous, result = self._requests[request_id]
+            if previous != signature:
+                raise ValueError("gui_agent_request_id_conflict")
+            if result is None:
+                raise ValueError("gui_agent_request_in_flight_or_unknown")
+            return result
+        if len(self._requests) >= 128:
+            raise ValueError("gui_agent_session_request_budget_exhausted")
+        self._requests[request_id] = (signature, None)
+        result = await self.call_tool(tool_name, arguments)
+        self._requests[request_id] = (signature, result)
+        # A session retains compact replies for transport deduplication, not a
+        # second copy of the complete invocation history and XML trace.
+        if self._control is not None:
+            self._control.trace.clear()
+        return result
+
     async def _call_action(
         self,
         name: str,
@@ -144,13 +222,17 @@ class GuiAgentToolRuntime:
             {"tool": name, "args": dict(arguments or {})},
             persisted_only=False,
         )
+        if self.flow is not None:
+            return await self._call_function(name, arguments, kind="action")
         act = getattr(self.host, "act", None)
         if not callable(act):
             raise TypeError("gui_agent_host_act_required")
-        raw_result = act(action)
-        if inspect.isawaitable(raw_result):
-            raw_result = await raw_result
+        self._control.check()
+        self._control.effect_unknown = True
+        raw_result = await invoke(act, action)
         result = ActionResult.from_value(raw_result)
+        self._control.effect_unknown = not result.success
+        self._control.actions_executed += int(result.success)
         return GuiAgentToolResult(
             name=name,
             kind="action",
@@ -163,6 +245,8 @@ class GuiAgentToolRuntime:
         self,
         name: str,
         arguments: dict[str, Any],
+        *,
+        kind: str = "function",
     ) -> GuiAgentToolResult:
         acall_tool = getattr(self.flow, "acall_tool", None)
         if not callable(acall_tool):
@@ -170,6 +254,8 @@ class GuiAgentToolRuntime:
         raw_result = acall_tool(
             {"name": name, "arguments": dict(arguments or {})},
             experiment=self.experiment,
+            **({"checker_trigger_counts": self._checker_trigger_counts}
+               if hasattr(self.flow, "checker_library") else {}),
         )
         if inspect.isawaitable(raw_result):
             raw_result = await raw_result
@@ -179,31 +265,100 @@ class GuiAgentToolRuntime:
                 "actions_executed": raw_result.actions_executed,
                 "model_calls": raw_result.model_calls,
                 "fallback_steps": raw_result.fallback_steps,
-                "detail": _json_copy(raw_result.detail),
+                "detail": _json_copy({key: value for key, value in raw_result.detail.items()
+                                      if key not in {"trace", "feedback"}}),
+                "observation": observation_payload(raw_result.final_state),
+                "feedback": invocation_feedback(raw_result),
             }
             return GuiAgentToolResult(
                 name=name,
-                kind="function",
+                kind=kind,
                 success=raw_result.success,
                 output=output,
                 error=raw_result.error,
             )
-        if isinstance(raw_result, dict):
-            success = bool(raw_result.get("success", True))
+        if isinstance(raw_result, dict) and isinstance(raw_result.get("success"), bool):
+            success = raw_result["success"]
             error = str(raw_result.get("error") or "").strip() or None
             return GuiAgentToolResult(
                 name=name,
-                kind="function",
+                kind=kind,
                 success=success,
                 output=_json_copy(raw_result),
                 error=error,
             )
         return GuiAgentToolResult(
             name=name,
-            kind="function",
-            success=True,
-            output={"content": "Done" if raw_result is None else str(raw_result)},
+            kind=kind,
+            success=False,
+            output={"content": "Function returned an invalid execution result."},
+            error="gui_agent_function_result_invalid",
         )
+
+    @contextmanager
+    def _session(self):
+        if not self._session_lock.acquire(blocking=False):
+            raise ValueError("gui_agent_session_busy")
+        token = None
+        try:
+            if self._closed:
+                raise ValueError("gui_agent_session_closed")
+            if self._control is None:
+                self._control = ExecutionControl(self.timeout_seconds)
+            token = CURRENT_CONTROL.set(self._control)
+            self._control.check()
+            yield
+        finally:
+            if token is not None:
+                CURRENT_CONTROL.reset(token)
+            self._session_lock.release()
+
+    def cancel(self) -> dict[str, Any]:
+        self._closed = True
+        if self._control is not None:
+            self._control.cancelled.set()
+        return {"session_id": self.session_id, "status": "cancelled", "in_flight": self._session_lock.locked()}
+
+    def start_session(self) -> dict[str, Any]:
+        if not self._session_lock.acquire(blocking=False):
+            raise ValueError("gui_agent_session_active")
+        try:
+            if self._control is not None and not self._closed:
+                raise ValueError("gui_agent_session_active")
+            self._control = ExecutionControl(self.timeout_seconds)
+            self._checker_trigger_counts.clear()
+            self._requests.clear()
+            self._closed = False
+            self.session_id = uuid.uuid4().hex
+        finally:
+            self._session_lock.release()
+        return self.session_status()
+
+    def session_status(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "status": "closed" if self._closed else "active" if self._control is not None else "idle",
+            "in_flight": self._session_lock.locked(),
+            "remaining_seconds": self._control.remaining if self._control else self.timeout_seconds,
+            "actions_executed": self._control.actions_executed if self._control else 0,
+            "effect_unknown": self._control.effect_unknown if self._control else False,
+        }
+
+    async def finish(self, content: str) -> dict[str, Any]:
+        if not str(content).strip():
+            raise ValueError("finished_content_required")
+        with self._session():
+            checker = getattr(self.flow, "completion_checker", None)
+            status = "unknown"
+            if checker is not None:
+                try:
+                    status = "verified_success" if float(await invoke(checker)) > 0.5 else "verified_incomplete"
+                except Exception:  # noqa: BLE001 -- verifier errors are terminal facts
+                    status = "verifier_error"
+            self._closed = status != "verified_incomplete"
+            self._control.check()
+            return {"session_id": self.session_id, "task_status": status,
+                    "control": "stop" if self._closed else "host", "content": str(content).strip()}
 
     def _visible_functions(self) -> tuple[Function, ...]:
         if self.flow is None:

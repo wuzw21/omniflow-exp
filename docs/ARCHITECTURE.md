@@ -1,5 +1,10 @@
 # Architecture
 
+2026-09-07 重构将可变宿主置于稳定执行内核之外。任务级循环有且只有一个 owner；
+Function 内部仍走原有 Checker / OmniTransfer / OOB / post-observation 路径。
+对外调用、完成判定、取消、预算、传输重试与证据的合同见
+[HARNESS_PROTOCOL.md](HARNESS_PROTOCOL.md)。此文以下的 AndroidWorld 链仍为正式实验链。
+
 AndroidWorld 只有一条运行链：
 
 ```text

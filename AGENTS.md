@@ -2,12 +2,19 @@
 
 ## 修改长期原则（最高优先级）
 
-- 不能直接改整体设计；保持既有架构边界、模块职责和实验合同不变。
-- 不能改主线执行流；修复必须落在原有主线 owner 上，并保持原有调用顺序。
+- 2026-09-07 用户授权全项目重构：保存 main 的 `v1.0.0` 基线，内核闭环保留，
+  harness 可替换；允许调整模块边界和宿主协议。详细合同见 `docs/HARNESS_PROTOCOL.md`。
+- 任务级循环必须有唯一 owner：内置模式由 `OmniFlow.arun` 负责，外部宿主模式由
+  Codex/其他 Agent 负责；`acall_tool` 只执行一次调用，失败不得启动第二个 Planner。
+- 保留 Function 的 Check → Transfer → Act → Observe 闭环、canonical OmniTransfer、
+  显式 Memory 和 AndroidWorld 官方实验入口、OOB 物理层、时间与统计合同。
+- 用户允许删除历史归档，但先保护当前资产引用的文件和缺少替代品的高质量成功经验，
+  清理审计放 `data/runtime/`；不得把此授权扩大到当前有效 Memory 或无关论文文件。
 - 不能引入旁路、任务专用脚本或平行实现来绕过主线；配置、Checker 和 Transfer
   必须继续服从既有统一接口。
 - 可以修复通用 BUG，但必须在主线上修复，并用 focused regression test 证明它对
   所有调用方都是通用修复，而不是针对单个任务的特判。
+- bug 验收必须经过真机；单元测试、模拟器和构建仅为补充，无真机时标注“待真机验证”。
 
 ## AndroidWorld 极简运行长期规则（2026-08-25）
 

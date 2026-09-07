@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from omniflow.core.config import ANDROIDWORLD_PROTOCOL
-
+from src.experiment.protocol import ANDROIDWORLD_PROTOCOL
 
 _CONFIGURED_DEVICES = tuple(ANDROIDWORLD_PROTOCOL["devices"]) + (
     ANDROIDWORLD_PROTOCOL["source_device"],

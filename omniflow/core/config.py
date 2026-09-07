@@ -1,26 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
-import os
-from pathlib import Path
 
 from omniflow.core.model import (
     Checker,
     Transfer,
 )
 
-_ANDROIDWORLD_CONFIG_PATH = Path(
-    os.environ.get("OMNIFLOW_ANDROIDWORLD_CONFIG")
-    or Path(__file__).resolve().parents[2] / "config" / "paper_androidworld.json"
-).expanduser()
-_ANDROIDWORLD_CONFIG = json.loads(
-    _ANDROIDWORLD_CONFIG_PATH.read_text(encoding="utf-8")
-)
-ANDROIDWORLD_PROTOCOL = dict(_ANDROIDWORLD_CONFIG["protocol"])
-DEFAULT_MAX_STEPS = int(ANDROIDWORLD_PROTOCOL["max_steps"])
-DEFAULT_MAX_FALLBACK_STEPS = int(ANDROIDWORLD_PROTOCOL["max_fallback_steps"])
-DEFAULT_MAX_FUNCTION_TOOLS = int(ANDROIDWORLD_PROTOCOL["max_function_tools"])
+# Kernel defaults have no benchmark filesystem dependency. The AndroidWorld
+# harness reads its own protocol and passes the configured limits explicitly.
+DEFAULT_MAX_STEPS = 30
+DEFAULT_MAX_FUNCTION_TOOLS = 8
 
 GUI_AGENT_RULES = (
     "You are an Android GUI agent. Each turn, analyze the goal, the fresh current UI, and the complete action history, then return exactly one provided tool call.",
@@ -47,7 +37,7 @@ class Experiment:
     name: str = "ours"
 
     @classmethod
-    def for_method(cls, name: str) -> "Experiment":
+    def for_method(cls, name: str) -> Experiment:
         return cls(name=str(name or "ours"))
 
 
@@ -66,7 +56,7 @@ class PluginSet:
 class RuntimeSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     max_fallback_steps: int | None = None
-    max_function_tools: int = 8
+    max_function_tools: int = DEFAULT_MAX_FUNCTION_TOOLS
 
 
 @dataclass(frozen=True)
@@ -76,8 +66,8 @@ class OmniFlowConfig:
     plugins: PluginSet = field(default_factory=PluginSet)
 
     def resolved_plugins(self) -> PluginSet:
-        from omniflow.runtime.execution import default_transfer
         from omniflow.runtime.checker import default_checker
+        from omniflow.runtime.execution import default_transfer
 
         configured = self.plugins
         return PluginSet(

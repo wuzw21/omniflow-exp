@@ -193,7 +193,7 @@ class MinitapOobController:
         return False
 
     async def get_screen_data(self) -> MinitapScreenData:
-        observation = self.runtime.observe()
+        observation = await self.runtime.aobserve()
         display = (observation.get("extra") or {}).get("display")
         if isinstance(display, dict):
             self.device_width = _positive_dimension(

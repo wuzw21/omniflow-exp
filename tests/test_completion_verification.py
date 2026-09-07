@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.core.model import ActionResult, Observation, ToolCall
 from omniflow.functions.artifact import parse_function_artifact
@@ -739,7 +741,8 @@ def test_router_does_not_repeat_same_function_from_same_gui_state(
     )
 
 
-def test_router_can_repeat_same_function_after_gui_state_changes(tmp_path) -> None:
+@pytest.mark.parametrize("success_after, expected_success", [(2, True), (4, False)])
+def test_router_progress_and_task_budget_are_independent(tmp_path, success_after, expected_success) -> None:
     class RepeatingRouter:
         def __init__(self) -> None:
             self.calls = 0
@@ -782,7 +785,7 @@ def test_router_can_repeat_same_function_after_gui_state_changes(tmp_path) -> No
 
         def __call__(self) -> float:
             self.calls += 1
-            return 1.0 if self.calls == 2 else 0.0
+            return 1.0 if self.calls == success_after else 0.0
 
     store_path = tmp_path / "store.json"
     store = FunctionStore(store_path)
@@ -830,9 +833,9 @@ def test_router_can_repeat_same_function_after_gui_state_changes(tmp_path) -> No
 
     result = asyncio.run(flow.arun("Delete two items."))
 
-    assert result.success is True
-    assert result.detail["done_reason"] == "function_completed_verified"
+    assert result.success is expected_success
+    assert result.detail["done_reason"] == ("function_completed_verified" if expected_success else "step_budget_exceeded")
     assert result.fallback_steps == 0
-    assert router.calls == 2
-    assert checker.calls == 2
-    assert host.actions == 2
+    assert router.calls == min(success_after, 3)
+    assert checker.calls == min(success_after, 3)
+    assert host.actions == min(success_after, 3)

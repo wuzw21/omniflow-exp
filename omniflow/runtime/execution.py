@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 import hashlib
 import inspect
@@ -8,7 +9,7 @@ import json
 import math
 import re
 import time
-from typing import Any, Callable
+from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow.core.config import PluginSet
@@ -34,6 +35,7 @@ from omniflow.runtime.checker import (
     default_checker_trigger,
     is_transient_package,
 )
+from omniflow.runtime.control import CURRENT_CONTROL, checkpoint, invoke
 from omniflow.runtime.core import (
     execute_action as execute_core_action,
 )
@@ -83,6 +85,7 @@ async def execute_function(
     )
     resume_metadata_pending = dict(resume_metadata or {})
     for step_offset, function_step in enumerate(steps):
+        checkpoint()
         action = function_step.action
         function_step_started_ns = time.perf_counter_ns()
         source_state = await _load_state(
@@ -107,6 +110,7 @@ async def execute_function(
                     "trace": trace,
                     "failed_step_index": function_step.step_index,
                     "next_step_index": function_step.step_index,
+                    "failed_action_dispatched": False,
                 },
             )
         transfer_plugins = plugins
@@ -175,6 +179,7 @@ async def execute_function(
                     "trace": trace,
                     "failed_step_index": function_step.step_index,
                     "next_step_index": function_step.step_index,
+                    "failed_action_dispatched": step.result is not None,
                 },
             )
     return RunResult(
@@ -228,7 +233,7 @@ def _render_target_before_transfer(
                 None,
                 reason=f"function_render_target_binding_failed:{error}",
             )
-        result = await _await(transfer(action, rendered_target, source))
+        result = await invoke(transfer, action, rendered_target, source)
         return (
             result
             if isinstance(result, TransferResult)
@@ -627,7 +632,7 @@ async def _observe_ready(host: Host) -> Observation:
     after = Observation()
     for attempt in range(_OBSERVATION_READY_MAX_ATTEMPTS):
         after = Observation.from_value(
-            await _await(host.observe(xml=True, screenshot=True, app_info=True))
+            await invoke(host.observe, xml=True, screenshot=False, app_info=True)
         )
         # A foreground package/activity is not sufficient evidence that the
         # new page is available.  Some hosts publish the package transition
@@ -927,13 +932,15 @@ async def record_execution(
         fact["metadata"].update(metadata or {})
         if offset == 0:
             fact["metadata"].update(first_metadata or {})
-        recorded_steps.append(
-            await record_step(
+        recorded = await record_step(
                 host,
                 fact,
                 fallback_step_index=int(trace_start_index) + offset,
             )
-        )
+        recorded_steps.append(recorded)
+        control = CURRENT_CONTROL.get()
+        if control is not None:
+            control.trace.append(recorded)
     return recorded_steps
 
 

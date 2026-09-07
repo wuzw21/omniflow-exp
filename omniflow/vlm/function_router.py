@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from omniflow.core.model import Function, ToolCall
 from omniflow.functions.artifact import validate_arguments
+from omniflow.runtime.control import bounded_timeout, checkpoint, invoke
 from omniflow.vlm.usage import LLMUsageTracker
 
 REJECT_FUNCTION_TOOL = "reject_recalled_function"
@@ -117,10 +118,12 @@ class VLMFunctionRouter:
         if package_argument_required:
             system_prompt += _PACKAGE_ARGUMENT_PROMPT
             user_context["installed_apps"] = dict(self._installed_apps)
-        client = self._client or self._build_client()
+        checkpoint()
+        if self._client is None:
+            self._client = self._build_client()
         self._usage.start_call()
         try:
-            response = client.chat.completions.create(
+            response = await invoke(self._client.chat.completions.create,
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -138,7 +141,7 @@ class VLMFunctionRouter:
                 parallel_tool_calls=False,
                 extra_body={"parallel_tool_calls": False},
                 temperature=0,
-                timeout=self.timeout,
+                timeout=bounded_timeout(min(self.timeout or 30.0, 30.0)),
             )
         except Exception:
             self._usage.record_failure()

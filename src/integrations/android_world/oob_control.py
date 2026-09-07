@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Callable
 import io
 import json
 import os
 import subprocess
 import time
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 import uuid
 import xml.etree.ElementTree as ET
 
 import numpy as np
 from PIL import Image
+
+from omniflow.runtime.control import bounded_timeout, checkpoint
 
 CONTROL_ACTION = "cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW"
 CONTROL_PACKAGE = "cn.com.omnimind.bot"
@@ -108,6 +111,7 @@ class OobControlClient:
         raise RuntimeError("oob_control_observe_xml_missing")
 
     def act(self, action: dict[str, Any]) -> dict[str, Any]:
+        checkpoint()
         # The caller has just observed the state used for transfer.  The OOB
         # control path keeps that state as its current state, and the Android
         # side performs its own pre-dispatch fingerprint plus post-dispatch
@@ -400,7 +404,7 @@ class OobControlClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            timeout=timeout,
+            timeout=bounded_timeout(timeout),
         )
 
     def _run_broadcast(

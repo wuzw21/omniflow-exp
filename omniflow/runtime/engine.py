@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 import hashlib
 import inspect
 import json
 from pathlib import Path
 import re
-from typing import Any, Callable
+from threading import Lock
+from typing import Any
 import xml.etree.ElementTree as ET
 
 from omniflow.catalog import CatalogSnapshot
@@ -30,15 +32,22 @@ from omniflow.runtime.checker import (
     DEFAULT_CHECKER_LIBRARY_PATH,
     CheckerLibrary,
 )
+from omniflow.runtime.control import (
+    CURRENT_CONTROL,
+    ExecutionControl,
+    ExecutionStopped,
+    checkpoint,
+    invoke,
+)
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
     record_execution,
 )
+from omniflow.runtime.protocol import invocation_feedback
 from omniflow.transfer.embedding import PageEncoder
 from omniflow.vlm.usage import merge_usage, token_usage_status
 from omniflow.vlm_coordinates import display_size
-
 
 _FUNCTION_CACHE_CONFIDENCE_THRESHOLD = 0.95
 
@@ -146,6 +155,8 @@ class OmniFlow:
             set_router_installed_apps(dict(self.installed_apps))
         self.plugins = self.config.resolved_plugins()
         self._page_encoder: PageEncoder | None = None
+        self._operation_lock = Lock()
+        self._active_control: ExecutionControl | None = None
 
     def set_completion_checker(
         self,
@@ -158,7 +169,6 @@ class OmniFlow:
     async def _execute(
         self,
         goal: str,
-        direct_tool_call: ToolCall | None,
         *,
         experiment: Experiment | str | None = None,
         checker_trigger_counts: dict[str, int] | None = None,
@@ -167,7 +177,6 @@ class OmniFlow:
         if self.host is None:
             return RunResult(
                 False,
-                function_id=direct_tool_call.name if direct_tool_call else None,
                 error="host_not_set",
             )
         profile = _experiment(experiment)
@@ -216,7 +225,7 @@ class OmniFlow:
             },
             "function_cache_threshold": _FUNCTION_CACHE_CONFIDENCE_THRESHOLD,
             "router_configured": self.function_router is not None,
-            "status": "direct" if direct_tool_call is not None else "planner_tool_space",
+            "status": "planner_tool_space",
             "binding_status": "not_attempted",
             "replay_status": "not_started",
         }
@@ -276,7 +285,7 @@ class OmniFlow:
                 return None
             completion_review_calls += 1
             try:
-                reward = await _await(checker())
+                reward = await invoke(checker)
                 verified = float(reward) > 0.5
             except Exception as error:  # noqa: BLE001
                 completion_gate = {
@@ -298,170 +307,30 @@ class OmniFlow:
             function_session.completion_rejected = True
             function_session.fallback_context = {"completion_rejected": True}
 
-        selected_function: Function | None = None
-        resolved_arguments: dict[str, Any] = {}
-        selected_tool_call = direct_tool_call
-        if selected_tool_call is not None:
-            selected_function = self.store.get_function(selected_tool_call.name)
-            resolved_arguments = dict(selected_tool_call.arguments)
-            function_resolution["selected_function_id"] = selected_tool_call.name
-            function_resolution["arguments"] = dict(resolved_arguments)
-            if selected_function is None:
-                function_resolution["status"] = "unknown_selection"
-            elif direct_tool_call is not None and not goal:
-                goal = _direct_function_goal(
-                    selected_function,
-                    resolved_arguments,
-                )
-
-        if selected_function is not None:
-            function_session.selected_id = selected_function.id
-            try:
-                function_session.bound = bind_function(
-                    selected_function, resolved_arguments
-                )
-            except ValueError as error:
-                function_resolution["binding_status"] = "failed"
-                function_resolution["binding_error"] = str(error)
-                function_resolution["replay_status"] = "not_started"
-                replay = RunResult(
-                    False,
-                    function_id=selected_function.id,
-                    error=str(error),
-                    final_state=observation,
-                )
-            else:
-                function_resolution["binding_status"] = "succeeded"
-                replay = await execute_function(
-                    function_session.bound,
-                    host=self.host,
-                    plugins=self.plugins,
-                    observation=observation,
-                    installed_packages=self.installed_packages,
-                    state_loader=(
-                        self.catalog.get_state if self.catalog is not None else None
-                    ),
-                    checker_rules=self.checker_library.rules,
-                    checker_trigger_counts=shared_checker_trigger_counts,
-                )
-                replay_timing = replay.detail.get("timing")
-                if isinstance(replay_timing, dict):
-                    execution_timing.clear()
-                    execution_timing.update(replay_timing)
-            actions_executed += replay.actions_executed
-            trace.extend(replay.detail.get("trace") or ())
-            if replay.success:
-                function_resolution["replay_status"] = "succeeded"
-                observation = replay.final_state or observation
-                last_error = "function_replay_completed_e2e_unverified"
-                function_session.mark_completed()
-            else:
-                function_resolution["replay_status"] = "failed"
-                function_resolution["replay_error"] = (
-                    replay.error or "function_replay_failed"
-                )
-            observation = replay.final_state or observation
-            if not replay.success:
-                last_error = replay.error or "function_replay_failed"
-                function_session.mark_failed(replay, observation)
-                function_resolution["failed_step_index"] = (
-                    function_session.failed_step_index
-                )
-
-            if direct_tool_call is not None and replay.success:
-                verified = await review_function_completion()
-                if verified is not False:
-                    return finish(
-                        True,
-                        profile=profile,
-                        trace=trace,
-                        function_id=direct_tool_call.name,
-                        actions_executed=actions_executed,
-                        model_calls=model_calls,
-                        llm_usage=llm_usage,
-                        error=None,
-                        final_state=observation,
-                        terminal_detail={
-                            "done_reason": (
-                                "function_completed_verified"
-                                if verified is True
-                                else "function_completed"
-                            )
-                        },
-                    )
-                last_error = "official_completion_checker_rejected_function_result"
-                mark_completion_rejected()
-
-        if direct_tool_call is not None and selected_function is None:
-            try:
-                direct_action = _action_from_tool_call(direct_tool_call)
-            except ValueError as error:
+        async def resolve_completion(*, claimed: bool = False, content: str = "") -> RunResult | None:
+            """One task-completion gate for Router, Planner, and terminal claims."""
+            nonlocal previous_action_error
+            verified = await review_function_completion()
+            verifier_error = completion_gate is not None and completion_gate["status"] == "error"
+            if verified is True or verifier_error or (claimed and verified is None):
                 return finish(
-                    False,
-                    profile=profile,
-                    trace=trace,
-                    actions_executed=actions_executed,
-                    model_calls=model_calls,
-                    llm_usage=llm_usage,
-                    error=f"tool_not_found:{error}",
-                    final_state=observation,
-                )
-            if direct_action.tool == "finished":
-                return finish(
-                    True,
-                    profile=profile,
-                    trace=trace,
-                    actions_executed=actions_executed,
-                    model_calls=model_calls,
-                    llm_usage=llm_usage,
-                    final_state=observation,
+                    not verifier_error, profile=profile, trace=trace,
+                    function_id=function_session.selected_id or function_session.failed_id,
+                    actions_executed=actions_executed, model_calls=model_calls,
+                    llm_usage=llm_usage, fallback_steps=fallback_steps,
+                    final_state=observation, planner_diagnostics=planner_diagnostics,
+                    error=("completion_verifier_error:" + str(completion_gate.get("error"))) if verifier_error else None,
                     terminal_detail={
-                        "done_reason": "finished",
-                        "finished_content": str(
-                            direct_action.args.get("content") or ""
-                        ),
+                        "done_reason": "verifier_error" if verifier_error else "function_completed_verified" if verified is True else "finished",
+                        "finished_content": content,
+                        "completion_gate": dict(completion_gate or {}),
                     },
                 )
-            if direct_action.tool in {"abort", "info", "get_state"}:
-                return finish(
-                    False,
-                    profile=profile,
-                    trace=trace,
-                    actions_executed=actions_executed,
-                    model_calls=model_calls,
-                    llm_usage=llm_usage,
-                    error=f"tool_not_directly_invokable:{direct_action.tool}",
-                    final_state=observation,
-                )
-            step = await execute_robust_action(
-                direct_action,
-                observation=observation,
-                host=self.host,
-                plugins=self.plugins,
-                installed_packages=self.installed_packages,
-                checker_rules=self.checker_library.rules,
-                checker_trigger_counts=shared_checker_trigger_counts,
-            )
-            trace.extend(
-                await record_execution(
-                    self.host,
-                    step,
-                    trace_start_index=0,
-                )
-            )
-            return finish(
-                step.success,
-                profile=profile,
-                trace=trace,
-                actions_executed=step.actions_executed,
-                model_calls=model_calls,
-                llm_usage=llm_usage,
-                error=None if step.success else step.error,
-                final_state=step.after or observation,
-                terminal_detail={
-                    "done_reason": "tool_completed" if step.success else "error"
-                },
-            )
+            previous_action_error = None
+            if verified is False:
+                previous_action_error = "official_completion_checker_rejected_function_result"
+                mark_completion_rejected()
+            return None
 
         if self.planner is None:
             return finish(
@@ -482,8 +351,22 @@ class OmniFlow:
         )
         pending_user_input: str | None = None
         planner_diagnostics: dict[str, Any] = {}
+        repeated_decisions: dict[str, int] = {}
+
+        def admit_decision(call: ToolCall) -> None:
+            # Ignore volatile capture ids: the same decision on the same GUI
+            # state must not obtain a new budget merely by taking a screenshot.
+            key = json.dumps([call.name, call.arguments, observation.package_name,
+                              observation.activity_name, observation.xml], sort_keys=True)
+            repeated_decisions[key] = repeated_decisions.get(key, 0) + 1
+            if repeated_decisions[key] > 3:
+                raise ExecutionStopped("no_progress")
 
         while runtime_steps_used < self.config.runtime.max_steps:
+            checkpoint()
+            # Router-only iterations and entry-state retries consume the same
+            # task budget as Planner turns; neither may loop without a bound.
+            runtime_steps_used += 1
             max_fallback_steps = self.config.runtime.max_fallback_steps
             fallback_this_turn = function_session.recovery_pending
             if (
@@ -622,9 +505,8 @@ class OmniFlow:
                 cache_audit["status"] = "router_unavailable"
             else:
                 try:
-                    routed_value = await _await(
-                        self.function_router.route_function(goal, cache_functions)
-                    )
+                    routed_value = await invoke(self.function_router.route_function, goal, cache_functions)
+                    checkpoint()
                     routed_call = (
                         ToolCall.from_value(routed_value)
                         if routed_value is not None
@@ -640,6 +522,7 @@ class OmniFlow:
                 merge_usage(llm_usage, router_usage, component="function_router")
                 model_calls += _usage_model_calls(router_usage, fallback=1)
             if routed_call is not None:
+                admit_decision(routed_call)
                 selected_function = {
                     function.id: function for function in cache_functions
                 }.get(routed_call.name)
@@ -726,8 +609,7 @@ class OmniFlow:
                         )
                         replay_timing = replay.detail.get("timing")
                         if isinstance(replay_timing, dict):
-                            execution_timing.clear()
-                            execution_timing.update(replay_timing)
+                            execution_timing.setdefault("function_steps", []).extend(replay_timing.get("function_steps") or [])
                         actions_executed += replay.actions_executed
                         replay_trace = list(replay.detail.get("trace") or ())
                         trace.extend(replay_trace)
@@ -737,30 +619,9 @@ class OmniFlow:
                             cache_audit["status"] = "executed"
                             function_resolution["replay_status"] = "succeeded"
                             function_session.mark_completed()
-                            verified = await review_function_completion()
-                            if verified is True:
-                                return finish(
-                                    True,
-                                    profile=profile,
-                                    trace=trace,
-                                    function_id=function_session.selected_id,
-                                    actions_executed=actions_executed,
-                                    model_calls=model_calls,
-                                    llm_usage=llm_usage,
-                                    fallback_steps=fallback_steps,
-                                    final_state=observation,
-                                    planner_diagnostics=planner_diagnostics,
-                                    terminal_detail={
-                                        "done_reason": "function_completed_verified"
-                                    },
-                                )
-                            if verified is False:
-                                previous_action_error = (
-                                    "official_completion_checker_rejected_function_result"
-                                )
-                                mark_completion_rejected()
-                            else:
-                                previous_action_error = None
+                            completion = await resolve_completion()
+                            if completion is not None:
+                                return completion
                         else:
                             cache_audit["status"] = "execution_failed"
                             cache_audit["error"] = (
@@ -797,13 +658,12 @@ class OmniFlow:
                 )
             try:
                 planned_call = ToolCall.from_value(
-                    await _await(
-                        self.planner.one_step_tool_call(
-                            goal,
-                            planner_observation,
-                            planner_functions,
-                            dict(self.installed_apps),
-                        )
+                    await invoke(
+                        self.planner.one_step_tool_call,
+                        goal,
+                        planner_observation,
+                        planner_functions,
+                        dict(self.installed_apps),
                     )
                 )
             except Exception as error:  # noqa: BLE001
@@ -830,7 +690,8 @@ class OmniFlow:
             model_calls += _usage_model_calls(planner_usage, fallback=1)
             if fallback_this_turn:
                 fallback_steps += 1
-            runtime_steps_used += 1
+            checkpoint()
+            admit_decision(planned_call)
             planner_metadata = _take_planner_metadata(self.planner)
             _merge_planner_diagnostics(planner_diagnostics, planner_metadata)
             planner_diagnostics.setdefault("planner_calls", []).append(
@@ -855,10 +716,14 @@ class OmniFlow:
                     planner_metadata.get("summary") or ""
                 ).strip()
                 try:
-                    function_session.bound = bind_function(
+                    bound = bind_function(
                         selected_function,
                         planned_call.arguments,
                     )
+                    if resume_step_index is not None and bound != function_session.bound:
+                        previous_action_error = "function_resume_arguments_changed"
+                        continue
+                    function_session.bound = bound
                 except ValueError as error:
                     previous_action_error = str(error)
                     continue
@@ -890,38 +755,16 @@ class OmniFlow:
                 )
                 replay_timing = replay.detail.get("timing")
                 if isinstance(replay_timing, dict):
-                    execution_timing.clear()
-                    execution_timing.update(replay_timing)
+                    execution_timing.setdefault("function_steps", []).extend(replay_timing.get("function_steps") or [])
                 actions_executed += replay.actions_executed
                 replay_trace = list(replay.detail.get("trace") or ())
                 trace.extend(replay_trace)
                 observation = replay.final_state or observation
                 if replay.success:
                     function_session.mark_completed()
-                    verified = await review_function_completion()
-                    if verified is True:
-                        return finish(
-                            True,
-                            profile=profile,
-                            trace=trace,
-                            function_id=function_session.selected_id,
-                            actions_executed=actions_executed,
-                            model_calls=model_calls,
-                            llm_usage=llm_usage,
-                            fallback_steps=fallback_steps,
-                            final_state=observation,
-                            planner_diagnostics=planner_diagnostics,
-                            terminal_detail={
-                                "done_reason": "function_completed_verified"
-                            },
-                        )
-                    if verified is False:
-                        previous_action_error = (
-                            "official_completion_checker_rejected_function_result"
-                        )
-                        mark_completion_rejected()
-                    else:
-                        previous_action_error = None
+                    completion = await resolve_completion()
+                    if completion is not None:
+                        return completion
                 else:
                     function_session.mark_failed(replay, observation)
                     previous_action_error = replay.error or "function_replay_failed"
@@ -936,50 +779,10 @@ class OmniFlow:
                 if not finished_content:
                     previous_action_error = "finished_content_required"
                     continue
-                if function_session.completed is not None:
-                    verified = await review_function_completion()
-                    if verified is False:
-                        previous_action_error = (
-                            "official_completion_checker_rejected_function_result"
-                        )
-                        mark_completion_rejected()
-                        continue
-                    if verified is True:
-                        return finish(
-                            True,
-                            profile=profile,
-                            trace=trace,
-                            function_id=(
-                                function_session.selected_id
-                                or function_session.failed_id
-                            ),
-                            actions_executed=actions_executed,
-                            model_calls=model_calls,
-                            llm_usage=llm_usage,
-                            fallback_steps=fallback_steps,
-                            final_state=observation,
-                            planner_diagnostics=planner_diagnostics,
-                            terminal_detail={
-                                "done_reason": "function_completed_verified",
-                                "finished_content": finished_content,
-                            },
-                        )
-                return finish(
-                    True,
-                    profile=profile,
-                    trace=trace,
-                    function_id=function_session.selected_id or function_session.failed_id,
-                    actions_executed=actions_executed,
-                    model_calls=model_calls,
-                    llm_usage=llm_usage,
-                    fallback_steps=fallback_steps,
-                    final_state=observation,
-                    planner_diagnostics=planner_diagnostics,
-                    terminal_detail={
-                        "done_reason": "finished",
-                        "finished_content": finished_content,
-                    },
-                )
+                completion = await resolve_completion(claimed=True, content=finished_content)
+                if completion is not None:
+                    return completion
+                continue
             if planned.tool == "abort":
                 message = str(planned.args.get("value") or "").strip() or "vlm_aborted"
                 return finish(
@@ -1087,19 +890,19 @@ class OmniFlow:
             fallback_steps=fallback_steps,
             error=previous_action_error or "max_steps_exceeded",
             final_state=observation,
+            terminal_detail={"done_reason": "step_budget_exceeded"},
             planner_diagnostics=planner_diagnostics,
         )
 
     async def _observe(self, *, screenshot: bool) -> Observation:
-        return Observation.from_value(
-            await _await(
-                self.host.observe(
-                    xml=True,
-                    screenshot=screenshot,
-                    app_info=True,
-                )
-            )
+        checkpoint()
+        observation = Observation.from_value(
+            await invoke(self.host.observe, xml=True, screenshot=screenshot, app_info=True)
         )
+        control = CURRENT_CONTROL.get()
+        if control is not None:
+            control.observation = observation
+        return observation
 
     async def _ensure_planner_screenshot(
         self,
@@ -1127,19 +930,68 @@ class OmniFlow:
             return refreshed
         return _with_observation_extra(refreshed, **preserved)
 
-    async def acall_tool(
+    async def _invoke_tool(
         self,
         tool_call: ToolCall | dict[str, Any],
         *,
         experiment: Experiment | str | None = None,
         checker_trigger_counts: dict[str, int] | None = None,
     ) -> RunResult:
-        return await self._execute(
-            "",
-            ToolCall.from_value(tool_call),
-            experiment=experiment,
-            checker_trigger_counts=checker_trigger_counts,
-        )
+        """Execute one invocation and return to its caller, including on failure.
+
+        Only arun owns the task-level Planner loop. Function execution still
+        uses the same per-step Checker, Transfer, act, and observe owner.
+        """
+        call = ToolCall.from_value(tool_call)
+        if self.host is None:
+            return RunResult(False, function_id=call.name, error="host_not_set")
+        function = self.store.get_function(call.name)
+        observation = await self._observe(screenshot=False)
+        counts = checker_trigger_counts if checker_trigger_counts is not None else {}
+        if function is not None:
+            if not function.agent_visible:
+                return RunResult(False, function_id=call.name, error="function_not_agent_visible", final_state=observation)
+            try:
+                bound = bind_function(function, call.arguments)
+            except ValueError as error:
+                return RunResult(False, function_id=call.name, error=str(error), final_state=observation,
+                                 detail={"failed_action_dispatched": False})
+            result = await execute_function(
+                bound, host=self.host, plugins=self.plugins, observation=observation,
+                installed_packages=self.installed_packages,
+                state_loader=self.catalog.get_state if self.catalog is not None else None,
+                checker_rules=self.checker_library.rules, checker_trigger_counts=counts,
+            )
+            result = replace(result, detail={
+                **result.detail,
+                "done_reason": "function_completed" if result.success else "function_yielded",
+                "checker_trigger_counts": dict(counts),
+                "function_resolution": {
+                    "status": "direct", "selected_function_id": call.name,
+                    "store_path": str(self.store.path.resolve()), "arguments": dict(call.arguments),
+                    "replay_status": "succeeded" if result.success else "failed",
+                },
+            })
+        else:
+            try:
+                action = _action_from_tool_call(call)
+            except ValueError as error:
+                return RunResult(False, error=f"tool_not_found:{error}", final_state=observation)
+            if action.tool in {"finished", "abort", "info", "get_state"}:
+                reason = {"info": "waiting_input", "get_state": "observed"}.get(action.tool, action.tool)
+                result = RunResult(action.tool in {"finished", "get_state"}, final_state=observation,
+                                   detail={"done_reason": reason, "finished_content": str(action.args.get("content") or "")})
+            else:
+                step = await execute_robust_action(
+                    action, observation=observation, host=self.host, plugins=self.plugins,
+                    installed_packages=self.installed_packages,
+                    checker_rules=self.checker_library.rules, checker_trigger_counts=counts,
+                )
+                trace = await record_execution(self.host, step, trace_start_index=0)
+                result = RunResult(step.success, actions_executed=step.actions_executed,
+                                   error=step.error, final_state=step.after or observation,
+                                   detail={"trace": trace, "done_reason": "tool_completed" if step.success else "error"})
+        return replace(result, detail={**result.detail, "feedback": invocation_feedback(result)})
 
     async def arun(
         self,
@@ -1147,11 +999,51 @@ class OmniFlow:
         *,
         experiment: Experiment | str | None = None,
     ) -> RunResult:
-        return await self._execute(
-            str(goal),
-            None,
-            experiment=experiment,
+        return await self._controlled(self._execute, str(goal), experiment=experiment)
+
+    async def acall_tool(self, tool_call, *, experiment=None, checker_trigger_counts=None) -> RunResult:
+        return await self._controlled(
+            self._invoke_tool, tool_call, experiment=experiment,
+            checker_trigger_counts=checker_trigger_counts,
         )
+
+    def cancel(self) -> bool:
+        control = self._active_control
+        if control is None:
+            return False
+        control.cancelled.set()
+        return True
+
+    async def _controlled(self, callback, *args, **kwargs) -> RunResult:
+        if not self._operation_lock.acquire(blocking=False):
+            result = RunResult(False, error="execution_busy", detail={"done_reason": "execution_busy"})
+            return replace(result, detail={**result.detail, "feedback": invocation_feedback(result)})
+        control = CURRENT_CONTROL.get() or ExecutionControl()
+        token = CURRENT_CONTROL.set(control)
+        self._active_control = control
+        trace_offset, action_offset = len(control.trace), control.actions_executed
+        try:
+            control.check()
+            result = await callback(*args, **kwargs)
+            control.check()
+            if control.effect_unknown:
+                raise ExecutionStopped("effect_unknown")
+        except ExecutionStopped as error:
+            result = control.stopped_result(error.reason, trace_offset=trace_offset, action_offset=action_offset)
+        except asyncio.CancelledError:
+            control.cancelled.set()
+            result = control.stopped_result("cancelled", trace_offset=trace_offset, action_offset=action_offset)
+        except Exception as error:  # noqa: BLE001 -- seal failures at the invocation boundary
+            result = control.stopped_result(
+                "effect_unknown" if control.effect_unknown else "execution_error",
+                trace_offset=trace_offset, action_offset=action_offset,
+            )
+            result = replace(result, error=f"{type(error).__name__}:{error}")
+        finally:
+            self._active_control = None
+            CURRENT_CONTROL.reset(token)
+            self._operation_lock.release()
+        return replace(result, detail={**result.detail, "feedback": invocation_feedback(result)})
 
     async def _recall(
         self,
@@ -1315,7 +1207,7 @@ class OmniFlow:
             detail["function_resolution"] = dict(function_resolution)
         if terminal_detail:
             detail.update(terminal_detail)
-        return RunResult(
+        result = RunResult(
             success,
             function_id,
             actions_executed,
@@ -1325,6 +1217,7 @@ class OmniFlow:
             final_state,
             detail,
         )
+        return replace(result, detail={**detail, "feedback": invocation_feedback(result)})
 
 
 def _experiment(value: Experiment | str | None) -> Experiment:
@@ -1344,17 +1237,6 @@ def _action_from_tool_call(tool_call: ToolCall) -> Action:
             allow_non_action=True,
         )
     )
-
-
-def _direct_function_goal(
-    function: Function,
-    arguments: dict[str, Any],
-) -> str:
-    return (
-        f'Complete Function "{function.name}". '
-        f"Requested arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}. "
-        f"{function.description}"
-    ).strip()
 
 
 def _with_observation_extra(
