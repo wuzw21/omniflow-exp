@@ -243,12 +243,14 @@ def _render_target_before_transfer(
                 reason=f"function_render_target_binding_failed:{error}",
                 detail={"replay_unavailable": True},
             )
-        result = await invoke(transfer, action, rendered_target, source)
-        return (
-            result
-            if isinstance(result, TransferResult)
-            else TransferResult(None, reason="transfer_result_invalid")
-        )
+        try:
+            result = await invoke(transfer, action, rendered_target, source)
+        except Exception as error:
+            result = TransferResult(None, reason=f"transfer_exception:{type(error).__name__}",
+                                    detail={"exception_type": type(error).__name__})
+        if not isinstance(result, TransferResult):
+            result = TransferResult(None, reason="transfer_result_invalid")
+        return replace(result, target_input=result.target_input or rendered_target)
 
     return render_target
 

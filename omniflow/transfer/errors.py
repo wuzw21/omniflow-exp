@@ -33,7 +33,8 @@ async def attempt_transfer(transfer, action, target, source, *, phase):
     if result.action is None:
         with measure("evidence.failure_pair"):
             await invoke(record_transfer_error, action=action, result=result, source_page=source,
-                         target_page=target, phase=phase)
+                         target_page=result.target_input if result.target_input is not None else target,
+                         phase=phase)
     return result
 
 

@@ -81,6 +81,11 @@ Action 和页面送入 mapper 声称回放了原错误，因此标记
 `replay.status=unavailable, reason=preprocessing_context_required`，只留紧凑 pair。
 此记录不执行动作、不改变失败返回或 Planner 恢复顺序。
 
+参数遮罩成功后，`TransferResult.target_input` 可携带 mapper 实际使用的目标页面，
+供共同失败记录边界保存；普通拒绝和异常都保留该输入。它是内部诊断引用，不进入
+RunLog detail 或对外工具反馈，也不替换设备的真实观察。未预处理的 adapter 默认
+使用调用时的目标页面。失败 pair 因此标识实际 mapper 输入，而非遮罩前的页面。
+
 局部回放只接受一个明确的 manifest，不扫描历史、不派发设备动作：
 
 ```python

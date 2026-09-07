@@ -314,6 +314,8 @@ class TransferResult:
     action: Action | None
     reason: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    # Exact mapper input after preprocessing; never the device's physical state.
+    target_input: Observation | None = field(default=None, repr=False, compare=False)
 
 
 Checker = Callable[

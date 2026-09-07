@@ -147,6 +147,32 @@ def test_binding_failure_records_pair_without_claiming_mapper_replay(tmp_path, m
     assert not (tmp_path / 'pairs_assets').exists()
 
 
+@pytest.mark.parametrize('raises', [False, True])
+def test_mapping_pair_preserves_masked_input_without_changing_physical_state(tmp_path, monkeypatch, raises):
+    from omniflow.runtime.execution import _render_target_before_transfer
+    from omniflow.transfer.errors import attempt_transfer
+    from omniflow.transfer.failure_inputs import load_failure_inputs
+    pool = tmp_path / 'pairs.jsonl'
+    monkeypatch.setenv('OMNIFLOW_TRANSFER_ERROR_POOL', str(pool))
+    function = bind_function(_function(), {'file_name': 'new_name'})
+    source = render_bound_source_state(Observation(xml=SOURCE_XML), function.render_bindings, step_index=0)
+    target = Observation(xml=SOURCE_XML.replace('yMkm_calm_umbrella', 'new_name'))
+    seen = []
+    def mapper(action, observation, source):
+        seen.append(observation)
+        if raises:
+            raise ValueError('mapping probe')
+        return TransferResult(None, reason='rejected')
+    wrapped = _render_target_before_transfer(mapper, function.render_bindings, step_index=0)
+    result = asyncio.run(attempt_transfer(wrapped, function.steps[0].action, target, source, phase='execute.fast'))
+    assert result.action is None and len(seen) == 1
+    record = json.loads(pool.read_text())
+    _, saved_target, saved_source = load_failure_inputs(tmp_path / record['replay']['path'])
+    assert saved_target.xml == seen[0].xml and saved_source.xml == source.xml
+    assert '&lt;file_name&gt;' in saved_target.xml
+    assert 'new_name' in target.xml and '&lt;file_name&gt;' not in target.xml
+
+
 def test_compiler_extracts_task_value_from_clicked_node() -> None:
     evidence = _source_node_parameter_evidence(
         source_step={"observation": {"xml": SOURCE_XML}},
