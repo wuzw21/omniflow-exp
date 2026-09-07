@@ -129,6 +129,38 @@ def test_transfer_audit_counts_attempt_results_not_error_prefixes():
     assert report['transfer_success'] == 1 and report['transfer_failure'] == 2
 
 
+@pytest.mark.parametrize('accepted', [True, False])
+@pytest.mark.parametrize('entry', ['core', 'robust'])
+def test_stable_mapping_state_is_used_for_dispatch_evidence_and_recovery(accepted, entry):
+    from omniflow.runtime.core import execute_action
+    from omniflow.runtime.execution import execute_robust_action
+    from omniflow.core.model import ActionResult
+    original = Observation(xml='<old/>')
+    stable = Observation(xml='<stable/>')
+    after = Observation(xml='<after/>')
+    mapped = Action('click', {'x': 10, 'y': 20})
+    seen, dispatched = [], []
+    class Host:
+        async def observe_stable(self, **kwargs):
+            return stable
+        async def observe(self, **kwargs):
+            return after
+        async def act(self, action):
+            dispatched.append(action)
+            return ActionResult(True)
+    def transfer(action, target, source):
+        seen.append(target)
+        return TransferResult(mapped if accepted and target is stable else None, reason='probe')
+    callback = execute_action if entry == 'core' else execute_robust_action
+    result = asyncio.run(callback(Action('click', {'x': 900, 'y': 900}), observation=original,
+        host=Host(), plugins=PluginSet(transfer=transfer), source_state=Observation(xml='<source/>')))
+    assert seen == [original, stable]
+    assert result.before is stable
+    assert result.success == accepted
+    assert dispatched == ([mapped] if accepted else [])
+    assert result.after is (after if accepted else None)
+
+
 def test_mapping_exception_is_failure_with_pair_and_no_source_coordinate_replay(tmp_path, monkeypatch):
     path = tmp_path/'pairs.jsonl'
     monkeypatch.setenv('OMNIFLOW_TRANSFER_ERROR_POOL', str(path))

@@ -283,6 +283,7 @@ class ActionDecision:
     action: Action | None = None
     reason: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    observation: Observation | None = None
 
 
 @dataclass(frozen=True)

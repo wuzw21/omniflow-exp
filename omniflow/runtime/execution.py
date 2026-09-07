@@ -378,6 +378,7 @@ async def execute_robust_action(
         plugins=plugins,
         source_state=source_state,
     )
+    observation = decision.observation or observation
     if decision.kind == "block" or decision.action is None:
         blocked = StepResult(
             False,

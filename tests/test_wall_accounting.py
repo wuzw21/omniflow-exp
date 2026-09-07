@@ -91,3 +91,25 @@ def test_parallel_tasks_and_cancelled_span_remain_accounted():
         assert report['components']['concurrent']['exclusive_ms'] == 3
         assert report['components']['device']['failed_calls'] == 1
     asyncio.run(scenario())
+
+
+def test_async_cached_observation_is_awaited_and_included_in_post_action_timing():
+    from omniflow.runtime.core import execute_action
+    from omniflow.core.config import PluginSet
+    from omniflow.core.model import Action, ActionResult, Observation
+    clock = [0]
+    ledger = TimingLedger(clock=lambda: clock[0] * 1_000_000)
+    after = Observation(xml='<after/>')
+    class Host:
+        async def act(self, action):
+            return ActionResult(True)
+        async def take_after_action_observation(self):
+            clock[0] = 5
+            return after
+        async def observe(self, **kwargs):
+            raise AssertionError('cached state must avoid another observe')
+    with ledger.span('execution.other'):
+        result = asyncio.run(execute_action(Action('wait', {'duration_ms': 1}),
+            observation=Observation(xml='<before/>'), host=Host(), plugins=PluginSet()))
+    assert result.after is after
+    assert ledger.report()['components']['observe.post_action']['exclusive_ms'] == 5

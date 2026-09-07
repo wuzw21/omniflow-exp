@@ -45,6 +45,9 @@ AndroidWorld 的 `_TaskHost` 必须透传 `observe_stable` 和
 `take_after_action_observation`，两者都经过同一状态标识/证据捕获逻辑。缓存后态必须
 包含 recorder 的官方状态快照；缺少该快照时走普通 observe，不能传递不完整状态。
 只在底层 Host 实现优化而漏掉包装层能力，会使稳定重试失效并重复观察。
+稳定重试的 `ActionDecision` 同时携带实际用于映射的 Observation；共享执行和 Function
+执行均使用它作为派发前状态，失败时也把该状态交还恢复流程，避免记录旧页面。
+缓存后态的取用/规范化属于 `observe.post_action` 计时范围，并支持同步或异步 Host。
 
 失败池使用 `omniflow.failure-pair.v1`，每次失败追加一条记录。`pair_id` 根据 source、
 target 和 source action 内容计算，同一 pair 的 fast/stable/recall 尝试可以聚合。

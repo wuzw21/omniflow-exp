@@ -50,6 +50,7 @@ async def execute_action(
         plugins=plugins,
         source_state=source_state,
     )
+    observation = decision.observation or observation
     if decision.kind == "block" or decision.action is None:
         return StepResult(
             False,
@@ -106,13 +107,13 @@ async def execute_action(
         .lower()
         not in {"0", "false", "no", "off"}
     )
-    cached_after = (
-        take_after_action_observation()
-        if fast_pass_enabled and callable(take_after_action_observation)
-        else None
-    )
     observation_started_ns = time.perf_counter_ns()
     with measure("observe.post_action"):
+        cached_after = (
+            await invoke(take_after_action_observation)
+            if fast_pass_enabled and callable(take_after_action_observation)
+            else None
+        )
         after = Observation.from_value(
             cached_after
             if cached_after is not None
@@ -190,12 +191,17 @@ async def prepare_action(
             detail=detail,
         )
     stable_observe = getattr(host, "observe_stable", None) if host is not None else None
+    prepared_observation = observation
     if callable(stable_observe):
         stable_observe_started_ns = time.perf_counter_ns()
         with measure("observe.stable"):
             stable_observation = Observation.from_value(
                 await invoke(stable_observe, xml=True, screenshot=False, app_info=True)
             )
+        prepared_observation = stable_observation
+        control = CURRENT_CONTROL.get()
+        if control is not None:
+            control.observation = stable_observation
         stable_observe_ms = (
             time.perf_counter_ns() - stable_observe_started_ns
         ) / 1_000_000.0
@@ -224,6 +230,7 @@ async def prepare_action(
             return ActionDecision(
                 "ready",
                 action=stable_transfer.action,
+                observation=stable_observation,
                 reason=stable_transfer.reason,
                 detail={
                     **detail,
@@ -245,6 +252,7 @@ async def prepare_action(
     return ActionDecision(
         "block",
         reason=transfer.reason or "transfer_failed",
+        observation=prepared_observation,
         detail=failure_detail,
     )
 
