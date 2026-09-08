@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from src.integrations.android_world.run_episode import (
     _patch_androidworld_expense_setup_timeout,
 )
@@ -150,3 +152,45 @@ def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypa
             "--memory", str(memory)])
         with pytest.raises(SelectionReached):
             runner.run_task(args)
+
+
+@pytest.mark.parametrize('reward', [0.0, 1.0])
+@pytest.mark.parametrize('finished', [False, True])
+def test_mobilegpt_official_result_is_independent_of_method_exit(monkeypatch, tmp_path, reward, finished):
+    import json
+    from contextlib import nullcontext
+    from src.integrations import mobilegpt_oob_client as client, official_forward
+
+    task = SimpleNamespace(goal='Turn bluetooth on.', is_successful=lambda env: reward)
+    monkeypatch.setattr(official_forward, '_androidworld_task_startup',
+                        lambda **kwargs: nullcontext((object(), task)))
+    method_result = {'task_finished': finished, 'returncode': 0 if finished else 1,
+                     'reason': '' if finished else 'mobilegpt_oob_action_target_missing',
+                     'actions': 3, 'planner_steps': 5}
+    monkeypatch.setattr(client, '_run_mobilegpt_oob_transport', lambda **kwargs: dict(method_result))
+    monkeypatch.delenv('MOBILEGPT_STATS_JSONL', raising=False)
+    result = client.run_mobilegpt_oob_client(
+        serial='regression-device', adb_path='adb', server_host='127.0.0.1',
+        server_port=12345, instruction=task.goal, timeout_sec=10, max_steps=10,
+        output_root=tmp_path, android_world_root=str(tmp_path), task_name='SystemBluetoothTurnOn')
+    row = json.loads((tmp_path / 'task_results.jsonl').read_text())
+    assert result['validator_success'] == (reward > 0.5)
+    assert row['official_validator_success'] == (reward > 0.5)
+    assert row['androidworld_validator_result']['success'] == (reward > 0.5)
+    assert row['androidworld_validator_result']['reward'] == reward
+    assert row['mobilegpt_protocol']['task_finished'] is finished
+    assert row['process_returncode'] == method_result['returncode']
+    assert row['environment_failure'] is (not finished)
+    from src.experiment.run_task import _materialize_mobilegpt_canonical_run_log
+    runlog_path = _materialize_mobilegpt_canonical_run_log(
+        output_path=tmp_path,
+        item=SimpleNamespace(task='SystemBluetoothTurnOn', goal=task.goal, params={}, replay_seed=111),
+        target=SimpleNamespace(serial='regression-device'), task_seed=113)
+    runlog = json.loads(runlog_path.read_text())
+    assert runlog['success'] == (reward > 0.5)
+    assert runlog['validator']['success'] == (reward > 0.5)
+    assert runlog['diagnostics']['mobilegpt_result']['process_returncode'] == method_result['returncode']
+    assert runlog['diagnostics']['mobilegpt_result']['failure_reason'] == method_result['reason']
+    monkeypatch.setattr(client, 'run_mobilegpt_oob_client', lambda **kwargs: result)
+    assert client.main(['--serial', 'regression-device', '--adb', 'adb', '--server-port', '12345',
+                        '--instruction', task.goal, '--timeout', '10', '--output', str(tmp_path)]) == method_result['returncode']

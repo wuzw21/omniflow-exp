@@ -15,3 +15,14 @@ simple lifecycle is:
 
 Provider schemas describe only provider-owned prepared memory. Runtime inputs
 are passed directly to the public launcher; there is no experiment index.
+
+AndroidWorld result rows keep validator outcomes separate from method/process
+outcomes. `official_validator_success` and
+`androidworld_validator_result.success` report the official reward threshold
+(`reward > 0.5`), even if the method subsequently fails. MobileGPT's
+`mobilegpt_protocol.task_finished`, `process_returncode`, `classification`,
+and `failure_reason` retain its execution outcome independently. A positive
+official reward must not turn a failed process exit into zero; a nonzero exit
+must not rewrite a positive official reward as validator failure. This corrects
+the MobileGPT implementation to the existing result contract without adding
+fields or changing historical evidence.

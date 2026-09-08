@@ -179,3 +179,8 @@ Planner 的判断证据。完整 Function 通过当前 task 的官方完成检�
 只表示当前状态，`finished` 只表示终止结果，二者不与同一轮设备动作混合。
 
 架构和文件 owner 见 `docs/ARCHITECTURE.md` 与 `docs/FILE_EDIT_GUIDE.md`。
+
+官方 validator 与方法执行状态独立记录：MobileGPT 的
+`official_validator_success` 只取官方 reward 判定；`task_finished`、进程退出码和
+错误原因保留实际方法结果。不得用方法异常覆盖官方成功，也不得用官方成功掩盖进程
+异常。字段合同见 [Schema 说明](schemas/README.md)，修正待真机验证。

@@ -696,7 +696,8 @@ def run_mobilegpt_oob_client(
                 shutil.copy2(stats_source, stats_output)
             else:
                 stats_output = stats_source
-            execution_success = bool(result.get("task_finished")) and reward > 0.5
+            validator_success = reward > 0.5
+            execution_success = bool(result.get("task_finished")) and validator_success
             result_row = {
                 "schema_version": "omniflow.androidworld.result.v1",
                 "task_name": task_name,
@@ -714,11 +715,11 @@ def run_mobilegpt_oob_client(
                 "fixed_task_seed": True,
                 "fixed_task_params": True,
                 "official_validator_used": True,
-                "official_validator_success": execution_success,
+                "official_validator_success": validator_success,
                 "official_validator_coverage_rate": 1.0,
                 "androidworld_validator_result": {
                     "validator": "androidworld_official",
-                    "success": execution_success,
+                    "success": validator_success,
                     "reward": reward,
                 },
                 # ``0`` is a valid successful process return code.  Do not
@@ -759,7 +760,7 @@ def run_mobilegpt_oob_client(
                 json.dumps(result_row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            result["validator_success"] = execution_success
+            result["validator_success"] = validator_success
             result["task_results"] = str(output / "task_results.jsonl")
             return result
     return run_episode()
@@ -804,7 +805,9 @@ def main(argv: list[str] | None = None) -> int:
         grpc_port=args.grpc_port,
         perform_emulator_setup=not args.no_perform_emulator_setup,
     )
-    return 0 if result.get("validator_success") or result.get("task_finished") else int(result.get("returncode") or 1)
+    # Official task success does not erase a transport/method process failure.
+    # The result row preserves both facts, as the other official adapters do.
+    return int(result["returncode"]) if result.get("returncode") is not None else (0 if result.get("task_finished") else 1)
 
 
 if __name__ == "__main__":
