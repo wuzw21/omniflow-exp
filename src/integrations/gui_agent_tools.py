@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import inspect
 import json
+from importlib.resources import files
 from threading import Lock
 from typing import Any
 import uuid
@@ -39,12 +40,14 @@ class GuiAgentTool:
     description: str
     input_schema: dict[str, Any]
     kind: str
+    output_schema: dict[str, Any] | None = None
 
     def to_mcp_tool(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
             "inputSchema": _json_copy(self.input_schema),
+            **({"outputSchema": _json_copy(self.output_schema)} if self.output_schema is not None else {}),
         }
 
     def to_openai_tool(self) -> dict[str, Any]:
@@ -434,6 +437,8 @@ class GuiAgentToolRuntime:
     def function_tools() -> tuple[GuiAgentTool, ...]:
         """The entire model-visible OmniFlow service: recall and execute."""
         string = {"type": "string", "minLength": 1, "maxLength": 128}
+        output_schema = json.loads(files("src.integrations").joinpath(
+            "gui_agent_tool_result.schema.json").read_text(encoding="utf-8"))
         def schema(properties):
             return {"type": "object", "properties": properties,
                     "required": list(properties), "additionalProperties": False}
@@ -441,11 +446,11 @@ class GuiAgentToolRuntime:
             GuiAgentTool("omniflow_recall",
                 "Recall registered Functions for the current page and goal. Use one task_id per logical task; a new id explicitly starts a new task. Returns parameter schemas and session_id without executing device actions.",
                 schema({"task_id": string, "goal": {"type": "string", "minLength": 1},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 32}}), "service"),
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 32}}), "service", output_schema),
             GuiAgentTool("omniflow_execute",
                 "Execute one registered Function using its input schema. Returns partial progress and current state to the host. Reuse request_id only for identical transport retries; never replay a successful prefix blindly.",
                 schema({"session_id": string, "request_id": string, "function_id": string,
-                        "arguments": {"type": "object"}}), "service"),
+                        "arguments": {"type": "object"}}), "service", output_schema),
         )
 
     def harness_tools(self) -> tuple[GuiAgentTool, ...]:

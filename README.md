@@ -41,6 +41,8 @@ Function Store、执行内核、Python SDK、MCP 服务和使用 Skill。Skill �
 
 Codex/其他 MCP 宿主通过 [OmniFlow GUI Skill](skills/omniflow-gui/SKILL.md) 接入，
 服务启动和配置见 [MCP 接入](docs/HARNESS_MCP.md)。它复用 OOB 和同一 Function 内核。
+两工具使用标准 MCP tools/call，声明输入/输出 schema，同时返回 structuredContent 与
+兼容文本结果；协议适配和幂等标识见 [标准 tool call 合同](docs/HARNESS_MCP.md#标准-tool-call-合同)。
 宿主负责原始动作、任务完成判断和任务级循环；两工具服务不再对外注册每个 Function
 或提供另一套原始动作/任务控制工具。已有 GUI-agent 的 OOB 原始动作适配属于 harness。
 

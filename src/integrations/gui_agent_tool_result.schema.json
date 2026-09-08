@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OmniFlow tool result v1",
+  "type": "object",
+  "required": ["name", "session_id", "success", "error", "feedback"],
+  "properties": {
+    "name": {"type": "string"},
+    "session_id": {"type": "string"},
+    "success": {"type": "boolean"},
+    "error": {"type": ["string", "null"]},
+    "feedback": {"type": ["object", "null"]},
+    "task_id": {"type": ["string", "null"]},
+    "functions": {"type": "array", "items": {"type": "object"}},
+    "audit": {"type": "object"},
+    "automatic_retry": {"const": false},
+    "session": {"type": "object"}
+  },
+  "additionalProperties": false
+}

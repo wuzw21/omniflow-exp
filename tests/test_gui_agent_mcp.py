@@ -51,6 +51,7 @@ def test_mcp_invocation_schema_and_retry_without_second_dispatch(tmp_path):
         second = await transport.call_tool(None, request)
         assert not first.is_error and first == second and len(host.actions) == 1
         body = json.loads(first.content[0].text)
+        assert first.structured_content == body
         assert body['feedback']['observation']['image_base64'] is None
         wire = json.loads(first.model_dump_json(by_alias=True, exclude_unset=True))
         assert wire['content'][0]['type'] == 'text'
@@ -59,11 +60,20 @@ def test_mcp_invocation_schema_and_retry_without_second_dispatch(tmp_path):
         assert max(preview.size) <= 1280 and wire['content'][1]['mimeType'] == 'image/jpeg'
         assert Image.open(BytesIO(image.getvalue())).size == (1440, 3120)
         from jsonschema import validate
+        definition = runtime.function_tools()[1]
+        validate(body, definition.output_schema)
+        assert wire['structuredContent'] == body
+        assert definition.to_mcp_tool()['outputSchema'] == definition.output_schema
+        openai_definition = definition.to_openai_tool()
+        assert openai_definition['function']['name'] == 'omniflow_execute'
+        assert openai_definition['function']['parameters'] == definition.input_schema
         schema = json.loads((Path(__file__).parents[1]/'schemas/omniflow_invocation.v1.json').read_text())
         validate(body['feedback'], schema)
         invalid = await transport.call_tool(None, types.CallToolRequestParams(
             name='omniflow_execute', arguments={**args, 'request_id': 'two', 'arguments': {'duration_ms': 'bad'}}))
         assert invalid.is_error and len(host.actions) == 1
+        assert invalid.structured_content == json.loads(invalid.content[0].text)
+        validate(invalid.structured_content, definition.output_schema)
     asyncio.run(scenario())
 
 
@@ -77,9 +87,15 @@ def test_stdio_exposes_only_recall_and_function_execution(tmp_path):
                 await client.initialize()
                 names = {tool.name for tool in (await client.list_tools()).tools}
                 assert names == {'omniflow_recall', 'omniflow_execute'}
+                from mcp.shared.exceptions import MCPError
+                for name, arguments in [('unknown', {}), ('omniflow_execute', {'function_id': 'wait'})]:
+                    with pytest.raises(MCPError) as caught:
+                        await client.call_tool(name, arguments)
+                    assert caught.value.code == types.INVALID_PARAMS
                 rejected = await client.call_tool('omniflow_execute', {
                     'session_id': 'stale', 'request_id': 'one', 'function_id': 'wait', 'arguments': {}})
                 assert rejected.is_error
+                assert rejected.structured_content == json.loads(rejected.content[0].text)
     asyncio.run(scenario())
     assert not list(tmp_path.glob('*.json'))  # no implicit Memory compilation
 
@@ -129,6 +145,7 @@ def test_existing_runtime_stdio_bridge_and_completion_gate(tmp_path, reward):
                             'function_id': 'pause', 'arguments': {}}
                     result = await client.call_tool('omniflow_execute', args)
                     feedback = json.loads(result.content[0].text)['feedback']
+                    assert result.structured_content['feedback'] == feedback
                     assert checks == [1] and len(host.actions) == 1
                     assert feedback['control']['next'] == ('host' if reward == 0 else 'stop')
                     assert await client.call_tool('omniflow_execute', args) == result
@@ -139,6 +156,29 @@ def test_existing_runtime_stdio_bridge_and_completion_gate(tmp_path, reward):
         trace = runtime.execution_result().detail['trace']
         assert len(trace) == 1 and trace[0]['metadata']['function_id'] == 'pause'
         assert 'observation' not in trace[0]
+    asyncio.run(scenario())
+
+
+def test_empty_recall_has_schema_valid_structured_content(tmp_path):
+    from jsonschema import validate
+    class Host:
+        async def observe(self, **kwargs):
+            return Observation(xml='<hierarchy/>')
+        async def act(self, action):
+            raise AssertionError('recall must not dispatch')
+    async def scenario():
+        host = Host()
+        runtime = GuiAgentToolRuntime(host=host, flow=OmniFlow(tmp_path/'empty.json',host=host))
+        transport = GuiAgentMcp(runtime)
+        listed = await transport.list_tools()
+        for tool in listed.tools:
+            wire = json.loads(tool.model_dump_json(by_alias=True, exclude_unset=True))
+            assert 'inputSchema' in wire and 'outputSchema' in wire
+        result = await transport.call_tool(None,types.CallToolRequestParams(name='omniflow_recall',
+            arguments={'task_id':'task','goal':'goal','limit':1}))
+        assert not result.is_error and result.structured_content['functions'] == []
+        assert result.structured_content == json.loads(result.content[0].text)
+        validate(result.structured_content, runtime.function_tools()[0].output_schema)
     asyncio.run(scenario())
 
 

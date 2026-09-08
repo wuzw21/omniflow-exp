@@ -32,13 +32,23 @@ class GuiAgentMcp:
     async def list_tools(self, _context=None, _params=None):
         from mcp import types
         return types.ListToolsResult(tools=[types.Tool(
-            name=tool.name, description=tool.description, input_schema=tool.input_schema)
+            name=tool.name, description=tool.description, input_schema=tool.input_schema,
+            output_schema=tool.output_schema)
             for tool in self.runtime.function_tools()])
 
     @timed("mcp.request")
     async def call_tool(self, _context, params):
         from mcp import types
+        from mcp.shared.exceptions import MCPError
+        from jsonschema import ValidationError, validate
         name, args = params.name, params.arguments or {}
+        definitions = {tool.name: tool for tool in self.runtime.function_tools()}
+        if name not in definitions:
+            raise MCPError(types.INVALID_PARAMS, "Unknown tool")
+        try:
+            validate(args, definitions[name].input_schema)
+        except ValidationError as error:
+            raise MCPError(types.INVALID_PARAMS, "Invalid tool arguments") from error
         try:
             image_data = None
             execution = await self.runtime.call_function_tool(name, args)
@@ -63,13 +73,15 @@ class GuiAgentMcp:
             content = [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
             if image_data:
                 content.append(types.ImageContent(type="image", data=image_data[0], mime_type=image_data[1]))
-            return types.CallToolResult(content=content, is_error=not execution.success)
+            return types.CallToolResult(content=content, structured_content=result, is_error=not execution.success)
         except (Exception, ExecutionStopped) as error:  # noqa: BLE001 -- MCP error boundary
             if isinstance(error, ExecutionStopped):
                 self.runtime.cancel()
-            return types.CallToolResult(is_error=True, content=[types.TextContent(type="text", text=json.dumps({
-                "session_id": self.runtime.session_id, "error": str(error),
-                "automatic_retry": False, "session": self.runtime.session_status()}, ensure_ascii=False))])
+            result = {"name": name, "session_id": self.runtime.session_id,
+                "success": False, "error": str(error), "feedback": None,
+                "automatic_retry": False, "session": self.runtime.session_status()}
+            return types.CallToolResult(is_error=True, structured_content=result,
+                content=[types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))])
 
 
 def _image(observation: Observation) -> tuple[str, str] | None:

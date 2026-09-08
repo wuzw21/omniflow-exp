@@ -12,6 +12,47 @@ GuiAgentToolRuntime.function_tools()，MCP 和 Python harness 不各自复制 sc
 执行只接受注册且可见的 Function，使用同一个 Check → Transfer → Act → Observe
 闭环，不启动内部 Planner，也不把 Function 成功当作任务成功。
 
+## 标准 tool call 合同
+
+MCP 使用标准 `tools/list` / `tools/call`，不要求宿主实现 OmniFlow 专有消息类型：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "method": "tools/call",
+  "params": {
+    "name": "omniflow_execute",
+    "arguments": {
+      "session_id": "session-123",
+      "request_id": "operation-456",
+      "function_id": "turn_bluetooth_on",
+      "arguments": {}
+    }
+  }
+}
+```
+
+JSON-RPC `id` 由 MCP SDK 关联响应；`request_id` 是业务幂等标识，只在同一次操作的
+相同参数重试时复用；`function_id` 来自 Recall，不能用来调用原始动作。
+工具定义同时提供 `inputSchema` 和 `outputSchema`，后者唯一来源是
+`src/integrations/gui_agent_tool_result.schema.json`，随安装包发布。
+返回的 `structuredContent` 与首个 text 内容反序列化后的对象完全相同，图片仍作为
+独立 image 内容块。成功与执行错误均提供 name/session_id/success/error/feedback；
+进入执行前抛出的会话等错误允许 feedback=null，并提供 session 与 automatic_retry=false。
+未知工具或工具外层参数不满足 schema 时返回 JSON-RPC `-32602`；已识别工具的执行
+失败（包括 Function 参数校验、会话失效、部分执行）通过 `isError=true` 返回，保留
+现有恢复和停止事实。Function 执行成功与官方任务完成仍分别判断。
+
+同一工具定义的 `to_openai_tool()` 提供 Chat Completions function tool 格式；
+它不等同于 Responses API 格式。服务内的 Function arguments 是动态对象，因此
+当前声明 strict=false，实际参数仍由已注册 Function 的 input_schema 在执行前校验。
+宿主的协议适配只解析标准工具名称和参数，交给同一个 call_function_tool，不增加循环。
+
+可执行回归位于 `tests/test_gui_agent_mcp.py`：包括真实 stdio 工具发现、schema、
+结构化/文本一致性、协议错误、执行错误、重试去重、完成判定与取消。协议测试使用受控
+Host，不代表设备动作验收；本次协议修复待真机验证。
+
 ## 安装与连接
 
 AndroidWorld 验收统一使用：
