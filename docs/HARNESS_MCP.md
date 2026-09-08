@@ -168,9 +168,20 @@ wheel、组件及哈希清单：`data/runtime/releases/experiment-ready/`。
 
 补测修正了 MobileGPT 把 speak 通知当作下一轮观察请求、以及 T3A 忽略显式
 `--memory` 的问题，回归位于 `tests/test_androidworld_setup.py`，完整测试 222 项通过。
-两项修正均待真机验证。MobileGPT 首次失败还暴露了官方 reward 与方法错误的
-混合统计问题，尚待单独修正；当前 Python 环境仍有 AndroidWorld 的四项固定依赖
-版本声明冲突，不能把实跑通过表述为全新环境安装无冲突。
+两项修正均待真机验证。MobileGPT 首次失败暴露的混合统计问题已在共享结果边界
+修正：官方 reward 与方法退出分别保留，四种组合及 RunLog 写入都有可执行回归。
+修正后的同一模拟器任务通过；相关 bug 仍待真机验证。
+
+本机构建安装了 `android_world-0.1.0+omniflow.1-py3-none-any.whl`，替换此前来自
+其他提交的安装包。它是显式标注的集成构建，不是未经修改的官方发布件：输入为配置中
+`632ac95959ace58c8e2ed2db8e4209cc3d9c26ef` checkout 的当前 tracked 文件，
+包括该 checkout 已有的本地改动。逐文件哈希及改动清单保存在发布目录的
+`androidworld-build-source.json`；安装后的 157 个非生成 Python 文件与其逐字节一致。
+`config/androidworld-runtime.patch` 只调整构建版本、protobuf/numpy/pandas 的版本声明
+及 Python 3.13 才需要的 audioop-lts 条件。未直接修改已安装包的 metadata，也未改动
+原 checkout。正常 pip 安装该 wheel 后，当前环境 `pip check` 通过；这不替代空环境
+安装验收。构建时对临时源码副本应用该补丁，再用仓库 Python 执行
+`-m pip wheel <副本路径> --no-deps --no-build-isolation --wheel-dir <发布目录>`。
 
 2026-09-08 统一入口验收：同一 `SystemBluetoothTurnOn`、evaluation seed 113、
 同一显式 Store、Pixel 6 Pro 模拟器（Android 13 / 1440×3120）、OOB 0.6.0.3 (10)。

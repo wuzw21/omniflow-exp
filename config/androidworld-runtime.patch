@@ -1,0 +1,49 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -9,7 +9,7 @@
+ 
+ [project]
+ name = "android_world"
+-version = "0.1.0"
++version = "0.1.0+omniflow.1"
+ description = "Android World Environment Project"
+ readme = "README.md"
+ requires-python = ">=3.11"
+@@ -21,14 +21,14 @@
+     "fuzzywuzzy==0.18.0",
+     "google-generativeai",
+     "grpcio-tools==1.71.0",
+-    "protobuf==5.29.5",
++    "protobuf==5.29.6",
+     "immutabledict==2.0.0",
+     "IPython",
+     "jsonschema>=4.22.0",
+     "matplotlib>=3.6.1",
+-    "numpy==1.26.3",
++    "numpy==1.26.4",
+     "opencv-python",
+-    "pandas==2.1.4",
++    "pandas==2.3.3",
+     "pydub",
+     "python-Levenshtein",
+     "pytest",
+@@ -39,7 +39,7 @@
+     "termcolor",
+     "fastapi",
+     "uvicorn",
+-    "audioop-lts>=0.2.2",
++    "audioop-lts>=0.2.2; python_version >= '3.13'",
+ ]
+ 
+ [project.optional-dependencies]
+--- a/setup.py
++++ b/setup.py
+@@ -69,7 +69,7 @@
+     super().run()
+ 
+ _GRPCIO_TOOLS_VERSION = '1.71.0'
+-_PROTOBUF_VERSION = '5.29.5'
++_PROTOBUF_VERSION = '5.29.6'
+ 
+ setuptools.setup(
+     name='android_world',
