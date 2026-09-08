@@ -159,6 +159,19 @@ fallback 能力。两工具服务仍可召回与执行 Function；失败后交�
 
 ## 验证范围
 
+2026-09-08 构建后补测使用 OOB 0.6.1 (11)、同一 Standard 模拟器和
+`SystemBluetoothTurnOn`：builtin、Codex、Claude 均通过官方 validator；
+AppAgent、MobileGPT 和 T3A 也通过统一入口的官方判定。fixed_replay 跑完但
+官方 reward=0，不能列为任务成功。这是单任务接入验收，不是全量实验或速度比较。
+构建与运行证据：`data/runtime/validation/20260908-experiment-ready/`；
+wheel、组件及哈希清单：`data/runtime/releases/experiment-ready/`。
+
+补测修正了 MobileGPT 把 speak 通知当作下一轮观察请求、以及 T3A 忽略显式
+`--memory` 的问题，回归位于 `tests/test_androidworld_setup.py`，完整测试 222 项通过。
+两项修正均待真机验证。MobileGPT 首次失败还暴露了官方 reward 与方法错误的
+混合统计问题，尚待单独修正；当前 Python 环境仍有 AndroidWorld 的四项固定依赖
+版本声明冲突，不能把实跑通过表述为全新环境安装无冲突。
+
 2026-09-08 统一入口验收：同一 `SystemBluetoothTurnOn`、evaluation seed 113、
 同一显式 Store、Pixel 6 Pro 模拟器（Android 13 / 1440×3120）、OOB 0.6.0.3 (10)。
 依次切换 `--harness codex`、`claude`、`builtin`，均通过 AndroidWorld 官方 validator，
