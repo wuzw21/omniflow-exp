@@ -127,3 +127,26 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     assert len(oob.actions) == 1 and oob.actions[0]["tool"] == "click"
     assert oob.observations == 2  # initial page, then the physical action result
     assert sum(payload.startswith(b"X") for payload in sock.sent) == 2
+
+
+def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):
+    import pytest
+    from src.experiment import run_task as runner
+
+    memory = tmp_path / "source.json"
+    memory.write_text('{}')
+
+    class SelectionReached(Exception):
+        pass
+
+    def select(args):
+        assert args.source_run_log == str(memory)
+        raise SelectionReached
+
+    monkeypatch.setattr(runner, "_select_from_args", select)
+    for method in ("fixed_replay", "t3a_hint"):
+        args = runner.build_parser().parse_args([
+            "result", "--task", "SystemBluetoothTurnOn", "--method", method,
+            "--memory", str(memory)])
+        with pytest.raises(SelectionReached):
+            runner.run_task(args)

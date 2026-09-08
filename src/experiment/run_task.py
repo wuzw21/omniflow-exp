@@ -5274,7 +5274,7 @@ def run_task(args: argparse.Namespace) -> int:
             args.mobilegpt_source_memory_root = memory
         elif args.method == "appagent":
             args.appagent_memory_root = memory
-        elif args.method == "fixed_replay":
+        elif args.method in {"fixed_replay", "t3a_hint"}:
             args.source_run_log = memory
         elif args.method == AUTODROID_MEMORY_METHOD:
             args.autodroid_memory_root = memory
