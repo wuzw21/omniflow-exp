@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from omniflow.core.config import OmniFlowConfig, PluginSet, RuntimeSettings
 from omniflow.core.model import (
@@ -13,7 +14,7 @@ from omniflow.core.model import (
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.store import FunctionStore
 from omniflow.runtime.engine import OmniFlow
-from omniflow.runtime.checker import CheckerLibrary, checker_rule_matches
+from omniflow.runtime.checker import CheckerLibrary, checker_rule_matches, checker_rule_action
 from omniflow.runtime.execution import (
     _observe_ready,
     _transfer_page_package,
@@ -57,7 +58,28 @@ def _obscured_source_observation() -> Observation:
     )
 
 
-def test_default_checkers_enable_first_run_and_initial_setup_recovery() -> None:
+@pytest.mark.parametrize('rule_id,button', [
+    ('grant_foreground_permission', 'permission_allow_foreground_only_button'),
+    ('dismiss_permission_dialog', 'permission_allow_button'),
+])
+def test_permission_recovery_requires_system_resource_and_unique_target(rule_id, button):
+    rule = next(r for r in CheckerLibrary.load().rules if r['id'] == rule_id)
+    def observation(resource, count=1):
+        node = f'<node clickable="true" text="Always" resource-id="{resource}" bounds="[0,0][50,50]"/>'
+        return Observation(xml='<hierarchy>'+node*count+'</hierarchy>',
+            package_name='com.android.permissioncontroller', extra={'display': {'width':100,'height':100}})
+    for resource in ['', 'example.app:id/'+button]:
+        current = observation(resource)
+        assert not checker_rule_matches(rule,current=current,source=None,function_id='',step_index=0,action=Action('click',{}))
+        assert checker_rule_action(rule,current=current,source=None) is None
+    resource = 'com.android.permissioncontroller:id/'+button
+    current = observation(resource)
+    assert checker_rule_matches(rule,current=current,source=None,function_id='',step_index=0,action=Action('click',{}))
+    assert checker_rule_action(rule,current=current,source=None) is not None
+    assert checker_rule_action(rule,current=observation(resource,2),source=None) is None
+
+
+def test_generic_first_run_and_initial_setup_require_explicit_opt_in() -> None:
     rules = {rule["id"]: rule for rule in CheckerLibrary.load().rules}
     source = Observation(
         xml=(
@@ -90,8 +112,8 @@ def test_default_checkers_enable_first_run_and_initial_setup_recovery() -> None:
         package_name="com.example.app",
     )
 
-    assert rules["advance_first_run_onboarding"]["enabled"] is True
-    assert checker_rule_matches(
+    assert rules["advance_first_run_onboarding"]["enabled"] is False
+    assert not checker_rule_matches(
         rules["advance_first_run_onboarding"],
         current=welcome,
         source=source,
@@ -99,8 +121,8 @@ def test_default_checkers_enable_first_run_and_initial_setup_recovery() -> None:
         step_index=0,
         action=action,
     )
-    assert rules["dismiss_initial_setup"]["enabled"] is True
-    assert checker_rule_matches(
+    assert rules["dismiss_initial_setup"]["enabled"] is False
+    assert not checker_rule_matches(
         rules["dismiss_initial_setup"],
         current=setup,
         source=source,

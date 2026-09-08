@@ -14,6 +14,18 @@
 
 ## 执行诊断（开发中）
 
+Checker 的默认规则只处理明确的局部干扰。权限按钮以 Android 系统完整 resource-id
+匹配，动作目标必须唯一，不再根据 Allow/Always/确定 等通用文字或第一个候选点击。
+仅凭 Setup/Apply、ViewPager/Get started 判定的初始化与引导规则默认关闭；恢复目标
+应用和有源端遮挡证据的键盘规则保留。未知弹窗交还原 Planner。自定义规则应声明明确
+scope 和触发预算；规则启用与否不影响官方完成判定。
+
+评估规则收益时，触发次数只表示执行过恢复动作，不等于恢复成功。需结合带
+`origin=checker` 的动作结果、后续 Function 是否继续以及官方任务成功判定。
+ON/OFF 对照必须使用相同任务、参数、设备和干扰，模型在干扰前失败的 episode 只作
+环境失败记录，不能用于 Checker 收益或成功时延比较。误触发需由页面证据核验，
+不能用动作 RPC 成功代替“恢复正确”。
+
 AndroidWorld 的公共 `agent.step` 适配器创建执行账本，所有 method/Harness 使用同一
 计时边界；重置任务时重置账本，抛出异常的 step 也保留时间。RunLog 的
 `diagnostics.wall_accounting` 使用 `omniflow.wall-accounting.v1`：

@@ -1,5 +1,23 @@
 # Releases
 
+## Conservative Checker defaults, 2026-09-08
+
+Permission recovery now requires an exact Android system permission-button
+resource ID and a unique target. Generic text matching and first-candidate
+selection were removed from these enabled rules. Generic Setup/Apply and
+ViewPager onboarding rules are disabled by default; uncertain cases return to
+the original Planner. The shared interface and execution order are unchanged.
+
+219 project tests pass, including negative labels, non-system IDs and ambiguous
+permission targets. Local emulator ON/OFF probes injected HOME after the first
+click through the same OOB Harness. ON triggered `restore_target_app` once and
+returned to Settings, but subsequent task completion was not achieved; both
+effective ON/OFF runs ended with model timeouts. The earlier OFF attempt failed
+before intervention. There is no paired-success latency result or demonstrated
+net Checker benefit. Live permission-dialog acceptance remains pending; the
+permission-rule checks above are regressions, not physical-phone acceptance.
+Evidence: `data/runtime/validation/20260908-checker-conservative/summary.json`.
+
 ## 2026-09-08 Harness refactor acceptance
 
 The paper remains the design authority. The shared engine owns Recall/Execute,

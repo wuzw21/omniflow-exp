@@ -6,8 +6,8 @@
       "id": "grant_foreground_permission",
       "enabled": true,
       "phase": "pre_action",
-      "condition": {"xpath_exists": "//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')]"},
-      "action": {"action": "click", "target_xpath": "(//node[@clickable='true' and (contains(@resource-id,'permission_allow_foreground_only_button') or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or @text='仅在使用该应用时')])[1]"},
+      "condition": {"xpath_exists": "//node[@clickable='true' and (@resource-id='com.android.permissioncontroller:id/permission_allow_foreground_only_button' or @resource-id='com.google.android.permissioncontroller:id/permission_allow_foreground_only_button' or @resource-id='com.android.packageinstaller:id/permission_allow_foreground_only_button' or @resource-id='com.google.android.packageinstaller:id/permission_allow_foreground_only_button')]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@resource-id='com.android.permissioncontroller:id/permission_allow_foreground_only_button' or @resource-id='com.google.android.permissioncontroller:id/permission_allow_foreground_only_button' or @resource-id='com.android.packageinstaller:id/permission_allow_foreground_only_button' or @resource-id='com.google.android.packageinstaller:id/permission_allow_foreground_only_button')]"},
       "budget": {"max_triggers_per_run": 2},
       "priority": 105,
       "source": "runtime_policy"
@@ -17,8 +17,8 @@
       "id": "dismiss_permission_dialog",
       "enabled": true,
       "phase": "pre_action",
-      "condition": {"xpath_exists": "//node[(contains(@package,'permissioncontroller') or contains(@resource-id,'permissioncontroller') or contains(@resource-id,'packageinstaller') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'open with') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'just once') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'always') or contains(translate(@text,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use a different app'))]"},
-      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='allow' or normalize-space(@text)='允许' or normalize-space(@text)='确定' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='just once' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='always' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='while using the app' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='only this time' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='allow only while using' or normalize-space(@text)='仅在使用该应用时' or translate(normalize-space(@text),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='use a different app' or contains(@resource-id,'permission_allow_button') or contains(@resource-id,'allow_button') or contains(@resource-id,'button1'))][1]"},
+      "condition": {"xpath_exists": "//node[@clickable='true' and (@resource-id='com.android.permissioncontroller:id/permission_allow_button' or @resource-id='com.google.android.permissioncontroller:id/permission_allow_button' or @resource-id='com.android.packageinstaller:id/permission_allow_button' or @resource-id='com.google.android.packageinstaller:id/permission_allow_button')]"},
+      "action": {"action": "click", "target_xpath": "//node[@clickable='true' and (@resource-id='com.android.permissioncontroller:id/permission_allow_button' or @resource-id='com.google.android.permissioncontroller:id/permission_allow_button' or @resource-id='com.android.packageinstaller:id/permission_allow_button' or @resource-id='com.google.android.packageinstaller:id/permission_allow_button')]"},
       "budget": {"max_triggers_per_run": 2},
       "priority": 100,
       "source": "runtime_policy"
@@ -26,7 +26,7 @@
     {
       "schema_version": "omniflow.checker_rule.v1",
       "id": "dismiss_initial_setup",
-      "enabled": true,
+      "enabled": false,
       "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[.//node[normalize-space(@text)='Setup'] and .//node[@clickable='true' and (normalize-space(@text)='Apply' or normalize-space(@text)='确定')]]"
@@ -58,7 +58,7 @@
     {
       "schema_version": "omniflow.checker_rule.v1",
       "id": "advance_first_run_onboarding",
-      "enabled": true,
+      "enabled": false,
       "phase": "pre_action",
       "condition": {
         "xpath_exists": "//node[contains(@resource-id,'introduction') or contains(@resource-id,'onboarding') or contains(@resource-id,'welcome') or contains(@class,'ViewPager')]"
