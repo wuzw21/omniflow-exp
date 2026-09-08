@@ -512,17 +512,20 @@ def _run_mobilegpt_oob_transport(
                         f"expected={launched_package}:selected={selected_package}"
                     )
 
+            needs_observation = True
             while time.monotonic() - started < max(1.0, float(timeout_sec)):
-                snapshot = oob.observe(wait_to_stabilize=True)
-                xml = str(snapshot.get("xml") or "")
-                if not xml.strip():
-                    raise RuntimeError("mobilegpt_oob_observation_xml_missing")
-                xml = _ensure_mobilegpt_indices(xml)
-                image = _decode_image(snapshot.get("image_base64"))
-                send(b"S" + str(len(image)).encode("ascii") + b"\n" + image)
-                encoded_xml = xml.encode("utf-8")
-                send(b"X" + str(len(encoded_xml)).encode("ascii") + b"\n" + encoded_xml)
+                if needs_observation:
+                    snapshot = oob.observe(wait_to_stabilize=True)
+                    xml = str(snapshot.get("xml") or "")
+                    if not xml.strip():
+                        raise RuntimeError("mobilegpt_oob_observation_xml_missing")
+                    xml = _ensure_mobilegpt_indices(xml)
+                    image = _decode_image(snapshot.get("image_base64"))
+                    send(b"S" + str(len(image)).encode("ascii") + b"\n" + image)
+                    encoded_xml = xml.encode("utf-8")
+                    send(b"X" + str(len(encoded_xml)).encode("ascii") + b"\n" + encoded_xml)
                 response = receive_line()
+                needs_observation = True
                 if response == "$$$$$":
                     task_finished = True
                     lines.append("[omniflow] Task finished")
@@ -570,6 +573,12 @@ def _run_mobilegpt_oob_transport(
                     snapshot.get("display") or {},
                     xml,
                 )
+                # Upstream sends speech before the action for this same X
+                # frame. Its Android client does not acknowledge speech with
+                # a new screen: doing so queues an extra decision and applies
+                # the pending action against the wrong observation.
+                if str(action.get("name") or "").strip().lower() == "speak":
+                    needs_observation = False
                 if str(action.get("name") or "").strip().lower() not in {"speak", "read_screen"}:
                     actions += 1
                 lines.append(f"[omniflow] OOB action={action.get('name')}")
