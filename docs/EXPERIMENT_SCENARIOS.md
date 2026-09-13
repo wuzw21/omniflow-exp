@@ -60,9 +60,23 @@ Store contains a monolithic three-recipe Function, and the duplicate-deletion
 Store exposes an observation-dependent workflow as static replay. Neither is
 evidence of the current local-composition/online-observation contract. Preserve
 the initial batch as historical evidence, re-author through `convert-memory`
-into a new explicit `memory/adaptive_authoring_001/` bundle, and freeze a new
+into a new explicit immutable bundle, and freeze a new
 batch identity before evaluating those mechanisms. Do not patch old Stores or
 mix their results with the new authoring condition.
+
+The first re-authoring attempt exposed an invalid semantic classification of
+live-discovered record titles as task parameters; the prompt now distinguishes
+predicate-based discovery from goal-supplied values. The duplicate-record
+regression exercises the boundary: live inspection/comparison remains with the
+Planner and only the selected-record deletion suffix is executable. The compiler
+reports the exact occurrence, source step, and missing Agent-declared parameter
+when a binding is incomplete; it still does not infer or fill bindings.
+
+For SMS and duplicate deletion, `memory/adaptive_authoring_002/` is the reviewed
+new bundle used by `adaptive-v3-20260913`. SMS exposes paste/send; duplicate
+deletion exposes menu/delete/confirm. Both full workflows are hidden evidence.
+The multi-recipe conversion timed out twice; no accepted current bundle or
+live repeated-composition success is claimed for those attempts.
 
 ## Experimental conditions
 
@@ -154,7 +168,7 @@ success. A successful camera run with no failure does not validate reentry.
 Physical acceptance records device identity, installed APK version, code and
 asset hashes, operations, results, and applicable restart/repeat boundaries.
 
-The 2026-09-13 implementation regression run passed 260 tests under `tests/`.
+The 2026-09-13 implementation regression run passed 261 tests under `tests/`.
 Unrestricted pytest discovery also collected untracked vendor AutoDroid tests
 and stopped on their unavailable `gym` dependency; that is not a passing run.
 The checked 4090 targets are emulators with OOB 0.6.1 (versionCode 7), not
