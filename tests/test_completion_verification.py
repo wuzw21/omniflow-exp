@@ -17,7 +17,8 @@ from src.integrations.android_world.run_episode import _raw_replay_action_to_pay
 
 
 def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocked=False,
-                       checker_accepts=True, runtime=None):
+                       checker_accepts=True, runtime=None, prefix_tool='wait',
+                       failure_reason='test_layout_unresolved', recover_with_primitive=False):
     """Deterministic control-flow regression; never a device/Transfer accuracy result."""
     from omniflow.core.config import PluginSet
     from omniflow.core.model import Action, Function, FunctionStep, TransferResult
@@ -51,12 +52,12 @@ def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocke
         if action.tool != 'click':
             return TransferResult(action)
         if not host.recovered or still_blocked:
-            return TransferResult(None, reason='test_layout_unresolved')
+            return TransferResult(None, reason=failure_reason)
         return TransferResult(Action('click', {'x': 800, 'y': 800}))
 
     store = FunctionStore(tmp_path / 'store.json')
     for function_id, prefix in [('original', True), ('replacement', False)]:
-        steps = ([FunctionStep(0, Action('wait', {'duration_ms': 1}), 's0')] if prefix else [])
+        steps = ([FunctionStep(0, Action(prefix_tool, {'duration_ms': 1} if prefix_tool == 'wait' else {}), 's0')] if prefix else [])
         steps.append(FunctionStep(len(steps), Action('click', {'x': 100, 'y': 100}), 's1'))
         store.put_function(Function(function_id, function_id, 'Finish the operation', tuple(steps),
                                     schema_version='omniflow.function.v2',
@@ -76,7 +77,7 @@ def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocke
             if self.calls == 2:
                 return ToolCall('press_key', {'key': 'back'})
             if self.calls == 3:
-                if not functions:
+                if not functions or recover_with_primitive:
                     return ToolCall('click', {'x': 800, 'y': 800})
                 return ToolCall('replacement' if replacement else 'original', {})
             return ToolCall('finished', {'content': 'The current result is ready.'})
@@ -135,6 +136,27 @@ def test_missing_resume_evidence_remains_unknown():
     assert audit['resume_attempts'] is None and audit['resume_success'] is None
     audit = _execution_audit({'function_resume': {'attempt_count': 0, 'success_count': 0}})
     assert audit['resume_attempts'] == audit['resume_success'] == 0
+
+
+def test_paste_prefix_mapping_rejection_then_planner_success_is_not_resume(tmp_path, monkeypatch):
+    # Sanitized control-flow shape observed in the 2026-09-13 SMS Fold run:
+    # paste succeeded, send mapping rejected, Planner completed the task.
+    # This does not simulate target geometry or count as device acceptance.
+    flow, host, _ = _recovery_scenario(
+        tmp_path, monkeypatch, prefix_tool='paste',
+        failure_reason='omnitransfer_target_page_identity_mismatch',
+        recover_with_primitive=True,
+    )
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert result.success
+    assert [a.tool for a in host.actions] == ['paste', 'press_key', 'click']
+    evidence = result.detail['function_resume']
+    assert evidence['attempt_count'] == evidence['success_count'] == 0
+    assert len(evidence['events']) == 1
+    failure = evidence['events'][0]
+    assert failure['success'] is False and failure['failed_step_index'] == 1
+    assert failure['failed_action_dispatched'] is False
+    assert failure['error'] == 'omnitransfer_target_page_identity_mismatch'
 
 
 @pytest.mark.parametrize('enabled', [True, False], ids=['adaptive_full', 'no_reentry'])
