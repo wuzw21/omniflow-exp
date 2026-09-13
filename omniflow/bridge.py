@@ -1014,6 +1014,7 @@ def _run_result(
         ),
         "planner_diagnostics": result.detail.get("planner_diagnostics") or None,
         "function_resolution": function_resolution,
+        "function_resume": result.detail.get("function_resume"),
         "recall_hit": recall_hit,
         "recalled_function_id": recalled_function_id or None,
         "post_run_actions": post_run_actions or None,

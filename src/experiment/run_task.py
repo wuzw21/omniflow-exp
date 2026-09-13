@@ -2611,8 +2611,10 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "planner_actions": planner_actions,
         "planner_action_details": planner_action_details,
         "terminal_planner_call": terminal_planner_call,
-        "resume_attempts": _coerce_int(resume_value.get("attempt_count")),
-        "resume_success": _coerce_int(resume_value.get("success_count")),
+        "resume_attempts": (resume_value.get("attempt_count")
+                            if type(resume_value.get("attempt_count")) is int else None),
+        "resume_success": (resume_value.get("success_count")
+                           if type(resume_value.get("success_count")) is int else None),
         "router_tokens": _coerce_int(router_value.get("total_tokens")),
         "planner_tokens": _coerce_int(planner_value.get("total_tokens")),
         "router_calls": _coerce_int(router_value.get("model_calls")),

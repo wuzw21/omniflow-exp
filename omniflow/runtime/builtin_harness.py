@@ -112,6 +112,7 @@ async def run_builtin(
     recall_source_states: dict[str, Observation | None] = {}
     successful_router_invocations: set[str] = set()
     execution_timing: dict[str, Any] = {}
+    function_invocations: list[dict[str, Any]] = []
     completion_gate: dict[str, Any] | None = None
     function_resolution: dict[str, Any] = {
         "candidate_count": 0,
@@ -145,6 +146,15 @@ async def run_builtin(
     }
 
     def finish(success: bool, **kwargs: Any) -> RunResult:
+        terminal_detail = dict(kwargs.get("terminal_detail") or {})
+        resumed = [event for event in function_invocations if event["mode"] == "resume"]
+        terminal_detail["function_resume"] = {
+            "schema_version": "omniflow.function-resume.v1",
+            "attempt_count": len(resumed),
+            "success_count": sum(event["success"] is True for event in resumed),
+            "events": list(function_invocations),
+        }
+        kwargs["terminal_detail"] = terminal_detail
         kwargs.setdefault("completion_review_calls", completion_review_calls)
         kwargs.setdefault(
             "checker_trigger_counts",
@@ -189,6 +199,31 @@ async def run_builtin(
             function_resolution=function_resolution,
             **kwargs,
         )
+
+    async def execute_recorded(function: Function, **kwargs: Any) -> RunResult:
+        # Record actual kernel invocations, not Planner proposals or inferred
+        # successes.  Completion here means Function execution, not task success.
+        resuming = kwargs.pop("resuming", False)
+        event = {
+            "invocation_index": len(function_invocations),
+            "function_id": function.id,
+            "mode": "resume" if resuming else "fresh",
+            "after_failure": any(item["success"] is False for item in function_invocations),
+            "start_step_index": int(kwargs.get("start_step_index", 0)),
+            "trace_start_index": len(trace),
+            "success": None,
+        }
+        function_invocations.append(event)
+        replay = await execute_function(function, **kwargs)
+        event.update({
+            "success": replay.success,
+            "actions_executed": replay.actions_executed,
+            "trace_end_index": len(trace) + len(replay.detail.get("trace") or ()),
+            "failed_step_index": replay.detail.get("failed_step_index"),
+            "failed_action_dispatched": replay.detail.get("failed_action_dispatched"),
+            "error": replay.error,
+        })
+        return replay
 
     async def review_function_completion() -> bool | None:
         """Ask the benchmark checker before trusting Function completion."""
@@ -500,7 +535,7 @@ async def run_builtin(
                         )
                         continue
                     observation = current_entry_observation
-                    replay = await execute_function(
+                    replay = await execute_recorded(
                         function_session.bound,
                         host=self.host,
                         plugins=self.plugins,
@@ -656,8 +691,9 @@ async def run_builtin(
                     )
                     continue
                 observation = current_entry_observation
-            replay = await execute_function(
+            replay = await execute_recorded(
                 function_session.bound,
+                resuming=resume_step_index is not None,
                 host=self.host,
                 plugins=self.plugins,
                 observation=observation,

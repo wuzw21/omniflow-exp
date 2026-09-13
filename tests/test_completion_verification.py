@@ -16,6 +16,125 @@ from src.integrations.android_world.agent import (
 from src.integrations.android_world.run_episode import _raw_replay_action_to_payload
 
 
+def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocked=False,
+                       checker_accepts=True, runtime=None):
+    """Deterministic control-flow regression; never a device/Transfer accuracy result."""
+    from omniflow.core.config import PluginSet
+    from omniflow.core.model import Action, Function, FunctionStep, TransferResult
+    from omniflow.functions.recall import RecallResult
+
+    class Host:
+        def __init__(self):
+            self.actions = []
+            self.recovered = False
+            self.done = False
+
+        async def observe(self, **kwargs):
+            return Observation(xml=f'<page recovered="{self.recovered}" done="{self.done}"/>',
+                               image_base64='test-image',
+                               extra={'display': {'width': 1000, 'height': 1000}})
+
+        async def get_state(self, state_id):
+            return Observation(xml='<source/>', extra={'display': {'width': 1000, 'height': 1000}})
+
+        async def act(self, action):
+            self.actions.append(action)
+            if action.tool == 'press_key':
+                self.recovered = True
+            if action.tool == 'click':
+                assert action.args['x'] == 800  # never dispatch source x=100
+                self.done = True
+            return ActionResult(True)
+
+    host = Host()
+    def transfer(action, target, source):
+        if action.tool != 'click':
+            return TransferResult(action)
+        if not host.recovered or still_blocked:
+            return TransferResult(None, reason='test_layout_unresolved')
+        return TransferResult(Action('click', {'x': 800, 'y': 800}))
+
+    store = FunctionStore(tmp_path / 'store.json')
+    for function_id, prefix in [('original', True), ('replacement', False)]:
+        steps = ([FunctionStep(0, Action('wait', {'duration_ms': 1}), 's0')] if prefix else [])
+        steps.append(FunctionStep(len(steps), Action('click', {'x': 100, 'y': 100}), 's1'))
+        store.put_function(Function(function_id, function_id, 'Finish the operation', tuple(steps),
+                                    schema_version='omniflow.function.v2',
+                                    input_schema={'type': 'object', 'properties': {},
+                                                  'required': [], 'additionalProperties': False}))
+
+    class Planner:
+        def __init__(self):
+            self.catalogs = []
+            self.calls = 0
+
+        async def one_step_tool_call(self, goal, observation, functions, *args):
+            self.catalogs.append([f.id for f in functions])
+            self.calls += 1
+            if self.calls == 1:
+                return ToolCall('original', {})
+            if self.calls == 2:
+                return ToolCall('press_key', {'key': 'back'})
+            if self.calls == 3:
+                return ToolCall('replacement' if replacement else 'original', {})
+            return ToolCall('finished', {'content': 'The current result is ready.'})
+
+    planner = Planner()
+    flow = OmniFlow(store.path, host=host, planner=planner,
+                    completion_checker=lambda: checker_accepts and host.done,
+                    config=OmniFlowConfig(runtime=runtime or RuntimeSettings(max_steps=4, checker_enabled=False),
+                                         plugins=PluginSet(transfer=transfer)))
+    async def recall(*args, **kwargs):
+        return RecallResult((), {'reason': 'test_planner_selection'})
+    monkeypatch.setattr(flow, '_recall', recall)
+    return flow, host, planner
+
+
+@pytest.mark.parametrize('replacement', [False, True], ids=['resume_failed_step', 'select_other_function'])
+def test_recovery_preserves_prefix_and_records_actual_reuse(tmp_path, monkeypatch, replacement):
+    import json
+    from pathlib import Path
+    from jsonschema import validate
+    flow, host, planner = _recovery_scenario(tmp_path, monkeypatch, replacement=replacement)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert result.success and result.detail['done_reason'] == 'function_completed_verified'
+    assert [a.tool for a in host.actions] == ['wait', 'press_key', 'click']
+    assert planner.calls == 3
+    evidence = result.detail['function_resume']
+    assert evidence['attempt_count'] == evidence['success_count'] == int(not replacement)
+    assert [e['success'] for e in evidence['events']] == [False, True]
+    assert evidence['events'][0]['failed_action_dispatched'] is False
+    assert evidence['events'][1]['after_failure'] is True
+    assert evidence['events'][1]['start_step_index'] == int(not replacement)
+    schema = json.loads((Path(__file__).parents[1] / 'schemas/oob/omniflow_run_log.v1.json').read_text())
+    validate({'function_resume': evidence}, schema['properties']['diagnostics'])
+
+
+def test_failed_resume_stays_failed_and_never_dispatches_source_point(tmp_path, monkeypatch):
+    flow, host, _ = _recovery_scenario(tmp_path, monkeypatch, still_blocked=True)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert not result.success
+    assert [a.tool for a in host.actions] == ['wait', 'press_key']
+    evidence = result.detail['function_resume']
+    assert evidence['attempt_count'] == 1 and evidence['success_count'] == 0
+    assert evidence['events'][-1]['failed_action_dispatched'] is False
+
+
+def test_successful_resume_does_not_override_official_rejection(tmp_path, monkeypatch):
+    flow, host, _ = _recovery_scenario(tmp_path, monkeypatch, checker_accepts=False)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert host.done and not result.success
+    assert result.detail['function_resume']['success_count'] == 1
+
+
+def test_missing_resume_evidence_remains_unknown():
+    from src.experiment.run_task import _execution_audit
+    audit = _execution_audit({})
+    assert audit['resume_attempts'] is None and audit['resume_success'] is None
+    audit = _execution_audit({'function_resume': {'attempt_count': 0, 'success_count': 0}})
+    assert audit['resume_attempts'] == audit['resume_success'] == 0
+
+
 def test_androidworld_completion_uses_official_status_action() -> None:
     class Environment:
         def __init__(self) -> None:

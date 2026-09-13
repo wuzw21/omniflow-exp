@@ -26,3 +26,13 @@ official reward must not turn a failed process exit into zero; a nonzero exit
 must not rewrite a positive official reward as validator failure. This corrects
 the MobileGPT implementation to the existing result contract without adding
 fields or changing historical evidence.
+# Function recovery evidence
+
+`diagnostics.function_resume` may contain `omniflow.function-resume.v1`.
+Its `events` enumerate actual kernel invocations (fresh and resumed), with
+Function id, start step, trace interval, dispatch outcome and execution result.
+`after_failure` means a prior Function invocation failed in the same task; it
+does not assert that the later action is semantically correct. `attempt_count`
+and `success_count` count resumed invocations, not task completion. Legacy
+unversioned diagnostics remain readable; absent counts are unknown, not zero.
+An interrupted invocation may lack a sealed report and must remain unknown.

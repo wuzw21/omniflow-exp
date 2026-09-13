@@ -44,6 +44,42 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "function_resume": {
+          "type": "object",
+          "if": {
+            "required": ["schema_version"],
+            "properties": {"schema_version": {"const": "omniflow.function-resume.v1"}}
+          },
+          "then": {
+          "required": ["schema_version", "attempt_count", "success_count", "events"],
+          "properties": {
+            "schema_version": {"const": "omniflow.function-resume.v1"},
+            "attempt_count": {"type": "integer", "minimum": 0},
+            "success_count": {"type": "integer", "minimum": 0},
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["invocation_index", "function_id", "mode", "after_failure", "start_step_index", "trace_start_index", "success"],
+                "properties": {
+                  "invocation_index": {"type": "integer", "minimum": 0},
+                  "function_id": {"type": "string", "minLength": 1},
+                  "mode": {"enum": ["fresh", "resume"]},
+                  "after_failure": {"type": "boolean"},
+                  "start_step_index": {"type": "integer", "minimum": 0},
+                  "trace_start_index": {"type": "integer", "minimum": 0},
+                  "trace_end_index": {"type": "integer", "minimum": 0},
+                  "success": {"type": ["boolean", "null"]},
+                  "actions_executed": {"type": "integer", "minimum": 0},
+                  "failed_step_index": {"type": ["integer", "null"], "minimum": 0},
+                  "failed_action_dispatched": {"type": ["boolean", "null"]},
+                  "error": {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+          }
+        },
         "harness": {
           "type": "object",
           "required": ["name"],
