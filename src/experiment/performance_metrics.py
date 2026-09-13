@@ -20,6 +20,81 @@ PAIR_IDENTITY_FIELDS = (
 )
 
 
+def paired_sample_from_runlog(
+    run_log_path: str | Path, *, pair_id: str, condition: str,
+    environment_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Read one explicit atomic result and attach separately captured provenance.
+
+    The caller supplies immutable environment/asset identities from the frozen
+    receipt. Task parameters, seed and success come from this run's evidence.
+    No history lookup, fallback result selection or causal labeling is done.
+    """
+    import hashlib
+
+    path = Path(run_log_path)
+    raw = path.read_bytes()
+    run = json.loads(raw)
+    if run.get("schema_version") != "omniflow.run_log.v1":
+        raise ValueError("canonical_runlog_required")
+    results_path = path.with_name("task_results.jsonl")
+    rows = [json.loads(line) for line in results_path.read_text().splitlines() if line.strip()]
+    if len(rows) != 1:
+        raise ValueError("one_explicit_atomic_task_result_required")
+    row = rows[0]
+    if row.get("task_name") != run.get("task_name"):
+        raise ValueError("runlog_task_result_identity_mismatch")
+    diagnostics = run.get("diagnostics") or {}
+    validator = run.get("validator") or {}
+    official = validator.get("official") is True and row.get("official_validator_used") is True
+    if official and validator.get("success") is not row.get("success"):
+        raise ValueError("runlog_task_result_validator_mismatch")
+    identity = dict(environment_identity)
+    identity.update(task_name=run["task_name"], evaluation_seed=row.get("task_random_seed"),
+                    task_parameters=row.get("task_params"))
+    if row.get("model"):
+        if identity.get("model") and row["model"] != identity["model"]:
+            raise ValueError("runlog_model_mismatch")
+        identity["model"] = row["model"]
+    if row.get("model_base_url") and identity.get("endpoint_id") != row["model_base_url"]:
+        raise ValueError("runlog_endpoint_mismatch")
+    events = (diagnostics.get("function_resume") or {}).get("events")
+    outcome = "unknown"
+    if isinstance(events, list):
+        if any(event.get("success") is False for event in events):
+            outcome = "actions_failed"
+        elif events and all(event.get("success") is True for event in events):
+            outcome = "actions_succeeded"
+        elif not events:
+            outcome = "not_attempted"
+    usage = diagnostics.get("llm_usage") or {}
+    ledger = diagnostics.get("wall_accounting") or {}
+    components = ledger.get("components") or {}
+    component_wall = {name: value["exclusive_ms"] for name, value in components.items()
+                      if isinstance(value, dict) and "exclusive_ms" in value}
+    ledger_status = "missing"
+    if component_wall:
+        values = list(component_wall.values())
+        if any(type(x) not in (int, float) or not math.isfinite(x) or x < 0 for x in values):
+            raise ValueError("invalid_component_wall_time")
+        covered = ledger.get("covered_wall_ms")
+        if type(covered) not in (int, float) or not math.isfinite(covered) or abs(sum(values) - covered) > 0.1:
+            raise ValueError("component_wall_time_does_not_reconcile")
+        ledger_status = "reconciled"
+    return {
+        "pair_id": pair_id, "condition": condition, "identity": identity,
+        "official_success": row.get("success") if official else None,
+        "execution_duration_ms": row.get("execution_duration_ms"),
+        "model_calls": usage.get("model_calls"),
+        "total_tokens": usage.get("total_tokens") if usage.get("token_usage_status") == "tracked" else None,
+        "replay_outcome": outcome, "runtime_policy": diagnostics.get("runtime_policy"),
+        "component_wall_ms": component_wall, "component_status": ledger_status,
+        "owner_delta_ms": ledger.get("owner_delta_ms"),
+        "run_log_path": str(path.resolve()), "run_log_sha256": hashlib.sha256(raw).hexdigest(),
+        "task_result_sha256": hashlib.sha256(results_path.read_bytes()).hexdigest(),
+    }
+
+
 def summarize_paired_experiments(
     samples: Iterable[dict[str, Any]], *, expected_pair_ids: Iterable[str],
     reference: str = "memory_off", candidate: str = "full",
@@ -61,16 +136,31 @@ def summarize_paired_experiments(
             raise ValueError("pair_task_name_required")
         if sample.get("official_success") is not None and type(sample["official_success"]) is not bool:
             raise ValueError("official_success_must_be_boolean_or_unknown")
-        elapsed = sample.get("execution_duration_ms")
-        if elapsed is not None and (
-            type(elapsed) not in (float, int) or not math.isfinite(elapsed) or elapsed < 0
-        ):
-            raise ValueError("invalid_execution_duration_ms")
+        for metric in ("execution_duration_ms", "model_calls", "total_tokens"):
+            value = sample.get(metric)
+            if value is not None and (
+                type(value) not in (float, int) or not math.isfinite(value) or value < 0
+            ):
+                raise ValueError(f"invalid_{metric}")
         indexed[key] = dict(sample)
 
     def mean(values):
         values = list(values)
         return sum(values) / len(values) if values else None
+
+    def resource_summary(rows):
+        result = {}
+        for metric in ("model_calls", "total_tokens"):
+            values = [row[metric] for row in rows if row.get(metric) is not None]
+            result[metric] = {"observed_count": len(values), "mean": mean(values)}
+        names = sorted({name for row in rows for name in (row.get("component_wall_ms") or {})})
+        result["components"] = {
+            name: {"observed_count": sum(row.get("component_status") == "reconciled" for row in rows),
+                   "mean_exclusive_ms": mean((row.get("component_wall_ms") or {}).get(name, 0.0)
+                                             for row in rows if row.get("component_status") == "reconciled")}
+            for name in names
+        }
+        return result
 
     own_sets = {}
     for condition in (reference, candidate):
@@ -86,6 +176,7 @@ def summarize_paired_experiments(
             # Partial execution is not a completed benchmark success rate.
             "success_rate": len(successful) / len(expected) if len(rows) == len(expected) else None,
             "success_latency_count": len(elapsed), "success_mean_execution_ms": mean(elapsed),
+            "success_resources": resource_summary(successful),
         }
 
     common, latency_pairs, incomplete = [], [], []
@@ -123,6 +214,8 @@ def summarize_paired_experiments(
             "reference_mean_execution_ms": mean(a["execution_duration_ms"] for _, a, _ in rows),
             "candidate_mean_execution_ms": mean(b["execution_duration_ms"] for _, _, b in rows),
             "mean_delta_ms": mean(differences),
+            "reference_resources": resource_summary([a for _, a, _ in rows]),
+            "candidate_resources": resource_summary([b for _, _, b in rows]),
             "task_cluster_bootstrap_delta_ci95_ms": interval,
         }
 

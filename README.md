@@ -29,6 +29,9 @@ Planner、OOB 和官方完成检查。默认 on。它不关闭动作映射，也
 `src.experiment.performance_metrics.summarize_paired_experiments`，显式传入冻结 pair
 列表与样本；输出各自 success set、双方成功交集、快路径与恢复成功分层，以及 task
 cluster bootstrap 区间。缺失运行、缺失耗时和不一致配置均不能伪装成可比较样本。
+`paired_sample_from_runlog` 只读取一个显式 RunLog 和 sibling 原子结果，并结合独立的
+环境/资产 receipt 构造样本；缺失 usage 保留未知，组件只使用已对账的 exclusive wall
+time，较早 Function 失败不会被最后一次成功掩盖。
 
 Android 验收与对外 Harness 接入使用同一条运行链，只替换决策宿主：
 

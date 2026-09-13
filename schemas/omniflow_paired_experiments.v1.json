@@ -38,6 +38,8 @@
         "reference_mean_execution_ms": {"$ref": "#/$defs/mean"},
         "candidate_mean_execution_ms": {"$ref": "#/$defs/mean"},
         "mean_delta_ms": {"$ref": "#/$defs/mean"},
+        "reference_resources": {"type": "object"},
+        "candidate_resources": {"type": "object"},
         "task_cluster_bootstrap_delta_ci95_ms": {
           "type": ["array", "null"], "minItems": 2, "maxItems": 2, "items": {"type": "number"}
         }

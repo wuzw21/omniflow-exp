@@ -74,6 +74,48 @@ def test_pairing_never_accepts_invalid_time_values(elapsed):
         summarize_paired_experiments(rows, expected_pair_ids=['a', 'b', 'c'])
 
 
+@pytest.mark.parametrize('events,outcome', [
+    ([{'success': False}, {'success': True}], 'actions_failed'),
+    ([{'success': True}], 'actions_succeeded'),
+    ([], 'not_attempted'), (None, 'unknown'),
+])
+def test_explicit_runlog_loader_keeps_earlier_failure_and_unknown_usage(tmp_path, events, outcome):
+    from src.experiment.performance_metrics import paired_sample_from_runlog
+    log = tmp_path / 'run_log.json'
+    run = {'schema_version': 'omniflow.run_log.v1', 'task_name': 'example',
+           'validator': {'official': True, 'success': True},
+           'diagnostics': {'function_resume': {'events': events},
+                           'wall_accounting': {'covered_wall_ms': 3, 'owner_delta_ms': 0.1,
+                               'components': {'transfer': {'exclusive_ms': 1}, 'other': {'exclusive_ms': 2}}}}}
+    log.write_text(json.dumps(run))
+    row = {'task_name': 'example', 'task_random_seed': 113, 'task_params': {'value': 'new'},
+           'official_validator_used': True, 'success': True, 'execution_duration_ms': 3.1,
+           'duration_ms': 100, 'model': 'frozen', 'model_base_url': 'endpoint'}
+    log.with_name('task_results.jsonl').write_text(json.dumps(row) + '\n')
+    sample = paired_sample_from_runlog(log, pair_id='one', condition='full',
+                                      environment_identity={'model': 'frozen', 'endpoint_id': 'endpoint'})
+    assert sample['execution_duration_ms'] == 3.1
+    assert sample['replay_outcome'] == outcome
+    assert sample['model_calls'] is sample['total_tokens'] is None
+    assert sample['component_status'] == 'reconciled'
+    assert len(sample['run_log_sha256']) == 64
+    run['diagnostics']['wall_accounting']['covered_wall_ms'] = 9
+    log.write_text(json.dumps(run))
+    with pytest.raises(ValueError, match='does_not_reconcile'):
+        paired_sample_from_runlog(log, pair_id='one', condition='full',
+                                 environment_identity={'model': 'frozen', 'endpoint_id': 'endpoint'})
+
+
+def test_absent_component_is_zero_only_with_a_complete_ledger():
+    from src.experiment.performance_metrics import summarize_paired_experiments
+    rows = _paired_samples()
+    rows[1].update(component_status='reconciled', component_wall_ms={'checker': 4})
+    rows[3].update(component_status='reconciled', component_wall_ms={'other': 40})
+    report = summarize_paired_experiments(rows, expected_pair_ids=['a', 'b', 'c'], bootstrap_repeats=0)
+    checker = report['paired_full_system']['candidate_resources']['components']['checker']
+    assert checker == {'observed_count': 2, 'mean_exclusive_ms': 2}
+
+
 def test_androidworld_common_step_owner_accounts_failures_and_reset():
     from types import SimpleNamespace
     from src.integrations.android_world.run_episode import _ExperimentAgentAdapter
