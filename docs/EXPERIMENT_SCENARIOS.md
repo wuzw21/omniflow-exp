@@ -75,8 +75,13 @@ when a binding is incomplete; it still does not infer or fill bindings.
 For SMS and duplicate deletion, `memory/adaptive_authoring_002/` is the reviewed
 new bundle used by `adaptive-v3-20260913`. SMS exposes paste/send; duplicate
 deletion exposes menu/delete/confirm. Both full workflows are hidden evidence.
-The multi-recipe conversion timed out twice; no accepted current bundle or
-live repeated-composition success is claimed for those attempts.
+The multi-recipe conversion timed out twice. A third attempt through the same
+compiler wrapper with a 300-second offline authoring timeout completed all
+three proposal attempts, but each omitted required source classifications.
+`memory/adaptive_authoring_003/` therefore contains hidden evidence only, not
+an accepted reusable inventory. No live repeated-composition result is claimed
+for that task. Increasing offline waiting did not solve the long-source
+authoring failure; online task and Planner deadlines were not increased.
 
 ## Experimental conditions
 
@@ -169,7 +174,12 @@ success. A successful camera run with no failure does not validate reentry.
 Physical acceptance records device identity, installed APK version, code and
 asset hashes, operations, results, and applicable restart/repeat boundaries.
 
-The 2026-09-13 implementation regression run passed 261 tests under `tests/`.
+The final 2026-09-13 implementation regression run passed 267 tests under
+`tests/`. Stopped-invocation regressions ensure cancellation, deadline and
+`effect_unknown` retain completed model usage and Function failure evidence,
+while clearing the task-local diagnostic snapshot on exit. This does not infer
+missing historical counters or change terminal control. Device acceptance of
+the diagnostic fix remains pending physical-device validation.
 Unrestricted pytest discovery also collected untracked vendor AutoDroid tests
 and stopped on their unavailable `gym` dependency; that is not a passing run.
 The checked 4090 targets are emulators with OOB 0.6.1 (versionCode 7), not
@@ -177,3 +187,14 @@ physical-device acceptance. Environment receipts and live results are kept
 under `data/runtime/validation/adaptive-v2-20260913/` and the explicit batch
 archive. SSH failure is transport evidence, not an AndroidWorld task outcome;
 check the atomic RunLog and process completion before proceeding or retrying.
+
+Four scenario tasks completed all eight conditions on all three targets: 96
+episodes. The remaining 24 multi-recipe episodes are blocked on an accepted
+authoring inventory. Nine runs using its legacy monolithic Store are retained
+separately and do not validate current adaptive composition. The reviewed
+duplicate-deletion Store produced an actual twice-invoked local Function with
+official success on Standard; SMS on Fold produced mapping rejection followed
+by Planner recovery and official success. No resumed or post-failure Function
+invocation was observed in these batches: that live branch is `not_triggered`,
+even though its deterministic regressions pass. The consolidated audit is
+`data/runtime/validation/ADAPTIVE_SCENARIOS_20260913.md`.

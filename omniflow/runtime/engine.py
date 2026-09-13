@@ -255,6 +255,7 @@ class OmniFlow:
         token = CURRENT_CONTROL.set(control)
         self._active_control = control
         trace_offset, action_offset = len(control.trace), control.actions_executed
+        previous_snapshot = control.terminal_snapshot
         try:
             control.check()
             result = await callback(*args, **kwargs)
@@ -273,6 +274,7 @@ class OmniFlow:
             )
             result = replace(result, error=f"{type(error).__name__}:{error}")
         finally:
+            control.terminal_snapshot = previous_snapshot
             self._active_control = None
             CURRENT_CONTROL.reset(token)
             self._operation_lock.release()

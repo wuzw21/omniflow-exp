@@ -20,7 +20,7 @@ from omniflow.core.schemas import action_from_tool_call
 from omniflow.functions.artifact import bind_function
 from omniflow.functions.recall import RecallResult
 from omniflow.runtime.checker import DEFAULT_CHECKER_LIBRARY_PATH
-from omniflow.runtime.control import ExecutionStopped, checkpoint, invoke
+from omniflow.runtime.control import CURRENT_CONTROL, ExecutionStopped, checkpoint, invoke
 from omniflow.runtime.execution import (
     execute_function,
     execute_robust_action,
@@ -198,6 +198,16 @@ async def run_builtin(
             success,
             function_resolution=function_resolution,
             **kwargs,
+        )
+
+    control = CURRENT_CONTROL.get()
+    if control is not None:
+        # Diagnostic projection only: the existing finish owner seals counters;
+        # control still owns cancellation, effects, trace and terminal status.
+        control.terminal_snapshot = lambda: finish(
+            False, profile=profile, trace=trace, model_calls=model_calls,
+            llm_usage=llm_usage, fallback_steps=fallback_steps,
+            final_state=control.observation,
         )
 
     async def execute_recorded(function: Function, **kwargs: Any) -> RunResult:

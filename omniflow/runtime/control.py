@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import inspect
 import math
 from threading import Event
@@ -32,6 +32,7 @@ class ExecutionControl:
     trace: list[dict[str, Any]] = field(default_factory=list)
     observation: Observation | None = None
     effect_unknown: bool = False
+    terminal_snapshot: Callable[[], RunResult] | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if not math.isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 600:
@@ -49,10 +50,16 @@ class ExecutionControl:
             raise ExecutionStopped("deadline_exceeded")
 
     def stopped_result(self, reason: str, *, trace_offset=0, action_offset=0) -> RunResult:
-        return RunResult(
-            False, actions_executed=self.actions_executed - action_offset,
+        snapshot = RunResult(False)
+        if self.terminal_snapshot is not None:
+            try:
+                snapshot = self.terminal_snapshot()
+            except Exception as error:
+                snapshot = RunResult(False, detail={"terminal_snapshot_error": type(error).__name__})
+        return replace(
+            snapshot, success=False, actions_executed=self.actions_executed - action_offset,
             error=reason, final_state=self.observation,
-            detail={"done_reason": reason, "trace": self.trace[trace_offset:],
+            detail={**snapshot.detail, "done_reason": reason, "trace": self.trace[trace_offset:],
                     "effect_unknown": self.effect_unknown,
                     "failed_action_dispatched": None if self.effect_unknown else False},
         )

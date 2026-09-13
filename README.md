@@ -10,6 +10,8 @@ Recall 和 Function 闭环。外部失败返回当前状态和失败
 位置，交还宿主决策。协议与迁移说明见 [Harness 协议](docs/HARNESS_PROTOCOL.md)。
 AndroidWorld 正式入口不变。
 
+内置 Harness 在取消、超时和 `effect_unknown` 退出时也保留退出前的模型用量与 Function
+调用证据；终止原因和动作效果仍由同一个 execution control 决定，诊断快照在调用结束后清除。
 内置 Harness 的 `diagnostics.function_resume` 保存实际 Function 调用、失败位置、
 恢复后重新调用及断点续执行的证据；`success_count` 只表示续执行完成，不代表官方任务
 成功。旧 RunLog 缺失该记录时，汇总保留 null，不能解释成零次恢复。新增回归入口为

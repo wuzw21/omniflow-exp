@@ -159,6 +159,34 @@ def test_paste_prefix_mapping_rejection_then_planner_success_is_not_resume(tmp_p
     assert failure['error'] == 'omnitransfer_target_page_identity_mismatch'
 
 
+@pytest.mark.parametrize('reason', ['effect_unknown', 'cancelled', 'deadline_exceeded'])
+def test_stopped_invocation_retains_completed_usage_and_failure_evidence(tmp_path, monkeypatch, reason):
+    from omniflow.runtime.control import CURRENT_CONTROL, ExecutionStopped
+    flow, host, _ = _recovery_scenario(tmp_path, monkeypatch)
+    act = host.act
+    controls = []
+
+    async def unknown_effect(action):
+        if action.tool == 'press_key':
+            control = CURRENT_CONTROL.get()
+            controls.append(control)
+            control.effect_unknown = reason == 'effect_unknown'
+            raise ExecutionStopped(reason)
+        return await act(action)
+
+    monkeypatch.setattr(host, 'act', unknown_effect)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert not result.success and result.error == reason
+    assert result.model_calls == 2
+    assert result.detail['llm_usage']['model_calls'] == 2
+    assert result.detail['effect_unknown'] is (reason == 'effect_unknown')
+    assert result.detail['failed_action_dispatched'] is (None if reason == 'effect_unknown' else False)
+    evidence = result.detail['function_resume']
+    assert len(evidence['events']) == 1 and evidence['events'][0]['success'] is False
+    assert evidence['attempt_count'] == 0
+    assert controls[0].terminal_snapshot is None
+
+
 @pytest.mark.parametrize('enabled', [True, False], ids=['adaptive_full', 'no_reentry'])
 def test_reentry_ablation_keeps_same_planner_actions_and_completion_gate(tmp_path, monkeypatch, enabled):
     flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
