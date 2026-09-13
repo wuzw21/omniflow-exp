@@ -16,7 +16,7 @@ PERFORMANCE_METRICS_SCHEMA = "omniflow.androidworld.performance-metrics.v1"
 PAIR_IDENTITY_FIELDS = (
     "task_name", "device_model", "evaluation_seed", "task_parameters",
     "model", "endpoint_id", "source_sha256", "code_commit",
-    "transfer_sha256", "protocol_sha256",
+    "transfer_sha256", "protocol_sha256", "store_sha256", "transfer_states_sha256",
 )
 
 

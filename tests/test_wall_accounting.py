@@ -42,6 +42,7 @@ def test_paired_latency_includes_recovered_success_and_separates_success_sets():
 
 
 @pytest.mark.parametrize('field', ['model', 'device_model', 'task_parameters', 'evaluation_seed',
+                                 'store_sha256', 'transfer_states_sha256',
                                   'endpoint_id', 'code_commit', 'transfer_sha256', 'source_sha256'])
 def test_pairing_rejects_changed_experimental_controls(field):
     from src.experiment.performance_metrics import summarize_paired_experiments

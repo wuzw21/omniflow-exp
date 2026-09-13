@@ -143,8 +143,9 @@ locates its action evidence. Unknown/missing historical counts remain null.
 Use `src.experiment.performance_metrics.summarize_paired_experiments` with an
 explicit frozen expected pair list and evidence-derived samples. Required
 shared identities are task, real device, parameters, seed, model/endpoint,
-source, code, Transfer and protocol. Preserve condition-specific Store and
-policy hashes with each source receipt. RunLog paths/hashes are analysis
+source, code, Transfer, protocol, Store and transfer-state catalog. Strict
+Memory ON/OFF must share both artifact hashes as well as the model. Preserve
+condition-specific policy hashes with each source receipt. RunLog paths/hashes are analysis
 inputs, not runtime selection indexes.
 
 Report all planned/completed/failed/unreached/missing counts. Success latency
