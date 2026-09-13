@@ -1504,7 +1504,10 @@ def _validate_agent_owned_semantic_bindings(
             )
             if not expected.issubset(actual):
                 raise ValueError(
-                    "function_author_task_parameter_binding_incomplete"
+                    "function_author_task_parameter_binding_incomplete:"
+                    f"occurrence_index={occurrence_index}:"
+                    f"source_step_index={source_step_index}:"
+                    f"missing_agent_declared_parameters={','.join(sorted(expected - actual))}"
                 )
 
 

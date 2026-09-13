@@ -1167,7 +1167,9 @@ def test_agent_cannot_label_task_parameter_then_emit_empty_schema() -> None:
 
     with pytest.raises(
         ValueError,
-        match="function_author_task_parameter_binding_incomplete",
+        match=("function_author_task_parameter_binding_incomplete:"
+               "occurrence_index=0:source_step_index=0:"
+               "missing_agent_declared_parameters=event_title"),
     ):
         _materialize_authoring_response(
             {
