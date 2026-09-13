@@ -151,6 +151,66 @@ def test_reentry_ablation_keeps_same_planner_actions_and_completion_gate(tmp_pat
     assert bool(planner.catalogs[2]) == enabled
 
 
+def test_resume_argument_change_cannot_repeat_prefix_or_change_remaining_effect(tmp_path, monkeypatch):
+    from dataclasses import replace
+    flow, host, planner = _recovery_scenario(tmp_path, monkeypatch)
+    original = flow.store.functions['original']
+    flow.store.put_function(replace(original,
+        input_schema={'type': 'object', 'properties': {'pause_ms': {'type': 'integer'}},
+                      'required': ['pause_ms'], 'additionalProperties': False},
+        bindings=({'source': '$.arguments.pause_ms', 'target': '$.steps[0].action.args.duration_ms'},)))
+    choose = planner.one_step_tool_call
+    errors = []
+    async def changed(goal, observation, functions, *args):
+        errors.append(observation.extra.get('previous_action_error'))
+        call = await choose(goal, observation, functions, *args)
+        if call.name == 'original':
+            return ToolCall('original', {'pause_ms': 1 if planner.calls == 1 else 2})
+        return call
+    monkeypatch.setattr(planner, 'one_step_tool_call', changed)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert not result.success
+    assert 'function_resume_arguments_changed' in errors
+    assert [a.tool for a in host.actions] == ['wait', 'press_key']
+    assert len(result.detail['function_resume']['events']) == 1
+    assert result.detail['function_resume']['attempt_count'] == 0
+
+
+def test_reentry_ablation_and_recovery_counters_reset_for_new_task(tmp_path, monkeypatch):
+    flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
+        runtime=RuntimeSettings(max_steps=4, checker_enabled=False, function_reentry_enabled=False))
+    for _ in range(2):
+        host.actions.clear()
+        host.recovered = host.done = False
+        planner.calls = 0
+        planner.catalogs.clear()
+        result = asyncio.run(flow.arun('Finish the operation'))
+        assert result.success
+        assert planner.catalogs[0] and not planner.catalogs[2]
+        assert len(result.detail['function_resume']['events']) == 1
+        assert result.detail['function_resume']['attempt_count'] == 0
+
+
+def test_memory_off_uses_same_kernel_but_never_recalls_or_exposes_functions(tmp_path, monkeypatch):
+    flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
+        runtime=RuntimeSettings(max_steps=3, checker_enabled=False, function_memory_enabled=False))
+    catalogs = []
+    async def no_recall(*args, **kwargs):
+        raise AssertionError('Memory OFF cannot encode or recall stored pages')
+    async def raw_planner(goal, observation, functions, *args):
+        catalogs.append(tuple(functions))
+        return (ToolCall('click', {'x': 800, 'y': 800}) if not host.done
+                else ToolCall('finished', {'content': 'Done'}))
+    monkeypatch.setattr(flow, '_recall', no_recall)
+    monkeypatch.setattr(planner, 'one_step_tool_call', raw_planner)
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert result.success and result.model_calls == 2
+    assert catalogs == [(), ()] and len(flow.store.functions) == 2
+    assert [a.tool for a in host.actions] == ['click']
+    assert result.detail['function_resume']['events'] == []
+    assert result.detail['runtime_policy']['function_memory_enabled'] is False
+
+
 def test_androidworld_completion_uses_official_status_action() -> None:
     class Environment:
         def __init__(self) -> None:

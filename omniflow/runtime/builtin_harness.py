@@ -373,11 +373,14 @@ async def run_builtin(
             )
         pending_user_input = None
         memory_disabled = (
-            not self.config.runtime.function_reentry_enabled
-            and any(event["success"] is False for event in function_invocations)
+            not self.config.runtime.function_memory_enabled
+            or (not self.config.runtime.function_reentry_enabled
+                and any(event["success"] is False for event in function_invocations))
         )
         if memory_disabled:
-            recall_result = RecallResult((), {"reason": "function_reentry_disabled"})
+            recall_result = RecallResult((), {"reason": (
+                "function_memory_disabled" if not self.config.runtime.function_memory_enabled
+                else "function_reentry_disabled")})
         else:
             recall_result = await self._recall(
                 goal,

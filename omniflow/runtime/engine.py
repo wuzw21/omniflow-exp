@@ -279,6 +279,7 @@ class OmniFlow:
         return replace(result, detail={**result.detail, "feedback": invocation_feedback(result),
             "runtime_policy": {
                 "checker_enabled": self.config.runtime.checker_enabled,
+                "function_memory_enabled": self.config.runtime.function_memory_enabled,
                 "function_reentry_enabled": self.config.runtime.function_reentry_enabled,
             }})
 

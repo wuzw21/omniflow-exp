@@ -48,6 +48,7 @@
           "type": "object",
           "properties": {
             "checker_enabled": {"type": "boolean"},
+            "function_memory_enabled": {"type": "boolean"},
             "function_reentry_enabled": {"type": "boolean"}
           }
         },

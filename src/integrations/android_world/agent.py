@@ -220,6 +220,7 @@ def build_agent(
                 max_steps=configured_max_steps,
                 max_fallback_steps=max_fallback_steps,
                 checker_enabled=os.environ.get("OMNIFLOW_CHECKER_MODE", "on") == "on",
+                function_memory_enabled=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on",
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
             ),
         ),

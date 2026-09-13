@@ -20,6 +20,11 @@ AndroidWorld 正式入口不变。
 Planner、OOB 和官方完成检查。默认 on。它不关闭动作映射，也不重放源坐标；结果作为
 `reentry_ablation` 独立归档，不晋升为默认论文结果。此开关不适用于外部宿主。
 
+严格的 Memory ON/OFF 配对使用同一个显式 `--memory STORE`，仅切换
+`--function-memory on|off`。off 保留 Store 和相同模型、超时、Host、Planner 创建路径，
+关闭内置循环的 Function 暴露、召回和调用，结果独立存为 `memory_ablation`。
+不传 Memory 的原 baseline 仍可运行，但其配置路径不同，不能冒充这一单因素消融。
+
 补充实验场景与执行条件见 [场景覆盖](docs/EXPERIMENT_SCENARIOS.md)。配对分析复用
 `src.experiment.performance_metrics.summarize_paired_experiments`，显式传入冻结 pair
 列表与样本；输出各自 success set、双方成功交集、快路径与恢复成功分层，以及 task

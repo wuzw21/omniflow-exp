@@ -66,7 +66,8 @@ def _experimental_omniflow_enabled(method: str) -> bool:
         and (bool(str(os.environ.get("OMNIFLOW_EXPERIMENTAL_MODEL") or "").strip())
              or os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
              or os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
-             or os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on")
+             or os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
+             or os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on")
     )
 
 
@@ -1040,7 +1041,8 @@ def _run_command(
                 task=args.task,
                 method=method,
                 device=device,
-                archive_kind=("reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
+                archive_kind=("memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
+                              else "reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
                               else "checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
                               else "external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
                               else "experimental_gpt55"),
@@ -1198,6 +1200,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--function-reentry", choices=("on", "off"),
                         default=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on"),
                         help="Builtin OmniFlow: allow Function reuse after a Function execution failure")
+    parser.add_argument("--function-memory", choices=("on", "off"),
+                        default=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on"),
+                        help="Builtin matched ablation: retain explicit Store and disable Function exposure")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument(
         "--evaluation-seed",
@@ -1252,6 +1257,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         raise ValueError("function_reentry_ablation_requires_builtin_omniflow_run")
     os.environ["OMNIFLOW_FUNCTION_REENTRY"] = args.function_reentry
+    if args.function_memory != "on" and (
+        args.action != "run" or args.method != "omniflow" or args.harness != "builtin" or not args.memory
+    ):
+        raise ValueError("function_memory_ablation_requires_builtin_omniflow_run_with_store")
+    os.environ["OMNIFLOW_FUNCTION_MEMORY"] = args.function_memory
     if args.harness != "builtin" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("external_harness_requires_run_method_omniflow")
     os.environ["OMNIFLOW_HARNESS"] = args.harness

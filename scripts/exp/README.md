@@ -123,7 +123,10 @@ OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置�
 执行失败后关闭当前任务后续 Function 调用，保留同一 Planner 和 completion checker。
 `--checker off` 独立控制共享恢复规则。两者可组合，并由 RunLog `runtime_policy`
 分别记录；消融结果独立归档，不能覆盖默认正式结果。`--function-reentry off` 仅适用
-内置 Harness；Memory OFF 使用不传 `--memory` 的同一入口。
+内置 Harness。严格 Memory ON/OFF 配对保留同一个显式 Store，使用
+`--function-memory on|off`；off 只关闭内置 Function 暴露/执行，并独立归档为
+`memory_ablation`。原不传 Memory 的 baseline 改变模型超时和 Host 等待配置，
+不得混入这一单因素配对。
 
 `run --task TASK --method omniflow --device DEVICE --memory STORE --harness HARNESS`
 是所有 Android Harness 的同一验收入口；HARNESS 可为 `builtin`（默认）、`codex`、

@@ -40,6 +40,18 @@ def test_reentry_ablation_is_explicit_and_cannot_promote_formal_results(monkeypa
     assert not _experimental_omniflow_enabled('mobilegpt')
 
 
+def test_matched_memory_ablation_requires_store_and_is_isolated(monkeypatch):
+    from src.experiment.run_tasks import main
+    monkeypatch.setenv('OMNIFLOW_CHECKER_MODE', 'on')
+    monkeypatch.setenv('OMNIFLOW_FUNCTION_REENTRY', 'on')
+    monkeypatch.setenv('OMNIFLOW_HARNESS', 'builtin')
+    with pytest.raises(ValueError, match='function_memory_ablation_requires_builtin_omniflow_run_with_store'):
+        main(['run', '--method', 'omniflow', '--function-memory', 'off'])
+    monkeypatch.setenv('OMNIFLOW_FUNCTION_MEMORY', 'off')
+    assert _experimental_omniflow_enabled('omniflow')
+    assert build_parser().parse_args(['run', '--function-memory', 'on']).function_memory == 'on'
+
+
 @pytest.mark.parametrize('args', [
     ['run', '--method', 'mobilegpt'],
     ['run', '--method', 'omniflow', '--harness', 'codex'],
