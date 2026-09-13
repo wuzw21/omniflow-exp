@@ -141,6 +141,14 @@ the semantic value cannot be known from the goal/task_parameters before executio
 A value deterministically derived from task parameters, such as an end time from
 hour plus duration, is also task_parameter. Classify by where the desired semantic
 value comes from, not by whether the current target coordinates must be observed.
+The words "context" or "identified earlier" do not make a value a task parameter:
+verify that the value is supplied by the goal/task_parameters before execution.
+When the goal names a predicate (for example duplicate, cheapest, unread, or newest)
+rather than a particular record, inspecting and selecting the matching records is
+online_observation. A title learned by comparing live records must not become a
+task_parameter binding to replay the source comparison. Keep inspection, comparison,
+and conditional record selection with the Planner. A fixed menu/confirm operation
+after the Planner has selected the record can be a safe local Function.
 
 Stage 2 — discover Functions. Find zero or more semantically stable, contiguous
 local operations in the successful source steps. If the same operation repeats,
@@ -154,6 +162,12 @@ any source steps as stable or task_parameter, expose at least one maximal safe l
 Function; do not return an empty local inventory while claiming reusable steps.
 Returning no local Function is valid only when the complete Function is safe for
 direct replay or every source step is genuinely online_observation.
+For repeated complete operations, prefer one local definition with repeated
+occurrences and semantic field names over one monolithic list of numbered input
+slots. Every occurrence must independently declare its actual value bindings;
+equal source values do not imply that two different semantic fields are one
+parameter. The Planner owns how many times and with which values to call a local
+Function; source occurrences are provenance, never a runtime call sequence.
 
 Stage 3 — author every binding on the A side. The Compiler will not infer,
 recommend, repair, or select bindings. Read task_parameters, each source action,

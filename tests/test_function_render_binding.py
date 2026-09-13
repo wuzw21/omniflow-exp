@@ -1198,6 +1198,53 @@ def test_agent_cannot_label_task_parameter_then_emit_empty_schema() -> None:
         )
 
 
+def test_duplicate_predicate_keeps_live_comparison_out_of_delete_local() -> None:
+    # A duplicate title is discovered from live records, not supplied by the goal.
+    # The author classifies that dependency; the compiler only enforces the plan.
+    facts = {
+        "run_id": "duplicate-record-comparison",
+        "goal": "Delete one duplicate recipe after comparing its full fields.",
+        "task_parameters": {},
+        "steps": [
+            {"source_step_index": i, "before_state_id": f"state-{i}",
+             "action": {"tool": "click", "args": {"x": 500, "y": 500}}}
+            for i in range(7)
+        ],
+    }
+    proposal = {
+        "binding_owner": "agent",
+        "reason": "Compare live records first, then delete the selected copy.",
+        "semantic_analysis": {"steps": [
+            {"source_step_index": i,
+             "semantic_kind": "online_observation" if i < 4 else "stable",
+             "parameter_names": [],
+             "reason": "Live record comparison." if i < 4 else "Fixed deletion control."}
+            for i in range(7)
+        ]},
+        "functions": [{
+            "function_id": "delete_selected_record", "name": "Delete selected record",
+            "description": "Delete the already selected record and confirm.",
+            "occurrences": [{"source_step_indices": [4, 5, 6]}], "parameters": [],
+        }],
+        "complete_function": {
+            "function_id": "complete_duplicate_cleanup", "name": "Duplicate cleanup evidence",
+            "description": "Historical inspection, comparison, and deletion.",
+            "source_step_indices": list(range(7)),
+            "execution_mode": "planner_handoff", "parameters": [],
+        },
+    }
+    result = _materialize_authoring_response(proposal, facts, candidate_map={})
+    functions = {f["function_id"]: f for f in result["bundle"]["functions"]}
+    assert functions["complete_duplicate_cleanup"]["agent_visible"] is False
+    local = functions["delete_selected_record"]
+    assert local["agent_visible"] is True
+    assert [s["source_state_id"] for s in local["steps"]] == ["state-4", "state-5", "state-6"]
+    assert local["input_schema"]["properties"] == {}
+    proposal["functions"][0]["occurrences"][0]["source_step_indices"] = [3, 4, 5, 6]
+    with pytest.raises(ValueError, match="function_author_local_online_observation_not_replayable"):
+        _materialize_authoring_response(proposal, facts, candidate_map={})
+
+
 def test_online_observation_hides_complete_replay_and_keeps_safe_local() -> None:
     facts = {
         "run_id": "browser-multiply",
