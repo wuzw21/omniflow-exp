@@ -277,7 +277,10 @@ class OmniFlow:
             CURRENT_CONTROL.reset(token)
             self._operation_lock.release()
         return replace(result, detail={**result.detail, "feedback": invocation_feedback(result),
-            "runtime_policy": {"checker_enabled": self.config.runtime.checker_enabled}})
+            "runtime_policy": {
+                "checker_enabled": self.config.runtime.checker_enabled,
+                "function_reentry_enabled": self.config.runtime.function_reentry_enabled,
+            }})
 
     @timed("recall")
     async def _recall(

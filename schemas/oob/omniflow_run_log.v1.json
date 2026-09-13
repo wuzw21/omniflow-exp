@@ -44,6 +44,13 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "runtime_policy": {
+          "type": "object",
+          "properties": {
+            "checker_enabled": {"type": "boolean"},
+            "function_reentry_enabled": {"type": "boolean"}
+          }
+        },
         "function_resume": {
           "type": "object",
           "if": {

@@ -32,6 +32,26 @@ def test_unified_harness_selection(monkeypatch):
         build_harness('unknown')
 
 
+def test_reentry_ablation_is_explicit_and_cannot_promote_formal_results(monkeypatch):
+    monkeypatch.setenv('OMNIFLOW_FUNCTION_REENTRY', 'off')
+    assert build_parser().parse_args(['run']).function_reentry == 'off'
+    assert build_parser().parse_args(['run', '--function-reentry', 'on']).function_reentry == 'on'
+    assert _experimental_omniflow_enabled('omniflow')
+    assert not _experimental_omniflow_enabled('mobilegpt')
+
+
+@pytest.mark.parametrize('args', [
+    ['run', '--method', 'mobilegpt'],
+    ['run', '--method', 'omniflow', '--harness', 'codex'],
+    ['convert-memory', '--method', 'omniflow'],
+])
+def test_reentry_ablation_rejects_inapplicable_execution_owner(monkeypatch, args):
+    from src.experiment.run_tasks import main
+    monkeypatch.setenv('OMNIFLOW_CHECKER_MODE', 'on')
+    with pytest.raises(ValueError, match='function_reentry_ablation_requires_builtin_omniflow_run'):
+        main([*args, '--function-reentry', 'off'])
+
+
 def test_host_usage_does_not_invent_api_request_count(tmp_path):
     events = tmp_path/'events.jsonl'
     events.write_text(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 12, 'output_tokens': 3}}))

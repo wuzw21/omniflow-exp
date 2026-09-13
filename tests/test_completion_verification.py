@@ -76,6 +76,8 @@ def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocke
             if self.calls == 2:
                 return ToolCall('press_key', {'key': 'back'})
             if self.calls == 3:
+                if not functions:
+                    return ToolCall('click', {'x': 800, 'y': 800})
                 return ToolCall('replacement' if replacement else 'original', {})
             return ToolCall('finished', {'content': 'The current result is ready.'})
 
@@ -133,6 +135,20 @@ def test_missing_resume_evidence_remains_unknown():
     assert audit['resume_attempts'] is None and audit['resume_success'] is None
     audit = _execution_audit({'function_resume': {'attempt_count': 0, 'success_count': 0}})
     assert audit['resume_attempts'] == audit['resume_success'] == 0
+
+
+@pytest.mark.parametrize('enabled', [True, False], ids=['adaptive_full', 'no_reentry'])
+def test_reentry_ablation_keeps_same_planner_actions_and_completion_gate(tmp_path, monkeypatch, enabled):
+    flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
+        runtime=RuntimeSettings(max_steps=4, checker_enabled=False, function_reentry_enabled=enabled))
+    result = asyncio.run(flow.arun('Finish the operation'))
+    assert result.success
+    assert [a.tool for a in host.actions] == ['wait', 'press_key', 'click']
+    assert result.detail['runtime_policy']['function_reentry_enabled'] == enabled
+    evidence = result.detail['function_resume']
+    assert evidence['attempt_count'] == int(enabled)
+    assert len(evidence['events']) == (2 if enabled else 1)
+    assert bool(planner.catalogs[2]) == enabled
 
 
 def test_androidworld_completion_uses_official_status_action() -> None:

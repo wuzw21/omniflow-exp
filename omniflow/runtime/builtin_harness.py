@@ -372,13 +372,20 @@ async def run_builtin(
                 },
             )
         pending_user_input = None
-        recall_result = await self._recall(
-            goal,
-            observation=observation,
-            source_states=recall_source_states,
-            limit=len(self.store.functions),
-            exclude_function_ids=frozenset(function_session.excluded_ids),
+        memory_disabled = (
+            not self.config.runtime.function_reentry_enabled
+            and any(event["success"] is False for event in function_invocations)
         )
+        if memory_disabled:
+            recall_result = RecallResult((), {"reason": "function_reentry_disabled"})
+        else:
+            recall_result = await self._recall(
+                goal,
+                observation=observation,
+                source_states=recall_source_states,
+                limit=len(self.store.functions),
+                exclude_function_ids=frozenset(function_session.excluded_ids),
+            )
         recalled_functions = recall_result.functions
         continuation_function_id = (
             function_session.selected_id
@@ -396,8 +403,9 @@ async def run_builtin(
                 include_hidden=False,
             )
             if (
-                function.id not in function_session.excluded_ids
-                or function.id == continuation_function_id
+                not memory_disabled
+                and (function.id not in function_session.excluded_ids
+                     or function.id == continuation_function_id)
             )
         )
         planner_function_catalog = {

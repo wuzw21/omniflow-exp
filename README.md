@@ -15,6 +15,11 @@ AndroidWorld 正式入口不变。
 成功。旧 RunLog 缺失该记录时，汇总保留 null，不能解释成零次恢复。新增回归入口为
 `tests/test_completion_verification.py`；恢复行为仍须真机验收。
 
+`run --method omniflow --function-reentry off` 是内置 Harness 的恢复后复用消融：
+首个 Function 执行失败后，当前任务不再向 Router/Planner 暴露 Function，继续使用同一
+Planner、OOB 和官方完成检查。默认 on。它不关闭动作映射，也不重放源坐标；结果作为
+`reentry_ablation` 独立归档，不晋升为默认论文结果。此开关不适用于外部宿主。
+
 Android 验收与对外 Harness 接入使用同一条运行链，只替换决策宿主：
 
 ```bash
