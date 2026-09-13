@@ -28,6 +28,16 @@ the MobileGPT implementation to the existing result contract without adding
 fields or changing historical evidence.
 # Function recovery evidence
 
+`omniflow_paired_experiments.v1.json` describes analysis produced by
+`src.experiment.performance_metrics.summarize_paired_experiments`. Inputs are
+explicit samples and the frozen expected pair ids, not a runtime index. Pairing
+rejects mismatched task parameters, devices, seeds, model/endpoint, source,
+code, transfer, and shared protocol identities. Partial runs have a null final
+success rate. Unknown timings are excluded with counts; failed tasks never
+enter success latency. Full paired latency includes recovered successes and
+is reported separately from the fast-path subset. Confidence intervals resample
+tasks as clusters and are unavailable for fewer than two task clusters.
+
 `diagnostics.function_resume` may contain `omniflow.function-resume.v1`.
 Its `events` enumerate actual kernel invocations (fresh and resumed), with
 Function id, start step, trace interval, dispatch outcome and execution result.

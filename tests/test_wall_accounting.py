@@ -7,6 +7,73 @@ import pytest
 from omniflow.runtime.timing import TimingLedger, measure
 
 
+def _paired_samples():
+    from src.experiment.performance_metrics import PAIR_IDENTITY_FIELDS
+    result = []
+    for pair_id, ref, cand, ref_success, outcome in [
+        ('a', 10, 7, True, 'actions_succeeded'),
+        ('b', 20, 40, True, 'actions_failed'),
+        ('c', 1, 100, False, 'unknown'),
+    ]:
+        identity = {field: 'frozen' for field in PAIR_IDENTITY_FIELDS}
+        identity.update(task_name=pair_id, evaluation_seed=113, task_parameters={'value': 'new'})
+        for condition, elapsed, success in [('memory_off', ref, ref_success), ('full', cand, True)]:
+            result.append({'pair_id': pair_id, 'condition': condition, 'identity': dict(identity),
+                           'official_success': success, 'execution_duration_ms': elapsed,
+                           'replay_outcome': outcome})
+    return result
+
+
+def test_paired_latency_includes_recovered_success_and_separates_success_sets():
+    from src.experiment.performance_metrics import summarize_paired_experiments
+    report = summarize_paired_experiments(_paired_samples(), expected_pair_ids=['a', 'b', 'c'])
+    from jsonschema import validate
+    schema = json.loads((Path(__file__).parents[1] / 'schemas/omniflow_paired_experiments.v1.json').read_text())
+    validate(report, schema)
+    assert report['own_success_sets']['full']['success_mean_execution_ms'] == 49
+    assert report['own_success_sets']['memory_off']['success_rate'] == pytest.approx(2/3)
+    assert report['paired_full_system']['pair_count'] == 2
+    assert report['paired_full_system']['candidate_mean_execution_ms'] == 23.5
+    assert report['paired_full_system']['mean_delta_ms'] == 8.5  # recovery erases fast-path gain
+    assert report['paired_fast_path']['mean_delta_ms'] == -3
+    assert report['paired_recovered_success']['mean_delta_ms'] == 20
+    assert report['paired_full_system']['task_cluster_bootstrap_delta_ci95_ms'] is not None
+    assert report['paired_fast_path']['task_cluster_bootstrap_delta_ci95_ms'] is None
+
+
+@pytest.mark.parametrize('field', ['model', 'device_model', 'task_parameters', 'evaluation_seed',
+                                  'endpoint_id', 'code_commit', 'transfer_sha256', 'source_sha256'])
+def test_pairing_rejects_changed_experimental_controls(field):
+    from src.experiment.performance_metrics import summarize_paired_experiments
+    rows = _paired_samples()
+    rows[1]['identity'][field] = 'different'
+    with pytest.raises(ValueError, match='pair_identity_mismatch'):
+        summarize_paired_experiments(rows, expected_pair_ids=['a', 'b', 'c'])
+
+
+def test_missing_failed_and_unknown_runs_do_not_become_success_or_zero_latency():
+    from src.experiment.performance_metrics import summarize_paired_experiments
+    rows = _paired_samples()[:-1]
+    rows[1]['execution_duration_ms'] = None
+    report = summarize_paired_experiments(rows, expected_pair_ids=['a', 'b', 'c'])
+    assert report['missing_pair_ids'] == ['c']
+    assert report['own_success_sets']['full']['success_rate'] is None
+    assert report['official_success_intersection_count'] == 2
+    assert report['paired_full_system']['pair_count'] == 1
+    assert report['paired_fast_path']['candidate_mean_execution_ms'] is None
+    with pytest.raises(ValueError, match='duplicate_pair_condition'):
+        summarize_paired_experiments(rows + [rows[0]], expected_pair_ids=['a', 'b', 'c'])
+
+
+@pytest.mark.parametrize('elapsed', [float('nan'), float('inf'), -1, True])
+def test_pairing_never_accepts_invalid_time_values(elapsed):
+    from src.experiment.performance_metrics import summarize_paired_experiments
+    rows = _paired_samples()
+    rows[0]['execution_duration_ms'] = elapsed
+    with pytest.raises(ValueError, match='invalid_execution_duration_ms'):
+        summarize_paired_experiments(rows, expected_pair_ids=['a', 'b', 'c'])
+
+
 def test_androidworld_common_step_owner_accounts_failures_and_reset():
     from types import SimpleNamespace
     from src.integrations.android_world.run_episode import _ExperimentAgentAdapter

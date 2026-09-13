@@ -20,6 +20,11 @@ AndroidWorld 正式入口不变。
 Planner、OOB 和官方完成检查。默认 on。它不关闭动作映射，也不重放源坐标；结果作为
 `reentry_ablation` 独立归档，不晋升为默认论文结果。此开关不适用于外部宿主。
 
+补充实验场景与执行条件见 [场景覆盖](docs/EXPERIMENT_SCENARIOS.md)。配对分析复用
+`src.experiment.performance_metrics.summarize_paired_experiments`，显式传入冻结 pair
+列表与样本；输出各自 success set、双方成功交集、快路径与恢复成功分层，以及 task
+cluster bootstrap 区间。缺失运行、缺失耗时和不一致配置均不能伪装成可比较样本。
+
 Android 验收与对外 Harness 接入使用同一条运行链，只替换决策宿主：
 
 ```bash

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Explicit paired experiment analysis",
+  "type": "object",
+  "required": ["schema_version", "reference", "candidate", "own_success_sets", "missing_pair_ids", "official_success_intersection_count", "paired_full_system", "paired_fast_path", "paired_recovered_success", "paired_other_or_unknown", "bootstrap"],
+  "properties": {
+    "schema_version": {"const": "omniflow.paired-experiments.v1"},
+    "reference": {"type": "string", "minLength": 1},
+    "candidate": {"type": "string", "minLength": 1},
+    "own_success_sets": {"type": "object", "additionalProperties": {"$ref": "#/$defs/own"}},
+    "missing_pair_ids": {"type": "array", "items": {"type": "string"}},
+    "official_success_intersection_count": {"type": "integer", "minimum": 0},
+    "paired_full_system": {"$ref": "#/$defs/paired"},
+    "paired_fast_path": {"$ref": "#/$defs/paired"},
+    "paired_recovered_success": {"$ref": "#/$defs/paired"},
+    "paired_other_or_unknown": {"$ref": "#/$defs/paired"},
+    "bootstrap": {"type": "object", "required": ["unit", "repeats", "seed"], "properties": {
+      "unit": {"const": "task"}, "repeats": {"type": "integer", "minimum": 0}, "seed": {"type": "integer"}
+    }}
+  },
+  "$defs": {
+    "mean": {"type": ["number", "null"]},
+    "own": {
+      "type": "object",
+      "required": ["planned_count", "recorded_count", "missing_count", "official_success_count", "official_failure_count", "official_unreached_count", "success_rate", "success_latency_count", "success_mean_execution_ms"],
+      "properties": {
+        "success_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "success_mean_execution_ms": {"$ref": "#/$defs/mean"}
+      }
+    },
+    "paired": {
+      "type": "object",
+      "required": ["pair_count", "task_count", "pair_ids", "reference_mean_execution_ms", "candidate_mean_execution_ms", "mean_delta_ms", "task_cluster_bootstrap_delta_ci95_ms"],
+      "properties": {
+        "pair_count": {"type": "integer", "minimum": 0},
+        "task_count": {"type": "integer", "minimum": 0},
+        "pair_ids": {"type": "array", "items": {"type": "string"}},
+        "reference_mean_execution_ms": {"$ref": "#/$defs/mean"},
+        "candidate_mean_execution_ms": {"$ref": "#/$defs/mean"},
+        "mean_delta_ms": {"$ref": "#/$defs/mean"},
+        "task_cluster_bootstrap_delta_ci95_ms": {
+          "type": ["array", "null"], "minItems": 2, "maxItems": 2, "items": {"type": "number"}
+        }
+      }
+    }
+  }
+}

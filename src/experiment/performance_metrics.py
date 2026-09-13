@@ -13,6 +13,134 @@ from typing import Any, Iterable
 
 PERFORMANCE_METRICS_SCHEMA = "omniflow.androidworld.performance-metrics.v1"
 
+PAIR_IDENTITY_FIELDS = (
+    "task_name", "device_model", "evaluation_seed", "task_parameters",
+    "model", "endpoint_id", "source_sha256", "code_commit",
+    "transfer_sha256", "protocol_sha256",
+)
+
+
+def summarize_paired_experiments(
+    samples: Iterable[dict[str, Any]], *, expected_pair_ids: Iterable[str],
+    reference: str = "memory_off", candidate: str = "full",
+    bootstrap_repeats: int = 2000, random_seed: int = 0,
+) -> dict[str, Any]:
+    """Analyze explicit frozen samples; never scan, select, or launch experiments.
+
+    Each sample supplies pair_id, condition, identity, official_success (bool or
+    None), execution_duration_ms, and replay_outcome. Identity contains the
+    fields above; callers derive them from evidence, never directory aliases.
+    Condition-specific policy/Memory identities must be retained by the caller
+    as provenance; protocol_sha256 covers the shared experimental controls.
+    Missing runs remain missing. Failed/recovered Function invocations are not
+    task failures. No lifecycle duration substitutes for agent.step duration.
+    """
+    import numpy as np
+
+    expected = tuple(expected_pair_ids)
+    if not expected or len(set(expected)) != len(expected) or any(not isinstance(x, str) or not x for x in expected):
+        raise ValueError("expected_pair_ids_must_be_unique_nonempty_strings")
+    if not reference or not candidate or reference == candidate:
+        raise ValueError("distinct_pair_conditions_required")
+    if type(bootstrap_repeats) is not int or bootstrap_repeats < 0:
+        raise ValueError("bootstrap_repeats_must_be_nonnegative_integer")
+    indexed: dict[tuple[str, str], dict[str, Any]] = {}
+    for sample in samples:
+        pair_id, condition = sample.get("pair_id"), sample.get("condition")
+        key = pair_id, condition
+        if pair_id not in expected or condition not in (reference, candidate):
+            raise ValueError("sample_outside_frozen_comparison")
+        if key in indexed:
+            raise ValueError("duplicate_pair_condition")
+        identity = sample.get("identity")
+        if not isinstance(identity, dict) or any(
+            field not in identity or identity[field] is None for field in PAIR_IDENTITY_FIELDS
+        ):
+            raise ValueError("pair_identity_incomplete")
+        if not isinstance(identity["task_name"], str) or not identity["task_name"]:
+            raise ValueError("pair_task_name_required")
+        if sample.get("official_success") is not None and type(sample["official_success"]) is not bool:
+            raise ValueError("official_success_must_be_boolean_or_unknown")
+        elapsed = sample.get("execution_duration_ms")
+        if elapsed is not None and (
+            type(elapsed) not in (float, int) or not math.isfinite(elapsed) or elapsed < 0
+        ):
+            raise ValueError("invalid_execution_duration_ms")
+        indexed[key] = dict(sample)
+
+    def mean(values):
+        values = list(values)
+        return sum(values) / len(values) if values else None
+
+    own_sets = {}
+    for condition in (reference, candidate):
+        rows = [indexed[(pair_id, condition)] for pair_id in expected if (pair_id, condition) in indexed]
+        successful = [row for row in rows if row.get("official_success") is True]
+        elapsed = [row["execution_duration_ms"] for row in successful if row.get("execution_duration_ms") is not None]
+        own_sets[condition] = {
+            "planned_count": len(expected), "recorded_count": len(rows),
+            "missing_count": len(expected) - len(rows),
+            "official_success_count": len(successful),
+            "official_failure_count": sum(row.get("official_success") is False for row in rows),
+            "official_unreached_count": sum(row.get("official_success") is None for row in rows),
+            # Partial execution is not a completed benchmark success rate.
+            "success_rate": len(successful) / len(expected) if len(rows) == len(expected) else None,
+            "success_latency_count": len(elapsed), "success_mean_execution_ms": mean(elapsed),
+        }
+
+    common, latency_pairs, incomplete = [], [], []
+    for pair_id in expected:
+        a, b = indexed.get((pair_id, reference)), indexed.get((pair_id, candidate))
+        if a is None or b is None:
+            incomplete.append(pair_id)
+            continue
+        for field in PAIR_IDENTITY_FIELDS:
+            if a["identity"][field] != b["identity"][field]:
+                raise ValueError(f"pair_identity_mismatch:{pair_id}:{field}")
+        if a.get("official_success") is True and b.get("official_success") is True:
+            common.append(pair_id)
+            if a.get("execution_duration_ms") is not None and b.get("execution_duration_ms") is not None:
+                latency_pairs.append((pair_id, a, b))
+
+    def paired_summary(rows):
+        differences = [b["execution_duration_ms"] - a["execution_duration_ms"] for _, a, b in rows]
+        clusters: dict[str, list[float]] = defaultdict(list)
+        for (_, a, _), difference in zip(rows, differences):
+            clusters[a["identity"]["task_name"]].append(difference)
+        interval = None
+        # One task cannot estimate between-task generalization uncertainty.
+        if bootstrap_repeats and len(clusters) >= 2:
+            groups = list(clusters.values())
+            rng = np.random.default_rng(random_seed)
+            distribution = []
+            for _ in range(bootstrap_repeats):
+                selected = rng.integers(0, len(groups), size=len(groups))
+                distribution.append(mean(value for index in selected for value in groups[int(index)]))
+            interval = [float(x) for x in np.percentile(distribution, [2.5, 97.5])]
+        return {
+            "pair_count": len(rows), "task_count": len(clusters),
+            "pair_ids": [pair_id for pair_id, _, _ in rows],
+            "reference_mean_execution_ms": mean(a["execution_duration_ms"] for _, a, _ in rows),
+            "candidate_mean_execution_ms": mean(b["execution_duration_ms"] for _, _, b in rows),
+            "mean_delta_ms": mean(differences),
+            "task_cluster_bootstrap_delta_ci95_ms": interval,
+        }
+
+    fast = [row for row in latency_pairs if row[2].get("replay_outcome") == "actions_succeeded"]
+    recovered = [row for row in latency_pairs if row[2].get("replay_outcome") == "actions_failed"]
+    other = [row for row in latency_pairs if row[2].get("replay_outcome") not in ("actions_succeeded", "actions_failed")]
+    return {
+        "schema_version": "omniflow.paired-experiments.v1",
+        "reference": reference, "candidate": candidate,
+        "own_success_sets": own_sets, "missing_pair_ids": incomplete,
+        "official_success_intersection_count": len(common),
+        "paired_full_system": paired_summary(latency_pairs),
+        "paired_fast_path": paired_summary(fast),
+        "paired_recovered_success": paired_summary(recovered),
+        "paired_other_or_unknown": paired_summary(other),
+        "bootstrap": {"unit": "task", "repeats": bootstrap_repeats, "seed": random_seed},
+    }
+
 
 def _number(value: Any, default: float = 0.0) -> float:
     try:
