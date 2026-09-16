@@ -260,15 +260,15 @@ def _compact_accessibility_observation(
         if not labels and not actions:
             continue
         row: dict[str, Any] = {"label": " | ".join(labels)} if labels else {}
+        # Labels often live in non-clickable children of an actionable row.
+        # Preserve their observed geometry without inventing an action or
+        # selecting a target on the planner's behalf.
+        normalized_bounds = _normalized_bounds(
+            str(attributes.get("bounds") or "").strip(), width=width, height=height,
+        )
+        if normalized_bounds:
+            row["bounds_0_1000"] = normalized_bounds
         if actions:
-            bounds = str(attributes.get("bounds") or "").strip()
-            normalized_bounds = _normalized_bounds(
-                bounds,
-                width=width,
-                height=height,
-            )
-            if normalized_bounds:
-                row["bounds_0_1000"] = normalized_bounds
             row["actions"] = actions
             if attributes.get("enabled") == "false":
                 row["enabled"] = False

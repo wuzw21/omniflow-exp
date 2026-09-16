@@ -14,6 +14,24 @@ from omniflow.vlm.gui import (
 from omniflow.vlm.function_router import VLMFunctionRouter
 
 
+def test_planner_keeps_geometry_of_noninteractive_labels() -> None:
+    # Android Settings puts the semantic label in a non-clickable TextView
+    # inside a clickable row. These are observed device bounds, not a mapping.
+    projected = project_planner_context({
+        "package_name": "com.android.settings",
+        "display": {"width": 1080, "height": 2400},
+        "xml": '<hierarchy><node clickable="true" bounds="[0,1690][1080,1920]" '
+        'package="com.android.settings"><node text="Battery" clickable="false" '
+        'bounds="[189,1748][357,1819]" package="com.android.settings" />'
+        '</node></hierarchy>',
+    })
+    import json
+    labels = [json.loads(line) for line in projected["xml"].splitlines()]
+    battery = next(row for row in labels if row.get("label") == "Battery")
+    assert battery["bounds_0_1000"] == "[175,728][331,758]"
+    assert "actions" not in battery  # Do not invent clickability.
+
+
 def test_open_app_uses_host_catalog_without_benchmark_import(monkeypatch) -> None:
     original_import = builtins.__import__
 
