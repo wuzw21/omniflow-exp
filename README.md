@@ -145,6 +145,10 @@ OmniFlow 的 Function 转换由 A 端 authoring Agent 和无语义判定的 Comp
 宿主负责模型配置和 token 统计；Compiler 记录 authoring 调用次数。连续方案被拒绝时，
 Bridge 返回 `FUNCTION_AUTHORING_REJECTED`，不会把隐藏的证据 Function 作为注册成功。
 提供已有 Function 时，`enhance=true` 仍只增强该 Function。
+Bridge 注册时将编译器源页面合并到 Store 旁的 `transfer_states.json`，并复制截图到
+`transfer_screenshots/`，先保存证据再发布 Function。此聚合目录的 `run_id` 是 Store
+名称，不是单条 source trajectory。重新启动 Bridge 后读取这些源页面，不依赖原 RunLog
+继续存在；同一 state ID 的内容冲突会拒绝注册。持久化回归已通过，设备回放待真机验证。
 Agent 必须先逐步区分 `stable`、`task_parameter` 和 `online_observation`：稳定值可按
 Source 默认值复用；任务参数必须声明参数名和完整的 action/render binding；依赖当前
 页面读取、计算或条件判断的动作必须保留给在线 Planner。完成分类后，Agent 再从成功

@@ -25,6 +25,7 @@ from omniflow.functions.management import enhance_function
 from omniflow.runlog import import_run_log_evidence
 from omniflow.runtime.engine import InputRequired, OmniFlow
 from omniflow.vlm.planner import VLMPlanner
+from omniflow.transfer.runtime import TRANSFER_STATE_CATALOG_FILENAME, load_transfer_state_catalog
 
 PROTOCOL_VERSION = "2025-11-25"
 _DEFAULT_GUI_MAX_STEPS = 20
@@ -555,6 +556,7 @@ class JsonLineBridge:
                     for function_id in report["function_ids"]
                     if (function := compiled.store.get_function(function_id)) is not None
                 ]
+                self.flow.store.import_transfer_states(report["transfer_state_catalog"])
         except ValueError as error:
             return _save_compile_error(error)
         if not functions:
@@ -713,6 +715,11 @@ class _BridgeHost:
         return str(response.get("value") or "")
 
     def get_state(self, source_state_id: str) -> Observation:
+        catalog = load_transfer_state_catalog(
+            self.bridge.flow.store.path.parent / TRANSFER_STATE_CATALOG_FILENAME
+        )
+        if source_state_id in catalog:
+            return _state_observation(catalog[source_state_id])
         return _state_observation(
             self.bridge.host_call(
                 self.request_id, "get_state", {"state_id": source_state_id}

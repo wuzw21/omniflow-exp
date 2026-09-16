@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Iterable
 
@@ -54,6 +55,45 @@ class FunctionStore:
         self._normalize_visibility()
         self.save()
         return function
+
+    def import_transfer_states(self, catalog_path: str | Path) -> None:
+        """Freeze compiler evidence before publishing Functions that reference it."""
+        from omniflow.transfer.runtime import (
+            TRANSFER_STATE_CATALOG_FILENAME,
+            TRANSFER_STATE_CATALOG_VERSION,
+            load_transfer_state_catalog,
+        )
+
+        destination = self.path.parent / TRANSFER_STATE_CATALOG_FILENAME
+        states = load_transfer_state_catalog(destination)
+        incoming = load_transfer_state_catalog(catalog_path)
+        for state_id, state in incoming.items():
+            screenshot = state.get("screenshot_path")
+            if screenshot:
+                source = Path(screenshot)
+                content = source.read_bytes()
+                digest = hashlib.sha256(content).hexdigest()
+                frozen = self.path.parent / "transfer_screenshots" / (digest + source.suffix)
+                frozen.parent.mkdir(parents=True, exist_ok=True)
+                if not frozen.exists():
+                    temporary = frozen.with_suffix(frozen.suffix + ".tmp")
+                    temporary.write_bytes(content)
+                    temporary.replace(frozen)
+                elif frozen.read_bytes() != content:
+                    raise ValueError("function_source_screenshot_conflict")
+                state["screenshot_path"] = str(frozen.resolve())
+            if state_id in states and states[state_id] != state:
+                raise ValueError(f"function_source_state_conflict:{state_id}")
+            states[state_id] = state
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps({
+            "schema_version": TRANSFER_STATE_CATALOG_VERSION,
+            # This is the aggregate Store catalog, not one source trajectory.
+            "run_id": self.path.stem,
+            "states": states,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
 
     def delete_function(self, function_id: str) -> bool:
         normalized = str(function_id or "").strip()

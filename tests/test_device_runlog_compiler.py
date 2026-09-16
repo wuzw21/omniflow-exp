@@ -6,7 +6,9 @@ from io import StringIO
 from omniflow.functions.artifact import parse_function_artifact
 from omniflow.functions.compiler import compile_runlog_to_store
 from omniflow.runlog import import_run_log_evidence
-from omniflow.bridge import JsonLineBridge
+from omniflow.bridge import JsonLineBridge, _BridgeHost
+from omniflow.transfer.runtime import load_transfer_state_catalog
+import pytest
 
 
 def _state(xml: str = "<hierarchy />") -> dict:
@@ -274,3 +276,52 @@ def test_rejected_host_authoring_does_not_register_hidden_fallback_as_success(tm
     assert result["error"]["code"] == "FUNCTION_AUTHORING_REJECTED"
     assert len(calls) == 3
     assert bridge.flow.store.get_function("complete_source_workflow") is None
+
+
+def test_registered_source_survives_screenshot_cleanup_and_bridge_restart(tmp_path) -> None:
+    screenshot = tmp_path / "recording.png"
+    screenshot.write_bytes(b"immutable screenshot evidence")
+    run_log = _run_log()
+    run_log["steps"][0]["observation"]["pixels"] = {
+        "path": str(screenshot), "width": 1000, "height": 1000, "mime_type": "image/png",
+    }
+    path = tmp_path / "registered" / "store.json"
+    bridge = JsonLineBridge(path, reader=StringIO(), writer=StringIO())
+    result = bridge._save_function("save", {"run_log": run_log})
+    assert result["success"] is True, result
+    state_id = result["function"]["steps"][0]["source_state_id"]
+    screenshot.unlink()
+
+    restarted = JsonLineBridge(path, reader=StringIO(), writer=StringIO())
+    def unavailable_host(*args):
+        raise AssertionError("Registered evidence must not depend on old RunLog storage")
+    restarted.host_call = unavailable_host
+    observation = _BridgeHost(restarted, "replay").get_state(state_id)
+    catalog = load_transfer_state_catalog(path.parent / "transfer_states.json")
+    assert observation.xml == run_log["steps"][0]["observation"]["xml"]
+    from pathlib import Path
+    assert Path(catalog[state_id]["screenshot_path"]).read_bytes() == b"immutable screenshot evidence"
+
+
+def test_state_import_keeps_earlier_evidence_and_rejects_identity_conflict(tmp_path) -> None:
+    path = tmp_path / "registered" / "store.json"
+    bridge = JsonLineBridge(path, reader=StringIO(), writer=StringIO())
+    first = bridge._save_function("first", {"run_log": _run_log()})
+    first_id = first["function"]["steps"][0]["source_state_id"]
+    second_log = _run_log()
+    second_log["run_id"] = "second-run"
+    second_log["steps"][0]["observation"]["xml"] = '<hierarchy page="second" />'
+    second = bridge._save_function("second", {"run_log": second_log})
+    second_id = second["function"]["steps"][0]["source_state_id"]
+    catalog_path = path.parent / "transfer_states.json"
+    before = catalog_path.read_bytes()
+    assert {first_id, second_id} <= load_transfer_state_catalog(catalog_path).keys()
+    bridge.flow.store.import_transfer_states(catalog_path)
+    assert catalog_path.read_bytes() == before
+    conflict = json.loads(before)
+    conflict["states"][first_id]["xml"] = '<hierarchy overwritten="true" />'
+    conflict_path = tmp_path / "conflict.json"
+    conflict_path.write_text(json.dumps(conflict))
+    with pytest.raises(ValueError, match="function_source_state_conflict"):
+        bridge.flow.store.import_transfer_states(conflict_path)
+    assert catalog_path.read_bytes() == before
