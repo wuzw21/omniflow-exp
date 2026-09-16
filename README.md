@@ -140,6 +140,11 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 ```
 
 OmniFlow 的 Function 转换由 A 端 authoring Agent 和无语义判定的 Compiler 完成。
+设备 Bridge 的 `save_function` 可用 `run_log`（或 `run_id`）加 `enhance=true`
+调用宿主 `complete_json`，复用同一个 Compiler 的语义方案校验与反馈流程。
+宿主负责模型配置和 token 统计；Compiler 记录 authoring 调用次数。连续方案被拒绝时，
+Bridge 返回 `FUNCTION_AUTHORING_REJECTED`，不会把隐藏的证据 Function 作为注册成功。
+提供已有 Function 时，`enhance=true` 仍只增强该 Function。
 Agent 必须先逐步区分 `stable`、`task_parameter` 和 `online_observation`：稳定值可按
 Source 默认值复用；任务参数必须声明参数名和完整的 action/render binding；依赖当前
 页面读取、计算或条件判断的动作必须保留给在线 Planner。完成分类后，Agent 再从成功

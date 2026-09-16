@@ -445,11 +445,6 @@ class JsonLineBridge:
         supplied_arguments = body.get("arguments")
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
-        if enhance and supplied_function is None:
-            return _save_error(
-                "FUNCTION_ENHANCEMENT_INPUT_REQUIRED",
-                "functions is required when enhance=true",
-            )
         if supplied_run_log is not None:
             try:
                 run_log = _load_run_log_input(supplied_run_log)
@@ -491,12 +486,14 @@ class JsonLineBridge:
             with tempfile.TemporaryDirectory(prefix="omniflow-compile-") as output_root:
                 if enhance:
                     def complete_json(prompt: str) -> str:
+                        if supplied_function is None and body.get("instruction"):
+                            prompt += "\n\nAuthoring instruction:\n" + str(body["instruction"])
                         response = self.host_call(
                             request_id,
                             "complete_json",
                             {
                                 "prompt": prompt,
-                                "max_tokens": 512,
+                                "max_tokens": 512 if supplied_function is not None else 8192,
                                 "temperature": 0,
                             },
                         )
@@ -507,13 +504,14 @@ class JsonLineBridge:
                             raise ValueError("function_enhancer_response_invalid")
                         return content
 
-                    enhanced, _, _ = enhance_function(
-                        supplied_function,
-                        run_log,
-                        complete_json,
-                        instruction=str(body.get("instruction") or ""),
-                    )
-                    supplied_function = enhanced
+                    if supplied_function is not None:
+                        enhanced, _, _ = enhance_function(
+                            supplied_function,
+                            run_log,
+                            complete_json,
+                            instruction=str(body.get("instruction") or ""),
+                        )
+                        supplied_function = enhanced
                 function_bundle = None
                 if supplied_function is not None:
                     function_id = str(supplied_function.get("function_id") or "").strip()
@@ -527,6 +525,8 @@ class JsonLineBridge:
                         "functions": [supplied_function],
                     }
                 compile_options: dict[str, Any] = {}
+                if enhance and supplied_function is None:
+                    compile_options["complete_json"] = complete_json
                 if supplied_run_log is not None:
                     _, source_states = import_run_log_evidence(run_log)
                     compile_options["source_states"] = source_states
@@ -542,6 +542,13 @@ class JsonLineBridge:
                     function_bundle=function_bundle,
                     **compile_options,
                 )
+                if enhance and supplied_function is None and not report.get(
+                    "authoring_workflow", {}
+                ).get("agent_proposal_accepted"):
+                    return _save_error(
+                        "FUNCTION_AUTHORING_REJECTED",
+                        "The compiler rejected the semantic Function proposal",
+                    )
                 compiled = OmniFlow(Path(output_root) / "store.json")
                 functions = [
                     function

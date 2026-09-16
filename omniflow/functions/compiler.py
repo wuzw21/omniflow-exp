@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 from omniflow.core.trajectory import require_complete_source_run_log, state_id
@@ -218,6 +218,7 @@ def compile_runlog_to_store(
     timeout: float = 120.0,
     source_states: str | Path | dict[str, Any] | None = None,
     state_loader: Any | None = None,
+    complete_json: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Register strict v2 Functions and their referenced source states."""
     from omniflow.functions.artifact import bind_function, parse_function_artifact
@@ -430,13 +431,13 @@ def compile_runlog_to_store(
     }
     authoring_attempt_trace: list[dict[str, Any]] = []
     if function_bundle is not None:
-        if client is not None or prompt is not None:
+        if client is not None or prompt is not None or complete_json is not None:
             raise ValueError("function_bundle_cannot_use_author_model_options")
         authored = {
             "reason": "Registered the supplied Function Schema.",
             "bundle": json.loads(json.dumps(function_bundle, ensure_ascii=False)),
         }
-    elif selected_model is None:
+    elif selected_model is None and complete_json is None:
         if client is not None or prompt is not None:
             raise ValueError("author_model_required_for_author_options")
         # Device RunLog registration must not require a second Kotlin
@@ -446,7 +447,9 @@ def compile_runlog_to_store(
         # deterministic complete Function.
         authored = _raw_source_replay_authoring(facts)
     else:
-        if client is None:
+        if complete_json is not None and client is not None:
+            raise ValueError("authoring_transport_ambiguous")
+        if client is None and complete_json is None:
             try:
                 from openai import OpenAI
             except ImportError as exc:
@@ -474,7 +477,7 @@ def compile_runlog_to_store(
                         "replacement object. Do not patch the prior response."
                     ),
                 }
-            response = client.chat.completions.create(
+            response = None if complete_json is not None else client.chat.completions.create(
                 model=selected_model,
                 messages=[
                     {"role": "system", "content": authoring_prompt},
@@ -508,7 +511,11 @@ def compile_runlog_to_store(
             usage["total_tokens"] += (
                 total_tokens or prompt_tokens + completion_tokens
             )
-            raw_author_response = str(response.choices[0].message.content or "")
+            raw_author_response = (
+                complete_json(authoring_prompt + "\n\n" + json.dumps(request_payload, ensure_ascii=False))
+                if complete_json is not None
+                else str(response.choices[0].message.content or "")
+            )
             try:
                 proposal = json.loads(raw_author_response)
                 authored = _materialize_authoring_response(

@@ -222,3 +222,55 @@ def test_save_function_bridge_enhances_and_registers_the_same_function(
     assert result["functions"] == [result["function"]]
     assert len(model_calls) == 1
     assert model_calls[0]["max_tokens"] == 512
+
+
+def test_runlog_authoring_uses_host_model_and_compiler_feedback(tmp_path) -> None:
+    bridge = JsonLineBridge(tmp_path / "store.json", reader=StringIO(), writer=StringIO())
+    prompts = []
+    proposal = {
+        "binding_owner": "agent",
+        "reason": "The recorded navigation is stable.",
+        "semantic_analysis": {"steps": [{
+            "source_step_index": 0, "semantic_kind": "stable",
+            "parameter_names": [], "reason": "Fixed navigation target.",
+        }]},
+        "functions": [],
+        "complete_function": {
+            "function_id": "open_done", "name": "Open done",
+            "description": "Open the completion page.",
+            "source_step_indices": [0], "execution_mode": "direct_replay",
+            "parameters": [],
+        },
+    }
+
+    def host(request_id, method, payload):
+        assert method == "complete_json"
+        assert payload["max_tokens"] == 8192
+        prompts.append(payload["prompt"])
+        return {"content": json.dumps({} if len(prompts) == 1 else proposal)}
+
+    bridge.host_call = host
+    result = bridge._save_function("author", {"run_log": _run_log(), "enhance": True})
+    assert result["success"] is True
+    assert len(prompts) == 2
+    assert '"harness_feedback"' in prompts[1]
+    function = parse_function_artifact(result["function"])
+    assert function.function_id == "open_done"
+    assert function.steps[0].action.to_dict() == {"tool": "click", "args": {"x": 500, "y": 500}}
+    assert function.agent_visible is True
+
+
+def test_rejected_host_authoring_does_not_register_hidden_fallback_as_success(tmp_path) -> None:
+    bridge = JsonLineBridge(tmp_path / "store.json", reader=StringIO(), writer=StringIO())
+    calls = []
+
+    def host(request_id, method, payload):
+        calls.append(payload)
+        return {"content": "{}"}
+
+    bridge.host_call = host
+    result = bridge._save_function("author", {"run_log": _run_log(), "enhance": True})
+    assert result["success"] is False
+    assert result["error"]["code"] == "FUNCTION_AUTHORING_REJECTED"
+    assert len(calls) == 3
+    assert bridge.flow.store.get_function("complete_source_workflow") is None
