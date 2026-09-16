@@ -548,18 +548,7 @@ async def _dispatch_prepared(
     force_fresh_observation: bool = False,
 ) -> StepResult:
     if action.tool == "open_app":
-        from src.integrations.android_world.apps import (
-            canonicalize_androidworld_package,
-        )
-
-        package_name = canonicalize_androidworld_package(
-            str(action.args.get("package_name") or "").strip()
-        )
-        if package_name != str(action.args.get("package_name") or "").strip():
-            action = replace(
-                action,
-                args={**action.args, "package_name": package_name},
-            )
+        package_name = str(action.args.get("package_name") or "").strip()
         if installed_packages is None:
             return StepResult(
                 False,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 from types import SimpleNamespace
 
 from omniflow.core.model import Action, Function, Observation, StepResult
@@ -11,6 +12,41 @@ from omniflow.vlm.gui import (
     project_planner_context,
 )
 from omniflow.vlm.function_router import VLMFunctionRouter
+
+
+def test_open_app_uses_host_catalog_without_benchmark_import(monkeypatch) -> None:
+    original_import = builtins.__import__
+
+    def import_without_benchmark(name, *args, **kwargs):
+        if name == "src" or name.startswith("src."):
+            raise ModuleNotFoundError("No module named 'src'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_benchmark)
+    # This package name is valid on some phones and must not be remapped to
+    # another vendor's contacts application by a benchmark alias table.
+    package = "com.android.contacts"
+    call, _ = parse_model_turn_response(
+        {"requested_model": "test", "tool_calls": [{"function": {"name": "open_app", "arguments":
+         '{"package_name":"com.android.contacts"}'}}]},
+        requested_model="test", turn_index=1, installed_apps={"Contacts": package},
+    )
+    assert call.arguments["package_name"] == package
+
+    import omniflow.runtime.execution as execution
+    observation = Observation(xml="<hierarchy />", package_name=package)
+
+    async def dispatch(action, **kwargs):
+        return StepResult(True, action=action, before=observation, after=observation)
+
+    monkeypatch.setattr(execution, "execute_core_action", dispatch)
+    result = asyncio.run(execution._dispatch_prepared(
+        Action("open_app", {"package_name": package}), observation=observation,
+        host=SimpleNamespace(observe=lambda **kwargs: observation),
+        installed_packages=frozenset({package}),
+    ))
+    assert result.success
+    assert result.action.args["package_name"] == package
 
 
 def _function() -> Function:
