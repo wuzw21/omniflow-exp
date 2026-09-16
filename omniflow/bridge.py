@@ -517,6 +517,11 @@ class JsonLineBridge:
                                 "prompt": prompt,
                                 "max_tokens": 512 if supplied_function is not None else 8192,
                                 "temperature": 0,
+                                # Match the GUI planner's structured tool mode.
+                                # Reasoning-only provider output cannot author
+                                # a Function and must not consume the JSON budget.
+                                "enable_thinking": False,
+                                "thinking": {"type": "disabled"},
                             },
                         )
                         if not isinstance(response, dict):
