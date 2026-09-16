@@ -159,11 +159,11 @@ class JsonLineBridge:
         if tool == _RUN_GUI_TOOL:
             metadata = body.get("_meta")
             run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-            return self._run(request_id, {**args, **run_metadata})
+            return self._complete_run(request_id, self._run(request_id, {**args, **run_metadata}))
         if tool == "run_function":
             metadata = body.get("_meta")
             run_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-            return self._run_function(request_id, {**args, **run_metadata})
+            return self._complete_run(request_id, self._run_function(request_id, {**args, **run_metadata}))
         if tool not in _MANAGEMENT_TOOL_NAMES:
             raise ValueError(f"tool_not_exposed:{tool}")
 
@@ -233,6 +233,25 @@ class JsonLineBridge:
             "UNKNOWN_FUNCTION_MANAGEMENT_TOOL",
             f"Unknown Function management tool: {tool}",
         )
+
+    def _complete_run(self, request_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Commit device evidence through its owner, then perform package-owned registration."""
+        actions = result.pop("post_run_actions", None) or []
+        if not actions:
+            return result
+        self.host_call(request_id, "finish_run", result)
+        for action in actions:
+            try:
+                saved = self._call_tool(request_id, action)
+                result.update(
+                    auto_registered=saved.get("success") is True and saved.get("registered") is True,
+                    registered_function_id=saved.get("function_id"),
+                    registration_status=saved.get("status"),
+                    registration_error=saved.get("error"),
+                )
+            except Exception as error:
+                result.update(auto_registered=False, registration_error=str(error))
+        return result
 
     def _run_function(
         self,
@@ -424,7 +443,9 @@ class JsonLineBridge:
         supplied_functions = body.get("functions")
         run_id = str(body.get("run_id") or "").strip()
         supplied_run_log = body.get("run_log")
-        enhance = body.get("enhance") is True
+        # A RunLog is evidence, not an authored Function. All hosts use the
+        # same canonical authoring path without having to know this flag.
+        enhance = body.get("enhance", supplied_function is None and supplied_functions is None) is True
         if supplied_function is not None and not isinstance(supplied_function, dict):
             return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
         if supplied_functions is not None:
@@ -795,12 +816,32 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
             },
         }
     if name != "save_function":
-        return {"name": name, "inputSchema": {"type": "object"}}
+        definitions = {
+            "list_functions": ("List registered GUI Functions.", {"limit": "integer", "offset": "integer", "include_hidden": "boolean"}, []),
+            "get_function": ("Read a registered Function.", {"function_id": "string"}, ["function_id"]),
+            "delete_function": ("Delete a registered Function.", {"function_id": "string"}, ["function_id"]),
+            "clear_functions": ("Delete all Functions after explicit confirmation.", {"confirm": "boolean"}, ["confirm"]),
+            "list_run_logs": ("List recorded GUI executions.", {"limit": "integer", "offset": "integer", "source": "string", "status": "string", "model": "string", "query": "string"}, []),
+            "get_run_log": ("Read a GUI execution and its evidence.", {"run_id": "string"}, ["run_id"]),
+            "get_run_log_state": ("Read a recorded screen observation.", {"state_id": "string"}, ["state_id"]),
+            "run_gui": ("Execute a GUI goal using the configured planner and Function runtime.", {"goal": "string", "max_steps": "integer", "target_package_name": "string"}, ["goal"]),
+        }
+        description, properties, required = definitions[name]
+        return {
+            "name": name,
+            "description": description,
+            "inputSchema": {
+                "type": "object",
+                "properties": {key: {"type": value} for key, value in properties.items()},
+                "required": required,
+                "additionalProperties": False,
+            },
+        }
     return {
         "name": name,
         "description": (
-            "Save one reusable Function. Pass run_id or a RunLog object for deterministic "
-            "registration. For official semantic enhancement, pass the existing Function "
+            "Compile reusable Functions from a successful RunLog using canonical semantic "
+            "authoring. Pass run_id or run_log. For enhancement, pass the existing Function "
             "in functions, set enhance=true, and optionally provide instruction. The "
             "enhancer may change only semantic metadata and evidence-backed parameters; "
             "actions, coordinates, source states, and function_id remain immutable."

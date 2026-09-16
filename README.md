@@ -3,6 +3,13 @@
 Version **1.0.0** is the preserved baseline before the host-harness refactor.
 Release scope and validation are recorded in [release notes](docs/RELEASE_NOTES.md).
 
+The Android package bridge owns its management tool schemas and RunLog authoring
+policy. `save_function` with RunLog evidence and no supplied Function invokes the
+canonical semantic compiler by default; explicit `enhance=false` remains available
+for evidence-only compilation. Android commits execution evidence through
+`finish_run`; the package then performs automatic registration and reports its
+separate outcome without changing a successful device result into a failure.
+
 当前开发版将内核与宿主控制分开：内置 Planner 调用 `OmniFlow.arun`，外部 Agent
 只接入两个服务：`omniflow_recall` 召回 Function，`omniflow_execute` 执行 Function。
 Python 内核对应 `OmniFlow.arecall` / `aexecute_function`；它们与内置循环共用原来的
