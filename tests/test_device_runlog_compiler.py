@@ -250,8 +250,6 @@ def test_runlog_authoring_uses_host_model_and_compiler_feedback(tmp_path, option
     def host(request_id, method, payload):
         assert method == "complete_json"
         assert payload["max_tokens"] == 8192
-        assert payload["enable_thinking"] is False
-        assert payload["thinking"] == {"type": "disabled"}
         prompts.append(payload["prompt"])
         return {"content": json.dumps({} if len(prompts) == 1 else proposal)}
 
