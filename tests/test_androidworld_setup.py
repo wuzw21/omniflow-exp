@@ -6,6 +6,46 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_mobilegpt_server_uses_upstream_and_memory_cannot_replace_code(tmp_path, monkeypatch):
+    from pathlib import Path
+    from src.integrations.official_forward import prepare_mobilegpt_server
+
+    root = tmp_path / "upstream"
+    server = root / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "main.py").write_text("server_port = 12345\n")
+    (server / "server.py").write_text("upstream protocol")
+    (server / "memory/memory_manager.py").write_text("upstream memory")
+    stale = tmp_path / "stale/server"
+    stale.mkdir(parents=True)
+    (stale / "main.py").write_text("patched server")
+    monkeypatch.setenv("OMNIFLOW_MOBILEGPT_RUNTIME_ROOT", str(stale.parent))
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "memory_manager.py").write_text("old adapter")
+    (memory / "tasks.csv").write_text("learned task")
+    result = prepare_mobilegpt_server(
+        official_root=root, memory_root=memory, workspace=tmp_path / "run", port=17562
+    )
+    staged = Path(result["server_root"])
+    assert (staged / "main.py").read_text() == "server_port = 17562\n"
+    assert (staged / "server.py").read_text() == "upstream protocol"
+    assert (staged / "memory/memory_manager.py").read_text() == "upstream memory"
+    assert (staged / "memory/tasks.csv").read_text() == "learned task"
+
+
+def test_mobilegpt_native_environment_does_not_alias_provider_credentials(monkeypatch):
+    from src.experiment import run_task
+
+    monkeypatch.setattr(run_task, "_local_dotenv_env", lambda **kwargs: {})
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("LLMTHU_API_KEY", "test-other-provider")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+    env = run_task._subprocess_env({"MOBILEGPT_CLIENT_MODE": "upstream_accessibility"})
+    assert "OPENAI_API_KEY" not in env
+    assert env["OPENAI_BASE_URL"] == "https://example.invalid/v1"
+
+
 def test_mobilegpt_apk_preserves_upstream_client_except_server_address(tmp_path, monkeypatch):
     from pathlib import Path
     from src.integrations import official_forward

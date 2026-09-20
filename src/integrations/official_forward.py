@@ -969,123 +969,64 @@ def prepare_mobilegpt_server(
     embedding_model: str = "",
     chat_model: str = "",
     write_through_memory: bool = False,
+    port: int = 12345,
 ) -> dict[str, str]:
-    """Stage the official Server so its documented relative ``./memory`` works."""
-
+    """Stage upstream code without planner, protocol or response patches."""
+    if embedding_model or chat_model:
+        raise ValueError("upstream_mobilegpt_model_override_requires_explicit_configuration")
     root = Path(official_root).expanduser().resolve()
-    persistent_root_value = str(
-        os.environ.get("OMNIFLOW_MOBILEGPT_RUNTIME_ROOT") or ""
-    ).strip()
-    persistent_root = Path(persistent_root_value).expanduser() if persistent_root_value else None
-    persistent_source = persistent_root / "server" if persistent_root is not None else Path()
-    source = (
-        persistent_source
-        if (persistent_source / "main.py").is_file()
-        else root / "Server"
-    )
-    using_persistent_server = source == persistent_source
+    source = root / "Server"
+    memory = Path(memory_root).expanduser().resolve()
     work = Path(workspace).expanduser().resolve()
     target = work / "Server"
     if not (source / "main.py").is_file():
-        raise FileNotFoundError(f"official_mobilegpt_server_missing:{source / 'main.py'}")
-    memory = Path(memory_root).expanduser().resolve()
+        raise FileNotFoundError(f"official_mobilegpt_server_missing:{source}")
     if not memory.is_dir():
         raise FileNotFoundError(f"official_mobilegpt_memory_missing:{memory}")
+    work.mkdir(parents=True, exist_ok=False)
+    if (root / ".git").exists():
+        tracked = subprocess.check_output(
+            ["git", "ls-files", "-z", "Server"], cwd=root
+        ).decode().split("\0")
+        for name in filter(None, tracked):
+            destination = work / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(root / name, destination)
+    else:
+        shutil.copytree(source, target, symlinks=True)
+    # main.py documents deployment configuration; preserve all agent code.
+    main = target / "main.py"
+    source_main = main.read_text(encoding="utf-8")
+    if int(port) != 12345:
+        configured, count = re.subn(
+            r"(server_port\s*=\s*)12345", rf"\g<1>{int(port)}", source_main
+        )
+        if count != 1:
+            raise ValueError("upstream_mobilegpt_server_port_configuration_missing")
+        main.write_text(configured, encoding="utf-8")
+    staged_memory = target / "memory"
     overlay = memory / "frozen_memory"
     if not overlay.is_dir():
         overlay = memory
-    work.mkdir(parents=True, exist_ok=False)
-    shutil.copytree(source, target, symlinks=True)
-    # Patch only provider routing, wire compatibility and telemetry in the
-    # disposable Server copy. MobileGPT's memory lookup, task selection,
-    # planner and action state machine remain upstream behavior. A prepared
-    # runtime contains this compatibility layer already, so normal episodes
-    # only copy the immutable server template and overlay their own Memory.
-    # Some pinned checkouts already import the experiment's optional
-    # telemetry hook from ``utils``.  Provide that hook in the disposable
-    # workspace only, so a stale checkout cannot prevent the official server
-    # from starting.
-    staged_utils = target / "utils" / "utils.py"
-    staged_server = target / "server.py"
-    if (
-        not using_persistent_server
-        and
-        staged_utils.is_file()
-        and staged_server.is_file()
-        and "write_omniflow_mobilegpt_event" in staged_server.read_text(
-            encoding="utf-8"
-        )
-        and "def write_omniflow_mobilegpt_event" not in staged_utils.read_text(
-            encoding="utf-8"
-        )
-    ):
-        with staged_utils.open("a", encoding="utf-8") as handle:
-            handle.write(
-                "\n\n"
-                "def write_omniflow_mobilegpt_event(event):\n"
-                "    path = os.environ.get('MOBILEGPT_STATS_JSONL', '').strip()\n"
-                "    if not path:\n"
-                "        return\n"
-                "    parent = os.path.dirname(path)\n"
-                "    if parent:\n"
-                "        os.makedirs(parent, exist_ok=True)\n"
-                "    payload = dict(event) if isinstance(event, dict) else {'event': str(event)}\n"
-                "    with open(path, 'a', encoding='utf-8') as output:\n"
-                "        output.write(json.dumps(payload, ensure_ascii=False) + '\\n')\n"
-            )
-    # The official checkout hard-codes the OpenAI embedding default and some
-    # legacy chat aliases.  Configure only the disposable staging copy so the
-    # whole MobileGPT chat path uses the experiment's Qwen endpoint; the upstream
-    # checkout and its planner/action implementation remain untouched.
-    if not using_persistent_server:
-        _configure_mobilegpt_server(
-            target,
-            embedding_model=embedding_model,
-        )
-        _configure_mobilegpt_chat_model(target, chat_model=chat_model)
-        _configure_mobilegpt_json_query(target)
-        _configure_mobilegpt_response_compat(target)
-        _configure_mobilegpt_optional_completion_rate(target)
-        _configure_mobilegpt_action_shape_compat(target)
-        _configure_mobilegpt_selection_compat(target)
-        _configure_mobilegpt_system_app_catalog(target)
-        _configure_mobilegpt_empty_memory_csv_compat(target)
-        _configure_mobilegpt_target_package_fallback(target)
-        _configure_mobilegpt_client_error_transport(target)
-        _configure_mobilegpt_empty_xml_transport(target)
-        _configure_mobilegpt_qa_transport(target)
-    _configure_mobilegpt_app_discovery_transport(target)
-    if using_persistent_server:
-        _configure_mobilegpt_response_compat(target)
-    staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
-            raise ValueError(
-                f"official_mobilegpt_cold_memory_not_empty:{memory}"
-            )
-        # Upstream keeps both its Python memory package and the learned CSV
-        # graph under ``Server/memory``.  Seed the empty persistent directory
-        # with that exact staged package before linking it back into Server;
-        # otherwise replacing the directory with an empty symlink removes
-        # ``memory.memory_manager`` and the official server cannot import.
+            raise ValueError(f"official_mobilegpt_cold_memory_not_empty:{memory}")
         shutil.copytree(staged_memory, memory, symlinks=True, dirs_exist_ok=True)
-        if staged_memory.is_symlink() or staged_memory.is_file():
-            staged_memory.unlink()
-        elif staged_memory.is_dir():
-            shutil.rmtree(staged_memory)
+        shutil.rmtree(staged_memory)
         staged_memory.symlink_to(memory, target_is_directory=True)
     else:
-        for entry in overlay.iterdir():
-            destination = staged_memory / entry.name
+        # Memory includes upstream Python modules as well as learned data.
+        # Do not allow a converted asset to replace the executable code.
+        for entry in overlay.rglob("*"):
+            relative = entry.relative_to(overlay)
+            if "__pycache__" in relative.parts or entry.suffix in {".py", ".pyc"}:
+                continue
+            destination = staged_memory / relative
             if entry.is_dir():
-                shutil.copytree(entry, destination, symlinks=True, dirs_exist_ok=True)
-            else:
+                destination.mkdir(parents=True, exist_ok=True)
+            elif entry.is_file():
+                destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(entry, destination)
-        # The overlay may contain its own upstream Python memory package and
-        # therefore overwrite the compatibility edits above. Re-apply them
-        # after the learned CSV/Memory overlay is materialized in staging.
-        if not using_persistent_server:
-            _configure_mobilegpt_empty_memory_csv_compat(target)
     return {
         "workspace": str(work),
         "server_root": str(target),
@@ -1097,8 +1038,8 @@ def prepare_mobilegpt_runtime(
     *,
     official_root: str | Path,
     runtime_root: str | Path,
-    embedding_model: str = "GLM-Embedding-2",
-    chat_model: str = "Qwen3.6-Plus",
+    embedding_model: str = "",
+    chat_model: str = "",
 ) -> dict[str, str]:
     """Build the immutable MobileGPT server template once for a host.
 
@@ -2769,9 +2710,9 @@ def _mobilegpt_protocol_probe(
     return {
         "schema_version": "omniflow.mobilegpt_protocol_probe.v1",
         "stats_event_count": len(events),
-        "task_started": task_started > 0,
+        "task_started": task_started > 0 or "receive broadcast" in lowered,
         "task_started_count": task_started,
-        "task_finished": task_finished > 0,
+        "task_finished": task_finished > 0 or "task finished" in lowered,
         "task_finished_count": task_finished,
         "action_sent_count": action_sent,
         "client_service_ready": "# of apps" in lowered,
@@ -2825,7 +2766,6 @@ def _run_mobilegpt_client(
     )
     client_root = Path(client_workspace.name) / "official_client"
     shutil.copytree(root / "App", client_root)
-    _configure_mobilegpt_client_launch_lifecycle(client_root)
     global_java = (
         client_root
         / "app/src/main/java/com/example/MobileGPT/MobileGPTGlobal.java"
@@ -2856,18 +2796,6 @@ def _run_mobilegpt_client(
             f"sdk.dir={sdk}\n",
             encoding="utf-8",
         )
-    plugin_version = str(
-        os.environ.get("OMNIFLOW_ANDROID_GRADLE_PLUGIN") or "8.13.2"
-    ).strip()
-    build_file = client_root / "build.gradle"
-    build_file.write_text(
-        re.sub(
-            r"version ['\"]8\.0\.1['\"]",
-            f"version '{plugin_version}'",
-            build_file.read_text(encoding="utf-8"),
-        ),
-        encoding="utf-8",
-    )
     configured_apk = str(os.environ.get("OMNIFLOW_MOBILEGPT_APK") or "").strip()
     if reuse_installed_client:
         apk = Path()
@@ -3054,11 +2982,6 @@ def _run_mobilegpt_client(
     )
     stats_path = Path(os.environ.get("MOBILEGPT_STATS_JSONL", "")).expanduser()
     deadline = time.monotonic() + max(1.0, float(timeout_sec))
-    handshake_deadline = time.monotonic() + max(
-        1.0, float(handshake_timeout_sec)
-    )
-    last_action_count = 0
-    last_action_at = time.monotonic()
     last_log = ""
     server_log = Path(server_log_path).expanduser() if str(server_log_path).strip() else None
 
@@ -3190,67 +3113,8 @@ def _run_mobilegpt_client(
                     else "mobilegpt_server_handler_failed"
                 ),
             )
-        # Some pinned official MobileGPT Server versions do not emit the
-        # optional ``task_started`` telemetry event. They can nevertheless
-        # be fully alive: the accessibility client has received the goal and
-        # the server has already sent real device actions. Treating that
-        # state as a handshake timeout kills simple tasks in the middle of
-        # their official onboarding flow. An observed action is stronger
-        # evidence of a completed client/server handshake than the optional
-        # event, so only time out while no action has been sent at all.
-        if (
-            not probe["task_started"]
-            and _count_mobilegpt_device_actions(stats_path) == 0
-            and time.monotonic() >= handshake_deadline
-        ):
-            _run_adb(
-                adb_path,
-                serial,
-                ["shell", "am", "force-stop", "com.example.MobileGPT"],
-                check=False,
-            )
-            return finish_with_probe(
-                MOBILEGPT_HANDSHAKE_RETURN_CODE,
-                log,
-                "mobilegpt_handshake_timeout",
-            )
-        action_count = _count_mobilegpt_device_actions(stats_path)
-        if action_count != last_action_count:
-            last_action_count = action_count
-            last_action_at = time.monotonic()
-        if max_steps > 0 and action_count >= max_steps:
-            # MobileGPT has no upstream step cap; stop the client the same
-            # way every other formal method is bounded by --max-steps
-            # instead of only ever giving up on the wall-clock timeout.
-            _run_adb(
-                adb_path,
-                serial,
-                ["shell", "am", "force-stop", "com.example.MobileGPT"],
-                check=False,
-            )
-            return finish_with_probe(
-                MOBILEGPT_STEP_BUDGET_RETURN_CODE,
-                log,
-                "mobilegpt_step_budget_exhausted",
-            )
-        if (
-            max_steps > 0
-            and time.monotonic() - last_action_at >= MOBILEGPT_STEP_TIMEOUT_SEC
-        ):
-            # The official client can wait forever for the next server action
-            # even though the formal runner has a per-step budget. Bound that
-            # wait at the same 60-second step timeout used by AndroidWorld.
-            _run_adb(
-                adb_path,
-                serial,
-                ["shell", "am", "force-stop", "com.example.MobileGPT"],
-                check=False,
-            )
-            return finish_with_probe(
-                MOBILEGPT_STEP_TIMEOUT_RETURN_CODE,
-                log,
-                "mobilegpt_step_timeout",
-            )
+        # Upstream emits no injected action counters. Only the episode wall
+        # deadline bounds a live native client; absent telemetry is not a stall.
         time.sleep(1.0)
     # Keep the return contract identical to every earlier exit path.  The
     # AndroidWorld wrapper unpacks ``(returncode, episode_started)`` to compute
@@ -3281,18 +3145,7 @@ def run_mobilegpt_client(
     handshake_timeout_sec: float = MOBILEGPT_HANDSHAKE_TIMEOUT_SEC,
     server_log_path: str | Path = "",
 ) -> int:
-    """Reject the retired Accessibility client path.
-
-    Formal AndroidWorld runs invoke ``src.integrations.mobilegpt_oob_client``.
-    Keeping this legacy function as an explicit failure prevents a direct
-    ``official_forward`` invocation from silently bypassing the OOB physical
-    layer while preserving the upstream Server/Planner implementation.
-    """
-
-    raise RuntimeError(
-        "mobilegpt_legacy_accessibility_disabled_use_oob:"
-        "scripts/exp/run_androidworld.sh"
-    )
+    """Run the upstream Android client with official benchmark validation."""
 
     if not android_world_root or not task_name:
         return _run_mobilegpt_client(

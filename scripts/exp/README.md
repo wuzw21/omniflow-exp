@@ -1,5 +1,12 @@
 # AndroidWorld launcher
 
+2026-09-20 用户要求 MobileGPT 改用原版 Android Accessibility 客户端和 Server。
+`--method mobilegpt` 不再调用 `mobilegpt_oob_client`，也不向原版服务端注入
+JSON、QA、动作、应用发现或任务结束补丁。部署只配置客户端地址和对应服务端端口；
+模型配置由上游 checkout 决定，凭据使用其 OpenAI/GoogleSearch 环境配置。
+这些运行与历史 Qwen + OOB 结果协议不同，诊断时显式指定 `.archive/` 输出，
+不得混入既有论文结果。原生 E2E 仍待运行验证；模拟器不能代替真机验收。
+
 论文评测的冻结合同见
 [`docs/PAPER_FREEZE.md`](../../docs/PAPER_FREEZE.md)。本入口只负责把显式的
 task、method、device、source RunLog 和 Memory 交给既有主线；不会从历史目录

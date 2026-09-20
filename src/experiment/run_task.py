@@ -276,6 +276,10 @@ def _subprocess_env(
 ) -> dict[str, str]:
     dotenv_env = _local_dotenv_env(repo_root=repo_root)
     env = {**dotenv_env, **dict(os.environ), **dict(spec_env or {})}
+    if env.get("MOBILEGPT_CLIENT_MODE") == "upstream_accessibility":
+        # Native MobileGPT owns its models and provider configuration.
+        # Do not alias a different provider's key to OpenAI implicitly.
+        return env
     # The pinned MobileGPT Server uses the OpenAI-compatible client API for
     # both chat and embedding calls. Publish the canonical aliases once at the
     # common subprocess boundary so execution and memory authoring use the
@@ -2118,6 +2122,7 @@ def build_mobilegpt_server_command(
         raise FileNotFoundError(f"mobilegpt_server_root_missing:{server_root}")
     env: dict[str, str] = {}
     env["MOBILEGPT_SERVER_HOST"] = str(server_host or "0.0.0.0")
+    env["MOBILEGPT_CLIENT_MODE"] = "upstream_accessibility"
     env["MOBILEGPT_SERVER_PORT"] = str(int(port))
     env["PYTHONUNBUFFERED"] = "1"
     if serial.strip():
@@ -2143,24 +2148,8 @@ def build_mobilegpt_server_command(
     if resolved_action == "server":
         if resolved_memory_root is None:
             raise ValueError("mobilegpt_server_memory_required")
-        requested_embedding_model = str(embedding_model or "").strip()
-        if requested_embedding_model and requested_embedding_model != MOBILEGPT_EMBEDDING_MODEL:
-            raise ValueError("mobilegpt_embedding_model_is_fixed")
-        if write_through_memory:
-            # A cold official episode intentionally starts with an empty
-            # Memory directory, so there is no manifest to validate yet.
-            # The protocol fixes the embedding model for this boundary.
-            resolved_embedding_model = MOBILEGPT_EMBEDDING_MODEL
-        else:
-            resolved_embedding_model = _mobilegpt_memory_embedding_model(
-                resolved_memory_root,
-                manifest_path=(
-                    resolve_path(mobilegpt_memory_manifest)
-                    if mobilegpt_memory_manifest
-                    else None
-                ),
-            )
-        chat_model = require_formal_model(str(chat_model or FORMAL_MODEL).strip())
+        if embedding_model or chat_model:
+            raise ValueError("upstream_mobilegpt_models_are_configured_in_upstream_checkout")
         from src.integrations.official_forward import prepare_mobilegpt_server
 
         staged = resolved_memory_root.parent / "official_server_workspace"
@@ -2168,28 +2157,11 @@ def build_mobilegpt_server_command(
             official_root=root,
             memory_root=resolved_memory_root,
             workspace=staged,
-            embedding_model=resolved_embedding_model,
-            chat_model=chat_model,
+            port=port,
             write_through_memory=bool(write_through_memory),
         )
         staged_server_root = Path(forward["server_root"])
         env["MOBILEGPT_STATS_JSONL"] = str(resolve_path(stats_jsonl, root=repo_root))
-        # Keep the official action/list output as direct JSON while preserving
-        # the formal Qwen reasoning mode.  Leave enough completion room for
-        # selector/derive JSON on screens with many available actions.
-        env["MOBILEGPT_THINKING"] = FORMAL_THINKING
-        env["MOBILEGPT_MAX_TOKENS"] = "2048"
-        env["MOBILEGPT_LIST_MAX_TOKENS"] = "2048"
-        env["MOBILEGPT_REQUEST_TIMEOUT_SEC"] = "60"
-        # Bound the total provider chat calls for one formal episode.  The
-        # staged official server may issue several planner calls per device
-        # action; without this cap a stalled episode can consume hundreds of
-        # calls before the 600-second wall deadline.
-        env["MOBILEGPT_MAX_CHAT_CALLS"] = "64"
-        env["MOBILEGPT_RESPONSE_RETRIES"] = "1"
-        env["MOBILEGPT_EMBEDDING_MODEL"] = resolved_embedding_model
-        if chat_model:
-            env["MOBILEGPT_CHAT_MODEL"] = chat_model
         argv = [
             python_executable,
             str(staged_server_root / "main.py"),
@@ -2209,8 +2181,8 @@ def build_mobilegpt_server_command(
                 "state_backend": "official_mobilegpt",
                 "official_server": str(server_root / "main.py"),
                 "official_staged_server": str(staged_server_root / "main.py"),
-                "embedding_model": resolved_embedding_model,
-                "chat_model": chat_model,
+                "embedding_model": "text-embedding-3-small",
+                "chat_model": "upstream_main.py",
                 "external_forward_only": True,
                 "write_through_memory": bool(write_through_memory),
                 "log_path": str(staged_server_root.parent / "official_server.log"),
@@ -4398,13 +4370,15 @@ def build_mobilegpt_command(
     client_argv = [
         sys.executable,
         "-m",
-        "src.integrations.mobilegpt_oob_client",
+        "src.integrations.official_forward",
+        "--root",
+        str(resolve_path(mobilegpt_root, root=repo_root)),
         "--serial",
         target.serial,
         "--adb",
         str(adb_path or "adb"),
-        "--server-host",
-        str(server_host),
+        "--host",
+        "10.0.2.2",
         "--instruction",
         instruction,
         "--output",
@@ -4444,8 +4418,7 @@ def build_mobilegpt_command(
         "MOBILEGPT_STATS_JSONL": str(resolve_path(stats_jsonl, root=repo_root)),
         "MOBILEGPT_TARGET_PACKAGE": str(target_package or "").strip(),
         "MOBILEGPT_APP_READY_TIMEOUT_SEC": str(float(app_ready_timeout_sec)),
-        "MOBILEGPT_CLIENT_MODE": "official_oob",
-        "MOBILEGPT_OOB_SERVER_HOST": "127.0.0.1",
+        "MOBILEGPT_CLIENT_MODE": "upstream_accessibility",
         "OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND": str(
             client_runtime_env.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND")
             or os.environ.get("OMNIFLOW_ANDROIDWORLD_CONTROL_BACKEND")
@@ -4468,7 +4441,7 @@ def build_mobilegpt_command(
         if value:
             client_environment[key] = value
     return CommandSpec(
-        label=f"mobilegpt:oob:{target.label}",
+        label=f"mobilegpt:upstream:{target.label}",
         argv=client_argv,
         env=client_environment,
         cwd=repo_root,
@@ -4477,18 +4450,18 @@ def build_mobilegpt_command(
             float(timeout_sec) if timeout_sec is not None and timeout_sec > 0 else None
         ),
         metadata={
-            "mode": "mobilegpt_official_planner_oob_control",
+            "mode": "mobilegpt_upstream_client_server",
             "device_target": target.to_dict(),
             "mobilegpt_stats_jsonl": str(stats_jsonl),
             "mobilegpt_server_host": str(server_host),
             "mobilegpt_server_port": int(server_port),
             "target_package": str(target_package or "").strip(),
-            "official_lifecycle": "mobilegpt_server_and_oob_client",
+            "official_lifecycle": "mobilegpt_upstream_client_server",
             "official_server_entry": "Server/main.py",
-            "official_client_entry": "src.integrations.mobilegpt_oob_client",
+            "official_client_entry": "App/com.example.MobileGPT",
             "official_client_output": str(client_output),
-            "observe_backend": "oob_control",
-            "action_backend": "oob_control",
+            "observe_backend": "mobilegpt_accessibility",
+            "action_backend": "mobilegpt_accessibility",
             "external_forward_only": True,
             "app_ready_timeout_sec": float(app_ready_timeout_sec),
             "app_ready_poll_sec": float(app_ready_poll_sec),
@@ -4953,8 +4926,6 @@ def _run_result_mobilegpt(
                 mobilegpt_root=args.mobilegpt_root,
                 mobilegpt_memory_root=episode_memory_root,
                 mobilegpt_memory_manifest=source_manifest_path,
-                embedding_model=MOBILEGPT_EMBEDDING_MODEL,
-                chat_model=str(args.model or ""),
                 stats_jsonl=stats_jsonl,
                 server_host=args.mobilegpt_server_host,
                 port=int(args.mobilegpt_port),
@@ -4973,10 +4944,6 @@ def _run_result_mobilegpt(
                 ),
                 target_task_name=args.task,
                 write_through_memory=bool(cold_start),
-            )
-            server_spec = _configure_mobilegpt_formal_server(
-                server_spec,
-                model=str(args.model or ""),
             )
             browser_task_url = str(browser_task_prepare.get("url") or "").strip()
             if browser_task_url:
