@@ -600,6 +600,12 @@ def _run_mobilegpt_oob_transport(
         reason = "mobilegpt_oob_episode_incomplete"
     client_log = "\n".join(lines) + "\n"
     (output / "client_log.txt").write_text(client_log, encoding="utf-8")
+    # The launcher deletes its disposable server workspace after sealing the
+    # episode. Keep the upstream response/traceback with the durable evidence.
+    if server_log is not None and server_log.is_file():
+        server_log_output = output / "official_server.log"
+        if server_log.resolve() != server_log_output.resolve():
+            shutil.copy2(server_log, server_log_output)
     return {
         "returncode": 0 if task_finished else 124 if reason == "mobilegpt_episode_timeout" else 1,
         "reason": reason,

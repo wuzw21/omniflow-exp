@@ -122,6 +122,8 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
             self.actions.append(action)
 
     sock, oob = Socket(), Oob()
+    server_log = tmp_path / "disposable-server.log"
+    server_log.write_text("Upstream response and diagnostic evidence\n")
     monkeypatch.setattr(client.socket, "create_connection", lambda *a, **k: sock)
     monkeypatch.setattr(client, "OobControlClient", lambda *a, **k: oob)
     monkeypatch.setattr(client, "_prelaunch_target_package", lambda *a, **k: "com.android.settings")
@@ -129,7 +131,7 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     result = client._run_mobilegpt_oob_transport(
         serial="regression-device", adb_path="adb", server_host="127.0.0.1",
         server_port=12345, instruction=instruction, timeout_sec=10,
-        max_steps=10, output_root=tmp_path)
+        max_steps=10, output_root=tmp_path, server_log_path=str(server_log))
     assert result["task_finished"] and result["actions"] == 1
     assert len(oob.actions) == 1 and oob.actions[0]["tool"] == "click"
     assert oob.observations == 2  # initial page, then the physical action result
@@ -141,6 +143,7 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     assert remaining == b""
     assert received_instruction.decode().split() == instruction.split()
     assert b"\r" not in received_instruction
+    assert (tmp_path / "official_server.log").read_bytes() == server_log.read_bytes()
 
 
 def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):
