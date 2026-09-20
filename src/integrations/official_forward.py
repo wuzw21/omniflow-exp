@@ -1054,6 +1054,7 @@ def prepare_mobilegpt_server(
         _configure_mobilegpt_client_error_transport(target)
         _configure_mobilegpt_empty_xml_transport(target)
         _configure_mobilegpt_qa_transport(target)
+    _configure_mobilegpt_app_discovery_transport(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -2083,6 +2084,30 @@ def _configure_mobilegpt_system_app_catalog(server_root: Path) -> None:
         source.replace(update_anchor, update_replacement, 1),
         encoding="utf-8",
     )
+
+
+def _configure_mobilegpt_app_discovery_transport(server_root: Path) -> None:
+    """Honor explicit benchmark app identity without a Play-store lookup."""
+    path = server_root / "agents" / "app_agent.py"
+    if not path.is_file():
+        return
+    source = path.read_text(encoding="utf-8")
+    marker = "mobilegpt_skip_app_discovery_transport"
+    if marker in source:
+        return
+    original = "                app_name, description = get_package_info(package_name)\n"
+    replacement = (
+        f"                # {marker}: app identity comes from official setup.\n"
+        "                if (os.getenv('MOBILEGPT_SKIP_APP_DISCOVERY', '').strip() == '1'\n"
+        "                        and package_name == os.getenv('MOBILEGPT_TARGET_PACKAGE', '').strip()):\n"
+        "                    app_name = os.getenv('MOBILEGPT_TARGET_APP', '').strip() or package_name\n"
+        "                    description = app_name\n"
+        "                else:\n"
+        "                    app_name, description = get_package_info(package_name)\n"
+    )
+    if original not in source:
+        raise ValueError("mobilegpt_app_discovery_transport_contract_changed")
+    path.write_text(source.replace(original, replacement, 1), encoding="utf-8")
 
 
 def _configure_mobilegpt_empty_memory_csv_compat(server_root: Path) -> None:

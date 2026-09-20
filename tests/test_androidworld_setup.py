@@ -146,6 +146,48 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     assert (tmp_path / "official_server.log").read_bytes() == server_log.read_bytes()
 
 
+@pytest.mark.parametrize("skip,target,expected_calls", [
+    ("1", "com.example.app", []),
+    ("0", "com.example.app", ["com.example.app"]),
+    ("1", "com.other.app", ["com.example.app"]),
+])
+def test_mobilegpt_explicit_app_skips_external_discovery(monkeypatch, tmp_path, skip, target, expected_calls):
+    import os
+    from src.integrations.official_forward import _configure_mobilegpt_app_discovery_transport
+
+    path = tmp_path / "agents" / "app_agent.py"
+    path.parent.mkdir()
+    # Upstream app-list boundary, with network and embedding left injectable.
+    path.write_text(
+        "def update(new_packages):\n"
+        "    result = []\n"
+        "    for package_name in new_packages:\n"
+        "        if package_name:\n"
+        "                app_name, description = get_package_info(package_name)\n"
+        "                result.append((app_name, get_openai_embedding(description)))\n"
+        "    return result\n"
+    )
+    monkeypatch.setenv("MOBILEGPT_SKIP_APP_DISCOVERY", skip)
+    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", target)
+    monkeypatch.setenv("MOBILEGPT_TARGET_APP", "Official app")
+    calls, embeddings = [], []
+    def lookup(package):
+        calls.append(package)
+        return "Discovered app", "Discovered description"
+    def embed(description):
+        embeddings.append(description)
+        return [1.0]
+    _configure_mobilegpt_app_discovery_transport(tmp_path)
+    first = path.read_text()
+    _configure_mobilegpt_app_discovery_transport(tmp_path)
+    assert path.read_text() == first
+    namespace = dict(os=os, get_package_info=lookup, get_openai_embedding=embed)
+    exec(compile(first, str(path), "exec"), namespace)
+    assert namespace["update"](["com.example.app"])[0][1] == [1.0]
+    assert calls == expected_calls
+    assert embeddings == (["Discovered description"] if expected_calls else ["Official app"])
+
+
 def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):
     import pytest
     from src.experiment import run_task as runner
