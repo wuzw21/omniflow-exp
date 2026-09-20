@@ -1162,17 +1162,8 @@ def prepare_mobilegpt_client_apk(
     with tempfile.TemporaryDirectory(prefix="omniflow-mobilegpt-client-build-") as temp:
         client_root = Path(temp) / "official_client"
         shutil.copytree(root / "App", client_root)
-        _configure_mobilegpt_client_launch_lifecycle(client_root)
-        app_gradle = client_root / "app/build.gradle"
-        if app_gradle.is_file():
-            app_source = app_gradle.read_text(encoding="utf-8")
-            if "buildToolsVersion" not in app_source:
-                app_source = app_source.replace(
-                    "    compileSdk 33\n",
-                    "    compileSdk 33\n    buildToolsVersion \"35.0.0\"\n",
-                    1,
-                )
-                app_gradle.write_text(app_source, encoding="utf-8")
+        # Upstream documents only HOST_IP/HOST_PORT as client configuration.
+        # Preserve its service lifecycle, wire protocol and build definition.
         global_java = client_root / "app/src/main/java/com/example/MobileGPT/MobileGPTGlobal.java"
         source = global_java.read_text(encoding="utf-8")
         source = source.replace(

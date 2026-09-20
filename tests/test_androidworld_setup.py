@@ -5,6 +5,41 @@ from types import SimpleNamespace
 
 import pytest
 
+
+def test_mobilegpt_apk_preserves_upstream_client_except_server_address(tmp_path, monkeypatch):
+    from pathlib import Path
+    from src.integrations import official_forward
+
+    root = tmp_path / "upstream"
+    app = root / "App"
+    java = "app/src/main/java/com/example/MobileGPT/MobileGPTGlobal.java"
+    originals = {
+        java: 'HOST_IP = "INPUT_YOUR_SERVER_IP_ADDRESS"; HOST_PORT = 12345;',
+        "app/build.gradle": "    compileSdk 33\n",
+        "app/src/main/java/com/example/MobileGPT/MainActivity.java": "upstream activity",
+        "app/src/main/java/com/example/MobileGPT/MobileGPTAccessibilityService.java": "upstream service",
+    }
+    for name, content in originals.items():
+        path = app / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def build(argv, *, cwd, **kwargs):
+        cwd = Path(cwd)
+        for name, content in originals.items():
+            expected = content.replace("INPUT_YOUR_SERVER_IP_ADDRESS", "10.0.2.2")
+            assert (cwd / name).read_text() == expected
+        apk = cwd / "app/build/outputs/apk/debug/app-debug.apk"
+        apk.parent.mkdir(parents=True)
+        apk.write_bytes(b"test build artifact")
+
+    monkeypatch.setattr(official_forward.subprocess, "run", build)
+    output = tmp_path / "client.apk"
+    official_forward.prepare_mobilegpt_client_apk(
+        official_root=root, output_apk=output, gradle_bin="gradle"
+    )
+    assert output.read_bytes() == b"test build artifact"
+
 from src.integrations.android_world.run_episode import (
     _patch_androidworld_expense_setup_timeout,
 )
