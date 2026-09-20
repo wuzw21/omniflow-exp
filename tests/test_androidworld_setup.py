@@ -6,6 +6,29 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_mobilegpt_episode_command_launches_native_client(tmp_path, monkeypatch):
+    from src.experiment import run_task
+
+    monkeypatch.setattr(run_task, "task_goal_for_params", lambda *args, **kwargs: "full\ngoal")
+    monkeypatch.setattr(run_task, "_subprocess_env", lambda *args, **kwargs: {})
+    item = run_task.CanonicalRunLog("Task", "full\ngoal", {}, tmp_path / "source.json", 113, 1, {})
+    spec = run_task.build_mobilegpt_command(
+        item, method_name="mobilegpt",
+        target=run_task.DeviceTarget("standard45562", "emulator-45562", 45562),
+        android_world_root=tmp_path, output_root=tmp_path / "output",
+        stats_jsonl=tmp_path / "stats.jsonl", mobilegpt_root=tmp_path / "upstream",
+        server_host="0.0.0.0", server_port=17562, target_package="app.example",
+        max_steps=30, task_random_seed=113, fixed_task_seed=True,
+        fixed_task_params=True, task_params_override=None, perform_emulator_setup=False,
+        adb_path="adb", start_timeout_sec=30, finish_timeout_sec=600, repo_root=tmp_path,
+    )
+    assert spec.argv[2] == "src.integrations.official_forward"
+    assert spec.argv[spec.argv.index("--host") + 1] == "10.0.2.2"
+    assert spec.argv[spec.argv.index("--instruction") + 1] == "full\ngoal"
+    assert spec.metadata["action_backend"] == "mobilegpt_accessibility"
+    assert "src.integrations.mobilegpt_oob_client" not in spec.argv
+
+
 def test_mobilegpt_server_uses_upstream_and_memory_cannot_replace_code(tmp_path, monkeypatch):
     from pathlib import Path
     from src.integrations.official_forward import prepare_mobilegpt_server
