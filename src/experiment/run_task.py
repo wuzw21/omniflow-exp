@@ -2123,6 +2123,10 @@ def build_mobilegpt_server_command(
     env: dict[str, str] = {}
     env["MOBILEGPT_SERVER_HOST"] = str(server_host or "0.0.0.0")
     env["MOBILEGPT_CLIENT_MODE"] = "upstream_accessibility"
+    if chat_model or embedding_model:
+        env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
+        env["MOBILEGPT_CHAT_MODEL"] = chat_model
+        env["MOBILEGPT_VISION_MODEL"] = chat_model
     env["MOBILEGPT_SERVER_PORT"] = str(int(port))
     env["PYTHONUNBUFFERED"] = "1"
     if serial.strip():
@@ -2148,8 +2152,6 @@ def build_mobilegpt_server_command(
     if resolved_action == "server":
         if resolved_memory_root is None:
             raise ValueError("mobilegpt_server_memory_required")
-        if embedding_model or chat_model:
-            raise ValueError("upstream_mobilegpt_models_are_configured_in_upstream_checkout")
         from src.integrations.official_forward import prepare_mobilegpt_server
 
         staged = resolved_memory_root.parent / "official_server_workspace"
@@ -2158,6 +2160,8 @@ def build_mobilegpt_server_command(
             memory_root=resolved_memory_root,
             workspace=staged,
             port=port,
+            chat_model=chat_model,
+            embedding_model=embedding_model,
             write_through_memory=bool(write_through_memory),
         )
         staged_server_root = Path(forward["server_root"])
@@ -2181,8 +2185,8 @@ def build_mobilegpt_server_command(
                 "state_backend": "official_mobilegpt",
                 "official_server": str(server_root / "main.py"),
                 "official_staged_server": str(staged_server_root / "main.py"),
-                "embedding_model": "text-embedding-3-small",
-                "chat_model": "upstream_main.py",
+                "embedding_model": embedding_model or "text-embedding-3-small",
+                "chat_model": chat_model or "upstream_main.py",
                 "external_forward_only": True,
                 "write_through_memory": bool(write_through_memory),
                 "log_path": str(staged_server_root.parent / "official_server.log"),
@@ -4926,6 +4930,8 @@ def _run_result_mobilegpt(
                 mobilegpt_root=args.mobilegpt_root,
                 mobilegpt_memory_root=episode_memory_root,
                 mobilegpt_memory_manifest=source_manifest_path,
+                embedding_model=MOBILEGPT_EMBEDDING_MODEL,
+                chat_model=FORMAL_MODEL,
                 stats_jsonl=stats_jsonl,
                 server_host=args.mobilegpt_server_host,
                 port=int(args.mobilegpt_port),

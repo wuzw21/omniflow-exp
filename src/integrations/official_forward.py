@@ -972,8 +972,6 @@ def prepare_mobilegpt_server(
     port: int = 12345,
 ) -> dict[str, str]:
     """Stage upstream code without planner, protocol or response patches."""
-    if embedding_model or chat_model:
-        raise ValueError("upstream_mobilegpt_model_override_requires_explicit_configuration")
     root = Path(official_root).expanduser().resolve()
     source = root / "Server"
     memory = Path(memory_root).expanduser().resolve()
@@ -1004,6 +1002,18 @@ def prepare_mobilegpt_server(
         if count != 1:
             raise ValueError("upstream_mobilegpt_server_port_configuration_missing")
         main.write_text(configured, encoding="utf-8")
+    _configure_mobilegpt_chat_model(target, chat_model=chat_model)
+    if embedding_model:
+        utils = target / "utils/utils.py"
+        original = utils.read_text(encoding="utf-8")
+        configured, count = re.subn(
+            r'(def get_openai_embedding\(text: str, model=)"text-embedding-3-small"',
+            lambda match: match.group(1) + json.dumps(embedding_model),
+            original,
+        )
+        if count != 1:
+            raise ValueError("upstream_mobilegpt_embedding_configuration_missing")
+        utils.write_text(configured, encoding="utf-8")
     staged_memory = target / "memory"
     overlay = memory / "frozen_memory"
     if not overlay.is_dir():

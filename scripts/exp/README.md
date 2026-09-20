@@ -3,7 +3,9 @@
 2026-09-20 用户要求 MobileGPT 改用原版 Android Accessibility 客户端和 Server。
 `--method mobilegpt` 不再调用 `mobilegpt_oob_client`，也不向原版服务端注入
 JSON、QA、动作、应用发现或任务结束补丁。部署只配置客户端地址和对应服务端端口；
-模型配置由上游 checkout 决定，凭据使用其 OpenAI/GoogleSearch 环境配置。
+2026-09-20 用户随后指定沿用现有模型：仅将上游模型配置设为 Qwen3.6-Plus、
+GLM-Embedding-2 和现有 OpenAI-compatible endpoint；保留原版 query、响应解析、
+提示词、应用发现、客户端和记忆算法。GoogleSearch 仍按上游环境配置读取。
 这些运行与历史 Qwen + OOB 结果协议不同，诊断时显式指定 `.archive/` 输出，
 不得混入既有论文结果。原生 E2E 仍待运行验证；模拟器不能代替真机验收。
 

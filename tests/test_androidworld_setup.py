@@ -6,6 +6,33 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_mobilegpt_model_configuration_preserves_upstream_query_and_agents(tmp_path):
+    from pathlib import Path
+    from src.integrations.official_forward import prepare_mobilegpt_server
+
+    root = tmp_path / "upstream"
+    server = root / "Server"
+    (server / "memory").mkdir(parents=True)
+    (server / "utils").mkdir()
+    (server / "agents").mkdir()
+    (server / "main.py").write_text('os.environ["TASK_AGENT_GPT_VERSION"] = "gpt-4o"\nserver_port = 12345\n')
+    original = 'def get_openai_embedding(text: str, model="text-embedding-3-small", **kwargs):\n    return model\n\ndef query(messages):\n    return messages\n'
+    (server / "utils/utils.py").write_text(original)
+    (server / "server.py").write_text("unchanged wire protocol")
+    (server / "agents/task_agent.py").write_text("unchanged planning")
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    result = prepare_mobilegpt_server(
+        official_root=root, memory_root=memory, workspace=tmp_path / "run",
+        chat_model="Qwen3.6-Plus", embedding_model="GLM-Embedding-2",
+    )
+    staged = Path(result["server_root"])
+    assert "Qwen3.6-Plus" in (staged / "main.py").read_text()
+    assert (staged / "utils/utils.py").read_text() == original.replace("text-embedding-3-small", "GLM-Embedding-2")
+    assert (staged / "server.py").read_text() == "unchanged wire protocol"
+    assert (staged / "agents/task_agent.py").read_text() == "unchanged planning"
+
+
 def test_mobilegpt_episode_command_launches_native_client(tmp_path, monkeypatch):
     from src.experiment import run_task
 
