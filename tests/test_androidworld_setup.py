@@ -84,11 +84,13 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
         json.dumps({"name": "speak", "parameters": {"message": "Opening settings"}})
         for _ in range(2)
     ], json.dumps({"name": "click", "parameters": {"index": 26}}), "$$$$$"]
+    clock = [0.0]
 
     class Socket:
         def __init__(self):
             self.pending = bytearray(("\n".join(frames) + "\n").encode())
             self.sent = []
+            self.timeouts = 4
 
         def __enter__(self):
             return self
@@ -103,6 +105,10 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
             self.sent.append(payload)
 
         def recv(self, size):
+            if self.pending.startswith(b'{"name": "click"') and self.timeouts:
+                self.timeouts -= 1
+                clock[0] += 3
+                raise client.socket.timeout()
             result = bytes(self.pending[:size])
             del self.pending[:size]
             return result
@@ -123,14 +129,15 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
 
     sock, oob = Socket(), Oob()
     server_log = tmp_path / "disposable-server.log"
-    server_log.write_text("Upstream response and diagnostic evidence\n")
+    server_log.write_text("finish subtask!!\nNext task step is still being planned.\n")
+    monkeypatch.setattr(client.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(client.socket, "create_connection", lambda *a, **k: sock)
     monkeypatch.setattr(client, "OobControlClient", lambda *a, **k: oob)
     monkeypatch.setattr(client, "_prelaunch_target_package", lambda *a, **k: "com.android.settings")
     monkeypatch.setattr(client, "_wire_packages", lambda *a: ["com.android.settings"])
     result = client._run_mobilegpt_oob_transport(
         serial="regression-device", adb_path="adb", server_host="127.0.0.1",
-        server_port=12345, instruction=instruction, timeout_sec=10,
+        server_port=12345, instruction=instruction, timeout_sec=60,
         max_steps=10, output_root=tmp_path, server_log_path=str(server_log))
     assert result["task_finished"] and result["actions"] == 1
     assert len(oob.actions) == 1 and oob.actions[0]["tool"] == "click"

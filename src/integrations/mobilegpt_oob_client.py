@@ -424,10 +424,6 @@ def _run_mobilegpt_oob_transport(
     stats_value = str(os.environ.get("MOBILEGPT_STATS_JSONL") or "").strip()
     stats_path = Path(stats_value).expanduser() if stats_value else None
     app_ready_timeout_sec = float(os.environ.get("MOBILEGPT_APP_READY_TIMEOUT_SEC", "20") or 20)
-    finish_stall_timeout_sec = float(os.environ.get("MOBILEGPT_FINISH_STALL_TIMEOUT_SEC", "8") or 8)
-    finish_stall_started: float | None = None
-    last_finish_count = 0
-    last_action_count = 0
 
     connect_host = str(os.environ.get("MOBILEGPT_OOB_SERVER_HOST") or "127.0.0.1")
 
@@ -450,15 +446,12 @@ def _run_mobilegpt_oob_transport(
                 send(prefix.encode("utf-8") + text.encode("utf-8") + b"\n")
 
             def receive_line() -> str:
-                nonlocal finish_stall_started, last_finish_count
                 value = bytearray()
                 deadline = time.monotonic() + 90.0
                 while time.monotonic() < deadline:
                     try:
                         chunk = sock.recv(1)
                     except socket.timeout:
-                        if finish_stall_started is not None and time.monotonic() - finish_stall_started >= max(1.0, finish_stall_timeout_sec):
-                            return "$$$$$"
                         if server_log is not None and server_log.is_file():
                             server_text = server_log.read_text(encoding="utf-8", errors="replace")[-12000:]
                             if "Traceback (most recent call last)" in server_text:
@@ -466,18 +459,6 @@ def _run_mobilegpt_oob_transport(
                             terminal_reason = _stats_terminal_reason(stats_path)
                             if terminal_reason:
                                 raise RuntimeError(terminal_reason)
-                            # The pinned Server logs ``finish subtask!!`` when
-                            # its official agent has completed the request,
-                            # but some versions do not emit the final socket
-                            # sentinel afterwards.  Do not change the
-                            # Planner/Executor decision; close only this
-                            # transport stall after the server has reported
-                            # completion and no new action arrived.
-                            finish_count = server_text.count("finish subtask!!")
-                            if finish_count > last_finish_count:
-                                last_finish_count = finish_count
-                                if finish_stall_started is None:
-                                    finish_stall_started = time.monotonic()
                         continue
                     if not chunk:
                         raise RuntimeError("mobilegpt_oob_server_closed")
@@ -543,17 +524,9 @@ def _run_mobilegpt_oob_transport(
                     )
                     continue
                 if response.startswith("$$##$$"):
-                    if server_log is not None and server_log.is_file():
-                        server_text = server_log.read_text(encoding="utf-8", errors="replace")[-12000:]
-                        finish_count = server_text.count("finish subtask!!")
-                        if finish_count > last_finish_count:
-                            last_finish_count = finish_count
-                            if finish_stall_started is None:
-                                finish_stall_started = time.monotonic()
-                    if finish_stall_started is not None and time.monotonic() - finish_stall_started >= max(1.0, finish_stall_timeout_sec):
-                        task_finished = True
-                        lines.append("[omniflow] Task finished (official server completion keep-alive)")
-                        break
+                    # A subtask completion/read-screen notification is not a
+                    # task completion. Only an explicit terminal frame or
+                    # finish action may end the upstream execution loop.
                     continue
                 try:
                     action = json.loads(response)
@@ -585,8 +558,6 @@ def _run_mobilegpt_oob_transport(
                 if str(action.get("name") or "").strip().lower() not in {"speak", "read_screen"}:
                     actions += 1
                 lines.append(f"[omniflow] OOB action={action.get('name')}")
-                finish_stall_started = None
-                last_action_count = actions
                 if max_steps > 0 and planner_steps >= max_steps:
                     reason = "mobilegpt_step_budget_exhausted"
                     break
