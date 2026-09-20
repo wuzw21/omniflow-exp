@@ -188,6 +188,47 @@ def test_mobilegpt_explicit_app_skips_external_discovery(monkeypatch, tmp_path, 
     assert embeddings == (["Discovered description"] if expected_calls else ["Official app"])
 
 
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("content,is_list,expected", [
+    ("Clicked New Recipe button. Suggested Next plan: Fill in recipe details.", False,
+     "Clicked New Recipe button. Suggested Next plan: Fill in recipe details."),
+    ('{"action":{"name":"read_screen","parameters":{}}}', False,
+     {"action": {"name": "read_screen", "parameters": {}}}),
+    ('[{"name":"save_recipe"}]', True, [{"name": "save_recipe"}]),
+])
+def test_mobilegpt_query_preserves_upstream_text_and_json(tmp_path, prepared, content, is_list, expected):
+    import json
+    import os
+    from src.integrations.official_forward import _configure_mobilegpt_response_compat
+
+    path = tmp_path / "utils" / "utils.py"
+    path.parent.mkdir()
+    path.write_text('def query(messages, model="gpt-4-turbo", is_list=False):\n    pass\n\n'
+                    'def parse_completion_rate(value):\n    return value\n')
+    _configure_mobilegpt_response_compat(tmp_path)
+    if prepared:
+        source = path.read_text().replace(
+            "        # Upstream also uses query for plain-text action summaries.\n"
+            "        # Preserve its return contract when there is no JSON payload.\n"
+            "        return result\n",
+            "        # Non-list planner calls require an object with the official action\n"
+            "        # schema.  Never pass a prose/string payload into the upstream agent;\n"
+            "        # it would fail later with ``string indices must be integers``.\n"
+            "        continue\n")
+        path.write_text(source)
+        _configure_mobilegpt_response_compat(tmp_path)
+    events = []
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], usage=None)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response)))
+    client.with_options = lambda **kwargs: client
+    namespace = dict(os=os, json=json, OpenAI=lambda **kwargs: client,
+                     log=lambda *args: None, write_omniflow_mobilegpt_event=events.append,
+                     __parse_json=lambda text, is_list=False: text if text.startswith(('{', '[')) else None)
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    assert namespace["query"]([{"role": "user", "content": "Upstream request"}], is_list=is_list) == expected
+    assert [event["event"] for event in events] == ["chat_call"]
+
+
 def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):
     import pytest
     from src.experiment import run_task as runner

@@ -1055,6 +1055,8 @@ def prepare_mobilegpt_server(
         _configure_mobilegpt_empty_xml_transport(target)
         _configure_mobilegpt_qa_transport(target)
     _configure_mobilegpt_app_discovery_transport(target)
+    if using_persistent_server:
+        _configure_mobilegpt_response_compat(target)
     staged_memory = target / "memory"
     if write_through_memory:
         if any(memory.iterdir()):
@@ -1786,6 +1788,20 @@ def _configure_mobilegpt_response_compat(server_root: Path) -> None:
     source = utils_path.read_text(encoding="utf-8")
     marker = "# omniflow_mobilegpt_glm_response_compat"
     if marker in source:
+        # Upgrade prepared templates as well as freshly staged upstream code.
+        old = (
+            "        # Non-list planner calls require an object with the official action\n"
+            "        # schema.  Never pass a prose/string payload into the upstream agent;\n"
+            "        # it would fail later with ``string indices must be integers``.\n"
+            "        continue\n"
+        )
+        new = (
+            "        # Upstream also uses query for plain-text action summaries.\n"
+            "        # Preserve its return contract when there is no JSON payload.\n"
+            "        return result\n"
+        )
+        if old in source:
+            utils_path.write_text(source.replace(old, new, 1), encoding="utf-8")
         return
     if "import httpx" not in source:
         source = "import httpx\n" + source
@@ -1922,10 +1938,9 @@ def query(messages, model="Qwen3.6-Plus", is_list=False):
             except json.JSONDecodeError:
                 log(f"MobileGPT Qwen returned invalid JSON; retry {attempt}/{attempts}", "red")
                 continue
-        # Non-list planner calls require an object with the official action
-        # schema.  Never pass a prose/string payload into the upstream agent;
-        # it would fail later with ``string indices must be integers``.
-        continue
+        # Upstream also uses query for plain-text action summaries.
+        # Preserve its return contract when there is no JSON payload.
+        return result
     try:
         write_omniflow_mobilegpt_event({
             "event": "chat_empty_or_invalid",
