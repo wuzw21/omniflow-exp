@@ -487,7 +487,10 @@ def _run_mobilegpt_oob_transport(
                 raise RuntimeError("mobilegpt_oob_server_response_timeout")
 
             send_line("L", "##".join(_wire_packages(adb_path, serial)))
-            send_line("I", instruction)
+            # The official I frame ends at the first LF. Preserve all task
+            # text in that frame; raw continuation lines would be interpreted
+            # as protocol commands (notably A, the QA response frame).
+            send_line("I", instruction.replace("\r\n", " ").replace("\r", " ").replace("\n", " "))
             selected = receive_line()
             lines.append(f"[omniflow] server selected app frame={selected[:200]}")
             if not selected.startswith("##$$##"):

@@ -69,7 +69,12 @@ def test_resource_setup_dismisses_legacy_dialog_before_vlc_onboarding(
         controller_type.click_resource_id = original
 
 
-def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypatch, tmp_path):
+@pytest.mark.parametrize("instruction", [
+    "Open settings",
+    "Add the following recipes:\nRecipe: Avocado Toast\nAn easy meal\n ingredients: avocado",
+    "Add the following recipes:\r\nRecipe: Avocado Toast\r directions: toast bread",
+])
+def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypatch, tmp_path, instruction):
     import json
     from src.integrations import mobilegpt_oob_client as client
 
@@ -123,12 +128,19 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     monkeypatch.setattr(client, "_wire_packages", lambda *a: ["com.android.settings"])
     result = client._run_mobilegpt_oob_transport(
         serial="regression-device", adb_path="adb", server_host="127.0.0.1",
-        server_port=12345, instruction="Open settings", timeout_sec=10,
+        server_port=12345, instruction=instruction, timeout_sec=10,
         max_steps=10, output_root=tmp_path)
     assert result["task_finished"] and result["actions"] == 1
     assert len(oob.actions) == 1 and oob.actions[0]["tool"] == "click"
     assert oob.observations == 2  # initial page, then the physical action result
     assert sum(payload.startswith(b"X") for payload in sock.sent) == 2
+    # Upstream reads I through the first LF, then interprets every remaining
+    # byte as a new message type (including A for QA). No task body may escape.
+    instruction_frame = next(payload for payload in sock.sent if payload.startswith(b"I"))
+    received_instruction, remaining = instruction_frame[1:].split(b"\n", 1)
+    assert remaining == b""
+    assert received_instruction.decode().split() == instruction.split()
+    assert b"\r" not in received_instruction
 
 
 def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):
