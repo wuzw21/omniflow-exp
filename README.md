@@ -4,11 +4,17 @@ Version **1.0.0** is the preserved baseline before the host-harness refactor.
 Release scope and validation are recorded in [release notes](docs/RELEASE_NOTES.md).
 
 The Android package bridge owns its management tool schemas and RunLog authoring
-policy. `save_function` with RunLog evidence and no supplied Function invokes the
-canonical semantic compiler by default; explicit `enhance=false` remains available
-for evidence-only compilation. Android commits execution evidence through
+policy. `save_function` defaults to evidence-only compilation without model calls;
+explicit `enhance=true` invokes the canonical semantic compiler offline.
+The Store keeps `function_sources` provenance metadata, exposed as `source_run_id`
+by management reads without changing the executable Function v2 schema. New
+recordings with colliding generated IDs receive a stable source-scoped ID;
+explicitly supplied Functions remain the update path. Android commits evidence through
 `finish_run`; the package then performs automatic registration and reports its
 separate outcome without changing a successful device result into a failure.
+
+RunLog v1 also preserves the explicit `cancelled` terminal state (with
+`success=false`); cancellation is not eligible as successful registration evidence.
 
 当前开发版将内核与宿主控制分开：内置 Planner 调用 `OmniFlow.arun`，外部 Agent
 只接入两个服务：`omniflow_recall` 召回 Function，`omniflow_execute` 执行 Function。
@@ -149,8 +155,9 @@ bash scripts/exp/run_androidworld.sh convert-memory \
 OmniFlow 的 Function 转换由 A 端 authoring Agent 和无语义判定的 Compiler 完成。
 设备 Bridge 的 `save_function` 可用 `run_log`（或 `run_id`）加 `enhance=true`
 调用宿主 `complete_json`，复用同一个 Compiler 的语义方案校验与反馈流程。
-宿主负责模型配置和 token 统计；Compiler 记录 authoring 调用次数。连续方案被拒绝时，
-Bridge 返回 `FUNCTION_AUTHORING_REJECTED`，不会把隐藏的证据 Function 作为注册成功。
+宿主负责模型配置和 token 统计；Compiler 记录 authoring 调用次数。模型返回的是补丁行，
+不是整份 Function 文档。编译器逐条套用，失败的一行留下，已经套用的行保留。没有任何补丁能登记出
+可执行 Function 时，Bridge 返回 `FUNCTION_AUTHORING_REJECTED`，不会把隐藏的证据 Function 作为注册成功。
 提供已有 Function 时，`enhance=true` 仍只增强该 Function。
 Bridge 注册时将编译器源页面合并到 Store 旁的 `transfer_states.json`，并复制截图到
 `transfer_screenshots/`，先保存证据再发布 Function。此聚合目录的 `run_id` 是 Store
@@ -165,9 +172,9 @@ RunLog 中找到可复用 Function，并直接决定参数名和完整的 action
 source state，并从 Agent 已选定的 source binding 原样复制默认值，完成 schema/index
 校验与 Store 序列化。只有 Agent 明确分类为稳定的未声明值才保留 RunLog 默认值。
 只要存在 `online_observation`，完整 Source workflow 就以不可执行证据保存，运行时只暴露
-安全的局部 Function 并交还在线 Planner。三次 proposal 都不满足结构合同时会保留
-`authoring_failure.json`，原始 RunLog 也只作为不可执行证据注册，禁止以无参数静态 replay
-进入正式 Function Recall。
+安全的局部 Function 并交还在线 Planner。模型调用从「每步都在线」的底稿开始，只提交
+`span` 和 `step` 补丁。补丁全部无法登记时会保留 `authoring_failure.json`，原始 RunLog
+也只作为不可执行证据注册，禁止以无参数静态 replay 进入正式 Function Recall。
 同一语义 Function 在 RunLog 中重复出现时，Store 只注册一份定义，
 `compile_report.json` 的 `source_calls` 按 source 顺序保存多次引用及各自参数。
 局部 Function 不必覆盖完整 RunLog；重复 occurrence 的稳定性和绑定均由 Agent 负责，

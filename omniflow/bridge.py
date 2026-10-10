@@ -371,7 +371,7 @@ class JsonLineBridge:
             )
             return {
                 "success": True,
-                "functions": [item.to_dict() for item in functions],
+                "functions": [self.flow.store.function_payload(item) for item in functions],
                 "count": len(functions),
                 "total": total,
                 "limit": limit,
@@ -394,7 +394,7 @@ class JsonLineBridge:
             return {
                 "success": True,
                 "function_id": function_id,
-                "function": function.to_dict(),
+                "function": self.flow.store.function_payload(function),
                 "source": "omniflow_python",
             }
         if action == "delete":
@@ -437,15 +437,27 @@ class JsonLineBridge:
                 "agent_visible",
                 "enhance",
                 "instruction",
+                "prepare_authoring",
+                "authoring_proposal",
             },
         )
         supplied_function = body.get("function")
         supplied_functions = body.get("functions")
         run_id = str(body.get("run_id") or "").strip()
         supplied_run_log = body.get("run_log")
-        # A RunLog is evidence, not an authored Function. All hosts use the
-        # same canonical authoring path without having to know this flag.
-        enhance = body.get("enhance", supplied_function is None and supplied_functions is None) is True
+        # Fast capture freezes evidence; semantic authoring is an explicit offline
+        # operation and must not delay GUI completion or hold the bridge lock.
+        enhance = body.get("enhance", False) is True
+        prepare_authoring = body.get("prepare_authoring", False) is True
+        authoring_proposal = body.get("authoring_proposal")
+        if authoring_proposal is not None and not isinstance(authoring_proposal, dict):
+            return _save_error("FUNCTION_SCHEMA_INVALID", "authoring_proposal must be an object")
+        if (prepare_authoring or authoring_proposal is not None) and (
+            enhance or supplied_function is not None or supplied_functions is not None or body.get("arguments") is not None
+        ):
+            return _save_error("FUNCTION_SCHEMA_INVALID", "Agent authoring cannot be combined with enhance/functions/arguments")
+        if prepare_authoring and authoring_proposal is not None:
+            return _save_error("FUNCTION_SCHEMA_INVALID", "Prepare evidence before submitting an authoring proposal")
         if supplied_function is not None and not isinstance(supplied_function, dict):
             return _save_error("FUNCTION_SCHEMA_INVALID", "function must be an object")
         if supplied_functions is not None:
@@ -465,6 +477,11 @@ class JsonLineBridge:
                     "this save path accepts exactly one Function",
                 )
         supplied_arguments = body.get("arguments")
+        if supplied_function is not None:
+            # Management responses carry provenance beside the v2 artifact.
+            # It is not an executable Function field or a caller-selected source.
+            supplied_function = dict(supplied_function)
+            supplied_function.pop('source_run_id', None)
         if supplied_arguments is not None and not isinstance(supplied_arguments, dict):
             return _save_error("FUNCTION_ARGUMENTS_INVALID", "arguments must be an object")
         if supplied_run_log is not None:
@@ -515,7 +532,9 @@ class JsonLineBridge:
                             "complete_json",
                             {
                                 "prompt": prompt,
-                                "max_tokens": 512 if supplied_function is not None else 8192,
+                                # Reasoning-capable providers count reasoning in
+                                # this same budget; 512 could exhaust it before JSON.
+                                "max_tokens": 8192,
                                 "temperature": 0,
                             },
                         )
@@ -549,7 +568,28 @@ class JsonLineBridge:
                 compile_options: dict[str, Any] = {}
                 if enhance and supplied_function is None:
                     compile_options["complete_json"] = complete_json
-                if supplied_run_log is not None:
+                saved_source = self.flow.store.function_sources.get(
+                    str((supplied_function or {}).get('function_id') or ''),
+                )
+                reauthoring_saved_run = (
+                    supplied_function is None
+                    and run_id in self.flow.store.function_sources.values()
+                )
+                if saved_source == run_id or reauthoring_saved_run:
+                    # Both authoring and metadata enhancement consume the frozen recording.
+                    # Android may have observed the same structural state again
+                    # and replaced its transient screenshot since registration.
+                    from omniflow.transfer.runtime import (
+                        load_transfer_state_catalog, TRANSFER_STATE_CATALOG_VERSION,
+                    )
+                    compile_options['source_states'] = {
+                        'schema_version': TRANSFER_STATE_CATALOG_VERSION,
+                        'run_id': run_id,
+                        'states': load_transfer_state_catalog(
+                            self.flow.store.path.parent / 'transfer_states.json',
+                        ),
+                    }
+                elif supplied_run_log is not None:
                     _, source_states = import_run_log_evidence(run_log)
                     compile_options["source_states"] = source_states
                 else:
@@ -558,6 +598,11 @@ class JsonLineBridge:
                         "get_state",
                         {"state_id": state_id},
                     )
+                if prepare_authoring:
+                    prepared = compile_runlog_to_store(run_log, output_root, prepare_only=True)
+                    return {"success": True, "run_id": run_id, **prepared}
+                if authoring_proposal is not None:
+                    compile_options["authoring_proposal"] = authoring_proposal
                 report = compile_runlog_to_store(
                     run_log,
                     output_root,
@@ -567,10 +612,44 @@ class JsonLineBridge:
                 if enhance and supplied_function is None and not report.get(
                     "authoring_workflow", {}
                 ).get("agent_proposal_accepted"):
-                    return _save_error(
-                        "FUNCTION_AUTHORING_REJECTED",
-                        "The compiler rejected the semantic Function proposal",
-                    )
+                    workflow = report.get("authoring_workflow", {})
+                    reason = str(workflow.get("rejected_error") or
+                                 "The compiler rejected the semantic Function proposal")
+                    result = _save_error("FUNCTION_AUTHORING_REJECTED", reason)
+                    # Preserve compiler feedback outside its temporary build directory.
+                    # This is diagnostic evidence, never a Function or runtime index.
+                    diagnostic = {
+                        "run_id": run_id,
+                        "error": result["error"],
+                        "authoring_workflow": workflow,
+                        "authoring_attempts": report.get("authoring_attempts", []),
+                    }
+                    result["diagnostics"] = diagnostic
+                    try:
+                        directory = self.flow.store.path.parent / "authoring_reports"
+                        directory.mkdir(parents=True, exist_ok=True)
+                        key = hashlib.sha256(
+                            f"{run_id}\0{request_id}".encode("utf-8")
+                        ).hexdigest()
+                        target = directory / f"{key}.json"
+                        with tempfile.NamedTemporaryFile(
+                            mode="w", encoding="utf-8", dir=directory,
+                            suffix=".tmp", delete=False,
+                        ) as output:
+                            temporary = Path(output.name)
+                            try:
+                                json.dump(diagnostic, output, ensure_ascii=False)
+                                output.flush()
+                                temporary.replace(target)
+                            finally:
+                                temporary.unlink(missing_ok=True)
+                        result["diagnostic_path"] = str(target)
+                    except OSError:
+                        # Failure reporting must survive an unwritable diagnostics directory.
+                        result["diagnostic_persisted"] = False
+                    else:
+                        result["diagnostic_persisted"] = True
+                    return result
                 compiled = OmniFlow(Path(output_root) / "store.json")
                 functions = [
                     function
@@ -595,8 +674,13 @@ class JsonLineBridge:
                 value = parse_function_artifact(value).to_dict()
             except ValueError as error:
                 return _save_error("FUNCTION_SCHEMA_INVALID", str(error))
-            saved_functions.append(self.flow.store.put_function(value))
-        return _save_many_success(saved_functions)
+            saved_functions.append(self.flow.store.put_function(
+                value, source_run_id=run_id, create=supplied_function is None,
+            ))
+        result = _save_many_success(saved_functions)
+        result['functions'] = [self.flow.store.function_payload(f) for f in saved_functions]
+        result['function'] = result['functions'][0] if len(saved_functions) == 1 else None
+        return result
 
     def host_call(self, request_id: str, method: str, payload: dict[str, Any]) -> Any:
         self._host_call_index += 1
@@ -840,8 +924,11 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            "Compile reusable Functions from a successful RunLog using canonical semantic "
-            "authoring. Pass run_id or run_log. For enhancement, pass the existing Function "
+            "Save recorded Functions from a successful RunLog without model calls by default. "
+            "For host-Agent authoring, first pass run_id and prepare_authoring=true to read evidence "
+            "and the canonical authoring contract, then submit run_id and authoring_proposal. "
+            "These paths never call a hidden model. Legacy enhance=true uses offline model authoring. "
+            "For enhancement, pass the existing Function "
             "in functions, set enhance=true, and optionally provide instruction. The "
             "enhancer may change only semantic metadata and evidence-backed parameters; "
             "actions, coordinates, source states, and function_id remain immutable."
@@ -864,6 +951,8 @@ def _management_tool_definition(name: str) -> dict[str, Any]:
                 "agent_visible": {"type": "boolean"},
                 "enhance": {"type": "boolean"},
                 "instruction": {"type": "string"},
+                "prepare_authoring": {"type": "boolean"},
+                "authoring_proposal": {"type": "object"},
             },
             "additionalProperties": False,
             "anyOf": [

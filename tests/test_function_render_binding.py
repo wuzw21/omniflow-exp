@@ -1017,24 +1017,13 @@ def test_authoring_harness_accepts_complete_function_without_locals() -> None:
 def test_default_authoring_prompt_requires_semantic_classification() -> None:
     prompt = _default_authoring_workflow_prompt()
 
-    assert "Stage 1 — classify semantics" in prompt
-    assert "Stage 2 — discover Functions" in prompt
-    assert "Stage 3 — author every binding on the A side" in prompt
-    assert "Stage 4 — convert and register" in prompt
-    assert "stable" in prompt
-    assert "task_parameter" in prompt
+    assert '{"patches":["..."]}' in prompt
+    assert "span <start> <end> <function_id>" in prompt
+    assert "task_parameter name=<name> arg=<arg_name>" in prompt
+    assert "node=<node_id>" in prompt
     assert "online_observation" in prompt
-    assert "planner_handoff" in prompt
-    assert "Dynamic grounding is not itself an" in prompt
-    assert "Classify by where the desired semantic" in prompt
-    assert '"validation"' not in prompt
-    assert '"registration"' not in prompt
-    assert "Any undeclared stable value keeps the" in prompt
-    assert '"binding_owner": "agent"' in prompt
-    assert "occurrence_values" not in prompt
-    assert "other fixed control" in prompt
-    assert "binding_evidence" not in prompt
-    assert "candidate_id" not in prompt
+    assert "Stage 1" not in prompt
+    assert "complete replacement" not in prompt
 
 
 def test_agent_owned_bindings_are_converted_without_compiler_candidates() -> None:
@@ -1352,42 +1341,10 @@ def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
         ),
         "auxiliaries": {"display": {"width": 1000, "height": 1000}},
     }
-    proposal = {
-        "binding_owner": "agent",
-        "reason": "Bind the requested title.",
-        "semantic_analysis": {
-            "steps": [
-                {
-                    "source_step_index": 0,
-                    "semantic_kind": "task_parameter",
-                    "parameter_names": ["title"],
-                    "reason": "The text is supplied by the task goal.",
-                }
-            ]
-        },
-        "functions": [],
-        "complete_function": {
-            "function_id": "create_recipe",
-            "name": "Create recipe",
-            "description": "Create the requested recipe.",
-            "source_step_indices": [0],
-            "execution_mode": "direct_replay",
-            "parameters": [
-                {
-                    "name": "title",
-                    "description": "Requested recipe title",
-                    "bindings": [
-                        {
-                            "occurrence_index": 0,
-                            "source_step_index": 0,
-                            "binding_kind": "action_arg",
-                            "arg_name": "text",
-                        }
-                    ],
-                }
-            ],
-        },
-    }
+    proposal = {"patches": [
+        "span 0 0 create_recipe",
+        "step 0 task_parameter name=title arg=text",
+    ]}
 
     class CapturingCompletions:
         request = None
@@ -1445,13 +1402,106 @@ def test_compile_request_gives_raw_ui_to_agent_and_no_binding_candidates(
     )
 
     request = json.loads(completions.request["messages"][1]["content"])
+    assert "source_run" not in request
     assert "binding_evidence" not in request
-    assert "parameter_evidence" not in request["source_run"]
-    assert request["source_run"]["steps"][0]["source_ui"]["nodes"][0][
-        "id"
-    ] == "title-field"
+    assert request["judgment_card"]["steps"][0]["args"] == {"text": "Pasta"}
+    assert "nodes" not in request["judgment_card"]["steps"][0]
     assert report["authoring_workflow"]["binding_owner"] == "agent"
     assert report["authoring_workflow"]["agent_proposal_accepted"] is True
+    store = json.loads((tmp_path / "memory" / "store.json").read_text())
+    created = store["functions"]["create_recipe"]
+    assert created["bindings"] == [{
+        "source": "$.arguments.title",
+        "target": "$.steps[0].action.args.text",
+    }]
+
+
+def test_authoring_patches_leave_online_steps_with_the_planner(tmp_path) -> None:
+    state = {
+        "pixels": None,
+        "xml": (
+            '<hierarchy width="1000" height="1000">'
+            '<node id="save" text="Save" clickable="true" bounds="[0,0][200,80]" />'
+            '<node id="row" text="Cheapest lunch" clickable="true" '
+            'bounds="[0,200][800,400]" />'
+            "</hierarchy>"
+        ),
+        "auxiliaries": {"display": {"width": 1000, "height": 1000}},
+    }
+
+    def step(index: int, action: dict) -> dict:
+        return {
+            "step_index": index,
+            "observation": state,
+            "action": action,
+            "result": {"success": True},
+            "next_observation": state,
+        }
+
+    run_log = {
+        "schema_version": "omniflow.run_log.v1",
+        "run_id": "patch-online",
+        "task_name": "patch-online",
+        "goal": "Save the recipe, then open the cheapest lunch.",
+        "task_parameters": {"title": "Pasta"},
+        "seed": 111,
+        "status": "succeeded",
+        "success": True,
+        "validator": {"official": True, "success": True, "reward": 1},
+        "provenance": {"kind": "runtime"},
+        "steps": [
+            step(0, {"action_type": "input_text", "text": "Pasta", "x": 100, "y": 40}),
+            step(1, {"action_type": "click", "x": 100, "y": 40}),
+            step(2, {"action_type": "click", "x": 400, "y": 300}),
+        ],
+    }
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "patches": [
+                        "span 0 2 save_recipe",
+                        "step 2 online_observation",
+                        "step 0 task_parameter name=title arg=text",
+                        "step 1 task_parameter name=confirm node=save attr=text",
+                    ]
+                })))],
+            )
+
+    report = compile_runlog_to_store(
+        run_log,
+        tmp_path / "memory",
+        model="test-author",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        state_loader=lambda _state_id: state,
+    )
+    store = json.loads((tmp_path / "memory" / "store.json").read_text())
+    saved = store["functions"]["save_recipe"]
+    assert [step["action"]["tool"] for step in saved["steps"]] == [
+        "input_text",
+        "click",
+    ]
+    assert saved["agent_visible"] is True
+    assert store["functions"]["complete_source_workflow"]["agent_visible"] is False
+    assert saved["bindings"] == [{
+        "source": "$.arguments.title",
+        "target": "$.steps[0].action.args.text",
+    }]
+    assert saved["render_bindings"] == [{
+        "source": "$.arguments.confirm",
+        "step_index": 1,
+        "node_id": "save",
+        "attribute": "text",
+        "recorded_value": "Save",
+    }]
+    assert report["authoring_workflow"]["applied_patches"] == [
+        "span 0 2 save_recipe",
+        "step 2 online_observation",
+        "step 0 task_parameter name=title arg=text",
+        "step 1 task_parameter name=confirm node=save attr=text",
+    ]
 
 
 def test_agent_authors_semantic_binding_requests_and_harness_materializes_them() -> None:

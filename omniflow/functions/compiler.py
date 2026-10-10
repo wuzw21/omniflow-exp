@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -8,7 +9,7 @@ import re
 from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
-from omniflow.core.trajectory import require_complete_source_run_log, state_id
+from omniflow.core.trajectory import require_complete_source_run_log, state_id, observation_display
 from omniflow.functions.management import (
     iter_task_parameter_values,
     parameter_candidates,
@@ -23,188 +24,625 @@ from omniflow.runtime.checker import (
 
 
 def _default_authoring_workflow_prompt() -> str:
-    """Return the A-side authoring contract consumed by the converter."""
+    """Return the patch contract. The compiler owns the Function document."""
 
-    return """Turn one successful GUI RunLog into reusable Function Memory.
-Return exactly one JSON object in this shape; return no prose:
-{
-  "binding_owner": "agent",
-  "reason": "short rationale",
-  "semantic_analysis": {
-    "steps": [
-      {
-        "source_step_index": 0,
-        "semantic_kind": "stable",
-        "parameter_names": [],
-        "reason": "Opening the task page does not depend on the goal or live UI."
-      },
-      {
-        "source_step_index": 2,
-        "semantic_kind": "task_parameter",
-        "parameter_names": ["recipe_title"],
-        "reason": "The selected recipe name comes from the current task goal."
-      },
-      {
-        "source_step_index": 1,
-        "semantic_kind": "stable",
-        "parameter_names": [],
-        "reason": "This navigation action is invariant."
-      },
-      {
-        "source_step_index": 3,
-        "semantic_kind": "stable",
-        "parameter_names": [],
-        "reason": "This confirmation action is invariant."
-      },
-      {
-        "source_step_index": 4,
-        "semantic_kind": "online_observation",
-        "parameter_names": [],
-        "reason": "The next choice requires reading the changed collection."
-      },
-      {
-        "source_step_index": 5,
-        "semantic_kind": "stable",
-        "parameter_names": [],
-        "reason": "This navigation action is invariant."
-      },
-      {
-        "source_step_index": 6,
-        "semantic_kind": "task_parameter",
-        "parameter_names": ["recipe_title"],
-        "reason": "The selected recipe name comes from the current task goal."
-      },
-      {
-        "source_step_index": 7,
-        "semantic_kind": "stable",
-        "parameter_names": [],
-        "reason": "This confirmation action is invariant."
-      }
-    ]
-  },
-  "functions": [{
-    "function_id": "delete_recipe",
-    "name": "Delete requested recipe",
-    "description": "Delete one requested recipe from the visible collection.",
-    "occurrences": [
-      {"source_step_indices": [2, 3]},
-      {"source_step_indices": [6, 7]}
-    ],
-    "parameters": [{
-      "name": "recipe_title",
-      "description": "Value requested by the goal",
-      "bindings": [
-        {
-          "occurrence_index": 0,
-          "source_step_index": 2,
-          "binding_kind": "render_node",
-          "node_id": "0:24",
-          "attribute": "text",
-          "recorded_value": "First Recipe"
-        },
-        {
-          "occurrence_index": 1,
-          "source_step_index": 6,
-          "binding_kind": "render_node",
-          "node_id": "0:19",
-          "attribute": "content-desc",
-          "recorded_value": "Second Recipe"
-        }
-      ]
-    }]
-  }],
-  "complete_function": {
-    "function_id": "complete_task",
-    "name": "Complete requested task",
-    "description": "Complete the requested task using the successful workflow.",
-    "source_step_indices": [0, 1, 2, 3, 4, 5, 6, 7],
-    "execution_mode": "planner_handoff",
-    "parameters": []
-  }
-}
+    return """Register reusable pieces of one successful GUI run by returning patches.
+Return one JSON object and no prose: {"patches":["..."]}.
+The compiler starts from a base where every step is online_observation. Those
+steps stay with the online Planner. You do not write functions, bindings objects,
+execution_mode, or Store JSON.
 
-Stage 1 — classify semantics before authoring any Function. Account for every
-source step exactly once in semantic_analysis.steps and make the distinction
-yourself:
-- stable: the action and consumed value are invariant across task instances.
-- task_parameter: the action is reusable, but one or more consumed values come
-  from the current goal/task_parameters. List their semantic parameter_names.
-- online_observation: the action or its value depends on reading the current UI,
-  computing a fresh result, or making a conditional decision. Never turn a
-  source answer into a task parameter merely to make replay possible.
-An input such as an event title is task_parameter. An answer computed from live
-numbers in a browser is online_observation. Dynamic grounding is not itself an
-online semantic dependency: selecting a date, time, item, or record already
-specified by the goal/task_parameters remains task_parameter even when its target
-position must be mapped on the current device. Use online_observation only when
-the semantic value cannot be known from the goal/task_parameters before execution.
-A value deterministically derived from task parameters, such as an end time from
-hour plus duration, is also task_parameter. Classify by where the desired semantic
-value comes from, not by whether the current target coordinates must be observed.
-The words "context" or "identified earlier" do not make a value a task parameter:
-verify that the value is supplied by the goal/task_parameters before execution.
-When the goal names a predicate (for example duplicate, cheapest, unread, or newest)
-rather than a particular record, inspecting and selecting the matching records is
-online_observation. A title learned by comparing live records must not become a
-task_parameter binding to replay the source comparison. Keep inspection, comparison,
-and conditional record selection with the Planner. A fixed menu/confirm operation
-after the Planner has selected the record can be a safe local Function.
+Each patch is one line:
+- span <start> <end> <function_id>
+  Inclusive source_step_index range. The compiler marks steps in the range that
+  are still online_observation as stable and registers that contiguous range as
+  one Function. function_id matches [A-Za-z_][A-Za-z0-9_]{0,63}.
+- step <index> task_parameter name=<name> arg=<arg_name>
+  <arg_name> must be a key already listed in that step's args. The value stays
+  the recorded value.
+- step <index> task_parameter name=<name> node=<node_id> attr=<text|content-desc>
+  Use this for a click or long_press whose identity is the named node. node_id
+  must be the id on that step's hit, or an id you can see is not required: it
+  must already belong to that step.
+- step <index> online_observation
+  Leave this step to the Planner. If it sits inside a span, the compiler splits
+  that span around it.
 
-Stage 2 — discover Functions. Find zero or more semantically stable, contiguous
-local operations in the successful source steps. If the same operation repeats,
-represent it as one Function with multiple occurrences. Also identify one
-complete_function spanning the successful source sequence. A local Function must
-not contain an online_observation step. When any step is online_observation, set
-complete_function.execution_mode to planner_handoff; the full source sequence is
-then retained only as hidden evidence and the online Planner performs the dynamic
-part. Otherwise use direct_replay. If planner_handoff is necessary and you classified
-any source steps as stable or task_parameter, expose at least one maximal safe local
-Function; do not return an empty local inventory while claiming reusable steps.
-Returning no local Function is valid only when the complete Function is safe for
-direct replay or every source step is genuinely online_observation.
-For repeated complete operations, prefer one local definition with repeated
-occurrences and semantic field names over one monolithic list of numbered input
-slots. Every occurrence must independently declare its actual value bindings;
-equal source values do not imply that two different semantic fields are one
-parameter. The Planner owns how many times and with which values to call a local
-Function; source occurrences are provenance, never a runtime call sequence.
-
-Stage 3 — author every binding on the A side. The Compiler will not infer,
-recommend, repair, or select bindings. Read task_parameters, each source action,
-and source_ui.nodes. Decide the semantic parameter name and emit every binding
-yourself:
-- action_arg has exactly occurrence_index, source_step_index, binding_kind, and
-  arg_name. Bind only an argument that the source action actually consumes.
-- render_node has exactly occurrence_index, source_step_index, binding_kind,
-  node_id, attribute, and recorded_value. Use a node_id and text/content-desc
-  substring from that step's source_ui; render_node is for click/long_press only.
-  The node text must itself represent this parameter value. Never bind a Save,
-  Delete, OK, menu, tab, or other fixed control merely because it is clicked after
-  an input action. Do not add render_node unless changing the parameter requires
-  changing the semantic identity of the clicked/long-pressed source node.
-The source default for action_arg is copied verbatim from that action argument;
-the source default for render_node is its recorded_value. All undeclared action
-arguments and UI values remain fixed at their recorded defaults. If a safe binding
-cannot be determined, do not relabel the step as stable: keep it task_parameter
-and revise the Function boundary or proposal. Every task_parameter step in an
-executable Function must bind every parameter_name declared for that step. Never
-bind coordinates or repetition counts.
-
-The complete_function must contain exactly function_id, name, description,
-source_step_indices, execution_mode, and parameters. For direct_replay, its
-parameters must bind all task_parameter steps in the complete sequence. For
-planner_handoff, it may keep parameters empty because this complete Function is
-stored as non-executable source evidence. Any undeclared stable value keeps the
-recorded RunLog default.
-
-Stage 4 — convert and register. The Compiler only maps your source_step_index values
-to immutable RunLog actions/source states and serializes your declared parameters,
-bindings, default values, calls, and Function Store. It performs schema and index
-checks required to make valid JSON artifacts, but makes no semantic binding decision.
-Do not emit actions, coordinates, source_state_id, Store JSON, JSONPath expressions,
-checker rules, candidate ids, validation, or registration sections. Treat
-optional_checker_actions as removed setup and do not reconstruct them.
+A task_parameter step must lie inside a span. Put the span line before the step
+line. Unlisted steps stay online. Do not invent steps, argument names, or node
+ids. A fixed control such as Save, Delete, OK, or a tab is stable, not a
+parameter. A record chosen by a predicate such as cheapest, duplicate, or newest
+is online_observation, not a parameter.
 """
+
+
+_PATCH_COORDINATE_ARGS = {"x", "y", "x1", "y1", "x2", "y2"}
+_PATCH_FUNCTION_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_PATCH_PARAMETER_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _base_authoring_draft(source_indices: list[int]) -> dict[str, Any]:
+    return {
+        "kinds": {
+            index: "online_observation" for index in source_indices
+        },
+        "bindings": {index: [] for index in source_indices},
+        "explicit_online": [],
+        "spans": [],
+    }
+
+
+def _judgment_card(facts: dict[str, Any]) -> dict[str, Any]:
+    """Show each recorded call without the page's full node list."""
+
+    steps: list[dict[str, Any]] = []
+    for step in facts.get("steps") or ():
+        if not isinstance(step, dict):
+            continue
+        action = step.get("action") if isinstance(step.get("action"), dict) else {}
+        args = action.get("args") if isinstance(action.get("args"), dict) else {}
+        card_step: dict[str, Any] = {
+            "source_step_index": step.get("source_step_index"),
+            "action_type": str(action.get("tool") or ""),
+            "args": {
+                key: value
+                for key, value in args.items()
+                if key not in _PATCH_COORDINATE_ARGS
+            },
+        }
+        hit = _card_hit_node(step)
+        if hit:
+            card_step["hit"] = hit
+        steps.append(card_step)
+    return {
+        "goal": facts.get("goal") or "",
+        "task_parameters": facts.get("task_parameters") or {},
+        "steps": steps,
+    }
+
+
+def _card_hit_node(step: dict[str, Any]) -> dict[str, str] | None:
+    action = step.get("action") if isinstance(step.get("action"), dict) else {}
+    if str(action.get("tool") or "") not in {"click", "long_press"}:
+        return None
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    source_ui = step.get("source_ui") if isinstance(step.get("source_ui"), dict) else {}
+    display = source_ui.get("display") if isinstance(source_ui.get("display"), dict) else {}
+    try:
+        width = float(display.get("width") or 0)
+        height = float(display.get("height") or 0)
+        point = (
+            float(args["x"]) / 1000.0 * width,
+            float(args["y"]) / 1000.0 * height,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    containing: list[tuple[float, dict[str, Any]]] = []
+    for node in source_ui.get("nodes") or ():
+        if not isinstance(node, dict):
+            continue
+        bounds = _compiler_parse_bounds(str(node.get("bounds") or ""))
+        if bounds is None or not (
+            bounds[0] <= point[0] <= bounds[2] and bounds[1] <= point[1] <= bounds[3]
+        ):
+            continue
+        containing.append(
+            ((bounds[2] - bounds[0]) * (bounds[3] - bounds[1]), node)
+        )
+    if not containing:
+        return None
+    node = min(containing, key=lambda item: item[0])[1]
+    hit = {
+        key: str(node.get(key) or "")
+        for key in ("id", "text", "content-desc")
+        if str(node.get(key) or "").strip()
+    }
+    if "id" in hit:
+        hit["node_id"] = hit.pop("id")
+    return hit or None
+
+
+def _draft_source_indices(facts: dict[str, Any]) -> list[int]:
+    return [
+        int(step["source_step_index"])
+        for step in facts.get("steps") or ()
+        if isinstance(step, dict) and isinstance(step.get("source_step_index"), int)
+    ]
+
+
+def _span_indices(source_indices: list[int], start: int, end: int) -> list[int]:
+    if start not in source_indices or end not in source_indices:
+        raise ValueError(
+            "authoring_patch_span_invalid:"
+            f"start={start}:end={end}:"
+            f"allowed_source_step_indices={source_indices}"
+        )
+    start_at = source_indices.index(start)
+    end_at = source_indices.index(end)
+    if start_at > end_at:
+        raise ValueError(
+            "authoring_patch_span_invalid:"
+            f"start={start}:end={end}:range_is_reversed"
+        )
+    return source_indices[start_at : end_at + 1]
+
+
+def _fact_step(facts: dict[str, Any], source_index: int) -> dict[str, Any]:
+    for step in facts.get("steps") or ():
+        if isinstance(step, dict) and step.get("source_step_index") == source_index:
+            return step
+    raise ValueError(
+        "authoring_patch_step_invalid:"
+        f"unknown_source_step_index={source_index}"
+    )
+
+
+def _recorded_node_value(
+    step: dict[str, Any], node_id: str, attribute: str
+) -> str:
+    source_ui = step.get("source_ui") if isinstance(step.get("source_ui"), dict) else {}
+    matches = [
+        node
+        for node in source_ui.get("nodes") or ()
+        if isinstance(node, dict) and str(node.get("id") or "") == node_id
+    ]
+    if len(matches) != 1 or attribute not in matches[0]:
+        available = [
+            str(node.get("id") or "")
+            for node in source_ui.get("nodes") or ()
+            if isinstance(node, dict) and str(node.get("id") or "").strip()
+        ]
+        raise ValueError(
+            "authoring_patch_node_invalid:"
+            f"source_step_index={step.get('source_step_index')}:"
+            f"node_id={node_id}:attribute={attribute}:"
+            f"available_node_ids={available}"
+        )
+    return str(matches[0].get(attribute) or "")
+
+
+def _parse_patch_assignments(tail: str) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for token in tail.split():
+        if "=" not in token:
+            raise ValueError(f"authoring_patch_assignment_invalid:{token}")
+        key, value = token.split("=", 1)
+        if not key or not value or key in assignments:
+            raise ValueError(f"authoring_patch_assignment_invalid:{token}")
+        assignments[key] = value
+    return assignments
+
+
+def _parameters_for_occurrences(
+    draft: dict[str, Any], occurrences: list[list[int]]
+) -> list[dict[str, Any]]:
+    names: list[str] = []
+    for indices in occurrences:
+        for index in indices:
+            for binding in draft["bindings"].get(index) or ():
+                name = str(binding["name"])
+                if name not in names:
+                    names.append(name)
+    parameters: list[dict[str, Any]] = []
+    for name in names:
+        raw_bindings: list[dict[str, Any]] = []
+        for occurrence_index, indices in enumerate(occurrences):
+            for index in indices:
+                for binding in draft["bindings"].get(index) or ():
+                    if binding["name"] != name:
+                        continue
+                    item = {
+                        "occurrence_index": occurrence_index,
+                        "source_step_index": index,
+                        "binding_kind": binding["binding_kind"],
+                    }
+                    if binding["binding_kind"] == "action_arg":
+                        item["arg_name"] = binding["arg_name"]
+                    else:
+                        item["node_id"] = binding["node_id"]
+                        item["attribute"] = binding["attribute"]
+                        item["recorded_value"] = binding["recorded_value"]
+                    raw_bindings.append(item)
+        parameters.append(
+            {
+                "name": name,
+                "description": name,
+                "bindings": raw_bindings,
+            }
+        )
+    return parameters
+
+
+def _proposal_from_draft(
+    draft: dict[str, Any], facts: dict[str, Any]
+) -> dict[str, Any]:
+    source_indices = _draft_source_indices(facts)
+    grouped: dict[str, list[list[int]]] = {}
+    order: list[str] = []
+    for span in draft["spans"]:
+        function_id = str(span["function_id"])
+        if function_id not in grouped:
+            order.append(function_id)
+            grouped[function_id] = []
+        grouped[function_id].append(list(span["indices"]))
+    functions: list[dict[str, Any]] = []
+    for function_id in order:
+        occurrences = grouped[function_id]
+        functions.append(
+            {
+                "function_id": function_id,
+                "name": function_id.replace("_", " "),
+                "description": f"Replay the recorded {function_id} steps.",
+                "occurrences": [
+                    {"source_step_indices": indices} for indices in occurrences
+                ],
+                "parameters": _parameters_for_occurrences(draft, occurrences),
+            }
+        )
+    has_online = any(
+        draft["kinds"].get(index) == "online_observation" for index in source_indices
+    )
+    execution_mode = "planner_handoff" if has_online else "direct_replay"
+    complete_parameters = (
+        []
+        if has_online
+        else _parameters_for_occurrences(draft, [source_indices])
+    )
+    return {
+        "binding_owner": "agent",
+        "reason": "Applied authoring patches.",
+        "semantic_analysis": {
+            "steps": [
+                {
+                    "source_step_index": index,
+                    "semantic_kind": draft["kinds"][index],
+                    "parameter_names": [
+                        str(binding["name"])
+                        for binding in draft["bindings"].get(index) or ()
+                    ],
+                    "reason": "authoring patch",
+                }
+                for index in source_indices
+            ]
+        },
+        "functions": functions,
+        "complete_function": {
+            "function_id": "complete_source_workflow",
+            "name": "Complete source workflow",
+            "description": "Preserve the successful source workflow.",
+            "source_step_indices": source_indices,
+            "execution_mode": execution_mode,
+            "parameters": complete_parameters,
+        },
+    }
+
+
+def _apply_authoring_line(
+    draft: dict[str, Any],
+    line: str,
+    facts: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply one patch line. Reject the line without changing the draft."""
+
+    source_indices = _draft_source_indices(facts)
+    text = " ".join(str(line or "").split())
+    parts = text.split(" ")
+    candidate = copy.deepcopy(draft)
+    if len(parts) >= 4 and parts[0] == "span":
+        try:
+            start = int(parts[1])
+            end = int(parts[2])
+        except ValueError as error:
+            raise ValueError("authoring_patch_span_invalid") from error
+        function_id = parts[3]
+        if (
+            len(parts) != 4
+            or _PATCH_FUNCTION_ID.fullmatch(function_id) is None
+            or function_id == "complete_source_workflow"
+        ):
+            raise ValueError(
+                "authoring_patch_span_invalid:"
+                f"function_id={function_id!r}"
+            )
+        indices = _span_indices(source_indices, start, end)
+        explicit_online = {
+            int(index) for index in candidate.get("explicit_online") or ()
+        }
+        blocked = [index for index in indices if index in explicit_online]
+        if blocked:
+            raise ValueError(
+                "authoring_patch_span_contains_online:"
+                f"source_step_indices={blocked}"
+            )
+        covered = {
+            index
+            for span in candidate["spans"]
+            for index in span["indices"]
+        }
+        overlap = [index for index in indices if index in covered]
+        if overlap:
+            raise ValueError(
+                "authoring_patch_span_overlap:"
+                f"source_step_indices={overlap}"
+            )
+        for index in indices:
+            if candidate["kinds"].get(index) == "online_observation":
+                candidate["kinds"][index] = "stable"
+        candidate["spans"].append(
+            {"function_id": function_id, "indices": indices}
+        )
+    elif len(parts) >= 3 and parts[0] == "step":
+        try:
+            source_index = int(parts[1])
+        except ValueError as error:
+            raise ValueError("authoring_patch_step_invalid") from error
+        if source_index not in source_indices:
+            raise ValueError(
+                "authoring_patch_step_invalid:"
+                f"unknown_source_step_index={source_index}:"
+                f"allowed_source_step_indices={source_indices}"
+            )
+        kind = parts[2]
+        step = _fact_step(facts, source_index)
+        if kind == "online_observation" and len(parts) == 3:
+            candidate["kinds"][source_index] = "online_observation"
+            candidate["bindings"][source_index] = []
+            if source_index not in candidate["explicit_online"]:
+                candidate["explicit_online"].append(source_index)
+            replacement: list[dict[str, Any]] = []
+            for span in candidate["spans"]:
+                if source_index not in span["indices"]:
+                    replacement.append(span)
+                    continue
+                left = [index for index in span["indices"] if index < source_index]
+                right = [index for index in span["indices"] if index > source_index]
+                for part in (left, right):
+                    if part:
+                        replacement.append(
+                            {
+                                "function_id": span["function_id"],
+                                "indices": part,
+                            }
+                        )
+            candidate["spans"] = replacement
+        elif kind == "stable" and len(parts) == 3:
+            candidate["kinds"][source_index] = "stable"
+            candidate["bindings"][source_index] = []
+            candidate["explicit_online"] = [
+                index
+                for index in candidate["explicit_online"]
+                if int(index) != source_index
+            ]
+        elif kind == "task_parameter":
+            assignments = _parse_patch_assignments(" ".join(parts[3:]))
+            name = assignments.get("name") or ""
+            if (
+                set(assignments) not in (
+                    {"name", "arg"},
+                    {"name", "node", "attr"},
+                )
+                or _PATCH_PARAMETER_NAME.fullmatch(name) is None
+            ):
+                raise ValueError(
+                    "authoring_patch_parameter_invalid:"
+                    f"received={sorted(assignments)}"
+                )
+            if not any(
+                source_index in span["indices"] for span in candidate["spans"]
+            ):
+                raise ValueError(
+                    "authoring_patch_parameter_outside_span:"
+                    f"source_step_index={source_index}"
+                )
+            action = step.get("action") if isinstance(step.get("action"), dict) else {}
+            args = action.get("args") if isinstance(action.get("args"), dict) else {}
+            if "arg" in assignments:
+                arg_name = assignments["arg"]
+                if arg_name not in args:
+                    raise ValueError(
+                        "function_author_plan_parameter_target_invalid:"
+                        f"source_step_index={source_index}:arg_name={arg_name!r}:"
+                        f"available_action_args={sorted(args)}"
+                    )
+                binding = {
+                    "name": name,
+                    "binding_kind": "action_arg",
+                    "arg_name": arg_name,
+                }
+            else:
+                attribute = assignments["attr"]
+                if attribute not in {"text", "content-desc"}:
+                    raise ValueError(
+                        "authoring_patch_attribute_invalid:"
+                        f"attribute={attribute}"
+                    )
+                binding = {
+                    "name": name,
+                    "binding_kind": "render_node",
+                    "node_id": assignments["node"],
+                    "attribute": attribute,
+                    "recorded_value": _recorded_node_value(
+                        step, assignments["node"], attribute
+                    ),
+                }
+            existing = [
+                item
+                for item in candidate["bindings"].get(source_index) or ()
+                if item.get("name") != name
+            ]
+            existing.append(binding)
+            candidate["bindings"][source_index] = existing
+            candidate["kinds"][source_index] = "task_parameter"
+            candidate["explicit_online"] = [
+                index
+                for index in candidate["explicit_online"]
+                if int(index) != source_index
+            ]
+        else:
+            raise ValueError(f"authoring_patch_line_invalid:{text}")
+    else:
+        raise ValueError(f"authoring_patch_line_invalid:{text}")
+    _materialize_agent_owned_workflow(
+        _proposal_from_draft(candidate, facts),
+        facts,
+    )
+    return candidate
+
+
+def _parse_authoring_patches(raw: str) -> list[str]:
+    value = json.loads(raw)
+    if not isinstance(value, dict) or set(value) != {"patches"}:
+        raise ValueError(
+            "authoring_patches_required:"
+            "expected_top_level_fields=patches:"
+            f"received_fields={sorted(value) if isinstance(value, dict) else type(value).__name__}"
+        )
+    patches = value.get("patches")
+    if not isinstance(patches, list) or any(
+        not isinstance(patch, str) or not patch.strip() for patch in patches
+    ):
+        raise ValueError("authoring_patches_required")
+    return [" ".join(patch.split()) for patch in patches]
+
+
+def _author_by_patches(
+    facts: dict[str, Any],
+    *,
+    complete_json: Callable[[str], str] | None,
+    client: Any | None,
+    selected_model: str | None,
+    timeout: float,
+    authoring_prompt: str,
+    usage: dict[str, int],
+    authoring_attempt_trace: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, Exception | None, str]:
+    """Ask for patch lines and keep every line the current compiler accepts."""
+
+    source_indices = _draft_source_indices(facts)
+    draft = _base_authoring_draft(source_indices)
+    applied: list[str] = []
+    failed: list[dict[str, str]] = []
+    authoring_error: Exception | None = ValueError(
+        "authoring_patches_produced_no_executable_function"
+    )
+    raw_author_response = ""
+    card = _judgment_card(facts)
+    for attempt in range(1, 4):
+        request_payload: dict[str, Any] = {
+            "output_format": "json",
+            "judgment_card": card,
+            "applied_patches": list(applied),
+        }
+        if failed:
+            request_payload["failed_patches"] = list(failed)
+            request_payload["instruction"] = (
+                "Return JSON with a patches array containing only replacement "
+                "lines for the failed patches. Applied patches stay in effect."
+            )
+        response = None if complete_json is not None else client.chat.completions.create(
+            model=selected_model,
+            messages=[
+                {"role": "system", "content": authoring_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(request_payload, ensure_ascii=False),
+                },
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=8192,
+            temperature=0,
+            stream=False,
+            reasoning_effort="none",
+            extra_body={
+                "enable_thinking": False,
+                "thinking": {"type": "disabled"},
+            },
+            timeout=float(timeout),
+        )
+        response_usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(response_usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(
+            getattr(response_usage, "completion_tokens", 0) or 0
+        )
+        total_tokens = int(getattr(response_usage, "total_tokens", 0) or 0)
+        usage["model_calls"] += 1
+        usage["prompt_tokens"] += prompt_tokens
+        usage["completion_tokens"] += completion_tokens
+        usage["total_tokens"] += total_tokens or prompt_tokens + completion_tokens
+        raw_author_response = (
+            complete_json(
+                authoring_prompt
+                + "\n\n"
+                + json.dumps(request_payload, ensure_ascii=False)
+            )
+            if complete_json is not None
+            else str(response.choices[0].message.content or "")
+        )
+        try:
+            patches = _parse_authoring_patches(raw_author_response)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            authoring_error = error
+            authoring_attempt_trace.append(
+                {
+                    "attempt": attempt,
+                    "accepted": False,
+                    "error": str(error) or type(error).__name__,
+                    "raw_response": raw_author_response,
+                }
+            )
+            failed = [{"patch": raw_author_response, "error": str(error)}]
+            if applied:
+                break
+            continue
+        attempt_failures: list[dict[str, str]] = []
+        for patch in patches:
+            if patch in applied:
+                continue
+            try:
+                draft = _apply_authoring_line(draft, patch, facts)
+            except (TypeError, ValueError) as error:
+                attempt_failures.append(
+                    {"patch": patch, "error": str(error) or type(error).__name__}
+                )
+                continue
+            applied.append(patch)
+        failed = attempt_failures
+        authoring_error = None if applied else ValueError(
+            "authoring_patches_produced_no_executable_function"
+        )
+        authoring_attempt_trace.append(
+            {
+                "attempt": attempt,
+                "accepted": bool(applied) and not failed,
+                "error": None
+                if applied and not failed
+                else (
+                    failed[-1]["error"]
+                    if failed
+                    else "authoring_patches_produced_no_executable_function"
+                ),
+                "raw_response": raw_author_response,
+                "applied_patches": list(applied),
+                "failed_patches": list(failed),
+            }
+        )
+        if applied and not failed:
+            break
+        if applied and attempt >= 2:
+            break
+        if not applied and attempt >= 3:
+            break
+    if not applied:
+        return None, authoring_error, raw_author_response
+    authored = _materialize_agent_owned_workflow(
+        _proposal_from_draft(draft, facts),
+        facts,
+    )
+    authored["authoring_workflow"]["applied_patches"] = list(applied)
+    authored["authoring_workflow"]["rejected_patches"] = list(failed)
+    return authored, None, raw_author_response
 
 
 def compile_runlog_to_store(
@@ -212,6 +650,8 @@ def compile_runlog_to_store(
     output_root: str | Path,
     *,
     function_bundle: dict[str, Any] | None = None,
+    authoring_proposal: dict[str, Any] | None = None,
+    prepare_only: bool = False,
     model: str | None = None,
     client: Any | None = None,
     prompt: str | None = None,
@@ -430,7 +870,19 @@ def compile_runlog_to_store(
         "total_tokens": 0,
     }
     authoring_attempt_trace: list[dict[str, Any]] = []
-    if function_bundle is not None:
+    if prepare_only:
+        if authoring_proposal is not None or function_bundle is not None or complete_json is not None or selected_model:
+            raise ValueError("authoring_preparation_cannot_compile_or_call_model")
+        return {"source_run": facts, "authoring_contract": authoring_prompt}
+    if authoring_proposal is not None:
+        if function_bundle is not None or client is not None or complete_json is not None or selected_model or prompt is not None:
+            raise ValueError("agent_authoring_proposal_cannot_use_model_or_function_bundle")
+        # The existing host Agent owns semantic reasoning and correction. This
+        # path only validates/materializes its proposal through the one compiler.
+        authored = _materialize_authoring_response(authoring_proposal, facts, candidate_map={})
+        _validate_materialized_function_artifacts(authored, raw_payload=raw)
+        authoring_attempt_trace.append({"attempt": 1, "accepted": True, "error": None})
+    elif function_bundle is not None:
         if client is not None or prompt is not None or complete_json is not None:
             raise ValueError("function_bundle_cannot_use_author_model_options")
         authored = {
@@ -461,91 +913,23 @@ def compile_runlog_to_store(
             if os.getenv("OPENAI_BASE_URL"):
                 options["base_url"] = os.environ["OPENAI_BASE_URL"]
             client = OpenAI(**options)
-        raw_author_response = ""
-        authoring_error: Exception | None = None
-        for attempt in range(1, 4):
-            request_payload: dict[str, Any] = {
-                "output_format": "json",
-                "source_run": facts,
-            }
-            if authoring_attempt_trace:
-                request_payload["harness_feedback"] = {
-                    "previous_attempt": attempt - 1,
-                    "error": authoring_attempt_trace[-1]["error"],
-                    "instruction": (
-                        "Revise the Function proposal JSON and return a complete "
-                        "replacement object. Do not patch the prior response."
-                    ),
-                }
-            response = None if complete_json is not None else client.chat.completions.create(
-                model=selected_model,
-                messages=[
-                    {"role": "system", "content": authoring_prompt},
-                    {
-                        "role": "user",
-                        "content": json.dumps(request_payload, ensure_ascii=False),
-                    },
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=8192,
-                temperature=0,
-                stream=False,
-                reasoning_effort="none",
-                extra_body={
-                    "enable_thinking": False,
-                    "thinking": {"type": "disabled"},
-                },
-                timeout=float(timeout),
+        authored, authoring_error, raw_author_response = _author_by_patches(
+            facts,
+            complete_json=complete_json,
+            client=client,
+            selected_model=selected_model,
+            timeout=float(timeout),
+            authoring_prompt=authoring_prompt,
+            usage=usage,
+            authoring_attempt_trace=authoring_attempt_trace,
+        )
+        if authoring_error is not None or authored is None:
+            failure = authoring_error or ValueError(
+                "authoring_patches_produced_no_executable_function"
             )
-            response_usage = getattr(response, "usage", None)
-            prompt_tokens = int(
-                getattr(response_usage, "prompt_tokens", 0) or 0
-            )
-            completion_tokens = int(
-                getattr(response_usage, "completion_tokens", 0) or 0
-            )
-            total_tokens = int(getattr(response_usage, "total_tokens", 0) or 0)
-            usage["model_calls"] += 1
-            usage["prompt_tokens"] += prompt_tokens
-            usage["completion_tokens"] += completion_tokens
-            usage["total_tokens"] += (
-                total_tokens or prompt_tokens + completion_tokens
-            )
-            raw_author_response = (
-                complete_json(authoring_prompt + "\n\n" + json.dumps(request_payload, ensure_ascii=False))
-                if complete_json is not None
-                else str(response.choices[0].message.content or "")
-            )
-            try:
-                proposal = json.loads(raw_author_response)
-                authored = _materialize_authoring_response(
-                    proposal,
-                    facts,
-                    candidate_map={},
-                )
-                _validate_materialized_function_artifacts(
-                    authored,
-                    raw_payload=raw,
-                )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                authoring_error = error
-                authoring_attempt_trace.append(
-                    {
-                        "attempt": attempt,
-                        "accepted": False,
-                        "error": str(error) or type(error).__name__,
-                    }
-                )
-                continue
-            authoring_attempt_trace.append(
-                {"attempt": attempt, "accepted": True, "error": None}
-            )
-            authoring_error = None
-            break
-        if authoring_error is not None:
             _write_authoring_failure(
                 root,
-                error=authoring_error,
+                error=failure,
                 model=selected_model,
                 prompt=authoring_prompt,
                 response=raw_author_response,
@@ -553,7 +937,12 @@ def compile_runlog_to_store(
             )
             authored = _raw_source_replay_authoring(
                 facts,
-                rejected_error=str(authoring_error) or type(authoring_error).__name__,
+                rejected_error=str(failure) or type(failure).__name__,
+            )
+        else:
+            _validate_materialized_function_artifacts(
+                authored,
+                raw_payload=raw,
             )
     if not isinstance(authored, dict) or not {"reason", "bundle"}.issubset(authored):
         raise ValueError("function_author_response_contract_invalid")
@@ -912,7 +1301,14 @@ def _materialize_authoring_response(
             facts,
             candidate_map=candidate_map,
         )
-    return _materialize_authoring_plan(value, facts)
+    if isinstance(value, dict) and set(value) == {"reason", "plan"}:
+        return _materialize_authoring_plan(value, facts)
+    raise ValueError(
+        "function_author_response_contract_invalid:"
+        "expected_top_level_fields=binding_owner,reason,semantic_analysis,functions,complete_function:"
+        f"received_fields={sorted(value) if isinstance(value, dict) else type(value).__name__}:"
+        "return_the_proposal_directly_without_a_wrapper"
+    )
 
 
 def _source_ui_projection(observation: Any) -> dict[str, Any]:
@@ -947,7 +1343,15 @@ def _source_ui_projection(observation: Any) -> dict[str, Any]:
         }
         if projected:
             nodes.append(projected)
-    return {"nodes": nodes}
+    projection: dict[str, Any] = {
+        "nodes": nodes,
+        "action_coordinates": "normalized_0_1000",
+        "node_bounds_coordinates": "pixels",
+    }
+    display = observation_display(observation)
+    if display is not None:
+        projection["display"] = {"width": display[0], "height": display[1]}
+    return projection
 
 
 def _raw_source_replay_authoring(
@@ -1066,6 +1470,12 @@ def _materialize_agent_owned_workflow(
         raise ValueError(
             "function_author_online_observation_requires_planner_handoff"
         )
+    if not has_online_observation and execution_mode != "direct_replay":
+        raise ValueError(
+            "function_author_complete_execution_mode_invalid:"
+            "all_steps_are_stable_or_task_parameter:expected=direct_replay:"
+            "task_parameters_are_bound_before_execution_and_do_not_require_planner_handoff"
+        )
 
     function_fields = {
         "function_id",
@@ -1101,6 +1511,7 @@ def _materialize_agent_owned_workflow(
         function_id = _agent_owned_function_id(raw_function, seen_ids)
         parameters = _agent_owned_parameters(
             raw_function.get("parameters"),
+            location=f"functions[{len(materialized_functions)}].parameters",
             occurrence_count=len(spans),
             facts=facts,
             spans=spans,
@@ -1148,6 +1559,7 @@ def _materialize_agent_owned_workflow(
     complete_id = _agent_owned_function_id(raw_complete, seen_ids)
     complete_parameters = _agent_owned_parameters(
         raw_complete.get("parameters"),
+        location="complete_function.parameters",
         occurrence_count=1,
         facts=facts,
         spans=[source_indices],
@@ -1246,11 +1658,21 @@ def _agent_owned_semantic_analysis(
         semantic_kind = str(raw_step.get("semantic_kind") or "").strip()
         parameter_names = raw_step.get("parameter_names")
         reason = str(raw_step.get("reason") or "").strip()
+        if isinstance(source_step_index, int) and not isinstance(source_step_index, bool):
+            if source_step_index not in source_indices:
+                raise ValueError(
+                    "function_author_semantic_step_invalid:"
+                    f"unknown_source_step_index={source_step_index}:"
+                    f"allowed_source_step_indices={source_indices}"
+                )
+            if source_step_index in parsed:
+                raise ValueError(
+                    "function_author_semantic_step_invalid:"
+                    f"duplicate_source_step_index={source_step_index}"
+                )
         if (
             isinstance(source_step_index, bool)
             or not isinstance(source_step_index, int)
-            or source_step_index not in source_indices
-            or source_step_index in parsed
             or semantic_kind
             not in {"stable", "task_parameter", "online_observation"}
             or not isinstance(parameter_names, list)
@@ -1306,11 +1728,17 @@ def _agent_owned_occurrence_span(value: Any, source_indices: list[int]) -> list[
 
 def _agent_owned_function_id(value: dict[str, Any], seen_ids: set[str]) -> str:
     function_id = str(value.get("function_id") or "").strip()
-    if (
-        re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", function_id) is None
-        or function_id in seen_ids
-    ):
-        raise ValueError("function_author_inventory_function_id_invalid")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", function_id) is None:
+        raise ValueError(
+            "function_author_inventory_function_id_invalid:"
+            f"function_id={function_id!r}:expected_pattern=[A-Za-z_][A-Za-z0-9_]{{0,63}}"
+        )
+    if function_id in seen_ids:
+        raise ValueError(
+            "function_author_inventory_function_id_invalid:"
+            f"duplicate_function_id={function_id}:"
+            "local_functions_and_complete_function_must_have_distinct_ids"
+        )
     seen_ids.add(function_id)
     return function_id
 
@@ -1318,6 +1746,7 @@ def _agent_owned_function_id(value: dict[str, Any], seen_ids: set[str]) -> str:
 def _agent_owned_parameters(
     value: Any,
     *,
+    location: str = "parameters",
     occurrence_count: int,
     facts: dict[str, Any],
     spans: list[list[int]],
@@ -1331,9 +1760,15 @@ def _agent_owned_parameters(
     }
     parsed: list[dict[str, Any]] = []
     names: set[str] = set()
-    for parameter in value:
+    for parameter_index, parameter in enumerate(value):
         if not isinstance(parameter, dict) or set(parameter) != parameter_fields:
-            raise ValueError("function_author_parameter_invalid")
+            raise ValueError(
+                "function_author_parameter_invalid:"
+                f"path={location}[{parameter_index}]:"
+                "expected_fields=bindings,description,name:"
+                f"received_fields={sorted(parameter) if isinstance(parameter, dict) else type(parameter).__name__}:"
+                "each_declared_parameter_requires_its_own_bindings"
+            )
         name = str(parameter.get("name") or "").strip()
         description = str(parameter.get("description") or "").strip()
         if (
@@ -1352,7 +1787,12 @@ def _agent_owned_parameters(
             bindings.append(parsed_binding)
             covered_occurrences.add(parsed_binding["occurrence_index"])
         if covered_occurrences != set(range(occurrence_count)):
-            raise ValueError("function_author_parameter_occurrence_incomplete")
+            raise ValueError(
+                "function_author_parameter_occurrence_incomplete:"
+                f"parameter={name}:missing_occurrence_indices={sorted(set(range(occurrence_count)) - covered_occurrences)}:"
+                f"occurrence_source_steps={spans}:"
+                "each_occurrence_is_a_whole_function_invocation_and_requires_every_parameter"
+            )
         values = _agent_owned_default_values(
             bindings,
             occurrence_count=occurrence_count,
@@ -1398,7 +1838,12 @@ def _agent_owned_default_values(
                 args = action.get("args") if isinstance(action, dict) else None
                 arg_name = str(binding.get("arg_name") or "")
                 if not isinstance(args, dict) or arg_name not in args:
-                    raise ValueError("function_author_plan_parameter_target_invalid")
+                    raise ValueError(
+                        "function_author_plan_parameter_target_invalid:"
+                        f"source_step_index={source_index}:arg_name={arg_name!r}:"
+                        f"available_action_args={sorted(args) if isinstance(args, dict) else []}:"
+                        "arg_name_must_match_a_source_action_argument_not_the_parameter_name"
+                    )
                 occurrence_values.append(args[arg_name])
             else:
                 occurrence_values.append(binding.get("recorded_value"))
@@ -1438,6 +1883,12 @@ def _agent_owned_binding(value: Any, occurrence_count: int) -> dict[str, Any]:
         )
     occurrence_index = value.get("occurrence_index")
     source_step_index = value.get("source_step_index")
+    if isinstance(occurrence_index, int) and not isinstance(occurrence_index, bool) and occurrence_index not in range(occurrence_count):
+        raise ValueError(
+            "function_author_parameter_binding_invalid:"
+            f"occurrence_index={occurrence_index}:allowed_occurrence_indices={list(range(occurrence_count))}:"
+            "occurrence_index_is_not_source_step_index"
+        )
     if (
         isinstance(occurrence_index, bool)
         or not isinstance(occurrence_index, int)

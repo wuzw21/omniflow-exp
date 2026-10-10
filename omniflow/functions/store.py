@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterable
 
@@ -24,6 +25,7 @@ class FunctionStore:
     ):
         self.path = Path(path)
         self.functions: dict[str, Function] = {}
+        self.function_sources: dict[str, str] = {}
         self.load_errors: dict[str, str] = {}
         self._load()
         self._seed(seed_functions, replace=replace_seeded)
@@ -47,10 +49,28 @@ class FunctionStore:
     def get_function(self, function_id: str) -> Function | None:
         return self.functions.get(str(function_id or "").strip())
 
-    def put_function(self, value: Function | dict) -> Function:
+    def function_payload(self, function: Function) -> dict:
+        payload = function.to_dict()
+        source = self.function_sources.get(function.id)
+        if source:
+            payload['source_run_id'] = source
+        return payload
+
+    def put_function(
+        self, value: Function | dict, *, source_run_id: str = '', create: bool = False,
+    ) -> Function:
         function = value if isinstance(value, Function) else parse_function_artifact(value)
         validate_function_artifact(function)
+        if create and function.id in self.functions and self.function_sources.get(function.id) != source_run_id:
+            if not source_run_id:
+                raise ValueError('function_source_run_id_required')
+            suffix = hashlib.sha256(source_run_id.encode()).hexdigest()[:16]
+            function = replace(function, function_id=f'{function.id}__{suffix}')
+            if function.id in self.functions and self.function_sources.get(function.id) != source_run_id:
+                raise ValueError('function_id_conflict')
         self.functions[function.id] = function
+        if source_run_id:
+            self.function_sources[function.id] = source_run_id
         self.load_errors.clear()
         self._normalize_visibility()
         self.save()
@@ -100,6 +120,7 @@ class FunctionStore:
         if normalized not in self.functions:
             return False
         del self.functions[normalized]
+        self.function_sources.pop(normalized, None)
         self.load_errors.clear()
         self.save()
         return True
@@ -107,12 +128,14 @@ class FunctionStore:
     def clear_functions(self) -> int:
         deleted = len(self.functions)
         self.functions.clear()
+        self.function_sources.clear()
         self.load_errors.clear()
         self.save()
         return deleted
 
     def reload(self) -> None:
         self.functions = {}
+        self.function_sources = {}
         self.load_errors = {}
         self._load()
 
@@ -123,6 +146,7 @@ class FunctionStore:
             "functions": {
                 key: value.to_dict() for key, value in sorted(self.functions.items())
             },
+            "function_sources": dict(sorted(self.function_sources.items())),
         }
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
         temporary.write_text(
@@ -152,6 +176,13 @@ class FunctionStore:
                 continue
             loaded[function.id] = function
         self.functions = loaded
+        sources = payload.get('function_sources') or {}
+        if not isinstance(sources, dict):
+            raise ValueError('function_sources_must_be_object')
+        self.function_sources = {
+            key: value for key, value in sources.items()
+            if key in loaded and isinstance(value, str) and value.strip()
+        }
         self.load_errors = load_errors
         self._normalize_visibility()
 

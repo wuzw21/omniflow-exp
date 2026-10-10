@@ -29,7 +29,7 @@
         {"type": "null"}
       ]
     },
-    "status": {"enum": ["succeeded", "failed"]},
+    "status": {"enum": ["succeeded", "failed", "cancelled"]},
     "success": {"type": "boolean"},
     "validator": {"$ref": "#/$defs/validator"},
     "provenance": {"$ref": "#/$defs/provenance"},

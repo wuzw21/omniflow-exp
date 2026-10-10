@@ -153,14 +153,13 @@ Authoring 过程对外只包含三个阶段：
    推荐、修复或补全任何 binding；source 默认值只从 Agent 指定的 action arg 或
    `recorded_value` 原样复制，只有 Agent 分类为稳定的未声明值继续使用 RunLog 默认值。
 
-因此 Agent 的 JSON 以 `binding_owner=agent` 明确所有权，并在 `semantic_analysis` 中
-先完成逐步分类，再在 `functions` 与
-`complete_function` 内只声明需要变化的 bindings，不提交 `validation` 或
-`registration` 字段。结构校验失败时 Harness 把错误反馈给同一 Agent并要求完整重写，
-最多三次；仍失败则写出 `authoring_failure.json`，原始 source replay 仅以
-`agent_visible=false` 的证据 Function 保存，不参与 Recall。若分类包含
-`online_observation`，完整 Function 同样只作隐藏证据，安全的局部 Function 仍可参与
-Recall，动态步骤由既有 Planner 主线完成。该行为不产生任何 compiler-derived binding。
+显式 `authoring_proposal` 仍是完整方案，Compiler 只做校验和落盘。模型调用不再交这份完整方案。
+Compiler 先生成底稿：每一步都是 `online_observation`，完整轨迹不可执行。模型只返回补丁行，
+`span` 划出可复用片段，`step` 声明 `arg_name` 或 `node_id`。Compiler 逐条套用到现有
+materializer；失败的一行被拒绝，已经套用的行保留，并只把失败行送回模型。没有任何可执行
+Function 时写出 `authoring_failure.json`，原始 source replay 仅以 `agent_visible=false`
+的证据 Function 保存，不参与 Recall。补丁没有覆盖的步骤仍由既有 Planner 主线完成。
+该行为不产生任何 compiler-derived binding。
 最终 Store 仍只包含 flat `omniflow.function.v2` artifacts；有序重复调用保存在
 `compile_report.json::source_calls`，因此一次 source evidence 可以表达“一份 Function
 定义、多个 invocation 引用”，而不复制 RunLog 或 Function actions。
