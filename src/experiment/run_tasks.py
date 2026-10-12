@@ -285,17 +285,6 @@ def _run_has_executable_swipe_evidence(payload: dict[str, Any]) -> bool:
     return True
 
 
-def _golden_run_is_complete(path: Path) -> bool:
-    """Return whether the canonical slot already contains official success.
-
-    This is an execution guard, not a result selector: the caller already
-    resolved one exact task/method/device path.  A completed activity must not
-    be launched again merely because the batch command was resumed.
-    """
-    quality = _run_quality(path)
-    return quality is not None and quality[:2] == (1, 1)
-
-
 def _promote_golden_run(
     *,
     candidate: Path,

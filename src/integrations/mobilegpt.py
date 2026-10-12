@@ -47,7 +47,6 @@ from src.integrations.runlog import (
 
 CONVERSION_SOURCE_SCHEMA = "omniflow.mobilegpt.source.v2"
 CONVERSION_MODE_OFFICIAL = "official_mobilegpt_learning"
-CONVERSION_AUDIT_SCHEMA = MOBILEGPT_AUDIT_SCHEMA
 # The upstream Server normally terminates by sending ``$$$$$``.  A malformed
 # model response or a dirty upstream checkout can otherwise keep asking for
 # the same screen forever.  Keep the historical successful range (the old
@@ -227,32 +226,6 @@ class MobileGPTConversionError(RuntimeError):
         self.details = details
         suffix = ":" + json.dumps(details, ensure_ascii=False, sort_keys=True) if details else ""
         super().__init__(self.code + suffix)
-
-
-def _memory_files(root: Path) -> tuple[list[Path], list[Path]]:
-    if not root.is_dir():
-        return [], []
-    files = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts
-    )
-    task_files = [
-        path
-        for path in files
-        if path.name == "tasks.csv" and path.parent.parent == root
-    ]
-    return files, task_files
-
-
-def _hash_memory_files(files: list[Path], *, root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(files, key=lambda item: item.relative_to(root).parts):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def validate_memory_manifest(memory_root: str | Path) -> dict[str, Any]:
@@ -1568,27 +1541,6 @@ def _swipe_direction(action: dict[str, Any]) -> str:
     return "down" if dy > 0 else "up"
 
 
-def _write_csv(
-    path: Path,
-    fieldnames: Sequence[str],
-    rows: Sequence[dict[str, Any]],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _json_text(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def _screen_identity(hierarchy_xml: str) -> str:
-    normalized = re.sub(r">\s+<", "><", str(hierarchy_xml or "").strip())
-    return hashlib.sha256(normalized.encode()).hexdigest()
-
-
 def _mobilegpt_ui_match_xml(parsed_xml: str) -> str:
     """Prepare the exact XML shape expected by MobileGPT UI match helpers."""
 
@@ -1772,85 +1724,6 @@ def _scroll_target_element(
                 candidate_count=len(candidates),
             )
     return candidates[0]
-
-
-def _reader_action_semantic_mismatch(
-    source_action_type: str,
-    source_action: dict[str, Any],
-    expected_action: dict[str, Any],
-    reader_action: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Return a mismatch when official Memory changes the action meaning."""
-
-    expected_name = str(expected_action.get("name") or "").strip().lower()
-    actual_name = str(reader_action.get("name") or "").strip().lower()
-    name_aliases = {
-        "navigate_back": {"back", "go-back", "navigate_back", "press_back"},
-        "answer": {"speak"},
-    }
-    allowed_names = name_aliases.get(source_action_type, {expected_name})
-    if actual_name not in allowed_names:
-        return {
-            "reason": "action_name",
-            "expected": expected_name,
-            "actual": actual_name,
-        }
-    expected_parameters = expected_action.get("parameters")
-    actual_parameters = reader_action.get("parameters")
-    if not isinstance(expected_parameters, dict) or not isinstance(actual_parameters, dict):
-        return {
-            "reason": "action_parameters",
-            "expected": expected_parameters,
-            "actual": actual_parameters,
-        }
-    if "index" in expected_parameters and str(
-        actual_parameters.get("index")
-    ) != str(expected_parameters.get("index")):
-        return {
-            "reason": "target_index",
-            "expected": expected_parameters.get("index"),
-            "actual": actual_parameters.get("index"),
-        }
-    if expected_name == "scroll" and str(
-        actual_parameters.get("direction") or ""
-    ).strip().lower() != str(expected_parameters.get("direction") or "").strip().lower():
-        return {
-            "reason": "scroll_direction",
-            "expected": expected_parameters.get("direction"),
-            "actual": actual_parameters.get("direction"),
-        }
-    if expected_name == "repeat-click" and int(
-        actual_parameters.get("number") or 0
-    ) != int(expected_parameters.get("number") or 0):
-        return {
-            "reason": "repeat_count",
-            "expected": expected_parameters.get("number"),
-            "actual": actual_parameters.get("number"),
-        }
-    if source_action_type == "input_text":
-        expected_text = str(source_action.get("text") or "")
-        actual_text = str(
-            actual_parameters.get("input_text")
-            or actual_parameters.get("text")
-            or actual_parameters.get("value")
-            or ""
-        )
-        if actual_text != expected_text:
-            return {
-                "reason": "input_text",
-                "expected": expected_text,
-                "actual": actual_text,
-            }
-    if source_action_type == "answer":
-        expected_message = str(source_action.get("text") or "")
-        actual_message = str(actual_parameters.get("message") or "")
-        if actual_message != expected_message:
-            return {
-                "reason": "answer_message",
-                "expected": expected_message,
-                "actual": actual_message,
-            }
-    return None
 
 
 def _parameter_values(task_parameters: dict[str, Any]) -> dict[str, str]:
@@ -2081,62 +1954,6 @@ def _direct_subtask_from_runlog(
         "screen": encoded_xml,
     }
     return metadata, selected, example
-
-
-def _native_action_example(
-    *,
-    instruction: str,
-    selected_subtask: dict[str, Any],
-    encoded_xml: str,
-    action: dict[str, Any],
-) -> dict[str, Any]:
-    parameters = action.get("parameters")
-    if not isinstance(parameters, dict):
-        parameters = {}
-    concrete_parameters = {
-        key: value
-        for key, value in parameters.items()
-        if key in {"direction", "index", "input_text", "message", "number"}
-    }
-    concrete_action = {
-        "name": str(action.get("name") or ""),
-        "parameters": concrete_parameters,
-    }
-    response = {
-        "reasoning": "Follow the verified successful source experience.",
-        "action": concrete_action,
-        "completion_rate": 1.0,
-        "plan": "Execute this action, then verify the subtask state.",
-    }
-    return {
-        "instruction": instruction,
-        "subtask": _json_text(selected_subtask),
-        "screen": encoded_xml,
-        "response": _json_text(response),
-    }
-
-
-def _valid_native_action_examples(value: Any) -> bool:
-    if not isinstance(value, list) or not value:
-        return False
-    for example in value:
-        if not isinstance(example, dict):
-            return False
-        if not all(
-            isinstance(example.get(key), str) and example.get(key)
-            for key in ("instruction", "subtask", "screen", "response")
-        ):
-            return False
-        try:
-            subtask = json.loads(example["subtask"])
-            response = json.loads(example["response"])
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(subtask, dict) or not isinstance(response, dict):
-            return False
-        if not isinstance(response.get("action"), dict):
-            return False
-    return True
 
 
 def _mobilegpt_action_from_runlog(
@@ -2508,56 +2325,6 @@ def _official_protocol_screen(kind: bytes, payload: bytes) -> bytes:
     return kind + str(len(payload)).encode("ascii") + b"\n" + payload
 
 
-def _mobilegpt_action_projection(action: Any) -> dict[str, Any]:
-    if not isinstance(action, dict):
-        return {}
-    name = str(action.get("name") or "").strip()
-    parameters = action.get("parameters")
-    if not isinstance(parameters, dict):
-        parameters = {}
-    projected: dict[str, Any] = {}
-    for key in ("index", "direction", "input_text", "message", "number"):
-        if key not in parameters:
-            continue
-        value = parameters[key]
-        if key == "index":
-            projected[key] = str(value)
-        elif key == "direction":
-            projected[key] = str(value).strip().lower()
-        elif key == "number":
-            try:
-                projected[key] = int(value)
-            except (TypeError, ValueError):
-                projected[key] = value
-        else:
-            projected[key] = str(value)
-    return {"name": name, "parameters": projected}
-
-
-def _mobilegpt_actions_match(expected: Any, actual: Any) -> bool:
-    """Compare the source-required action with the official wire action.
-
-    MobileGPT adds execution-only parameters that AndroidWorld does not
-    record, notably the scroll container index.  Those additions are valid;
-    changing any parameter present in the source action is not.
-    """
-
-    expected_action = _mobilegpt_action_projection(expected)
-    actual_action = _mobilegpt_action_projection(actual)
-    if expected_action.get("name") != actual_action.get("name"):
-        return False
-    expected_parameters = expected_action.get("parameters")
-    actual_parameters = actual_action.get("parameters")
-    if not isinstance(expected_parameters, dict) or not isinstance(
-        actual_parameters, dict
-    ):
-        return expected_parameters == actual_parameters
-    return all(
-        actual_parameters.get(key) == value
-        for key, value in expected_parameters.items()
-    )
-
-
 def _official_prompt_kind(messages: Any) -> str:
     if not isinstance(messages, list):
         return "unknown"
@@ -2586,92 +2353,6 @@ def _drop_null_official_optional_fields(value: dict[str, Any]) -> dict[str, Any]
         value = dict(value)
         value.pop("new_action", None)
     return value
-
-
-def _append_official_teacher_prompt(
-    messages: Any,
-    *,
-    teacher_action: dict[str, Any] | None,
-) -> Any:
-    if not isinstance(messages, list):
-        return messages
-    adapted = [dict(message) if isinstance(message, dict) else message for message in messages]
-    teacher_payload = (
-        {
-            "terminal": False,
-            "source_step_index": teacher_action["source_step_index"],
-            "source_action_type": teacher_action["source_action_type"],
-            "required_action": teacher_action["required_action"],
-            "target_label": teacher_action["target_label"],
-        }
-        if teacher_action is not None
-        else {"terminal": True, "required_action": {"name": "finish", "parameters": {}}}
-    )
-    guidance = (
-        "\n\n<authoritative_runlog_teacher>\n"
-        "This is offline memory authoring from a validator-successful RunLog. "
-        "The demonstrated action is authoritative evidence, not a suggestion. "
-        "Select or create the semantic subtask needed to preserve it, and when "
-        "deriving the low-level action output exactly required_action. Do not "
-        "substitute another UI, route, index, action, or an early finish. When "
-        "terminal is true, finish and emit no additional device action.\n"
-        "MOBILEGPT_AUTHORITATIVE_RUNLOG_STEP="
-        + json.dumps(teacher_payload, ensure_ascii=False, sort_keys=True)
-        + "\n</authoritative_runlog_teacher>"
-    )
-    for index in range(len(adapted) - 1, -1, -1):
-        message = adapted[index]
-        if isinstance(message, dict) and message.get("role") == "user":
-            message["content"] = str(message.get("content") or "") + guidance
-            return adapted
-    adapted.append({"role": "user", "content": guidance.lstrip()})
-    return adapted
-
-
-def _align_official_actions_to_teacher(
-    teacher_actions: Sequence[dict[str, Any]],
-    official_actions: Sequence[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    actual_index = 0
-    for teacher in teacher_actions:
-        expected = _mobilegpt_action_projection(teacher.get("required_action"))
-        while (
-            actual_index < len(official_actions)
-            and _mobilegpt_action_projection(official_actions[actual_index]).get("name")
-            == "speak"
-            and expected.get("name") != "speak"
-        ):
-            actual_index += 1
-        actual = (
-            _mobilegpt_action_projection(official_actions[actual_index])
-            if actual_index < len(official_actions)
-            else {}
-        )
-        matched = _mobilegpt_actions_match(expected, actual)
-        rows.append(
-            {
-                "source_step_index": int(teacher["source_step_index"]),
-                "source_action_type": str(teacher["source_action_type"]),
-                "expected_action": expected,
-                "actual_action": actual,
-                "target_label": str(teacher.get("target_label") or ""),
-                "matched": matched,
-                "consumed_transitions": 1 if matched else 0,
-            }
-        )
-        if actual_index < len(official_actions):
-            actual_index += 1
-    remaining = [
-        _mobilegpt_action_projection(action)
-        for action in official_actions[actual_index:]
-        if _mobilegpt_action_projection(action).get("name") != "speak"
-    ]
-    if remaining and rows:
-        rows[-1]["unexpected_actions"] = remaining
-        rows[-1]["matched"] = False
-        rows[-1]["consumed_transitions"] = 0
-    return rows
 
 
 def _official_xml_input(raw_xml: str) -> str:

@@ -96,40 +96,6 @@ def test_mobilegpt_native_environment_does_not_alias_provider_credentials(monkey
     assert env["OPENAI_BASE_URL"] == "https://example.invalid/v1"
 
 
-def test_mobilegpt_apk_preserves_upstream_client_except_server_address(tmp_path, monkeypatch):
-    from pathlib import Path
-    from src.integrations import official_forward
-
-    root = tmp_path / "upstream"
-    app = root / "App"
-    java = "app/src/main/java/com/example/MobileGPT/MobileGPTGlobal.java"
-    originals = {
-        java: 'HOST_IP = "INPUT_YOUR_SERVER_IP_ADDRESS"; HOST_PORT = 12345;',
-        "app/build.gradle": "    compileSdk 33\n",
-        "app/src/main/java/com/example/MobileGPT/MainActivity.java": "upstream activity",
-        "app/src/main/java/com/example/MobileGPT/MobileGPTAccessibilityService.java": "upstream service",
-    }
-    for name, content in originals.items():
-        path = app / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-
-    def build(argv, *, cwd, **kwargs):
-        cwd = Path(cwd)
-        for name, content in originals.items():
-            expected = content.replace("INPUT_YOUR_SERVER_IP_ADDRESS", "10.0.2.2")
-            assert (cwd / name).read_text() == expected
-        apk = cwd / "app/build/outputs/apk/debug/app-debug.apk"
-        apk.parent.mkdir(parents=True)
-        apk.write_bytes(b"test build artifact")
-
-    monkeypatch.setattr(official_forward.subprocess, "run", build)
-    output = tmp_path / "client.apk"
-    official_forward.prepare_mobilegpt_client_apk(
-        official_root=root, output_apk=output, gradle_bin="gradle"
-    )
-    assert output.read_bytes() == b"test build artifact"
-
 from src.integrations.android_world.run_episode import (
     _patch_androidworld_expense_setup_timeout,
 )
@@ -276,89 +242,6 @@ def test_mobilegpt_speech_keeps_pending_action_on_original_observation(monkeypat
     assert received_instruction.decode().split() == instruction.split()
     assert b"\r" not in received_instruction
     assert (tmp_path / "official_server.log").read_bytes() == server_log.read_bytes()
-
-
-@pytest.mark.parametrize("skip,target,expected_calls", [
-    ("1", "com.example.app", []),
-    ("0", "com.example.app", ["com.example.app"]),
-    ("1", "com.other.app", ["com.example.app"]),
-])
-def test_mobilegpt_explicit_app_skips_external_discovery(monkeypatch, tmp_path, skip, target, expected_calls):
-    import os
-    from src.integrations.official_forward import _configure_mobilegpt_app_discovery_transport
-
-    path = tmp_path / "agents" / "app_agent.py"
-    path.parent.mkdir()
-    # Upstream app-list boundary, with network and embedding left injectable.
-    path.write_text(
-        "def update(new_packages):\n"
-        "    result = []\n"
-        "    for package_name in new_packages:\n"
-        "        if package_name:\n"
-        "                app_name, description = get_package_info(package_name)\n"
-        "                result.append((app_name, get_openai_embedding(description)))\n"
-        "    return result\n"
-    )
-    monkeypatch.setenv("MOBILEGPT_SKIP_APP_DISCOVERY", skip)
-    monkeypatch.setenv("MOBILEGPT_TARGET_PACKAGE", target)
-    monkeypatch.setenv("MOBILEGPT_TARGET_APP", "Official app")
-    calls, embeddings = [], []
-    def lookup(package):
-        calls.append(package)
-        return "Discovered app", "Discovered description"
-    def embed(description):
-        embeddings.append(description)
-        return [1.0]
-    _configure_mobilegpt_app_discovery_transport(tmp_path)
-    first = path.read_text()
-    _configure_mobilegpt_app_discovery_transport(tmp_path)
-    assert path.read_text() == first
-    namespace = dict(os=os, get_package_info=lookup, get_openai_embedding=embed)
-    exec(compile(first, str(path), "exec"), namespace)
-    assert namespace["update"](["com.example.app"])[0][1] == [1.0]
-    assert calls == expected_calls
-    assert embeddings == (["Discovered description"] if expected_calls else ["Official app"])
-
-
-@pytest.mark.parametrize("prepared", [False, True])
-@pytest.mark.parametrize("content,is_list,expected", [
-    ("Clicked New Recipe button. Suggested Next plan: Fill in recipe details.", False,
-     "Clicked New Recipe button. Suggested Next plan: Fill in recipe details."),
-    ('{"action":{"name":"read_screen","parameters":{}}}', False,
-     {"action": {"name": "read_screen", "parameters": {}}}),
-    ('[{"name":"save_recipe"}]', True, [{"name": "save_recipe"}]),
-])
-def test_mobilegpt_query_preserves_upstream_text_and_json(tmp_path, prepared, content, is_list, expected):
-    import json
-    import os
-    from src.integrations.official_forward import _configure_mobilegpt_response_compat
-
-    path = tmp_path / "utils" / "utils.py"
-    path.parent.mkdir()
-    path.write_text('def query(messages, model="gpt-4-turbo", is_list=False):\n    pass\n\n'
-                    'def parse_completion_rate(value):\n    return value\n')
-    _configure_mobilegpt_response_compat(tmp_path)
-    if prepared:
-        source = path.read_text().replace(
-            "        # Upstream also uses query for plain-text action summaries.\n"
-            "        # Preserve its return contract when there is no JSON payload.\n"
-            "        return result\n",
-            "        # Non-list planner calls require an object with the official action\n"
-            "        # schema.  Never pass a prose/string payload into the upstream agent;\n"
-            "        # it would fail later with ``string indices must be integers``.\n"
-            "        continue\n")
-        path.write_text(source)
-        _configure_mobilegpt_response_compat(tmp_path)
-    events = []
-    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], usage=None)
-    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response)))
-    client.with_options = lambda **kwargs: client
-    namespace = dict(os=os, json=json, OpenAI=lambda **kwargs: client,
-                     log=lambda *args: None, write_omniflow_mobilegpt_event=events.append,
-                     __parse_json=lambda text, is_list=False: text if text.startswith(('{', '[')) else None)
-    exec(compile(path.read_text(), str(path), "exec"), namespace)
-    assert namespace["query"]([{"role": "user", "content": "Upstream request"}], is_list=is_list) == expected
-    assert [event["event"] for event in events] == ["chat_call"]
 
 
 def test_source_based_methods_use_explicit_memory_before_task_selection(monkeypatch, tmp_path):

@@ -132,10 +132,6 @@ DEFAULT_MOBILEGPT_ROOT = Path("data") / "runtime" / "external" / "mobilegpt"
 DEFAULT_MOBILEGPT_STATS_JSONL = (
     DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats.jsonl"
 )
-DEFAULT_MOBILEGPT_STATS_SUMMARY = (
-    DEFAULT_OUTPUT_ROOT / "_mobilegpt_stats" / "mobilegpt_stats_summary.json"
-)
-DEFAULT_MOBILEGPT_WAIT_START_TIMEOUT_SEC = 60.0
 DEFAULT_MOBILEGPT_EPISODE_WAIT_TIMEOUT_SEC = 300.0
 DEFAULT_MOBILEGPT_APP_READY_TIMEOUT_SEC = 15.0
 DEFAULT_MOBILEGPT_APP_READY_POLL_SEC = 0.25
@@ -148,40 +144,6 @@ def _mobilegpt_server_port(console_port: int) -> int:
     if int(console_port) == 5560:
         return 12345
     return 12000 + int(console_port) % 40000
-
-
-def _replay_step_budget(
-    source_run_log: str | Path,
-    *,
-    maximum: int = MAX_STEPS,
-) -> int:
-    """Bound online reasoning to the recorded trajectory plus a small margin.
-
-    The source RunLog is the only task-specific signal allowed to influence the
-    formal step budget.  Counting recorded action-bearing steps (including an
-    answer step, when present) gives the Planner enough room to recover from a
-    cross-device mismatch without falling back to the global 30-step budget.
-    Invalid or unavailable source evidence keeps the protocol's conservative
-    global maximum instead of inventing a smaller task budget.
-    """
-
-    try:
-        payload = json.loads(
-            Path(source_run_log).expanduser().read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return max(1, int(maximum))
-    steps = payload.get("steps") if isinstance(payload, dict) else None
-    if not isinstance(steps, list) or not steps:
-        return max(1, int(maximum))
-    recorded_steps = sum(
-        1
-        for step in steps
-        if isinstance(step, dict) and isinstance(step.get("action"), dict)
-    )
-    if recorded_steps <= 0:
-        return max(1, int(maximum))
-    return min(max(1, int(maximum)), recorded_steps + 10)
 
 
 @dataclass(frozen=True)
@@ -402,23 +364,6 @@ def _task_managed_output_root(
 
 def _source_seed_output_root(output_root: str | Path, source_seed: int) -> Path:
     return resolve_path(output_root) / f"source_seed_{int(source_seed)}"
-
-
-_SOURCE_XML_EVIDENCE_KEYS = {
-    "page",
-    "xml",
-    "observation_xml",
-    "hierarchy_xml",
-    "raw_xml",
-    "parsed_xml",
-    "encoded_xml",
-    "html_xml",
-    "screenshot",
-    "screenshot_path",
-    "screenshot_base64",
-    "image_path",
-    "image_base64",
-}
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -1414,33 +1359,6 @@ def _start_mobilegpt_browser_task_server(
     return prepare, process
 
 
-def _mobilegpt_memory_embedding_model(
-    memory_root: Path,
-    *,
-    manifest_path: Path | None = None,
-) -> str:
-    """Return the embedding model sealed with one MobileGPT memory bundle."""
-
-    manifest_path = manifest_path or memory_root.parent / MOBILEGPT_MEMORY_MANIFEST
-    try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(
-            f"mobilegpt_memory_manifest_unreadable:{manifest_path}"
-        ) from error
-    stats = payload.get("source_stats")
-    models = stats.get("embedding_models") if isinstance(stats, dict) else None
-    unique_models = sorted(
-        {str(model).strip() for model in models or [] if str(model).strip()}
-    )
-    if unique_models and unique_models != [MOBILEGPT_EMBEDDING_MODEL]:
-        raise ValueError(
-            "mobilegpt_embedding_model_mismatch:"
-            f"memory={','.join(unique_models)} expected={MOBILEGPT_EMBEDDING_MODEL}"
-        )
-    return MOBILEGPT_EMBEDDING_MODEL
-
-
 def build_mobilegpt_server_command(
     action: str,
     *,
@@ -1663,14 +1581,6 @@ def _select_from_args(args: argparse.Namespace) -> list[CanonicalRunLog]:
             meta={},
         )
     ]
-
-
-_RESULT_NON_EXECUTED_STATUSES = {
-    "INVALID_MEMORY_LEAKAGE",
-    "env_failed",
-    "init_failed",
-    "setup_failed",
-}
 
 
 def _is_mobilegpt_method(method: str) -> bool:
@@ -2082,39 +1992,6 @@ def _stop_background_command(process: subprocess.Popen[Any] | None) -> None:
     stop_process(process, timeout_sec=5)
 
 
-_RESULT_METADATA_ROW_KEYS = (
-    "source_run_log",
-    "memory_root",
-    "replay_run_log",
-    "store_path",
-    "task_random_seed",
-    "max_steps",
-    "max_fallback_steps",
-    "timeout_sec",
-    "planner_timeout_sec",
-    "fixed_task_seed",
-    "fixed_task_params",
-    "task_params",
-    "task_params_override",
-    "serial",
-    "console_port",
-    "device_target",
-    "planner_provider",
-    "model",
-    "backend",
-    "state_backend",
-    "action_backend",
-    "native_androidworld_agent_io",
-    "execution_backend",
-    "uses_source_xml",
-    "official_agent_name",
-    "uses_omniflow_agent",
-    "uses_source_action_hints",
-    "uses_function_retrieval",
-    "perform_emulator_setup",
-)
-
-
 def _next_attempt(setting_root: Path, group: str) -> Path:
     """Use one private-run slot; the public archive promotes it to ``current``."""
 
@@ -2423,32 +2300,6 @@ def build_appagent_command(
             "official_app_name": app_name,
             "external_forward_only": True,
             "shared_control_backend": "oob",
-        },
-    )
-
-
-def _configure_mobilegpt_formal_server(
-    spec: CommandSpec,
-    *,
-    model: str = "",
-) -> CommandSpec:
-    normalized_model = str(model or "").strip()
-    return replace(
-        spec,
-        env={
-            **spec.env,
-            "MOBILEGPT_CHAT_BASE_URL": FORMAL_MODEL_BASE_URL,
-            "MOBILEGPT_EMBEDDING_BASE_URL": FORMAL_MODEL_BASE_URL,
-            "MOBILEGPT_THINKING": FORMAL_THINKING,
-            **(
-                {"MOBILEGPT_CHAT_MODEL": normalized_model}
-                if normalized_model
-                else {}
-            ),
-        },
-        metadata={
-            **spec.metadata,
-            **({"model": normalized_model} if normalized_model else {}),
         },
     )
 

@@ -1521,38 +1521,6 @@ def seal_appagent_memory(
     return manifest
 
 
-def validate_appagent_source_demo(
-    *,
-    memory_root: str | Path,
-    app_name: str,
-    demo_name: str,
-    source_result: str | Path,
-    task_name: str,
-    expected_teacher_action_count: int,
-    expected_demo_action_count: int,
-) -> dict[str, Any]:
-    """Require one complete official-success source demo before doc generation."""
-
-    root = Path(memory_root).expanduser().resolve()
-    demo_root = (
-        root
-        / "apps"
-        / _safe_appagent_name(app_name)
-        / "demos"
-        / _safe_appagent_name(demo_name)
-    )
-    source_result_row = _official_source_result(
-        Path(source_result).expanduser().resolve(),
-        task_name=str(task_name or "").strip(),
-    )
-    _validate_demo_artifacts(
-        demo_root,
-        expected_teacher_action_count=int(expected_teacher_action_count),
-        expected_demo_action_count=int(expected_demo_action_count),
-    )
-    return source_result_row
-
-
 def validate_appagent_memory(
     memory_root: str | Path,
     *,
@@ -2725,17 +2693,6 @@ def _grid_point(
         origin_x + unit_width * horizontal // 4,
         origin_y + unit_height * vertical // 4,
     )
-
-
-def _direction_from_points(
-    start: tuple[int, int],
-    end: tuple[int, int],
-) -> str:
-    delta_x = end[0] - start[0]
-    delta_y = end[1] - start[1]
-    if abs(delta_x) > abs(delta_y):
-        return "right" if delta_x > 0 else "left"
-    return "down" if delta_y > 0 else "up"
 
 
 def _safe_appagent_name(value: Any) -> str:
