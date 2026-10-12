@@ -454,14 +454,26 @@ def build_agent(
 
 
 def _goal_with_task_parameters(goal: str, task_parameters: Any) -> str:
-    """Give the Planner public task API values without changing the task goal."""
+    """Restate only parameter values the goal text already discloses.
 
+    AndroidWorld ``task.params`` also carries hidden setup data (clipboard
+    contents, seeded rows, QA answers) that baselines never see.  A value is
+    public only if it appears verbatim in the goal; everything else stays
+    with the task so the Planner gets no privileged information.
+    """
+
+    goal_text = str(goal or "")
     if not isinstance(task_parameters, dict) or not task_parameters:
-        return str(goal or "").strip()
+        return goal_text.strip()
     public_parameters = {
         str(name): value
         for name, value in task_parameters.items()
-        if str(name).strip() and str(name).strip().casefold() != "seed"
+        if str(name).strip()
+        and str(name).strip().casefold() != "seed"
+        and isinstance(value, (str, int, float))
+        and not isinstance(value, bool)
+        and str(value).strip()
+        and str(value).strip().casefold() in goal_text.casefold()
     }
     if not public_parameters:
         return str(goal or "").strip()

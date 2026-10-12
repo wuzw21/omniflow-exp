@@ -84,9 +84,17 @@ def test_host_usage_does_not_invent_api_request_count(tmp_path):
 
 
 def test_task_parameters_do_not_override_function_schema():
-    prompt = _goal_with_task_parameters('goal', {'seed': 1, 'value': 'literal'})
+    prompt = _goal_with_task_parameters('goal literal', {'seed': 1, 'value': 'literal'})
     assert 'omit fields absent from that schema' in prompt
     assert '"value": "literal"' in prompt and '"seed"' not in prompt
+
+
+def test_task_parameters_absent_from_goal_are_never_disclosed():
+    params = {'file_name': 'notes.md', 'clipboard': 'hidden text', 'rows': [{'a': 1}], 'answer': 42}
+    prompt = _goal_with_task_parameters('Create notes.md with the clipboard content', params)
+    assert '"file_name": "notes.md"' in prompt
+    assert 'hidden text' not in prompt and '42' not in prompt and 'rows' not in prompt
+    assert _goal_with_task_parameters('Do it', {'secret': 'x1'}) == 'Do it'
 
 
 @pytest.mark.parametrize('requires_planner', [True, False])
