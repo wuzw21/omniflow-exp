@@ -68,8 +68,7 @@ def _experimental_omniflow_enabled(method: str) -> bool:
              or os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
              or os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
              or os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
-             or os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
-             or os.environ.get("OMNIFLOW_BASELINE", "none") != "none")
+             or os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off")
     )
 
 
@@ -965,10 +964,14 @@ def _run_command(
     if args.avd_snapshot and not args.dry_run:
         _avd_snapshot(serial, "load", args.avd_snapshot)
     experimental = _experimental_omniflow_enabled(method)
+    # Same-harness baselines are main-table rows with their own result slot
+    # (data/androidworld/<task>/<baseline>/...), never mixed into omniflow.
+    baseline = os.environ.get("OMNIFLOW_BASELINE", "none") if method == "omniflow" else "none"
+    result_method = baseline if baseline != "none" else method
     destination = _golden_run_root(
         args.output,
         task=args.task,
-        method=method,
+        method=result_method,
         device=device,
         evaluation_seed=int(args.evaluation_seed or TASK_SEED),
     )
@@ -1057,11 +1060,9 @@ def _run_command(
                 candidate=matches[0],
                 output_root=args.output,
                 task=args.task,
-                method=method,
+                method=result_method,
                 device=device,
-                archive_kind=(f"baseline_{os.environ['OMNIFLOW_BASELINE']}"
-                              if os.environ.get("OMNIFLOW_BASELINE", "none") != "none"
-                              else "oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
+                archive_kind=("oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
                               else "memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
                               else "reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
                               else "checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
@@ -1078,7 +1079,7 @@ def _run_command(
                 candidate=matches[0],
                 output_root=args.output,
                 task=args.task,
-                method=method,
+                method=result_method,
                 device=device,
                 archive_kind="superseded",
             )
@@ -1129,7 +1130,7 @@ def _run_command(
                 candidate=failed_evidence[0],
                 output_root=args.output,
                 task=args.task,
-                method=method,
+                method=result_method,
                 device=device,
             )
     return method, label, effective_returncode
@@ -1231,7 +1232,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline", choices=("none", "mobilegpt_style", "appagent_style", "demo_hint"),
                         default=os.environ.get("OMNIFLOW_BASELINE", "none"),
                         help="Same-harness baseline on the builtin OmniFlow harness "
-                             "(docs/BASELINES_SAME_HARNESS.md); archived as baseline_<name>")
+                             "(docs/BASELINES_SAME_HARNESS.md); results go to <task>/<baseline>/")
     parser.add_argument("--element-docs", default=os.environ.get("OMNIFLOW_ELEMENT_DOCS", ""),
                         help="AppAgent demo_docs directory for --baseline appagent_style")
     parser.add_argument("--avd-snapshot", default=os.environ.get("OMNIFLOW_AVD_SNAPSHOT", ""),

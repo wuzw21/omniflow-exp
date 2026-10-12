@@ -162,9 +162,10 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   时查询官方 checker，通过即 `function_completed_verified`），只作为 oracle 消融，
   `archive_kind=oracle_ablation` 独立归档，不得进入正式结果表或与基线对比。
 - 同 harness 基线（2026-10-12，`docs/BASELINES_SAME_HARNESS.md`）：主表的
-  MobileGPT/AppAgent 行改为 `--method omniflow --baseline mobilegpt_style|appagent_style`，
-  与 OmniFlow 共用 Planner/OOB/模型/预算，只换复用机制（属性匹配 Transfer / 元素文档）；
-  归档为 `baseline_<name>`。原版复现只做 10–20 任务的附录保真度检查。
+  MobileGPT/AppAgent/T3A+hint 行改为 `--method omniflow --baseline
+  mobilegpt_style|appagent_style|demo_hint`，与 OmniFlow 共用 Planner/OOB/模型/预算，只换
+  复用机制（属性匹配 Transfer / 元素文档 / 演示文本）；结果槽位为 `<task>/<baseline>/`。
+  原版复现只做 10–20 任务的附录保真度检查。Planner 只能看到 goal 原文已出现的 task 参数。
 - `--avd-snapshot NAME` 在每个 (method, device) 运行前 load 整机快照，`save-snapshot`
   动作在 setup 后创建；待真机验证。
 - `observation` 只作为 Planner 的状态输入，`finished` 只作为终止结果，不得与设备

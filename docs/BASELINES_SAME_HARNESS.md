@@ -13,14 +13,15 @@ OOB Host、同一个模型（Qwen3.6-Plus）、同一步数预算，官方 valid
 | 行 | 复用的东西 | 运行方式 |
 | --- | --- | --- |
 | zero-shot | 无 | `--method omniflow`，不传 `--memory` |
-| t3a_hint | 演示步骤文本放进 prompt | `--method t3a_hint`（官方 T3A agent，见下方注） |
+| demo_hint（T3A+hint 的同 harness 版） | 同一份脱敏演示步骤文本追加到 goal | `--method omniflow --baseline demo_hint --source-run-log <run_log.json>` |
 | fixed_replay | 原坐标逐步重放 | `--method fixed_replay` |
 | MobileGPT-style | 子任务 Function + 属性匹配重定位 | `--method omniflow --baseline mobilegpt_style --memory <store.json>` |
 | AppAgent-style | 元素文档注入 Planner prompt | `--method omniflow --baseline appagent_style --memory <store.json> --element-docs <appagent>/apps/<app>/demo_docs` |
 | OmniFlow | Function + OmniTransfer + Checker | `--method omniflow --memory <store.json>` |
 
-注：t3a_hint 目前仍走 AndroidWorld 官方 T3A agent，而非 OmniFlow Planner，严格说不是同
-harness；论文里应如实标注，或后续改为 OmniFlow Planner + 演示文本。
+注：原 `--method t3a_hint` 仍走 AndroidWorld 官方 T3A agent，只用于附录保真度检查；主表用
+`demo_hint`，它复用 t3a_hint 完全相同的脱敏 hint 文件（`_source_action_hint_path_for_item`），
+只把执行者换成 OmniFlow Planner，并关闭 Function 记忆。
 
 ## MobileGPT-style
 
@@ -43,9 +44,15 @@ AppAgent 的核心是探索/演示阶段为每个 UI 元素生成一份文档（
 
 ## 运行与归档
 
-`--baseline` 只允许 `--method omniflow`、builtin harness、提供 `--memory` 且 oracle 关闭。
-结果按 `archive_kind=baseline_<name>` 归档到 `.archive/<task>/omniflow/<device>/`，不会覆盖
-OmniFlow 的正式结果槽位。
+`--baseline` 只允许 `--method omniflow`、builtin harness、oracle 关闭；`mobilegpt_style` /
+`appagent_style` 需要 `--memory`，`demo_hint` 需要 `--source-run-log`。每个基线有自己的正式结果槽位
+`data/androidworld/<task>/<baseline>/<setting>/runlog/current`，失败按同一规则进 `.archive/<task>/<baseline>/`，
+与 omniflow 互不覆盖。汇总：`python3 scripts/exp/generate_task_table.py --all --methods omniflow,mobilegpt_style,appagent_style,demo_hint`。
+
+## Planner 看到的任务信息
+
+`_goal_with_task_parameters` 以前把 AndroidWorld `task.params` 整体附在 goal 后，其中包括剪贴板内容、
+预置数据、QA 答案等基线看不到的隐藏 setup 数据。现在只复述 goal 原文里已经出现的参数值，其余一律不给。
 
 ## 原版复现的定位
 
