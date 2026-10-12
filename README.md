@@ -130,6 +130,8 @@ bash scripts/exp/run_androidworld.sh run \
 正式方法固定为 `fixed_replay`、`omniflow`、`mobilegpt`、`appagent`、`t3a_hint`。
 其中 AppAgent 使用同一份 source RunLog 生成一次官方 demo Memory，再进入统一的
 AndroidWorld/OOB/validator 流程；当前执行批次只启动前三种方法，AutoDroid 保留为待运行 cell。
+主表的 MobileGPT/AppAgent 对比使用同 harness 版本（`--baseline mobilegpt_style|appagent_style`），
+整机快照用 `save-snapshot`/`--avd-snapshot`，见 `docs/BASELINES_SAME_HARNESS.md`。
 设备和默认值来自 `config/paper_androidworld.json`。正式运行和 Memory 转换固定使用
 `Qwen3.6-Plus`；显式传入其他模型会在入口处拒绝。
 
