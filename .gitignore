@@ -37,3 +37,23 @@ checkpoints/
 # Local launch output.
 *.log
 nohup.out
+
+# Scratch/agent workspaces and build output (local only).
+/tmp/
+/tmp_ipv4/
+/output/
+/outputs/
+/build/
+/.claude/
+/.cc-connect
+/.codex-*/
+/.codex_remote_ignore_sha.patch
+
+# LaTeX build products at the repository root.
+/*.aux
+/*.fdb_latexmk
+/*.fls
+/*.out
+/*.synctex.gz
+/main.pdf
+/wrapper.pdf

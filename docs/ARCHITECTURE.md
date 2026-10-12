@@ -179,10 +179,11 @@ OmniFlow 的在线执行仍是通用 `Observe -> Act` 循环。每轮先对 Stor
 一个可选的 system-prompt 注入点；不为 task、设备或失败类型增加专用执行分支。
 
 Function 是一种普通 Action；它的 action list 和返回结果写入统一 action history。完整
-replay 后，AndroidWorld Harness 先调用当前 task 的官方 completion checker：通过时以
-`function_completed_verified` 立即结束，不再产生 Planner 模型调用；未通过时把明确的
-checker rejection 作为反馈交给同一条在线 Planner 主线。Function 之后 Planner 输出
-`finished` 时也必须再次通过该 checker，避免把“动作执行成功”误报为“任务完成”。最终
-成功仍只由 AndroidWorld 官方 validator 定义。到 AndroidWorld 边界时，内部终止只映射为
+replay 后回到同一条在线 Planner 主线，由 Planner 依据新观察决定 `finished` 或继续；
+任务完成只由 Agent 自己判定。AndroidWorld 官方 validator 是评测 oracle，只在 episode
+结束后调用一次，最终成功只由它定义，运行中不作为反馈（`RuntimeSettings.completion_oracle_enabled`
+默认 False，内核会丢弃传入的 completion checker）。旧行为——重放后或 `finished` 时
+查询官方 checker、通过即 `function_completed_verified`——只在
+`--completion-oracle on` 的 oracle 消融中保留，并独立归档为 `oracle_ablation`。到 AndroidWorld 边界时，内部终止只映射为
 官方 `JSONAction(action_type="status", goal_status="complete")`，不伪装成 `answer`；
 `finished_content` 仅作为 AgentInteractionResult 数据和审计信息保存。

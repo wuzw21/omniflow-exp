@@ -25,6 +25,10 @@
   OpenRouter 的 Qwen3.6-Plus。OmniFlow SR=53.2%（185/348），无 Memory 的
   同一 online executor 为 37.1%（129/348）；AutoDroid 为 14.1%（49/348），
   MobileGPT 为 17.2%（60/348）。不能表述为所有基线均完全失效。
+  注意：以上 OmniFlow 与无 Memory executor 数字产生于 2026-10-10 之前的合同，
+  当时运行中会调用 AndroidWorld 官方 completion checker（见下文“完成判定合同”），
+  属于 oracle 条件；AutoDroid/MobileGPT 没有该信号。oracle 关闭后的正式数字重跑
+  之前，引用这些数字必须注明此条件，不得与基线作无条件对比。
 - 成本结果必须保留配对口径（§5.2，第 9 页）：双方均成功的 83 个 task-device
   配对中，model calls 从 6.70 降到 3.99（-40.5%），tokens 从 26.4k 降到
   13.0k（-50.8%）。185 个成功 episode 的 1644 个可复用动作中，946 个直接
@@ -136,8 +140,9 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 - `src/integrations/android_world/run_episode.py` 是唯一 native episode/lifecycle owner。
 - `compile_runlog_to_store` 是唯一 Function 写 API；输出 v2 `store.json`、`compile_report.json` 和 sibling `transfer_states.json`。
 - 成功 RunLog 必须先由 A-side authoring Agent 对每个 source step 显式区分 `stable`、`task_parameter` 和 `online_observation`，再提取零个或多个连续局部 Function，并生成一个覆盖全部成功主流程动作的完整 Function。任务参数必须由 Agent 声明 action/render binding；在线观察、实时计算或条件决策步骤不得进入可执行的静态 replay，完整 Function 只以 `agent_visible=false` 的证据保存并交还既有 Planner 主线。Agent 和 Compiler 都不得删除、重排或截断所选连续段的中间动作；`origin=checker` 恢复动作仍由独立共享 Checker 提取和执行。所有 binding 只能由 A-side authoring Agent 显式决定；只有 Agent 明确分类为稳定而未填写的字段才原样使用成功 RunLog 中的默认值。Compiler 只校验 schema、连续 source 顺序和显式引用，并机械转换 Agent 已声明的分类与 binding，不得推断、推荐、修复或补全参数。最终 Function 数量大于等于一，不增加嵌套或 parent/child schema。
-- runtime 只读取注册的 Function Store 和 `data/current.json`，不能自动补 Store、建 catalog 或写平行 manifest。
-- `data/current.json` 是唯一运行时本地索引；ledger、汇总和外部 manifest 只能作为证据。
+- runtime 只读取显式传入的 Function Store，不能自动补 Store、建 catalog 或写平行 manifest；
+  ledger、汇总和外部 manifest 只能作为证据。（`data/current.json` 已不被运行时代码读取，
+  仅由 `tools/build_4090_resources.sh` 作为部署数据同步标记。）
 - AndroidWorld 当前统一 E2E 方法为 `fixed_replay`、`omniflow`、`mobilegpt`、
   `appagent`、`t3a_hint`。AppAgent 通过同一入口和 OOB/validator 路径执行，
   不再作为历史专用方法；`script_replay` 仍不进入 AndroidWorld 方法。
@@ -146,10 +151,20 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   Function Store 和设备环境；Planner 从 Function `input_schema` 生成参数，runtime
   通过 `bindings` 绑定后执行。禁止 direct Function id、Function 序列、预绑定参数、
   source qualification replay 或任务专用执行脚本。
-- 完整 Function 重放成功后，runtime 必须先调用当前 task 的官方 completion checker；
-  checker 通过就立即生成 `function_completed_verified` 终止结果，不再进入 Planner，
-  也不追加设备动作。checker 未通过才进入既有 Planner fallback。`observation` 只作为
-  checker/Planner 的状态输入，`finished` 只作为终止结果，不得与设备动作混在同一轮。
+- 完成判定合同（2026-10-10 起）：benchmark 官方 validator（AndroidWorld
+  `task.is_successful`）是评测 oracle，不是 agent 信号。正式运行中任务完成只由
+  Agent 自己判定（Planner `finished`，或 CLI Harness 的 `finish`）；官方 validator
+  只在 episode 结束后由 lifecycle 调用一次，作为唯一成功判据。完整 Function 重放
+  成功后回到同一 Planner 主线，由 Planner 依据观察决定 `finished` 或继续。
+  内核通过 `RuntimeSettings.completion_oracle_enabled`（默认 False）强制该合同：
+  未开启时 `OmniFlow.set_completion_checker` 丢弃传入的 checker。
+- `run --method omniflow --completion-oracle on` 恢复旧行为（重放后/`finished`
+  时查询官方 checker，通过即 `function_completed_verified`），只作为 oracle 消融，
+  `archive_kind=oracle_ablation` 独立归档，不得进入正式结果表或与基线对比。
+- `observation` 只作为 Planner 的状态输入，`finished` 只作为终止结果，不得与设备
+  动作混在同一轮。
+- 分层：`omniflow/` 内核不得 import `src.*` 或 `android_world`；benchmark 相关能力
+  （如 AndroidWorld 包名解析）由 `src/` 以参数注入，`tests/test_kernel_layering.py` 守护。
 
 ## OmniTransfer 合同
 
@@ -269,7 +284,7 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
 - `data/androidworld/COMPLETION_STATUS.md` 展示 116×15 正式 E2E cell 完成情况；
   `MEMORY_READY_SOURCES.md` 每个任务只展示一份可复用 source；`RUNLOG_INDEX.md` 和
   `ARCHIVE_AUDIT.json` 提供逐 RunLog 证据与机器审计。目录迁移、去重或导入结束后
-  必须通过官方 refresh 入口更新 `data/current.json`，再重生成这些文档。
+  必须重生成这些文档。
 
 ## 修改方式
 

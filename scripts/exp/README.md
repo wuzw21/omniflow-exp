@@ -129,7 +129,10 @@ OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置�
 # 可替换 Harness 的统一验收
 
 补充消融沿用本入口：`run --method omniflow --function-reentry off` 在首个 Function
-执行失败后关闭当前任务后续 Function 调用，保留同一 Planner 和 completion checker。
+执行失败后关闭当前任务后续 Function 调用，保留同一 Planner。
+`--completion-oracle on` 让运行中查询 AndroidWorld 官方 completion checker（2026-10-10
+之前的默认行为），仅作 oracle 消融，`archive_kind=oracle_ablation` 独立归档；默认 off，
+任务完成由 Agent 自行判定，官方 validator 只在 episode 结束后评测一次。
 `--checker off` 独立控制共享恢复规则。两者可组合，并由 RunLog `runtime_policy`
 分别记录；消融结果独立归档，不能覆盖默认正式结果。`--function-reentry off` 仅适用
 内置 Harness。严格 Memory ON/OFF 配对保留同一个显式 Store，使用

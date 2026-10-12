@@ -69,8 +69,9 @@ context 提供当前 flow、goal、预算和 evidence_root；适配器只能使�
 Store 与内核，不自行初始化设备或复制 validator。测试与产品接入使用相同的两工具分发。
 
 内置 CLI 适配通过私有 Unix socket 连接 episode 持有的 GuiAgentToolRuntime；
-子进程 `--connect` 是 stdio 字节桥。官方 completion checker 通过后返回 stop，
-当前 episode 禁止通过新 task_id 重开任务。进程退出时先取消并收尾在途调用。
+子进程 `--connect` 是 stdio 字节桥。正式运行中 CLI Agent 自行判断完成并调用
+`finish`，不会看到官方 completion checker；只有 `--completion-oracle on` 消融才在
+提示中声明并在结束时复核该 checker，通过后返回 stop。当前 episode 禁止通过新 task_id 重开任务。进程退出时先取消并收尾在途调用。
 接入结果保留在现有外部 Harness 归档中，不能混入固定模型论文结果；未知模型调用次数
 记为 null。下面的独立服务配置用于由外部应用持有设备生命周期的部署场景。
 

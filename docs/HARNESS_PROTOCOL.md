@@ -177,6 +177,9 @@ AndroidWorld 保持原来的 shell → run_tasks → run_task → run_episode �
 3. **完成判定不统一。** 原始动作路径的 `finished` 和 Function 完成分支有不同处理。
    现在内置 Harness 统一调用当前任务 checker；通过立即终止，checker 出错立即返回
    `verifier_error`，不会为了“修正页面”盲目追加动作。无 checker 的完成声明保持未验证。
+   （2026-10-10 更新：AndroidWorld 官方 checker 属于评测 oracle，正式运行默认不再注入，
+   完成声明一律由 Agent 自行给出、episode 结束后由官方 validator 评测；上述在线 checker
+   行为只在 `--completion-oracle on` 的 `oracle_ablation` 中保留。）
 4. **阻塞取消与预算重置。** 同步模型/OOB 调用阻塞事件循环，外部每次调用缺少共享预算。
    现在同步 I/O 进入工作线程，当前会话共享不超过 600 秒的 deadline；模型 HTTP 请求
    不超过 30 秒且受剩余预算约束。取消阻止下一次 dispatch，已发出的动作先收尾。
@@ -276,7 +279,7 @@ OOB 0.6.1 / versionCode 7。实际 OOB 截图和一个 wait 动作成功；重�
 | 顺序 | 验证项 | 必须观察到的结果 |
 |---|---|---|
 | 1 | 模型等待与动作在途时取消、重复取消 | 收尾前不释放设备 owner，之后零新增动作；未知副作用明确报告 |
-| 2 | Function 完成、checker 拒绝与异常 | 通过即停止；拒绝反馈宿主；异常不触发盲目纠正动作 |
+| 2 | Function 完成、checker 拒绝与异常（仅 oracle 消融；正式运行无在线 checker） | 通过即停止；拒绝反馈宿主；异常不触发盲目纠正动作 |
 | 3 | Transfer 失败与部分执行恢复 | 保留已执行前缀和当前页面，不重发前缀或 source 坐标 |
 | 4 | 会话断开、重连与进程重启 | 同会话重发不重复动作；过期 session id 拒绝续接 |
 | 5 | Memory OFF/ON 交替运行 | 同任务/参数/设备/seed/模型/endpoint，两组均通过官方验证才组成时延配对 |

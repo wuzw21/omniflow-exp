@@ -62,8 +62,11 @@ AndroidWorld setup/reset、同一 OOB Host、Function 闭环、官方 validator 
 不同宿主的接入结果作为外部 Harness 证据保存，不晋升为冻结模型的论文结果。
 RunLog 的 `diagnostics.harness` 保存宿主实际报告的模型与用量；宿主不提供 API
 请求次数时，结果 `model_calls` / `vlm_calls` 为 null，表示未知，不计作零次调用。
-恢复策略可用 `--checker on|off` 配置，默认 on；off 不关闭官方完成验证，
+恢复策略可用 `--checker on|off` 配置，默认 on；off 只关闭共享恢复规则，
 结果标记为 Checker 消融并单独归档。SDK 使用 `RuntimeSettings(checker_enabled=False)`。
+官方 validator 是评测 oracle：默认只在 episode 结束后评测一次，运行中不反馈给 Agent。
+`--completion-oracle on`（SDK：`RuntimeSettings(completion_oracle_enabled=True)`）
+恢复运行中查询，只作 oracle 消融并独立归档为 `oracle_ablation`。
 RunLog 的 `diagnostics.wall_accounting` 保存公共执行边界内的非重叠耗时分账；映射
 失败池保存紧凑 pair/hash 和有限候选。字段与当前覆盖限制见
 [执行诊断](docs/HARNESS_PROTOCOL.md#执行诊断开发中)，不得将未归因时间当成模型耗时。
