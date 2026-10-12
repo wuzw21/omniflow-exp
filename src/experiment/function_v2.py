@@ -15,6 +15,7 @@ from omniflow.runtime.checker import (
 )
 from omniflow.vlm.model_config import resolve_openai_compatible_config
 from src.experiment.paths import relative_reference, sha256_file
+from src.integrations.android_world.apps import resolve_androidworld_package
 from src.experiment.protocol import (
     FORMAL_THINKING,
     omniflow_base_url,
@@ -226,6 +227,7 @@ def compile_function_v2(
 
     client = options.get("client")
     try:
+        options.setdefault("package_resolver", resolve_androidworld_package)
         report = compile_runlog_to_store(run_log, root, **options)
     finally:
         if client is not None:

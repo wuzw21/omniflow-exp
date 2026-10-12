@@ -659,8 +659,15 @@ def compile_runlog_to_store(
     source_states: str | Path | dict[str, Any] | None = None,
     state_loader: Any | None = None,
     complete_json: Callable[[str], str] | None = None,
+    package_resolver: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
-    """Register strict v2 Functions and their referenced source states."""
+    """Register strict v2 Functions and their referenced source states.
+
+    ``package_resolver`` maps a recorded app label to its Android package.  It
+    is supplied by the benchmark/device integration (e.g. AndroidWorld); the
+    kernel never imports an integration to obtain it.  Without a resolver the
+    package observed after the recorded launch is used.
+    """
     from omniflow.functions.artifact import bind_function, parse_function_artifact
     from omniflow.functions.store import FunctionStore
     from omniflow.transfer.runtime import (
@@ -834,6 +841,7 @@ def compile_runlog_to_store(
             action = _canonicalize_open_app_action(
                 action,
                 next_observation=next_observation,
+                package_resolver=package_resolver,
             )
             steps.append(
                 {
@@ -3898,6 +3906,7 @@ def _canonicalize_open_app_action(
     action: dict[str, Any],
     *,
     next_observation: Any,
+    package_resolver: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Persist the native package observed after a recorded app launch."""
 
@@ -3906,12 +3915,12 @@ def _canonicalize_open_app_action(
     package_name = str(action.get("args", {}).get("package_name") or "").strip()
     if "." in package_name and " " not in package_name:
         return action
-    try:
-        from src.integrations.android_world.apps import resolve_androidworld_package
-
-        resolved_package = resolve_androidworld_package(package_name)
-    except Exception:
-        resolved_package = ""
+    resolved_package = ""
+    if package_resolver is not None:
+        try:
+            resolved_package = str(package_resolver(package_name) or "").strip()
+        except Exception:
+            resolved_package = ""
     if resolved_package:
         updated = json.loads(json.dumps(action, ensure_ascii=False))
         updated.setdefault("args", {})["package_name"] = resolved_package
