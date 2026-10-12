@@ -1228,7 +1228,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--function-memory", choices=("on", "off"),
                         default=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on"),
                         help="Builtin matched ablation: retain explicit Store and disable Function exposure")
-    parser.add_argument("--baseline", choices=("none", "mobilegpt_style", "appagent_style"),
+    parser.add_argument("--baseline", choices=("none", "mobilegpt_style", "appagent_style", "demo_hint"),
                         default=os.environ.get("OMNIFLOW_BASELINE", "none"),
                         help="Same-harness baseline on the builtin OmniFlow harness "
                              "(docs/BASELINES_SAME_HARNESS.md); archived as baseline_<name>")
@@ -1315,11 +1315,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         raise ValueError("function_memory_ablation_requires_builtin_omniflow_run_with_store")
     os.environ["OMNIFLOW_FUNCTION_MEMORY"] = args.function_memory
-    if args.baseline not in {"none", "mobilegpt_style", "appagent_style"}:
-        raise ValueError("baseline_must_be_none_mobilegpt_style_or_appagent_style")
+    if args.baseline not in {"none", "mobilegpt_style", "appagent_style", "demo_hint"}:
+        raise ValueError("baseline_must_be_none_mobilegpt_style_appagent_style_or_demo_hint")
     if args.baseline != "none" and (
         args.action != "run" or args.method != "omniflow" or args.harness != "builtin"
-        or args.completion_oracle != "off" or not args.memory
+        or args.completion_oracle != "off"
+        or not (args.source_run_log if args.baseline == "demo_hint" else args.memory)
     ):
         raise ValueError("same_harness_baseline_requires_builtin_omniflow_run_with_store_and_no_oracle")
     if args.baseline == "appagent_style" and not args.element_docs:

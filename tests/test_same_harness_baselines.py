@@ -97,3 +97,17 @@ def test_avd_snapshot_uses_emulator_console_and_rejects_ko(monkeypatch):
         run_tasks._avd_snapshot("emulator-5554", "save", "clean")
     with pytest.raises(ValueError, match="avd_snapshot_invalid"):
         run_tasks._avd_snapshot("emulator-5554", "delete", "clean")
+
+
+def test_demo_hint_baseline_needs_source_run_log_and_disables_functions(monkeypatch):
+    from src.experiment import run_tasks
+    from src.integrations.android_world import agent
+
+    monkeypatch.delenv("OMNIFLOW_BASELINE", raising=False)
+    with pytest.raises(ValueError, match="same_harness_baseline_requires"):
+        run_tasks.main(["run", "--method", "omniflow", "--baseline", "demo_hint", "--memory", "m", "--dry-run"])
+    monkeypatch.setenv("OMNIFLOW_BASELINE", "demo_hint")
+    assert agent.same_harness_baseline() == "demo_hint"
+    monkeypatch.setenv("OMNIFLOW_BASELINE", "bogus")
+    with pytest.raises(ValueError, match="unknown_same_harness_baseline"):
+        agent.same_harness_baseline()

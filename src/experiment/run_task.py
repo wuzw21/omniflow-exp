@@ -3029,6 +3029,12 @@ def run_task(args: argparse.Namespace) -> int:
         if method == "omniflow":
             store_text = str(args.store_path or "").strip()
             store_path = resolve_path(store_text) if store_text else None
+            if os.environ.get("OMNIFLOW_BASELINE") == "demo_hint" and not args.dry_run:
+                # Same redacted semantic hint file t3a_hint uses; the episode
+                # subprocess inherits this environment.
+                os.environ["OMNIFLOW_DEMO_HINT"] = str(
+                    _source_action_hint_path_for_item(item, output_root=memory_root)
+                )
         elif method == AUTODROID_MEMORY_METHOD:
             store_path = memory_root / "unused-store.json"
         else:

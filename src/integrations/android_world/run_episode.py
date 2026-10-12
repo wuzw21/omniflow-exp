@@ -3774,6 +3774,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             official_goal_hint_text, official_goal_hint_meta = (
                 _load_official_agent_goal_hint(args.source_action_hint_path)
             )
+        elif os.environ.get("OMNIFLOW_BASELINE") == "demo_hint":
+            # Same-harness T3A+hint: identical redacted demo text, OmniFlow Planner.
+            official_goal_hint_text, official_goal_hint_meta = (
+                _load_official_agent_goal_hint(os.environ.get("OMNIFLOW_DEMO_HINT"))
+            )
+            if not official_goal_hint_text:
+                raise RuntimeError(f"demo_hint_unavailable:{official_goal_hint_meta}")
 
         episode_recorder = recording_session.recorder
         episode_recorder_error = recording_session.error

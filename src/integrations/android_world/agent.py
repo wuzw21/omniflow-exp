@@ -37,7 +37,7 @@ from src.integrations.android_world.host import AndroidWorldHost, make_agent_res
 MODE_OMNIFLOW = "omniflow"
 # Same-harness baselines (docs/BASELINES_SAME_HARNESS.md): identical Planner,
 # Host, budget and post-episode validator; only the reuse mechanism differs.
-SAME_HARNESS_BASELINES = ("none", "mobilegpt_style", "appagent_style")
+SAME_HARNESS_BASELINES = ("none", "mobilegpt_style", "appagent_style", "demo_hint")
 
 
 def same_harness_baseline() -> str:
@@ -295,10 +295,10 @@ def build_agent(
                 max_steps=configured_max_steps,
                 max_fallback_steps=max_fallback_steps,
                 checker_enabled=os.environ.get("OMNIFLOW_CHECKER_MODE", "on") == "on",
-                # AppAgent-style reuses element docs only, never Functions.
+                # AppAgent-style / demo_hint reuse docs or demo text, never Functions.
                 function_memory_enabled=(
                     os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on"
-                    and baseline != "appagent_style"
+                    and baseline not in {"appagent_style", "demo_hint"}
                 ),
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
                 completion_oracle_enabled=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") == "on",
