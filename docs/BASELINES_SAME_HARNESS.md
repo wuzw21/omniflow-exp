@@ -47,7 +47,7 @@ AppAgent 的核心是探索/演示阶段为每个 UI 元素生成一份文档（
 `--baseline` 只允许 `--method omniflow`、builtin harness、oracle 关闭；`mobilegpt_style` /
 `appagent_style` 需要 `--memory`，`demo_hint` 需要 `--source-run-log`。每个基线有自己的正式结果槽位
 `data/androidworld/<task>/<baseline>/<setting>/runlog/current`，失败按同一规则进 `.archive/<task>/<baseline>/`，
-与 omniflow 互不覆盖。汇总：`python3 scripts/exp/generate_task_table.py --all --methods omniflow,mobilegpt_style,appagent_style,demo_hint`。
+与 omniflow 互不覆盖。汇总：`scripts/exp/generate_task_table.py` 目前只读 `omniflow`，需要加 `--methods` 参数才会出基线行（该脚本未入库，补丁另附）。
 
 ## Planner 看到的任务信息
 

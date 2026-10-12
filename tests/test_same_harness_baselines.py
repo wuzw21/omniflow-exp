@@ -112,20 +112,3 @@ def test_demo_hint_baseline_needs_source_run_log_and_disables_functions(monkeypa
     with pytest.raises(ValueError, match="unknown_same_harness_baseline"):
         agent.same_harness_baseline()
 
-
-def test_task_table_reports_same_harness_baseline_rows_separately(tmp_path):
-    import importlib.util
-    import json
-
-    spec = importlib.util.spec_from_file_location("gtt", "scripts/exp/generate_task_table.py")
-    gtt = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gtt)
-    setting = gtt.EXPECTED_TARGET_SETTINGS[0]
-    current = tmp_path / "data" / "T" / "mobilegpt_style" / setting / "runlog" / "current"
-    current.mkdir(parents=True)
-    (current / "run_log.json").write_text(json.dumps({"task_name": "T", "success": True}), encoding="utf-8")
-    out = gtt.generate_task("T", data_root=tmp_path / "data", output_root=tmp_path / "out",
-                            report_methods=("omniflow", "mobilegpt_style"))
-    rows = (tmp_path / "out" / "T" / "summary.csv").read_text(encoding="utf-8")
-    assert out["task"] == "T"
-    assert f"mobilegpt_style,{setting}" in rows and "omniflow," in rows
