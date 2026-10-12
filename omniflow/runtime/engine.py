@@ -63,7 +63,8 @@ class OmniFlow:
         self.host = host
         self.planner = planner
         self.function_router = function_router
-        self.completion_checker = completion_checker
+        self.completion_checker = None
+        self.set_completion_checker(completion_checker)
         self.installed_apps = (
             {
                 str(label).strip(): str(package).strip()
@@ -94,9 +95,19 @@ class OmniFlow:
         self,
         checker: Callable[[], Any] | None,
     ) -> None:
-        """Attach the current benchmark task's authoritative completion check."""
+        """Attach an in-loop completion oracle, only for explicit oracle ablations.
 
-        self.completion_checker = checker
+        A benchmark validator is ground truth.  Feeding its verdict back into
+        the task loop lets the agent retry against the answer key, which the
+        compared baselines never get.  Unless ``completion_oracle_enabled`` is
+        set, the checker is dropped and task completion is decided by the
+        agent itself (Planner ``finished``); the official validator then runs
+        exactly once, after the episode, as the evaluation authority.
+        """
+
+        self.completion_checker = (
+            checker if self.config.runtime.completion_oracle_enabled else None
+        )
 
 
     @timed("observe")
@@ -283,6 +294,7 @@ class OmniFlow:
                 "checker_enabled": self.config.runtime.checker_enabled,
                 "function_memory_enabled": self.config.runtime.function_memory_enabled,
                 "function_reentry_enabled": self.config.runtime.function_reentry_enabled,
+                "completion_oracle_enabled": self.config.runtime.completion_oracle_enabled,
             }})
 
     @timed("recall")

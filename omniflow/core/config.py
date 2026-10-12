@@ -60,9 +60,16 @@ class RuntimeSettings:
     checker_enabled: bool = True
     function_memory_enabled: bool = True
     function_reentry_enabled: bool = True
+    # Benchmark ground-truth validators (e.g. AndroidWorld ``task.is_successful``)
+    # are evaluation oracles, not agent signals.  They are never consulted inside
+    # the task loop unless an experiment explicitly opts in; opted-in runs are an
+    # oracle ablation and must be archived separately from formal results.
+    completion_oracle_enabled: bool = False
     planner_error_retries: int = 0
 
     def __post_init__(self):
+        if type(self.completion_oracle_enabled) is not bool:
+            raise ValueError("completion_oracle_enabled_must_be_boolean")
         if type(self.function_memory_enabled) is not bool:
             raise ValueError("function_memory_enabled_must_be_boolean")
         if type(self.function_reentry_enabled) is not bool:

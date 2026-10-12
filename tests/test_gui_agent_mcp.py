@@ -11,6 +11,7 @@ pytest.importorskip('mcp')
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
+from omniflow.core.config import OmniFlowConfig, RuntimeSettings
 from omniflow.core.model import (
     Action,
     ActionResult,
@@ -123,7 +124,8 @@ def test_existing_runtime_stdio_bridge_and_completion_gate(tmp_path, reward):
             (FunctionStep(0, Action('wait', {'duration_ms': 1}), 'source'),),
             schema_version='omniflow.function.v2',
             input_schema={'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}))
-        flow = OmniFlow(store.path, host=host)
+        flow = OmniFlow(store.path, host=host, config=OmniFlowConfig(
+            runtime=RuntimeSettings(completion_oracle_enabled=True)))
         checks = []
         def checker():
             checks.append(len(host.actions))

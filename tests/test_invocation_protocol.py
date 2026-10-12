@@ -44,7 +44,7 @@ def flow_with_function(tmp_path, planner):
         input_schema={'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False},
     ))
     return OmniFlow(store.path, host=Host(), planner=planner, config=OmniFlowConfig(
-        runtime=RuntimeSettings(max_steps=3),
+        runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3),
         plugins=PluginSet(checker=lambda ctx: None, transfer=lambda *args: TransferResult(None, reason='transfer_unreliable')),
     ))
 

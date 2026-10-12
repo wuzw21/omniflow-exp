@@ -59,7 +59,12 @@ def _install_official_completion_checker(
     task: Any,
     env: Any,
 ) -> None:
-    """Bind the initialized AndroidWorld task validator to this runtime."""
+    """Offer the AndroidWorld validator as an in-loop oracle.
+
+    ``OmniFlow.set_completion_checker`` discards it unless the run is an
+    explicit ``--completion-oracle on`` ablation, so formal runs never see
+    ground truth before the single post-episode official evaluation.
+    """
 
     flow.set_completion_checker(lambda: task.is_successful(env))
 
@@ -222,6 +227,7 @@ def build_agent(
                 checker_enabled=os.environ.get("OMNIFLOW_CHECKER_MODE", "on") == "on",
                 function_memory_enabled=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on",
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
+                completion_oracle_enabled=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") == "on",
             ),
         ),
     )

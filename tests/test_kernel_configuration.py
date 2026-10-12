@@ -55,7 +55,7 @@ def test_checker_switch_preserves_function_execution_and_official_checker(tmp_pa
         input_schema={'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}))
     host = Host()
     flow = OmniFlow(store.path, host=host, completion_checker=completion,
-        config=OmniFlowConfig(runtime=RuntimeSettings(checker_enabled=enabled),plugins=PluginSet(checker=checker)))
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, checker_enabled=enabled),plugins=PluginSet(checker=checker)))
     runtime = GuiAgentToolRuntime(host=host, flow=flow)
     result = asyncio.run(runtime.call_function_tool('omniflow_execute', {
         'session_id': runtime.session_id, 'request_id': 'one', 'function_id': 'pause', 'arguments': {}}))
@@ -95,7 +95,7 @@ def test_native_request_retry_is_bounded_and_refreshes_observation(
             return ToolCall('finished', {'content': 'done'})
     store = FunctionStore(tmp_path/'empty.json');store.save()
     flow = OmniFlow(store.path, host=Host(), planner=Planner(), completion_checker=lambda: True,
-        config=OmniFlowConfig(runtime=RuntimeSettings(checker_enabled=False, planner_error_retries=budget)))
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, checker_enabled=False, planner_error_retries=budget)))
     result = asyncio.run(flow.arun('goal'))
     assert result.success == success and len(requests) == calls
     assert len(set(requests)) == calls

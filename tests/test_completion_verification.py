@@ -85,7 +85,7 @@ def _recovery_scenario(tmp_path, monkeypatch, *, replacement=False, still_blocke
     planner = Planner()
     flow = OmniFlow(store.path, host=host, planner=planner,
                     completion_checker=lambda: checker_accepts and host.done,
-                    config=OmniFlowConfig(runtime=runtime or RuntimeSettings(max_steps=4, checker_enabled=False),
+                    config=OmniFlowConfig(runtime=runtime or RuntimeSettings(completion_oracle_enabled=True, max_steps=4, checker_enabled=False),
                                          plugins=PluginSet(transfer=transfer)))
     async def recall(*args, **kwargs):
         return RecallResult((), {'reason': 'test_planner_selection'})
@@ -190,7 +190,7 @@ def test_stopped_invocation_retains_completed_usage_and_failure_evidence(tmp_pat
 @pytest.mark.parametrize('enabled', [True, False], ids=['adaptive_full', 'no_reentry'])
 def test_reentry_ablation_keeps_same_planner_actions_and_completion_gate(tmp_path, monkeypatch, enabled):
     flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
-        runtime=RuntimeSettings(max_steps=4, checker_enabled=False, function_reentry_enabled=enabled))
+        runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=4, checker_enabled=False, function_reentry_enabled=enabled))
     result = asyncio.run(flow.arun('Finish the operation'))
     assert result.success
     assert [a.tool for a in host.actions] == ['wait', 'press_key', 'click']
@@ -228,7 +228,7 @@ def test_resume_argument_change_cannot_repeat_prefix_or_change_remaining_effect(
 
 def test_reentry_ablation_and_recovery_counters_reset_for_new_task(tmp_path, monkeypatch):
     flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
-        runtime=RuntimeSettings(max_steps=4, checker_enabled=False, function_reentry_enabled=False))
+        runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=4, checker_enabled=False, function_reentry_enabled=False))
     for _ in range(2):
         host.actions.clear()
         host.recovered = host.done = False
@@ -243,7 +243,7 @@ def test_reentry_ablation_and_recovery_counters_reset_for_new_task(tmp_path, mon
 
 def test_memory_off_uses_same_kernel_but_never_recalls_or_exposes_functions(tmp_path, monkeypatch):
     flow, host, planner = _recovery_scenario(tmp_path, monkeypatch,
-        runtime=RuntimeSettings(max_steps=3, checker_enabled=False, function_memory_enabled=False))
+        runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3, checker_enabled=False, function_memory_enabled=False))
     catalogs = []
     async def no_recall(*args, **kwargs):
         raise AssertionError('Memory OFF cannot encode or recall stored pages')
@@ -570,7 +570,7 @@ def test_successful_function_stops_when_official_completion_checker_passes(
         host=host,
         planner=planner,
         completion_checker=checker,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3)),
     )
 
     result = asyncio.run(flow.arun("Set brightness to the maximum."))
@@ -672,7 +672,7 @@ def test_rejected_function_completion_returns_checker_feedback_to_planner(
         host=host,
         planner=planner,
         completion_checker=checker,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=4)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=4)),
     )
 
     result = asyncio.run(flow.arun("Set brightness to the maximum."))
@@ -860,7 +860,7 @@ def test_incomplete_local_function_can_route_to_second_local_function(
         planner=CompositionPlanner(),
         function_router=router,
         completion_checker=checker,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3)),
     )
 
     result = asyncio.run(flow.arun("Complete the first and second subtasks."))
@@ -968,7 +968,7 @@ def test_router_does_not_repeat_same_function_from_same_gui_state(
         planner=planner,
         function_router=router,
         completion_checker=checker,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3)),
     )
 
     result = asyncio.run(flow.arun("Read the Team Weekly Sync note."))
@@ -1073,7 +1073,7 @@ def test_router_progress_and_task_budget_are_independent(tmp_path, success_after
         planner=UnusedPlanner(),
         function_router=router,
         completion_checker=checker,
-        config=OmniFlowConfig(runtime=RuntimeSettings(max_steps=3)),
+        config=OmniFlowConfig(runtime=RuntimeSettings(completion_oracle_enabled=True, max_steps=3)),
     )
 
     result = asyncio.run(flow.arun("Delete two items."))

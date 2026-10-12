@@ -67,7 +67,8 @@ def _experimental_omniflow_enabled(method: str) -> bool:
              or os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
              or os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
              or os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
-             or os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on")
+             or os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
+             or os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off")
     )
 
 
@@ -1041,7 +1042,8 @@ def _run_command(
                 task=args.task,
                 method=method,
                 device=device,
-                archive_kind=("memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
+                archive_kind=("oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
+                              else "memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
                               else "reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
                               else "checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
                               else "external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
@@ -1196,7 +1198,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--harness", default=os.environ.get("OMNIFLOW_HARNESS", "builtin"),
                         help="OmniFlow task harness: builtin, codex, claude, or module:factory")
     parser.add_argument("--checker", choices=("on", "off"), default=os.environ.get("OMNIFLOW_CHECKER_MODE", "on"),
-                        help="Shared recovery Checker policy; official completion validation always remains enabled")
+                        help="Shared recovery Checker policy; the official validator still runs once after the episode")
+    parser.add_argument("--completion-oracle", choices=("on", "off"),
+                        default=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off"),
+                        help="OmniFlow oracle ablation: consult the official validator inside the task loop. "
+                             "Default off; 'on' reproduces pre-2026-10 results and is archived as oracle_ablation")
     parser.add_argument("--function-reentry", choices=("on", "off"),
                         default=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on"),
                         help="Builtin OmniFlow: allow Function reuse after a Function execution failure")
@@ -1252,6 +1258,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.checker != "on" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("checker_ablation_requires_run_method_omniflow")
     os.environ["OMNIFLOW_CHECKER_MODE"] = args.checker
+    if args.completion_oracle != "off" and (args.action != "run" or args.method != "omniflow"):
+        raise ValueError("completion_oracle_ablation_requires_run_method_omniflow")
+    os.environ["OMNIFLOW_COMPLETION_ORACLE"] = args.completion_oracle
     if args.function_reentry != "on" and (
         args.action != "run" or args.method != "omniflow" or args.harness != "builtin"
     ):

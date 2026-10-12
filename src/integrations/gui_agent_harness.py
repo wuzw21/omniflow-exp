@@ -121,7 +121,10 @@ class CliHarness:
         runtime = GuiAgentToolRuntime(host=context.flow.host, flow=context.flow,
             timeout_seconds=context.timeout_seconds, max_service_calls=context.max_steps,
             allow_task_switch=False)
-        initial_gate = await review_completion(context.flow.completion_checker)
+        # Only explicit oracle ablations expose the benchmark validator; formal
+        # runs must not leak ground truth into the host prompt or loop.
+        oracle = context.flow.completion_checker
+        initial_gate = await review_completion(oracle)
         skill = Path(__file__).resolve().parents[2] / "skills/omniflow-gui/SKILL.md"
         if not skill.is_file():
             for prefix in (Path(__file__).resolve().parents[2], Path(sys.prefix)):
@@ -129,16 +132,21 @@ class CliHarness:
                 if candidate.is_file():
                     skill = candidate
                     break
+        oracle_note = (
+            "\nCurrent official completion check after task initialization: "
+            + json.dumps(initial_gate) + "\n"
+            if oracle is not None else "\n")
         prompt = ("Perform this Android task through the configured OmniFlow runtime: " + context.goal
             + "\nUse only omniflow_recall and omniflow_execute. The Android environment, Memory, "
-              "device, recording and official completion checker are already owned by this episode. "
+              "device and recording are already owned by this episode. "
               "Do not use shell, other device tools, file edits, subagents, or launch another runtime. "
               "Use the same task_id throughout this episode. "
-              "Stop when feedback.control.next is stop. Verified task success is authoritative. "
-              "If no Function fits or execution fails and you cannot recover with the available tools, "
+              "Stop when feedback.control.next is stop. "
+              + ("Verified task success is authoritative. " if oracle is not None else
+                 "Decide task completion yourself from the observed screen; no external verifier is available. ")
+            + "If no Function fits or execution fails and you cannot recover with the available tools, "
               "report the limitation and stop. Never invent success or replay an unknown effect.\n"
-            + "\nCurrent official completion check after task initialization: "
-            + json.dumps(initial_gate) + "\n" + skill.read_text())
+            + oracle_note + skill.read_text())
         (root / "prompt.txt").write_text(prompt)
         process = None
         error = None
@@ -173,12 +181,20 @@ class CliHarness:
                             process.kill()
                             await process.wait()
             result = runtime.execution_result()
-            if not error and not result.detail.get("completion_gate"):
-                gate = await review_completion(context.flow.completion_checker)
+            if not error and oracle is not None and not result.detail.get("completion_gate"):
+                gate = await review_completion(oracle)
                 if gate:
                     result = replace(result, detail={**result.detail, "completion_gate": gate})
         report = _host_report(self.name, root / "events.jsonl")
         error = error or report["error"] or result.error
+        if oracle is None:
+            # No in-loop oracle: a clean host exit is the host's own completion
+            # claim; the official validator judges it once after the episode.
+            reason = error or "finished"
+            detail = {**result.detail, "done_reason": reason, "harness": report,
+                      "llm_usage": report, "planner_steps": result.detail.get("service_calls", 0)}
+            (root / "summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
+            return replace(result, success=not error, error=error, detail=detail)
         gate = result.detail.get("completion_gate") or {}
         verified = gate.get("status") == "verified"
         if not verified and not error:
