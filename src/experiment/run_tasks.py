@@ -651,6 +651,31 @@ def _wait_for_device(adb: str, serial: str, timeout: int) -> None:
     raise RuntimeError(f"android_emulator_boot_timeout:{serial}")
 
 
+def _avd_snapshot(serial: str, verb: str, name: str, *, timeout: int = 180) -> None:
+    """Save or load a whole-emulator snapshot through the emulator console.
+
+    Loading one post-setup snapshot before every (method, device) episode gives
+    each method a byte-identical starting device instead of relying only on
+    per-app data restores.  ``-no-snapshot-save`` only disables the quick-boot
+    save on exit; named console snapshots are unaffected.
+    """
+
+    if verb not in {"save", "load"} or not name:
+        raise ValueError(f"avd_snapshot_invalid:{verb}:{name}")
+    adb = _sdk_tool("adb")
+    try:
+        completed = subprocess.run(
+            (adb, "-s", serial, "emu", "avd", "snapshot", verb, name),
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"avd_snapshot_{verb}_failed:{serial}:{name}:{exc}") from exc
+    output = f"{completed.stdout}\n{completed.stderr}".strip()
+    if completed.returncode != 0 or any(line.strip().startswith("KO") for line in output.splitlines()):
+        raise RuntimeError(f"avd_snapshot_{verb}_failed:{serial}:{name}:{output[-300:]}")
+    _wait_for_device(adb, serial, timeout)
+
+
 def _running_avd_name(adb: str, serial: str) -> str:
     try:
         completed = subprocess.run(
@@ -937,6 +962,8 @@ def _run_command(
     temporary_root: Path,
 ) -> tuple[str, str, int]:
     label, serial, port = device
+    if args.avd_snapshot and not args.dry_run:
+        _avd_snapshot(serial, "load", args.avd_snapshot)
     experimental = _experimental_omniflow_enabled(method)
     destination = _golden_run_root(
         args.output,
@@ -1180,7 +1207,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         nargs="?",
-        choices=("run", "convert-memory"),
+        choices=("run", "convert-memory", "save-snapshot"),
         default="run",
     )
     parser.add_argument("--task", default=DEFAULT_TASK)
@@ -1207,6 +1234,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "(docs/BASELINES_SAME_HARNESS.md); archived as baseline_<name>")
     parser.add_argument("--element-docs", default=os.environ.get("OMNIFLOW_ELEMENT_DOCS", ""),
                         help="AppAgent demo_docs directory for --baseline appagent_style")
+    parser.add_argument("--avd-snapshot", default=os.environ.get("OMNIFLOW_AVD_SNAPSHOT", ""),
+                        help="Named emulator snapshot loaded before every (method, device) run; "
+                             "create it once after setup with the save-snapshot action")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument(
         "--evaluation-seed",
@@ -1258,6 +1288,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     for flag in ("checker", "completion_oracle", "function_reentry", "function_memory"):
         if getattr(args, flag) not in {"on", "off"}:
             raise ValueError(f"{flag}_must_be_on_or_off")
+    if args.action == "save-snapshot":
+        if not args.avd_snapshot:
+            raise ValueError("save-snapshot requires --avd-snapshot")
+        devices = _devices(args.device)
+        if not args.dry_run:
+            _ensure_devices_started(devices, timeout=min(TASK_DEADLINE_SEC, 180))
+            for _label, serial, _port in devices:
+                _avd_snapshot(serial, "save", args.avd_snapshot)
+        print(json.dumps({"action": "save-snapshot", "snapshot": args.avd_snapshot,
+                          "devices": [item[0] for item in devices]}, ensure_ascii=False))
+        return 0
     if args.checker != "on" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("checker_ablation_requires_run_method_omniflow")
     os.environ["OMNIFLOW_CHECKER_MODE"] = args.checker

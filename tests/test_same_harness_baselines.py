@@ -73,3 +73,27 @@ def test_same_harness_baseline_requires_builtin_omniflow_with_store(monkeypatch)
     with pytest.raises(ValueError, match="appagent_style_requires_element_docs"):
         run_tasks.main(["run", "--method", "omniflow", "--baseline", "appagent_style",
                         "--memory", "m", "--dry-run"])
+
+
+def test_avd_snapshot_uses_emulator_console_and_rejects_ko(monkeypatch):
+    import subprocess
+
+    from src.experiment import run_tasks
+
+    calls, waited = [], []
+    replies = iter(("OK", "KO: snapshot 'clean' not found"))
+
+    def fake_run(command, **kwargs):
+        calls.append(tuple(command[1:]))
+        return subprocess.CompletedProcess(command, 0, next(replies), "")
+
+    monkeypatch.setattr(run_tasks, "_sdk_tool", lambda name: name)
+    monkeypatch.setattr(run_tasks.subprocess, "run", fake_run)
+    monkeypatch.setattr(run_tasks, "_wait_for_device", lambda adb, serial, timeout: waited.append(serial))
+    run_tasks._avd_snapshot("emulator-5554", "load", "clean")
+    assert calls == [("-s", "emulator-5554", "emu", "avd", "snapshot", "load", "clean")]
+    assert waited == ["emulator-5554"]
+    with pytest.raises(RuntimeError, match="avd_snapshot_save_failed"):
+        run_tasks._avd_snapshot("emulator-5554", "save", "clean")
+    with pytest.raises(ValueError, match="avd_snapshot_invalid"):
+        run_tasks._avd_snapshot("emulator-5554", "delete", "clean")
