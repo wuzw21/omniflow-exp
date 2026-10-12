@@ -110,6 +110,46 @@ def _host_report(name: str, path: Path) -> dict[str, Any]:
     return report
 
 
+_STATUS_PREFIX = "TASK_STATUS:"
+_ANSWER_PREFIX = "ANSWER:"
+COMPLETION_CLAIM_INSTRUCTION = (
+    "When you stop, end your final message with exactly one line `TASK_STATUS: complete` "
+    "if the observed screen shows the whole task is done, otherwise `TASK_STATUS: incomplete`. "
+    "If the task asks for information, add one line `ANSWER: <answer>` before it. ")
+
+
+def _host_final_message(name: str, path: Path) -> str:
+    """Return the host's last assistant text from its event stream."""
+    final = ""
+    for line in path.read_text().splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if name == "claude":
+            if event.get("type") == "result" and isinstance(event.get("result"), str):
+                final = event["result"]
+        else:
+            item = event.get("item") if event.get("type") == "item.completed" else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                final = str(item.get("text") or "")
+    return final
+
+
+def _host_completion_claim(name: str, path: Path) -> tuple[bool, str]:
+    """Parse the host's explicit completion claim; absent or ambiguous means incomplete."""
+    status, answer = None, ""
+    for raw in _host_final_message(name, path).splitlines():
+        line = raw.strip().strip("`").strip()
+        if line.upper().startswith(_STATUS_PREFIX):
+            status = line[len(_STATUS_PREFIX):].strip().lower()
+        elif line.upper().startswith(_ANSWER_PREFIX):
+            answer = line[len(_ANSWER_PREFIX):].strip()
+    return status == "complete", answer
+
+
 @dataclass(frozen=True)
 class CliHarness:
     name: str
@@ -143,7 +183,8 @@ class CliHarness:
               "Use the same task_id throughout this episode. "
               "Stop when feedback.control.next is stop. "
               + ("Verified task success is authoritative. " if oracle is not None else
-                 "Decide task completion yourself from the observed screen; no external verifier is available. ")
+                 "Decide task completion yourself from the observed screen; no external verifier is available. "
+                 + COMPLETION_CLAIM_INSTRUCTION)
             + "If no Function fits or execution fails and you cannot recover with the available tools, "
               "report the limitation and stop. Never invent success or replay an unknown effect.\n"
             + oracle_note + skill.read_text())
@@ -188,11 +229,16 @@ class CliHarness:
         report = _host_report(self.name, root / "events.jsonl")
         error = error or report["error"] or result.error
         if oracle is None:
-            # No in-loop oracle: a clean host exit is the host's own completion
-            # claim; the official validator judges it once after the episode.
+            # No in-loop oracle: only the host's explicit final claim counts as
+            # completion; the official validator judges it once after the episode.
+            claimed, answer = _host_completion_claim(self.name, root / "events.jsonl")
+            if not error and not claimed:
+                error = "host_task_incomplete"
             reason = error or "finished"
             detail = {**result.detail, "done_reason": reason, "harness": report,
                       "llm_usage": report, "planner_steps": result.detail.get("service_calls", 0)}
+            if answer and not error:
+                detail["finished_content"] = answer
             (root / "summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
             return replace(result, success=not error, error=error, detail=detail)
         gate = result.detail.get("completion_gate") or {}

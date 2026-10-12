@@ -153,7 +153,7 @@ seed/path preflight、结果注册或专项测试的历史描述不再适用。
   source qualification replay 或任务专用执行脚本。
 - 完成判定合同（2026-10-10 起）：benchmark 官方 validator（AndroidWorld
   `task.is_successful`）是评测 oracle，不是 agent 信号。正式运行中任务完成只由
-  Agent 自己判定（Planner `finished`，或 CLI Harness 的 `finish`）；官方 validator
+  Agent 自己判定（Planner `finished`，或 CLI Harness 最终消息的 `TASK_STATUS: complete` 行）；官方 validator
   只在 episode 结束后由 lifecycle 调用一次，作为唯一成功判据。完整 Function 重放
   成功后回到同一 Planner 主线，由 Planner 依据观察决定 `finished` 或继续。
   内核通过 `RuntimeSettings.completion_oracle_enabled`（默认 False）强制该合同：

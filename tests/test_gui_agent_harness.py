@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from omniflow.core.model import RunResult
-from src.integrations.gui_agent_harness import HarnessContext, _host_report, build_harness
+from src.integrations.gui_agent_harness import (
+    HarnessContext, _host_completion_claim, _host_report, build_harness)
 from src.experiment.run_tasks import build_parser, _experimental_omniflow_enabled
 from src.integrations.android_world.agent import _goal_with_task_parameters
 
@@ -110,3 +111,37 @@ def test_factory_harness_declares_planner_dependency(monkeypatch, tmp_path, requ
     assert captured['harness'] is harness
     assert ('planner' in captured) == requires_planner
     assert ('function_router' in captured) == requires_planner
+
+
+def _events(tmp_path, *events):
+    path = tmp_path / 'events.jsonl'
+    path.write_text('\n'.join(json.dumps(event) for event in events) + '\nnot-json\n')
+    return path
+
+
+def test_host_completion_claim_reads_explicit_final_status(tmp_path):
+    claude = _events(tmp_path, {'type': 'result', 'result': 'done\nANSWER: 42\nTASK_STATUS: complete'})
+    assert _host_completion_claim('claude', claude) == (True, '42')
+    codex = _events(tmp_path,
+        {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'TASK_STATUS: complete'}},
+        {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '`TASK_STATUS: incomplete`'}})
+    assert _host_completion_claim('codex', codex) == (False, '')
+
+
+def test_host_completion_claim_absent_status_is_incomplete(tmp_path):
+    path = _events(tmp_path, {'type': 'result', 'result': 'I turned Bluetooth on.'})
+    assert _host_completion_claim('claude', path) == (False, '')
+    assert _host_completion_claim('codex', path) == (False, '')
+
+
+@pytest.mark.parametrize('variable', [
+    'OMNIFLOW_CHECKER_MODE', 'OMNIFLOW_COMPLETION_ORACLE',
+    'OMNIFLOW_FUNCTION_REENTRY', 'OMNIFLOW_FUNCTION_MEMORY'])
+def test_environment_ablation_switches_must_be_on_or_off(monkeypatch, variable):
+    from src.experiment.run_tasks import main
+    for name in ('OMNIFLOW_CHECKER_MODE', 'OMNIFLOW_FUNCTION_REENTRY', 'OMNIFLOW_FUNCTION_MEMORY'):
+        monkeypatch.setenv(name, 'on')
+    monkeypatch.setenv('OMNIFLOW_COMPLETION_ORACLE', 'off')
+    monkeypatch.setenv(variable, 'yes')
+    with pytest.raises(ValueError, match='_must_be_on_or_off'):
+        main(['run', '--method', 'omniflow'])

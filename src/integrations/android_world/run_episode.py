@@ -4183,7 +4183,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
         def measured_task_validator(*validation_args, **validation_kwargs):
-            # In-loop completion checking is already owned by execution timing.
+            # In-loop completion checking only happens in the --completion-oracle on
+            # ablation; it is already owned by execution timing.
             if instrumented_agent.execution_active:
                 return original_task_validator(*validation_args, **validation_kwargs)
             with measure("official_validator"):

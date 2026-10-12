@@ -1255,6 +1255,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Environment defaults bypass argparse choices; reject anything but on/off so
+    # a typo can never silently select an ablation or the formal condition.
+    for flag in ("checker", "completion_oracle", "function_reentry", "function_memory"):
+        if getattr(args, flag) not in {"on", "off"}:
+            raise ValueError(f"{flag}_must_be_on_or_off")
     if args.checker != "on" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("checker_ablation_requires_run_method_omniflow")
     os.environ["OMNIFLOW_CHECKER_MODE"] = args.checker

@@ -5,7 +5,6 @@ Moved verbatim from ``src.integrations.android_world.run_episode``; that module 
 
 from __future__ import annotations
 
-import logging
 import importlib
 import re
 import time
@@ -15,8 +14,6 @@ from src.integrations.android_world.episode_utils import (
     _normalize_androidworld_setup_label,
     logger,
 )
-
-logger = logging.getLogger("src.integrations.android_world.run_episode")
 
 
 def _androidworld_runtime_permissions_granted(

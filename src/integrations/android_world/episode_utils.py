@@ -13,7 +13,8 @@ from typing import Any, Sequence
 import unicodedata
 
 
-logger = logging.getLogger(__name__)
+# Keep the historical logger name so existing log filters/handlers still match.
+logger = logging.getLogger("src.integrations.android_world.run_episode")
 
 
 def _normalize_androidworld_setup_label(value: Any) -> Any:
