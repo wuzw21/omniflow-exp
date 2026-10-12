@@ -279,6 +279,7 @@ def planner_state(observation: Observation) -> dict[str, Any]:
             "recent_actions",
             "execution_history",
             "user_input",
+            "element_docs",
         }
     }
     return {key: value for key, value in state.items() if value is not None}

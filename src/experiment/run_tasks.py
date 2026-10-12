@@ -68,7 +68,8 @@ def _experimental_omniflow_enabled(method: str) -> bool:
              or os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
              or os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
              or os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
-             or os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off")
+             or os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
+             or os.environ.get("OMNIFLOW_BASELINE", "none") != "none")
     )
 
 
@@ -1031,7 +1032,9 @@ def _run_command(
                 task=args.task,
                 method=method,
                 device=device,
-                archive_kind=("oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
+                archive_kind=(f"baseline_{os.environ['OMNIFLOW_BASELINE']}"
+                              if os.environ.get("OMNIFLOW_BASELINE", "none") != "none"
+                              else "oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
                               else "memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
                               else "reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
                               else "checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
@@ -1198,6 +1201,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--function-memory", choices=("on", "off"),
                         default=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on"),
                         help="Builtin matched ablation: retain explicit Store and disable Function exposure")
+    parser.add_argument("--baseline", choices=("none", "mobilegpt_style", "appagent_style"),
+                        default=os.environ.get("OMNIFLOW_BASELINE", "none"),
+                        help="Same-harness baseline on the builtin OmniFlow harness "
+                             "(docs/BASELINES_SAME_HARNESS.md); archived as baseline_<name>")
+    parser.add_argument("--element-docs", default=os.environ.get("OMNIFLOW_ELEMENT_DOCS", ""),
+                        help="AppAgent demo_docs directory for --baseline appagent_style")
     parser.add_argument("--source-run-log", default="")
     parser.add_argument(
         "--evaluation-seed",
@@ -1265,6 +1274,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         raise ValueError("function_memory_ablation_requires_builtin_omniflow_run_with_store")
     os.environ["OMNIFLOW_FUNCTION_MEMORY"] = args.function_memory
+    if args.baseline not in {"none", "mobilegpt_style", "appagent_style"}:
+        raise ValueError("baseline_must_be_none_mobilegpt_style_or_appagent_style")
+    if args.baseline != "none" and (
+        args.action != "run" or args.method != "omniflow" or args.harness != "builtin"
+        or args.completion_oracle != "off" or not args.memory
+    ):
+        raise ValueError("same_harness_baseline_requires_builtin_omniflow_run_with_store_and_no_oracle")
+    if args.baseline == "appagent_style" and not args.element_docs:
+        raise ValueError("appagent_style_requires_element_docs")
+    os.environ["OMNIFLOW_BASELINE"] = args.baseline
+    if args.element_docs:
+        os.environ["OMNIFLOW_ELEMENT_DOCS"] = str(resolve_path(args.element_docs))
     if args.harness != "builtin" and (args.action != "run" or args.method != "omniflow"):
         raise ValueError("external_harness_requires_run_method_omniflow")
     os.environ["OMNIFLOW_HARNESS"] = args.harness

@@ -35,6 +35,7 @@ _PLANNER_CONTEXT_KEYS = (
     "recent_actions",
     "execution_history",
     "user_input",
+    "element_docs",
 )
 
 PlannerContextProjector = Callable[[dict[str, Any]], dict[str, Any]]
@@ -632,6 +633,7 @@ def _turn_text(
         else None
     )
     execution_history = ""
+    element_docs = ""
     feedback: list[str] = []
     if isinstance(extra, dict) and extra:
         context = dict(extra)
@@ -642,6 +644,7 @@ def _turn_text(
         ).strip()
         context.pop("forbid_finished", None)
         user_input = str(context.pop("user_input", "") or "").strip()
+        element_docs = str(context.pop("element_docs", "") or "").strip()
         if planner_feedback:
             feedback.append(planner_feedback)
         if previous_action_error:
@@ -651,6 +654,8 @@ def _turn_text(
     lines.extend(("Past Actions:", execution_history or "0. No action yet."))
     if feedback:
         lines.extend(("Feedback:", "\n".join(feedback)))
+    if element_docs:
+        lines.extend(("Documentation of UI elements on this screen:", element_docs))
     lines.extend(
         (
             "Current accessibility elements (label-only rows are read-only; rows with actions are interactive):",

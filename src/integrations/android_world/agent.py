@@ -17,6 +17,8 @@ from omniflow import (
     RunResult,
     RuntimeSettings,
 )
+from omniflow.core.config import PluginSet
+from omniflow.transfer.attribute import attribute_transfer
 from omniflow.core.trajectory import state_id
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
@@ -33,6 +35,59 @@ from src.experiment.protocol import MAX_STEPS
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
+# Same-harness baselines (docs/BASELINES_SAME_HARNESS.md): identical Planner,
+# Host, budget and post-episode validator; only the reuse mechanism differs.
+SAME_HARNESS_BASELINES = ("none", "mobilegpt_style", "appagent_style")
+
+
+def same_harness_baseline() -> str:
+    value = os.environ.get("OMNIFLOW_BASELINE", "none")
+    if value not in SAME_HARNESS_BASELINES:
+        raise ValueError(f"unknown_same_harness_baseline:{value}")
+    return value
+
+
+def load_element_docs(root: str | Path) -> dict[str, dict[str, str]]:
+    """Load AppAgent ``demo_docs`` (one ``<element_id>.txt`` dict per element)."""
+
+    import ast
+
+    docs: dict[str, dict[str, str]] = {}
+    for path in sorted(Path(root).expanduser().glob("*.txt")):
+        payload = ast.literal_eval(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            docs[path.stem] = {str(k): str(v or "").strip() for k, v in payload.items()}
+    if not docs:
+        raise ValueError(f"element_docs_empty:{root}")
+    return docs
+
+
+def element_docs_for_xml(xml_text: str, docs: dict[str, dict[str, str]]) -> str:
+    """Render docs of on-screen elements the way AppAgent's prompt does."""
+
+    import xml.etree.ElementTree as ET
+
+    from src.integrations.appagent import _appagent_element_id
+
+    try:
+        root = ET.fromstring(xml_text or "")
+    except ET.ParseError:
+        return ""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for node in root.iter():
+        try:
+            element_id = _appagent_element_id(node)
+        except ValueError:
+            continue
+        doc = docs.get(element_id)
+        if doc is None or element_id in seen:
+            continue
+        seen.add(element_id)
+        label = node.attrib.get("text") or node.attrib.get("content-desc") or element_id
+        usage = "; ".join(f"{k}: {v}" for k, v in doc.items() if v)
+        lines.append(f"- {label} [{node.attrib.get('bounds', '')}]: {usage}")
+    return "\n".join(lines)
 
 
 def _emit_official_completion(env: Any, answer: str = "") -> None:
@@ -75,10 +130,12 @@ class _TaskHost:
         host: AndroidWorldHost,
         state: dict[str, Any],
         transfer_states: dict[str, dict[str, Any]],
+        element_docs: dict[str, dict[str, str]] | None = None,
     ):
         self.host = host
         self.state = state
         self.transfer_states = transfer_states
+        self.element_docs = element_docs
 
     @property
     def env(self) -> Any:
@@ -116,6 +173,12 @@ class _TaskHost:
                 "state_id": official_state_id,
             }
         )
+        if self.element_docs:
+            docs_text = element_docs_for_xml(identified.xml, self.element_docs)
+            if docs_text:
+                payload = identified.to_dict()
+                payload["extra"] = {**payload.get("extra", {}), "element_docs": docs_text}
+                identified = Observation.from_value(payload)
         transfer_state = _transfer_state(identified)
         self.state["captured_transfer_states"][transfer_state["state_id"]] = (
             transfer_state
@@ -206,7 +269,14 @@ def build_agent(
         "captured_transfer_states": {},
     }
     transfer_states = load_transfer_state_catalog(transfer_state_path)
-    host = _TaskHost(raw_host, state, transfer_states)
+    baseline = same_harness_baseline()
+    element_docs = None
+    if baseline == "appagent_style":
+        docs_root = str(os.environ.get("OMNIFLOW_ELEMENT_DOCS") or "").strip()
+        if not docs_root:
+            raise ValueError("appagent_style_requires_OMNIFLOW_ELEMENT_DOCS")
+        element_docs = load_element_docs(docs_root)
+    host = _TaskHost(raw_host, state, transfer_states, element_docs)
     fallback_limit_text = str(
         os.environ.get("OMNIFLOW_ANDROIDWORLD_MAX_FALLBACK_STEPS") or ""
     ).strip()
@@ -225,9 +295,16 @@ def build_agent(
                 max_steps=configured_max_steps,
                 max_fallback_steps=max_fallback_steps,
                 checker_enabled=os.environ.get("OMNIFLOW_CHECKER_MODE", "on") == "on",
-                function_memory_enabled=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on",
+                # AppAgent-style reuses element docs only, never Functions.
+                function_memory_enabled=(
+                    os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on"
+                    and baseline != "appagent_style"
+                ),
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
                 completion_oracle_enabled=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") == "on",
+            ),
+            plugins=PluginSet(
+                transfer=attribute_transfer if baseline == "mobilegpt_style" else None,
             ),
         ),
     )
