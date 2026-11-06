@@ -191,6 +191,28 @@ is evidence of a rejection path, not proof that the target was absent or that
 the top candidate was wrong. The device rows remain `pending_physical_device`
 until the required real-phone operation has been observed.
 
+### 2026-11-07 emulator supplemental validation
+
+The same `SystemBluetoothTurnOn` source Memory was exercised on the 4090
+Standard AVD (`emulator-45562`, Android 13, 1440×3120) with OOB 0.6.1
+(versionCode 7). The first fixed replay reached three successful OOB actions,
+then failed before dispatch with `host_action_state_stale`; the official
+validator result was 0/1. After the bounded resynchronization fix, all five
+OOB actions returned success and the stale-state error disappeared, while the
+official validator remained 0/1 because the replay did not turn Bluetooth on.
+This separates physical dispatch reliability from task-semantic success.
+
+The same target with the `mobimem_style` same-harness path then completed
+Function recall despite a missing source Observation; it stopped before any
+physical action because the configured Qwen3.6-Plus endpoint returned team
+access denied (403). That row is an environment failure, not a method result.
+
+The raw RunLogs and hashes are preserved under
+`data/runtime/validation/20261107-oob-state-stale-4090/` and
+`data/runtime/validation/20261107-recall-missing-source-4090/`. These are
+emulator supplements, not formal paper cells; physical-phone acceptance stays
+`pending_physical_device`.
+
 `diagnostics.function_resume.events` records actual fresh/resumed Function
 invocations and whether a previous invocation failed. Event success means
 execution completion, not semantic correctness. An event's trace interval
