@@ -124,6 +124,36 @@ configuration and is not this matched Memory ablation.
 
 ## Action-adaptation evidence
 
+Explicit failure-input manifests can be replayed offline without starting a
+device or dispatching an action. The batch helper preserves the caller's
+manifest order and reports only observed mapping outcomes:
+
+```python
+import asyncio
+from omniflow.transfer.failure_inputs import (
+    replay_failure_inputs_batch,
+    summarize_admission_operating_points,
+    summarize_replay_results,
+)
+
+rows = asyncio.run(replay_failure_inputs_batch(
+    ["/absolute/path/to/first.json.gz", "/absolute/path/to/second.json.gz"],
+))
+summary = summarize_replay_results(rows)
+operating_points = summarize_admission_operating_points(
+    rows, score_thresholds=[0.80, 0.90, 0.95], margin_thresholds=[0.0, 0.05]
+)
+```
+
+The input list is explicit. The helper does not scan error pools, result
+directories, or archives. A mapped result records the canonical Transfer
+outcome, not a reviewed correctness label. Labels for false-accept and
+false-reject analysis must come from reviewed correspondences or separate
+evidence.
+Operating-point coverage is a policy simulation over recorded scores. It does
+not establish false-accept or false-reject rates until each accepted row has a
+reviewed correspondence label.
+
 Reuse the canonical OmniTransfer evaluation and its reviewed ASE/PAPT inputs.
 `scripts/evaluate_association_depth.py` takes an explicit checkpoint, dataset,
 split, device, and output; it performs inference evaluation, not training.
@@ -139,6 +169,27 @@ close that gap. A new checkpoint condition must preserve the canonical matcher
 interface, identify its own protocol and hash, and be validated before use.
 
 ## Evidence and analysis
+
+## Limitation-to-evidence matrix
+
+The following matrix turns the current method limits into executable evidence
+without rerunning the full AndroidWorld suite for every change:
+
+| Limitation | Offline evidence | Device evidence required | Acceptance output |
+|---|---|---|---|
+| Transfer rejection and score instability | Explicit `failure-inputs.v1` batch replay with V10 checkpoint; score/margin operating-point sweep | One paired task on each target profile | coverage, rejection reason, reviewed false-accept/false-reject |
+| Structural replay does not imply semantic completion | Replay trace with an explicit completion result kept separate from mapping result | Official validator after Function completion | function success, official success, semantic gap |
+| Stale or non-executable targets | Snapshot-bound candidate admission tests and recorded candidate evidence | Repeated UI transition and popup task | stale rejection, duplicate-dispatch count, fallback result |
+| App/page workflow interruption | Deterministic recovery and resume regressions | Popup, login, loading, and repeated interruption tasks | fallback rate, resume index, recovered success |
+| Cold-start and partial Memory coverage | Explicit source-coverage subsets and existing RunLogs | Target runs only for the frozen subset | success, reuse, model calls as coverage grows |
+| App-version drift | Reviewed source/target page pairs with changed package/version metadata | Same task before and after app update | safe rejection, fallback success, re-authoring required |
+| Full-task cost and latency | Existing paired metrics and offline trace accounting | OFF/ON paired episodes on the same device | execution time, model calls, tokens, recovery cost |
+| Physical-device reliability | No offline substitute for device I/O | Real phone with installed OOB and app receipt | device identity, APK/version hash, operation/result evidence |
+
+Offline rows must retain `label_status=reviewed|unknown`. A rejected mapping
+is evidence of a rejection path, not proof that the target was absent or that
+the top candidate was wrong. The device rows remain `pending_physical_device`
+until the required real-phone operation has been observed.
 
 `diagnostics.function_resume.events` records actual fresh/resumed Function
 invocations and whether a previous invocation failed. Event success means

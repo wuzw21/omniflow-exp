@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from collections.abc import Iterable
 
 from omniflow.core.model import Action, Observation
 
@@ -147,3 +148,106 @@ async def replay_failure_inputs(path: str | Path, *, transfer=None):
     from omniflow.transfer.errors import attempt_transfer
     action, target, source = load_failure_inputs(path)
     return await attempt_transfer(transfer or default_transfer, action, target, source, phase="replay")
+
+
+async def replay_failure_inputs_batch(
+    paths: Iterable[str | Path],
+    *,
+    transfer=None,
+) -> list[dict[str, object]]:
+    """Replay explicitly supplied failure inputs without device dispatch.
+
+    ``paths`` is the complete input set. This helper never scans an error
+    pool, result directory, or historical archive. Keeping caller order
+    makes checkpoint and threshold comparisons reproducible.
+    """
+
+    rows: list[dict[str, object]] = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser().resolve()
+        result = await replay_failure_inputs(path, transfer=transfer)
+        detail = result.detail if isinstance(result.detail, dict) else {}
+        rows.append(
+            {
+                "path": str(path),
+                "mapped": result.action is not None,
+                "reason": str(result.reason or ""),
+                "score": detail.get("score"),
+                "margin": detail.get("margin"),
+                "target_candidate_id": detail.get("target_candidate_id"),
+                "target_execution_candidate_id": detail.get(
+                    "target_execution_candidate_id"
+                ),
+                "executable": detail.get("executable"),
+            }
+        )
+    return rows
+
+
+def summarize_replay_results(rows: Iterable[dict[str, object]]) -> dict[str, object]:
+    """Summarize replay rows without inventing correctness labels."""
+
+    materialized = [row for row in rows if isinstance(row, dict)]
+    mapped = [row for row in materialized if row.get("mapped") is True]
+    rejected = [row for row in materialized if row.get("mapped") is not True]
+    reasons: dict[str, int] = {}
+    for row in rejected:
+        reason = str(row.get("reason") or "unknown").strip() or "unknown"
+        reasons[reason] = reasons.get(reason, 0) + 1
+    return {
+        "total": len(materialized),
+        "mapped": len(mapped),
+        "rejected": len(rejected),
+        "coverage": (len(mapped) / len(materialized)) if materialized else None,
+        "rejection_reasons": dict(sorted(reasons.items())),
+    }
+
+
+def summarize_admission_operating_points(
+    rows: Iterable[dict[str, object]],
+    *,
+    score_thresholds: Iterable[float],
+    margin_thresholds: Iterable[float] = (0.0,),
+) -> list[dict[str, object]]:
+    """Simulate score/margin admission on recorded Transfer outputs.
+
+    This is a policy analysis over observed outputs. It does not rerun the
+    matcher and it does not infer whether an accepted candidate is correct.
+    Rows without a numeric score remain rejected at every operating point.
+    A missing margin is treated as unavailable and therefore fails any
+    positive margin threshold.
+    """
+
+    materialized = [row for row in rows if isinstance(row, dict)]
+    points: list[dict[str, object]] = []
+    for score_threshold in score_thresholds:
+        score_cutoff = float(score_threshold)
+        for margin_threshold in margin_thresholds:
+            margin_cutoff = float(margin_threshold)
+            accepted = 0
+            for row in materialized:
+                try:
+                    score = float(row.get("score"))
+                except (TypeError, ValueError):
+                    continue
+                if score < score_cutoff:
+                    continue
+                if margin_cutoff > 0:
+                    try:
+                        margin = float(row.get("margin"))
+                    except (TypeError, ValueError):
+                        continue
+                    if margin < margin_cutoff:
+                        continue
+                accepted += 1
+            points.append(
+                {
+                    "score_threshold": score_cutoff,
+                    "margin_threshold": margin_cutoff,
+                    "total": len(materialized),
+                    "accepted": accepted,
+                    "rejected": len(materialized) - accepted,
+                    "coverage": accepted / len(materialized) if materialized else None,
+                }
+            )
+    return points

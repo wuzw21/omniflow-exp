@@ -8,7 +8,14 @@ from omniflow.core.model import Action, Observation, TransferResult
 from omniflow.runtime.core import prepare_action
 from omniflow.transfer.errors import attempt_transfer
 from omniflow.runtime.timing import TimingLedger
-from omniflow.transfer.failure_inputs import load_failure_inputs, replay_failure_inputs
+from omniflow.transfer.failure_inputs import (
+    load_failure_inputs,
+    replay_failure_inputs,
+    replay_failure_inputs_batch,
+    save_failure_inputs,
+    summarize_admission_operating_points,
+    summarize_replay_results,
+)
 
 
 def test_failed_mapping_and_stable_retry_share_pair_owner(tmp_path, monkeypatch):
@@ -101,6 +108,43 @@ def test_missing_pair_asset_keeps_failure_but_does_not_claim_replay_ready(tmp_pa
         Action('click', {'x': 1, 'y': 2}), Observation(xml='<target/>'), source, phase='execute.fast'))
     assert result.reason == 'rejected'
     assert json.loads(pool.read_text())['replay']['status'] == 'unavailable'
+
+
+def test_explicit_batch_replay_preserves_order_and_reports_only_observed_outcomes(tmp_path, monkeypatch):
+    monkeypatch.setenv('OMNIFLOW_TRANSFER_ERROR_POOL', str(tmp_path / 'pairs.jsonl'))
+    source = Observation(xml='<source/>', package_name='app')
+    target = Observation(xml='<target/>', package_name='app')
+    first_name = save_failure_inputs(tmp_path, Action('click', {'x': 1, 'y': 2}), source, target)
+    first = tmp_path / first_name
+    second_name = save_failure_inputs(tmp_path, Action('click', {'x': 3, 'y': 4}), source, target)
+    second = tmp_path / second_name
+
+    def transfer(action, _target, _source):
+        if action.args['x'] == 1:
+            return TransferResult(Action('click', {'x': 10, 'y': 20}), detail={'score': 0.95})
+        return TransferResult(None, reason='target_candidate_not_executable', detail={'score': 0.4})
+
+    rows = asyncio.run(replay_failure_inputs_batch([first, second], transfer=transfer))
+    assert [row['mapped'] for row in rows] == [True, False]
+    assert rows[0]['score'] == 0.95
+    assert rows[1]['reason'] == 'target_candidate_not_executable'
+    assert summarize_replay_results(rows) == {
+        'total': 2,
+        'mapped': 1,
+        'rejected': 1,
+        'coverage': 0.5,
+        'rejection_reasons': {'target_candidate_not_executable': 1},
+    }
+    assert summarize_admission_operating_points(
+        rows,
+        score_thresholds=[0.5, 0.9],
+        margin_thresholds=[0.0, 0.1],
+    ) == [
+        {'score_threshold': 0.5, 'margin_threshold': 0.0, 'total': 2, 'accepted': 1, 'rejected': 1, 'coverage': 0.5},
+        {'score_threshold': 0.5, 'margin_threshold': 0.1, 'total': 2, 'accepted': 0, 'rejected': 2, 'coverage': 0.0},
+        {'score_threshold': 0.9, 'margin_threshold': 0.0, 'total': 2, 'accepted': 1, 'rejected': 1, 'coverage': 0.5},
+        {'score_threshold': 0.9, 'margin_threshold': 0.1, 'total': 2, 'accepted': 0, 'rejected': 2, 'coverage': 0.0},
+    ]
 
 
 def test_large_pair_input_does_not_change_mapping_failure(tmp_path, monkeypatch):
