@@ -4,6 +4,7 @@ from omniflow.runtime.timing import timed
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import os
 import re
 from typing import Any
 
@@ -18,7 +19,20 @@ from omniflow.transfer.errors import attempt_transfer
 RECALL_AUDIT_VERSION = "omniflow.function-recall.v1"
 PAGE_SIMILARITY_WEIGHT = 0.30
 GOAL_LEXICAL_WEIGHT = 0.70
-FUNCTION_PAGE_SIMILARITY_THRESHOLD = 0.80
+def _env_float(name: str, default: float) -> float:
+    """Threshold override for controlled ablations only (see builtin_harness)."""
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a float, got {raw!r}")
+
+
+FUNCTION_PAGE_SIMILARITY_THRESHOLD = _env_float(
+    "OMNIFLOW_FUNCTION_PAGE_SIMILARITY_THRESHOLD", 0.80
+)
 
 
 @dataclass(frozen=True)
@@ -363,7 +377,9 @@ def _embed_page(
     return page
 
 
-def _observation_package(observation: Observation) -> str:
+def _observation_package(observation: Observation | None) -> str:
+    if observation is None:
+        return ""
     explicit = str(observation.package_name or "").strip()
     if explicit:
         return explicit
