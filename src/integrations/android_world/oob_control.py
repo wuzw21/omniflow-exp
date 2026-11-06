@@ -174,7 +174,27 @@ class OobControlClient:
                         "height": display.get("height"),
                     },
                 }
-        result = self._request("act", payload)
+        try:
+            result = self._request("act", payload)
+        except RuntimeError as error:
+            # The resident dispatcher validates the supplied state before it
+            # dispatches an action.  A package transition or a fresh
+            # dispatcher observation can therefore make the Python-side
+            # state identity stale without any physical side effect.  Retry
+            # once without the optional state so the dispatcher uses its own
+            # current state; never replay a request after a dispatch failure.
+            if "host_action_state_stale" not in str(error):
+                raise
+            retry_payload = dict(payload)
+            retry_payload.pop("state", None)
+            result = self._request("act", retry_payload)
+            if isinstance(result, dict):
+                result = dict(result)
+                extra = dict(result.get("extra") or {})
+                diagnostics = dict(extra.get("diagnostics") or {})
+                diagnostics["state_resync"] = "dispatcher_current_state"
+                extra["diagnostics"] = diagnostics
+                result["extra"] = extra
         if not isinstance(result, dict):
             raise RuntimeError("oob_control_act_result_invalid")
         return result
