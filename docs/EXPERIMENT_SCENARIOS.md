@@ -213,6 +213,18 @@ The raw RunLogs and hashes are preserved under
 emulator supplements, not formal paper cells; physical-phone acceptance stays
 `pending_physical_device`.
 
+The 4090 copy of the `SystemBluetoothTurnOn` Memory was also checked against
+the canonical local bundle. Its `store.json` references five source states,
+while the 4090 `transfer_states.json` contained only four. The canonical local
+bundle contains all five states. The two `store.json` files had the same SHA256
+(`89f5098d...d587a48`), while the state catalogs differed
+(`b4f9d2f5...c6c92e2` locally and `3af9d2eb...14e04ea` on 4090). This is a
+deployment-asset integrity failure and is kept out of method and Transfer
+metrics. The remote checkout had unrelated dirty changes, so it was not
+overwritten during validation. A formal rerun requires the canonical checkout
+and its sibling state catalog to be synchronized as one explicit Memory
+bundle.
+
 `diagnostics.function_resume.events` records actual fresh/resumed Function
 invocations and whether a previous invocation failed. Event success means
 execution completion, not semantic correctness. An event's trace interval
