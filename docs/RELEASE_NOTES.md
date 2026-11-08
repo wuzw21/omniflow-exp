@@ -46,8 +46,11 @@ interpreter. **Not yet run on a device.**
 `--harness module:factory` seam with zero main-line changes. It is deliberately kept out
 of the main table: ARTEMIS reports its own Checker verdict, not the official validator,
 and has no Function/Transfer artifacts, so only task success could be compared — and even
-that cannot be subtracted. See `docs/BASELINES_SAME_HARNESS.md`. **Not yet run on a
-device**; helper/OOB coexistence on one AVD is unverified.
+that cannot be subtracted. See `docs/BASELINES_SAME_HARNESS.md`. A 4090 AVD pre-validation
+on `emulator-45562` confirmed helper installation and OOB coexistence for a 5-action fixed
+replay. The adapter now enables trace recording and pins `ARTEMIS_TRACES_DIR` to episode
+evidence. Physical-device acceptance and DashScope structured-output compatibility remain
+pending.
 
 ## Conservative Checker defaults, 2026-09-08
 

@@ -189,6 +189,13 @@ bash scripts/exp/run_androidworld.sh run --method omniflow \
 
 附录里的写法：报官方 validator 结果，并明确"该数字与主表不可相减，完成判定不同"。
 
-**待真机验证**：ARTEMIS 的 accessibility helper 与 OOB 是否能在同一 AVD 上共存、
-`--standalone` 下 traces 目录是否按预期落盘、以及 helper 安装后 OOB 是否仍能正常观察。
-这三条都必须在跑任何附录表格前确认。
+2026-11-08 已完成 4090 AVD 预验证。`emulator-45562` 上的 ARTEMIS helper v6
+以 protocol v2 建立连接，随后通过 OmniFlow 唯一入口完成 `SystemBluetoothTurnOn`
+fixed replay 的 5 个 OOB 动作，官方 validator 为 0/1。OOB episode 收尾会停用 helper，
+因此外部进程结束后已显式卸载 helper 并停止该 AVD。ARTEMIS Pro 通过 DashScope
+`qwen3.6-plus` 产生了多次 200 响应，最后在 Hopper 的 JSON 输出请求处收到兼容性错误，
+没有生成官方成功结果。adapter 已同时传入 `--test-name` 和 `ARTEMIS_TRACES_DIR`，
+一次 DashScope trace probe 已把 `data_engine.db` 与 `steps.json` 写入请求的 evidence 目录。
+
+ARTEMIS 的物理真机验收、DashScope JSON 输出兼容性和可控 traces 目录仍待验证。附录表格
+只能引用 AndroidWorld 官方 validator 结果，并保留 external harness 的完成判定边界。
