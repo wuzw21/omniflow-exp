@@ -23,8 +23,10 @@ What this adapter does and does not claim:
 * ARTEMIS's published ``99%+`` figure comes from its own Checker exit review, not
   from the official validator.  Do not copy that number into a main-table row.
 
-This adapter has not been validated on a device from this repository.  It is
-documented as 待真机验证 until an episode is run end to end.
+The adapter has been smoke-validated on the 4090 AndroidWorld AVD.  Physical
+device acceptance remains 待真机验证.  DashScope Pro additionally needs the
+external ARTEMIS checkout's non-Google structured-output method set to
+``function_calling``.  That third-party patch is kept outside this repository.
 """
 
 from __future__ import annotations

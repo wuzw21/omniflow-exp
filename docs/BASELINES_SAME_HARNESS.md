@@ -197,5 +197,9 @@ fixed replay 的 5 个 OOB 动作，官方 validator 为 0/1。OOB episode 收�
 没有生成官方成功结果。adapter 已同时传入 `--test-name` 和 `ARTEMIS_TRACES_DIR`，
 一次 DashScope trace probe 已把 `data_engine.db` 与 `steps.json` 写入请求的 evidence 目录。
 
-ARTEMIS 的物理真机验收、DashScope JSON 输出兼容性和可控 traces 目录仍待验证。附录表格
-只能引用 AndroidWorld 官方 validator 结果，并保留 external harness 的完成判定边界。
+ARTEMIS 的物理真机验收仍待验证。DashScope structured output 在 ARTEMIS 外部 checkout
+中需要把非 Google endpoint 的 `with_structured_output` 默认方法设为 `function_calling`。
+4090 临时 checkout 应用这一补丁后，Pro 流程完成了自己的任务循环和成功收尾，trace 也已
+写入 episode evidence。该补丁尚未写入 OmniFlow 主线或官方 ARTEMIS 发布件，部署时必须
+显式使用已打补丁的外部 checkout。附录表格只能引用 AndroidWorld 官方 validator 结果，
+并保留 external harness 的完成判定边界。

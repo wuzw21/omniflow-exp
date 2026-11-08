@@ -49,8 +49,9 @@ and has no Function/Transfer artifacts, so only task success could be compared â
 that cannot be subtracted. See `docs/BASELINES_SAME_HARNESS.md`. A 4090 AVD pre-validation
 on `emulator-45562` confirmed helper installation and OOB coexistence for a 5-action fixed
 replay. The adapter now enables trace recording and pins `ARTEMIS_TRACES_DIR` to episode
-evidence. Physical-device acceptance and DashScope structured-output compatibility remain
-pending.
+evidence. DashScope Pro execution succeeds after the external ARTEMIS wrapper selects
+`function_calling` for non-Google structured output. Physical-device acceptance and an
+officially maintained ARTEMIS compatibility checkout remain pending.
 
 ## Conservative Checker defaults, 2026-09-08
 
