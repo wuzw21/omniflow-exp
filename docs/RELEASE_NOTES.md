@@ -56,6 +56,11 @@ checkout's own virtualenv and prefers `DASHSCOPE_API_KEY` for DashScope endpoint
 task produced no valid physical action and was rejected by the official validator. Physical-
 device acceptance and an officially maintained ARTEMIS compatibility checkout remain pending.
 
+### Experimental archive labels
+
+Experimental OmniFlow runs now use the model-neutral `experimental_model` archive kind.
+Existing `experimental_gpt55_*` directories remain historical evidence and are not renamed.
+
 ## Conservative Checker defaults, 2026-09-08
 
 Permission recovery now requires an exact Android system permission-button

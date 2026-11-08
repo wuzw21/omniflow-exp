@@ -7,7 +7,11 @@ import pytest
 from omniflow.core.model import RunResult
 from src.integrations.gui_agent_harness import (
     HarnessContext, _host_completion_claim, _host_report, build_harness)
-from src.experiment.run_tasks import build_parser, _experimental_omniflow_enabled
+from src.experiment.run_tasks import (
+    _archive_kind_for_run,
+    build_parser,
+    _experimental_omniflow_enabled,
+)
 from src.integrations.android_world.agent import _goal_with_task_parameters
 
 
@@ -39,6 +43,16 @@ def test_reentry_ablation_is_explicit_and_cannot_promote_formal_results(monkeypa
     assert build_parser().parse_args(['run', '--function-reentry', 'on']).function_reentry == 'on'
     assert _experimental_omniflow_enabled('omniflow')
     assert not _experimental_omniflow_enabled('mobilegpt')
+
+
+def test_experimental_archive_does_not_claim_a_specific_model(monkeypatch):
+    monkeypatch.setenv('OMNIFLOW_EXPERIMENTAL_MODEL', 'qwen3.6-plus')
+    monkeypatch.setenv('OMNIFLOW_EXPERIMENTAL_ENDPOINT_PROFILE', 'openai')
+    monkeypatch.setenv(
+        'OMNIFLOW_EXPERIMENTAL_BASE_URL',
+        'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    )
+    assert _archive_kind_for_run() == 'experimental_model'
 
 
 def test_matched_memory_ablation_requires_store_and_is_isolated(monkeypatch):

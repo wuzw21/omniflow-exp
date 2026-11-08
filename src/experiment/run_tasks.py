@@ -79,6 +79,22 @@ def _experimental_omniflow_enabled(method: str) -> bool:
     )
 
 
+def _archive_kind_for_run() -> str:
+    """Name an experimental archive without asserting a model identity."""
+
+    if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off":
+        return "oracle_ablation"
+    if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on":
+        return "memory_ablation"
+    if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on":
+        return "reentry_ablation"
+    if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on":
+        return "checker_ablation"
+    if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin":
+        return "external_harness"
+    return "experimental_model"
+
+
 def _methods(value: str) -> tuple[str, ...]:
     if not value or value == "all":
         return ENABLED_METHODS
@@ -1143,12 +1159,7 @@ def _run_command(
                 task=args.task,
                 method=result_method,
                 device=device,
-                archive_kind=("oracle_ablation" if os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") != "off"
-                              else "memory_ablation" if os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") != "on"
-                              else "reentry_ablation" if os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") != "on"
-                              else "checker_ablation" if os.environ.get("OMNIFLOW_CHECKER_MODE", "on") != "on"
-                              else "external_harness" if os.environ.get("OMNIFLOW_HARNESS", "builtin") != "builtin"
-                              else "experimental_gpt55"),
+                archive_kind=_archive_kind_for_run(),
             )
         else:
             promoted = _promote_golden_run(
