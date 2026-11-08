@@ -17,11 +17,35 @@ OOB Host、同一个模型（Qwen3.6-Plus）、同一步数预算，官方 valid
 | fixed_replay | 原坐标逐步重放 | `--method fixed_replay` |
 | MobileGPT-style | 子任务 Function + 属性匹配重定位 | `--method omniflow --baseline mobilegpt_style --memory <store.json>` |
 | AppAgent-style | 元素文档注入 Planner prompt | `--method omniflow --baseline appagent_style --memory <store.json> --element-docs <appagent>/apps/<app>/demo_docs` |
+| MobiMem-style（AgentRR） | 录制的交互序列 + 安全条件回放 | `--method omniflow --baseline mobimem_style --memory <store.json>` |
 | OmniFlow | Function + OmniTransfer + Checker | `--method omniflow --memory <store.json>` |
 
 注：原 `--method t3a_hint` 仍走 AndroidWorld 官方 T3A agent，只用于附录保真度检查；主表用
 `demo_hint`，它复用 t3a_hint 完全相同的脱敏 hint 文件（`_source_action_hint_path_for_item`），
 只把执行者换成 OmniFlow Planner，并关闭 Function 记忆。
+
+## Baseline registry and suite runner
+
+基线定义集中在 `src/experiment/baselines.py`。该注册表同时维护展示名、输入依赖、
+Function memory 开关、Transfer 替换和结果槽位，Agent 与 launcher 都从这里读取，避免
+新增基线时分别修改多处条件分支。
+
+可以用 `--baseline all` 在同一个 task、device、evaluation seed、Memory、source RunLog
+和 element-docs 输入上按注册表顺序运行全部同 harness 条件：
+
+```bash
+bash scripts/exp/run_androidworld.sh run \
+  --method omniflow \
+  --baseline all \
+  --memory <store.json> \
+  --source-run-log <run_log.json> \
+  --element-docs <appagent>/apps/<app>/demo_docs
+```
+
+suite runner 逐个设置 baseline 环境并调用同一个 `_run`，每个条件仍写入独立的
+`<task>/<baseline>/` 结果槽位。返回值保留每一行的状态和设备结果，单行失败会使 suite
+标为失败，同时保留此前各行的证据。当前 runner 只提供基建，尚未宣称任何新的真实设备
+成功率或成本结果。
 
 ## MobileGPT-style
 
@@ -42,10 +66,54 @@ AppAgent 的核心是探索/演示阶段为每个 UI 元素生成一份文档（
 `observation.extra["element_docs"]`，Planner 以 "Documentation of UI elements on this screen"
 一节呈现。AppAgent-style 强制关闭 Function 记忆，因此它与 zero-shot 的差就是元素文档的贡献。
 
+## MobiMem-style（AgentRR）
+
+MobiMem（arXiv:2512.15784，*Beyond Training: Enabling Self-Evolution of Agents
+with MOBIMEM*）把 agent memory 分成三个原语。只有第三个能和 OmniFlow 的
+Transfer 直接对照，所以这里只复现它：
+
+- **Profile Memory**（DisGraph 用户偏好图）：AndroidWorld 任务里没有可检索的
+  用户偏好信号，复现出来也测不出差别。
+- **Experience Memory**（多级模板）：这是 MobiMem 版的 Function 资产，而
+  Function 资产本来就归 OmniFlow 所有。换掉它改变的是"测什么"，不是"谁映射得更准"。
+- **Action Memory + AgentRR**（录制回放）：回放**录制的动作序列**，而不是为单个
+  动作从源界面重新推导一个目标点。这才是 OmniTransfer 的直接替代，因此它是本行。
+
+实现是 `omniflow/transfer/agentrr.py::agentrr_transfer_with`，通过
+`PluginSet(transfer=...)` 注入，与 `mobilegpt_style` 走同一个接缝。Planner、
+Checker、Function 召回、参数绑定、步数预算、官方 validator 全部不变，所以
+这条行与 OmniFlow 行的差**只有 mapper 一个函数**。
+
+它和 MobileGPT-style 的区别要保留，不要合并：
+
+- 属性重定位为**单个**录制元素在新屏按 resource-id / text / content-desc 重新
+  定位，并重新绑定本动作自己的参数。
+- AgentRR 按身份回放**录制的交互**，每次派发前检查安全条件；条件不满足时**弃权**
+  （`agentrr_guard_*`），而不是去找一个更松的匹配——一个开始猜的回放机制就不再是
+  回放机制了。
+
+安全条件（`AgentRRPolicy`）与它们产生的失败原因：
+
+| 条件 | 不满足时的 reason |
+| --- | --- |
+| 源状态必须存在 | `agentrr_source_state_missing` |
+| 包名未改变 | `agentrr_guard_package_changed` |
+| 录制身份在当前屏仍唯一存在 | `agentrr_guard_signature_absent` |
+| 录制点可解析 | `agentrr_invalid_source_point` / `agentrr_recorded_element_missing` |
+
+`AgentRRPolicy(require_package_match=False, require_same_signature=False)` 是纯
+位置回放，也就是本基线最弱的形式：回放录制的点本身，不要求录制身份仍在。
+它是消融，不是默认行。
+
+包名比较取**整屏** package（`observation.package_name` 或窗口根节点的），不能取
+录制叶节点的——多数 Android 节点不带 `package` 属性，只有窗口根带，取叶节点会让
+这条条件变成空条件。这个 bug 在离线回归里暴露过一次。
+
 ## 运行与归档
 
 `--baseline` 只允许 `--method omniflow`、builtin harness、oracle 关闭；`mobilegpt_style` /
-`appagent_style` 需要 `--memory`，`demo_hint` 需要 `--source-run-log`。每个基线有自己的正式结果槽位
+`appagent_style` / `mobimem_style` 需要 `--memory`，`demo_hint` 需要 `--source-run-log`。
+每个基线有自己的正式结果槽位
 `data/androidworld/<task>/<baseline>/<setting>/runlog/current`，失败按同一规则进 `.archive/<task>/<baseline>/`，
 与 omniflow 互不覆盖。汇总：`scripts/exp/generate_task_table.py` 目前只读 `omniflow`，需要加 `--methods` 参数才会出基线行（该脚本未入库，补丁另附）。
 

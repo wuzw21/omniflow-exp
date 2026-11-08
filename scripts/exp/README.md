@@ -140,6 +140,12 @@ OmniFlow、OmniTransfer V10、OOB APK、V10 checkpoint、无密钥运行配置�
 `memory_ablation`。原不传 Memory 的 baseline 改变模型超时和 Host 等待配置，
 不得混入这一单因素配对。
 
+同 harness 基线由 `src/experiment/baselines.py` 的唯一注册表驱动。单行使用
+`--baseline mobilegpt_style|appagent_style|demo_hint|mobimem_style`，需要整组配对时使用
+`--baseline all`，它固定同一 task、device、seed、Memory、source RunLog 和 element-docs，
+逐行写入独立的 `<task>/<baseline>/` 槽位。suite 只提供统一调度和证据分隔，真实设备
+成功率、时延和能耗仍须在各目标设备上运行后登记。
+
 `run --task TASK --method omniflow --device DEVICE --memory STORE --harness HARNESS`
 是所有 Android Harness 的同一验收入口；HARNESS 可为 `builtin`（默认）、`codex`、
 `claude` 或部署者显式提供的 `package.module:factory`。不为各宿主建立专项 runner。

@@ -132,6 +132,8 @@ bash scripts/exp/run_androidworld.sh run \
 AndroidWorld/OOB/validator 流程；当前执行批次只启动前三种方法，AutoDroid 保留为待运行 cell。
 主表的 MobileGPT/AppAgent 对比使用同 harness 版本（`--baseline mobilegpt_style|appagent_style`），
 整机快照用 `save-snapshot`/`--avd-snapshot`，见 `docs/BASELINES_SAME_HARNESS.md`。
+需要在同一输入上逐行运行全部同 harness 条件时使用 `--baseline all`，结果按 baseline
+独立归档，避免不同复用机制互相覆盖。
 设备和默认值来自 `config/paper_androidworld.json`。正式运行和 Memory 转换固定使用
 `Qwen3.6-Plus`；显式传入其他模型会在入口处拒绝。
 

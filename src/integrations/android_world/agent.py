@@ -18,7 +18,6 @@ from omniflow import (
     RuntimeSettings,
 )
 from omniflow.core.config import PluginSet
-from omniflow.transfer.attribute import attribute_transfer
 from omniflow.core.trajectory import state_id
 from omniflow.functions.store import FunctionStore
 from omniflow.transfer.runtime import (
@@ -32,18 +31,19 @@ from omniflow.transfer.runtime import (
 from src.experiment.observation_evidence import canonicalize_run_log_observation
 from src.experiment.performance_metrics import PerformanceMetrics
 from src.experiment.protocol import MAX_STEPS
+from src.experiment.baselines import baseline_names, baseline_spec
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
 MODE_OMNIFLOW = "omniflow"
 # Same-harness baselines (docs/BASELINES_SAME_HARNESS.md): identical Planner,
 # Host, budget and post-episode validator; only the reuse mechanism differs.
-SAME_HARNESS_BASELINES = ("none", "mobilegpt_style", "appagent_style", "demo_hint")
+SAME_HARNESS_BASELINES = baseline_names()
 
 
 def same_harness_baseline() -> str:
-    value = os.environ.get("OMNIFLOW_BASELINE", "none")
-    if value not in SAME_HARNESS_BASELINES:
-        raise ValueError(f"unknown_same_harness_baseline:{value}")
+    value = str(os.environ.get("OMNIFLOW_BASELINE", "none") or "none").strip()
+    value = value or "none"
+    baseline_spec(value)
     return value
 
 
@@ -88,6 +88,17 @@ def element_docs_for_xml(xml_text: str, docs: dict[str, dict[str, str]]) -> str:
         usage = "; ".join(f"{k}: {v}" for k, v in doc.items() if v)
         lines.append(f"- {label} [{node.attrib.get('bounds', '')}]: {usage}")
     return "\n".join(lines)
+
+
+def _baseline_transfer(baseline: str) -> Any:
+    """Return the one mapper a same-harness baseline swaps in, if any.
+
+    Every baseline row differs from the OmniFlow row in exactly this function.
+    Planner, Checker, Function recall, argument binding, budgets and the official
+    validator stay identical, which is what makes the rows comparable.
+    """
+
+    return baseline_spec(baseline).transfer_factory()()
 
 
 def _emit_official_completion(env: Any, answer: str = "") -> None:
@@ -271,7 +282,7 @@ def build_agent(
     transfer_states = load_transfer_state_catalog(transfer_state_path)
     baseline = same_harness_baseline()
     element_docs = None
-    if baseline == "appagent_style":
+    if baseline_spec(baseline).requires_element_docs:
         docs_root = str(os.environ.get("OMNIFLOW_ELEMENT_DOCS") or "").strip()
         if not docs_root:
             raise ValueError("appagent_style_requires_OMNIFLOW_ELEMENT_DOCS")
@@ -298,13 +309,13 @@ def build_agent(
                 # AppAgent-style / demo_hint reuse docs or demo text, never Functions.
                 function_memory_enabled=(
                     os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on") == "on"
-                    and baseline not in {"appagent_style", "demo_hint"}
+                    and baseline_spec(baseline).function_memory_enabled
                 ),
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
                 completion_oracle_enabled=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") == "on",
             ),
             plugins=PluginSet(
-                transfer=attribute_transfer if baseline == "mobilegpt_style" else None,
+                transfer=_baseline_transfer(baseline),
             ),
         ),
     )

@@ -18,6 +18,13 @@ from src.experiment.androidworld_paths import (
     canonical_device_seed_name,
     canonical_method_name,
 )
+from src.experiment.baselines import (
+    BASELINE_SUITE,
+    BASELINE_SUITE_ALIAS,
+    baseline_names,
+    baseline_result_slot,
+    validate_baseline_request,
+)
 from src.experiment.appagent_source import convert_runlog_to_appagent_memory
 from src.experiment.function_v2 import compile_function_v2, write_function_review
 from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
@@ -967,7 +974,7 @@ def _run_command(
     # Same-harness baselines are main-table rows with their own result slot
     # (data/androidworld/<task>/<baseline>/...), never mixed into omniflow.
     baseline = os.environ.get("OMNIFLOW_BASELINE", "none") if method == "omniflow" else "none"
-    result_method = baseline if baseline != "none" else method
+    result_method = baseline_result_slot(method, baseline)
     destination = _golden_run_root(
         args.output,
         task=args.task,
@@ -1202,6 +1209,39 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _run_baseline_suite(args: argparse.Namespace) -> dict[str, Any]:
+    """Run every registered same-harness baseline on the same request.
+
+    Each baseline is a separate result slot, while task, device, seed, model,
+    Host and lifecycle settings stay fixed by the caller.  The environment is
+    restored even when one condition fails so a failed row cannot contaminate
+    the next invocation in the same Python process.
+    """
+
+    previous = os.environ.get("OMNIFLOW_BASELINE")
+    rows: list[dict[str, Any]] = []
+    try:
+        for baseline in BASELINE_SUITE:
+            os.environ["OMNIFLOW_BASELINE"] = baseline
+            row = _run(args)
+            rows.append({"baseline": baseline, **row})
+    finally:
+        if previous is None:
+            os.environ.pop("OMNIFLOW_BASELINE", None)
+        else:
+            os.environ["OMNIFLOW_BASELINE"] = previous
+    return {
+        "action": "run-baseline-suite",
+        "task": args.task,
+        "status": (
+            "completed"
+            if all(row.get("status", "completed") == "completed" for row in rows)
+            else "failed"
+        ),
+        "baselines": rows,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1229,7 +1269,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--function-memory", choices=("on", "off"),
                         default=os.environ.get("OMNIFLOW_FUNCTION_MEMORY", "on"),
                         help="Builtin matched ablation: retain explicit Store and disable Function exposure")
-    parser.add_argument("--baseline", choices=("none", "mobilegpt_style", "appagent_style", "demo_hint"),
+    parser.add_argument("--baseline", choices=baseline_names(include_suite_alias=True),
                         default=os.environ.get("OMNIFLOW_BASELINE", "none"),
                         help="Same-harness baseline on the builtin OmniFlow harness "
                              "(docs/BASELINES_SAME_HARNESS.md); results go to <task>/<baseline>/")
@@ -1316,17 +1356,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         raise ValueError("function_memory_ablation_requires_builtin_omniflow_run_with_store")
     os.environ["OMNIFLOW_FUNCTION_MEMORY"] = args.function_memory
-    if args.baseline not in {"none", "mobilegpt_style", "appagent_style", "demo_hint"}:
-        raise ValueError("baseline_must_be_none_mobilegpt_style_appagent_style_or_demo_hint")
-    if args.baseline != "none" and (
-        args.action != "run" or args.method != "omniflow" or args.harness != "builtin"
-        or args.completion_oracle != "off"
-        or not (args.source_run_log if args.baseline == "demo_hint" else args.memory)
-    ):
-        raise ValueError("same_harness_baseline_requires_builtin_omniflow_run_with_store_and_no_oracle")
-    if args.baseline == "appagent_style" and not args.element_docs:
-        raise ValueError("appagent_style_requires_element_docs")
-    os.environ["OMNIFLOW_BASELINE"] = args.baseline
+    validate_baseline_request(
+        args.baseline,
+        action=args.action,
+        method=args.method,
+        harness=args.harness,
+        completion_oracle=args.completion_oracle,
+        memory=args.memory,
+        source_run_log=args.source_run_log,
+        element_docs=args.element_docs,
+    )
+    os.environ["OMNIFLOW_BASELINE"] = (
+        "none" if args.baseline == BASELINE_SUITE_ALIAS else args.baseline
+    )
     if args.element_docs:
         os.environ["OMNIFLOW_ELEMENT_DOCS"] = str(resolve_path(args.element_docs))
     if args.harness != "builtin" and (args.action != "run" or args.method != "omniflow"):
@@ -1354,7 +1396,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             else _convert_memory(args)
         )
     else:
-        result = _run(args)
+        result = (
+            _run_baseline_suite(args)
+            if args.baseline == BASELINE_SUITE_ALIAS
+            else _run(args)
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status", "completed") == "completed" else 1
 
