@@ -16,7 +16,9 @@ for runtime_env in \
   fi
 done
 
-if [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
+if [[ -n "${DASHSCOPE_API_KEY:-}" && "${OMNIFLOW_EXPERIMENTAL_BASE_URL:-}" == *dashscope.aliyuncs.com* ]]; then
+  export OPENAI_API_KEY="$DASHSCOPE_API_KEY"
+elif [[ -z "${OPENAI_API_KEY:-}" && -n "${LLMTHU_API_KEY:-}" ]]; then
   export OPENAI_API_KEY="$LLMTHU_API_KEY"
 fi
 
