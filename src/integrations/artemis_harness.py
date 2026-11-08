@@ -22,6 +22,8 @@ What this adapter does and does not claim:
   ARTEMIS has no such artifacts.
 * ARTEMIS's published ``99%+`` figure comes from its own Checker exit review, not
   from the official validator.  Do not copy that number into a main-table row.
+* The external checkout's own ``.venv/bin/python`` is used when present.  A
+  DashScope endpoint uses ``DASHSCOPE_API_KEY`` before inherited provider keys.
 
 The adapter has been smoke-validated on the 4090 AndroidWorld AVD.  Physical
 device acceptance remains 待真机验证.  DashScope Pro additionally needs the
@@ -46,7 +48,7 @@ from src.integrations.gui_agent_harness import HarnessContext
 # ARTEMIS installs its own accessibility helper and drives the device over adb.
 # It therefore needs to own the device for the whole episode; the shared OOB
 # host must not dispatch actions concurrently.  ``requires_builtin_planner``
-# stays True so the launcher never builds an OmniFlow Planner it would not use.
+# stays False so the launcher leaves planning to ARTEMIS's own loop.
 ARTEMIS_ROOT_ENV = "OMNIFLOW_ARTEMIS_ROOT"
 ARTEMIS_PROFILE_ENV = "OMNIFLOW_ARTEMIS_PROFILE"
 DEFAULT_ARTEMIS_PROFILE = "flash"
@@ -60,10 +62,19 @@ _ARTEMIS_CONFIG_TEMPLATE = {
     "default": {
         "provider": "openai",
         "model": "{model}",
+        "fallback": {"provider": "openai", "model": "{model}"},
     },
     "nodes": {
-        "object_detector": {"provider": "openai", "model": "{model}"},
-        "hopper": {"provider": "openai", "model": "{model}"},
+        "object_detector": {
+            "provider": "openai",
+            "model": "{model}",
+            "fallback": {"provider": "openai", "model": "{model}"},
+        },
+        "hopper": {
+            "provider": "openai",
+            "model": "{model}",
+            "fallback": {"provider": "openai", "model": "{model}"},
+        },
     },
     "video_analyzer": {"enabled": False},
 }
@@ -73,7 +84,7 @@ _ARTEMIS_CONFIG_TEMPLATE = {
 class ArtemisHarness:
     """One ARTEMIS CLI process per episode, sealed to the episode's device."""
 
-    requires_builtin_planner = True
+    requires_builtin_planner = False
 
     profile: str = DEFAULT_ARTEMIS_PROFILE
 
@@ -92,7 +103,7 @@ class ArtemisHarness:
         evidence.mkdir(parents=True, exist_ok=True)
         config_path = _write_config(evidence, root)
         command = [
-            sys.executable,
+            _artemis_python(root),
             "-m",
             "artemis",
             "run",
@@ -148,6 +159,8 @@ class ArtemisHarness:
             "artemis_outcome": outcome,
             "artemis_stdout": str(stdout_path),
             "artemis_stderr": str(stderr_path),
+            "artemis_stdout_tail": _read_tail(stdout_path),
+            "artemis_stderr_tail": _read_tail(stderr_path),
             # ARTEMIS reports no per-request API count.  Never infer one from
             # turn or tool counts, and never report 0 as if it were measured.
             "llm_usage": {
@@ -201,6 +214,15 @@ def _artemis_root() -> Path:
     return root
 
 
+def _artemis_python(root: Path) -> str:
+    """Use the dependency environment belonging to the external checkout."""
+
+    candidate = root / ".venv" / "bin" / "python"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return sys.executable
+
+
 def _device_serial(flow: Any) -> str:
     for candidate in (
         getattr(getattr(flow, "host", None), "adb_serial", ""),
@@ -215,10 +237,10 @@ def _device_serial(flow: Any) -> str:
 def _write_config(evidence: Path, root: Path) -> Path:
     """Render the per-episode ARTEMIS config with the formal model pinned."""
 
-    from src.experiment.protocol import FORMAL_MODEL
+    from src.experiment.protocol import omniflow_model
 
     payload = json.loads(
-        json.dumps(_ARTEMIS_CONFIG_TEMPLATE).replace("{model}", FORMAL_MODEL)
+        json.dumps(_ARTEMIS_CONFIG_TEMPLATE).replace("{model}", omniflow_model())
     )
     config_path = evidence / "artemis.jsonc"
     config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -226,13 +248,28 @@ def _write_config(evidence: Path, root: Path) -> Path:
 
 
 def _child_environment(root: Path, config_path: Path) -> dict[str, str]:
-    from src.experiment.protocol import FORMAL_MODEL, FORMAL_MODEL_BASE_URL
+    from src.experiment.protocol import omniflow_base_url, omniflow_model
 
     environment = dict(os.environ)
-    endpoint = FORMAL_MODEL_BASE_URL.rstrip("/")
-    api_key = str(
-        environment.get("LLMTHU_API_KEY") or environment.get("OPENAI_API_KEY") or ""
-    )
+    model = omniflow_model()
+    endpoint = omniflow_base_url().rstrip("/")
+    # DashScope is the explicit provider for the current ARTEMIS smoke.  Its
+    # native key must win over an inherited LLMTHU/OpenAI key because all three
+    # variables can be present in a long-lived experiment shell.
+    if "dashscope.aliyuncs.com" in endpoint.lower():
+        api_key = str(
+            environment.get("DASHSCOPE_API_KEY")
+            or environment.get("OPENAI_API_KEY")
+            or environment.get("LLMTHU_API_KEY")
+            or ""
+        )
+    else:
+        api_key = str(
+            environment.get("OPENAI_API_KEY")
+            or environment.get("LLMTHU_API_KEY")
+            or environment.get("DASHSCOPE_API_KEY")
+            or ""
+        )
     environment.update(
         {
             "PYTHONPATH": os.pathsep.join(
@@ -246,9 +283,9 @@ def _child_environment(root: Path, config_path: Path) -> dict[str, str]:
             "ARTEMIS_TRACES_DIR": str(config_path.parent),
             "OPENAI_BASE_URL": endpoint,
             "OPENAI_API_KEY": api_key,
-            "OPENAI_MODEL": FORMAL_MODEL,
+            "OPENAI_MODEL": model,
             "ARTEMIS_HELPER_AUTO_INSTALL": "true",
-            "ARTEMIS_DEFAULT_MODEL": FORMAL_MODEL,
+            "ARTEMIS_DEFAULT_MODEL": model,
             # Keep ARTEMIS from silently borrowing a Gemini key from the host
             # shell: this row is defined as model-matched, not native-config.
             "GOOGLE_API_KEY": "",
@@ -272,6 +309,16 @@ def _read_outcome(evidence: Path) -> dict[str, Any]:
         if isinstance(payload, dict):
             return payload
     return {}
+
+
+def _read_tail(path: Path, limit: int = 4000) -> str:
+    """Keep a bounded child-process diagnostic after lifecycle cleanup."""
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-limit:]
 
 
 def _failure(error: str) -> RunResult:

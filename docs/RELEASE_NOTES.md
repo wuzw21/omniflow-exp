@@ -50,8 +50,11 @@ that cannot be subtracted. See `docs/BASELINES_SAME_HARNESS.md`. A 4090 AVD pre-
 on `emulator-45562` confirmed helper installation and OOB coexistence for a 5-action fixed
 replay. The adapter now enables trace recording and pins `ARTEMIS_TRACES_DIR` to episode
 evidence. DashScope Pro execution succeeds after the external ARTEMIS wrapper selects
-`function_calling` for non-Google structured output. Physical-device acceptance and an
-officially maintained ARTEMIS compatibility checkout remain pending.
+`function_calling` for non-Google structured output. The adapter now uses the external
+checkout's own virtualenv and prefers `DASHSCOPE_API_KEY` for DashScope endpoints. The
+2026-11-08 public AndroidWorld smoke reached ARTEMIS and persisted traces, but the tested
+task produced no valid physical action and was rejected by the official validator. Physical-
+device acceptance and an officially maintained ARTEMIS compatibility checkout remain pending.
 
 ## Conservative Checker defaults, 2026-09-08
 

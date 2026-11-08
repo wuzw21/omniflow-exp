@@ -203,3 +203,10 @@ ARTEMIS 的物理真机验收仍待验证。DashScope structured output 在 ARTE
 写入 episode evidence。该补丁尚未写入 OmniFlow 主线或官方 ARTEMIS 发布件，部署时必须
 显式使用已打补丁的外部 checkout。附录表格只能引用 AndroidWorld 官方 validator 结果，
 并保留 external harness 的完成判定边界。
+
+适配器还会优先使用外部 checkout 的 `.venv/bin/python`，并在 DashScope endpoint 下优先
+读取 `DASHSCOPE_API_KEY`。2026-11-08 的公开入口 AVD smoke 已跑通 ARTEMIS 进程、helper、
+DashScope 请求和 trace 落盘，但 `SystemBluetoothTurnOn` 这次只更新了 ARTEMIS task plan，
+没有留下有效物理 action，AndroidWorld validator 为 0/1。该证据证明部署链路已通，不提供
+官方成功率，相关结果归档在
+`data/androidworld/.archive/SystemBluetoothTurnOn/omniflow/standard45562/checker_ablation_006/`。
