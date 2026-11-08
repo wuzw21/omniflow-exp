@@ -244,11 +244,10 @@ def _execution_audit(diagnostics: dict[str, Any]) -> dict[str, Any]:
                     confidence = _coerce_float(decision.get("confidence"))
                     score_rows.append(f"{function_id}({confidence:.3f})")
                 if score_rows:
-                    threshold = _coerce_float(cache_value.get("threshold"))
-                    detail += (
-                        f" threshold={threshold:.3f} candidates="
-                        + ", ".join(score_rows)
-                    )
+                    if cache_status == "below_threshold":
+                        threshold = _coerce_float(cache_value.get("threshold"))
+                        detail += f" threshold={threshold:.3f}"
+                    detail += " candidates=" + ", ".join(score_rows)
                 resolution_failures.append(detail)
                 break
         if not resolution_failures:

@@ -2,6 +2,7 @@ import json
 import pytest
 
 from src.experiment.run_tasks import _promote_golden_run, _archive_failed_run
+from src.experiment.result_report import _execution_audit
 
 
 @pytest.mark.parametrize('archive', [False, True])
@@ -49,3 +50,37 @@ def test_promoted_evidence_paths_follow_immutable_destination(tmp_path, archive)
     assert states["screenshot_path"] == promoted_path
     result = json.loads((destination / "task_results.jsonl").read_text())
     assert result["path"] == promoted_path
+
+
+def test_result_audit_distinguishes_router_rejection_from_threshold_rejection():
+    def audit(status):
+        return _execution_audit(
+            {
+                "execution_trace": [],
+                "function_resolution": {
+                    "recall": {
+                        "events": [
+                            {
+                                "function_cache": {
+                                    "status": status,
+                                    "threshold": 0.95,
+                                    "decisions": [
+                                        {
+                                            "function_id": "create_calendar_event",
+                                            "confidence": 1.0,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                },
+            }
+        )["resolution_failures"]
+
+    assert audit("below_threshold") == [
+        "cache_below_threshold threshold=0.950 candidates=create_calendar_event(1.000)"
+    ]
+    assert audit("rejected") == [
+        "cache_rejected candidates=create_calendar_event(1.000)"
+    ]
