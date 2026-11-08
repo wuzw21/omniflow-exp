@@ -12,6 +12,7 @@ from threading import Event
 import time
 from typing import Any
 
+from omniflow.core.config import MAX_EXECUTION_TIMEOUT_SECONDS
 from omniflow.core.model import Observation, RunResult
 
 
@@ -35,8 +36,11 @@ class ExecutionControl:
     terminal_snapshot: Callable[[], RunResult] | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        if not math.isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 600:
-            raise ValueError("execution_deadline_must_be_within_600_seconds")
+        if (
+            not math.isfinite(self.timeout_seconds)
+            or not 0 < self.timeout_seconds <= MAX_EXECUTION_TIMEOUT_SECONDS
+        ):
+            raise ValueError("execution_deadline_must_be_positive_and_within_ceiling")
         self.deadline = self.clock() + self.timeout_seconds
 
     @property

@@ -30,7 +30,7 @@ from omniflow.transfer.runtime import (
 )
 from src.experiment.observation_evidence import canonicalize_run_log_observation
 from src.experiment.performance_metrics import PerformanceMetrics
-from src.experiment.protocol import MAX_STEPS
+from src.experiment.protocol import MAX_STEPS, PLANNER_ERROR_RETRIES, EPISODE_TIMEOUT_SEC
 from src.experiment.baselines import baseline_names, baseline_spec
 from src.integrations.android_world.host import AndroidWorldHost, make_agent_result
 
@@ -313,6 +313,17 @@ def build_agent(
                 ),
                 function_reentry_enabled=os.environ.get("OMNIFLOW_FUNCTION_REENTRY", "on") == "on",
                 completion_oracle_enabled=os.environ.get("OMNIFLOW_COMPLETION_ORACLE", "off") == "on",
+                # A transport timeout must not be scored as a policy failure.
+                # Default matches RuntimeSettings; the launcher pins it explicitly
+                # so a stale shell variable cannot silently restore zero retries.
+                planner_error_retries=int(
+                    os.environ.get("OMNIFLOW_PLANNER_ERROR_RETRIES")
+                    or PLANNER_ERROR_RETRIES
+                ),
+                # The kernel seals an invocation on its own wall clock.  Pass the
+                # protocol episode budget explicitly; otherwise ExecutionControl's
+                # default seals the episode before the protocol deadline is reached.
+                execution_timeout_seconds=float(EPISODE_TIMEOUT_SEC),
             ),
             plugins=PluginSet(
                 transfer=_baseline_transfer(baseline),

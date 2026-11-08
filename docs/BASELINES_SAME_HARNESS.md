@@ -148,10 +148,47 @@ load 后等待 `sys.boot_completed`。`-no-snapshot-save` 只关闭退出时的 
 **待真机验证**：快照 load 后 OOB Accessibility 是否保持绑定、adb 是否短暂 offline、
 设备时间回退是否影响依赖日期的任务，都需要在 4090/真机上各跑一轮确认。
 
-## Google ARTEMIS / 外部 harness
+## Google ARTEMIS / 外部 harness（2026-11-06 更新）
 
-ARTEMIS（公开信息来自博客，未读到源码，以下需核实）是基于 adb 的 Android agent，带 MCP server，
-Apache-2.0。它有两种用法：作为一个额外的外部基线（用它自己的 agent 跑同一批任务，validator
-仍在 episode 后调用一次），或作为宿主通过 MCP 调用 OmniFlow 的 Function 工具，走
-`docs/HARNESS_MCP.md` 已有的外部 harness 路径（`--harness module:factory`，归档为
-`external_harness`）。在核实其接口前不写适配代码。
+ARTEMIS（github.com/google/artemis，Apache-2.0，Python 3.12+）已读到源码，此前"未读到源码"
+的表述作废。它是**完整的外部应用**：自带 Planner / Operator / Explorer 图、自己的 adb
+驱动、自己的 accessibility helper APK、自己的完成判定。它不调用任何 OmniFlow API，所以
+它是 external harness，不是同 harness 的复用变体。
+
+接入形态：`src/integrations/artemis_harness.py::factory`，走已有的
+`--harness module:factory` 缝，主线代码零改动。
+
+```bash
+export OMNIFLOW_ARTEMIS_ROOT=/abs/path/to/artemis
+bash scripts/exp/run_androidworld.sh run --method omniflow \
+  --harness src.integrations.artemis_harness:factory \
+  --task <TASK> --device standard45562
+```
+
+适配器做的几件必须做的事：
+
+- `--standalone` 必给。不给的话 ARTEMIS 会把任务提交给常驻 daemon 排队，设备就脱离本
+  episode 的控制了；一个 episode 必须独占一个进程。
+- 每个子 agent 节点都钉到正式 OpenAI 兼容 endpoint（`FORMAL_MODEL`、
+  `FORMAL_MODEL_BASE_URL`），并清空 `GOOGLE_API_KEY` / `GEMINI_API_KEY`，避免某个
+  sub-agent 悄悄回落到 Gemini 让这条行不再是同模型对比。
+- 录制点必须存在；缺失时返回 `artemis_device_serial_required` / `artemis_root_required`
+  这类 episode 失败，而不是中断整批运行。
+- ARTEMIS 自己的 `task_status` 只写进 `artemis_task_status`，**不写进 `done_reason`**。
+  episode 包装层只对 `done_reason == "finished"` 发出官方完成信号，而 validator 需要那个
+  信号；把 ARTEMIS 的判定塞进 `done_reason` 会让改法悄悄改变成功定义。
+
+**定位：只做附录，不进主表。** 三条理由：
+
+1. ARTEMIS 公布的 99%+ 是它自己 Checker 的 exit review，不是 AndroidWorld 官方
+   validator。两个数不能相减。
+2. 它没有 Function、Transfer、复用率这些产物，所以除了任务成功率，任何 OmniFlow 指标
+   都无从对照。
+3. 每个 episode 要多维护一个第三方应用栈 + 它的 helper APK + 它的配置漂移，成本远高于
+   换来的一条成功率数字。
+
+附录里的写法：报官方 validator 结果，并明确"该数字与主表不可相减，完成判定不同"。
+
+**待真机验证**：ARTEMIS 的 accessibility helper 与 OOB 是否能在同一 AVD 上共存、
+`--standalone` 下 traces 目录是否按预期落盘、以及 helper 安装后 OOB 是否仍能正常观察。
+这三条都必须在跑任何附录表格前确认。

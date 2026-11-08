@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from omniflow.core.model import (
     Checker,
@@ -11,6 +12,9 @@ from omniflow.core.model import (
 # harness reads its own protocol and passes the configured limits explicitly.
 DEFAULT_MAX_STEPS = 30
 DEFAULT_MAX_FUNCTION_TOOLS = 8
+# Hard ceiling for one controlled invocation.  A single episode that needs more
+# than this is an experiment-design bug, not a slow task.
+MAX_EXECUTION_TIMEOUT_SECONDS = 1800.0
 
 GUI_AGENT_RULES = (
     "You are an Android GUI agent. Each turn, analyze the goal, the fresh current UI, and the complete action history, then return exactly one provided tool call.",
@@ -65,7 +69,17 @@ class RuntimeSettings:
     # the task loop unless an experiment explicitly opts in; opted-in runs are an
     # oracle ablation and must be archived separately from formal results.
     completion_oracle_enabled: bool = False
-    planner_error_retries: int = 0
+    # A single transport timeout is not a task failure.  With the default of 0
+    # every request-level hiccup (endpoint latency, a dropped keep-alive)
+    # ended the whole episode as ``vlm_planner_failed``.  Retries re-observe and
+    # re-ask the same turn, so they add no actions and no goal information; they
+    # only stop network noise from being scored as a policy failure.
+    planner_error_retries: int = 2
+    # Wall-clock budget for one controlled invocation.  ``ExecutionControl`` used
+    # its own 600s default regardless of the experiment deadline, so raising the
+    # protocol deadline had no effect: the kernel still sealed every episode at
+    # 600s.  The AndroidWorld harness passes its protocol value here explicitly.
+    execution_timeout_seconds: float = 1200.0
 
     def __post_init__(self):
         if type(self.completion_oracle_enabled) is not bool:
@@ -76,6 +90,15 @@ class RuntimeSettings:
             raise ValueError("function_reentry_enabled_must_be_boolean")
         if type(self.planner_error_retries) is not int or not 0 <= self.planner_error_retries <= 3:
             raise ValueError("planner_error_retries_must_be_integer_0_to_3")
+        if (
+            isinstance(self.execution_timeout_seconds, bool)
+            or not isinstance(self.execution_timeout_seconds, (int, float))
+            or not math.isfinite(self.execution_timeout_seconds)
+            or not 0 < self.execution_timeout_seconds <= MAX_EXECUTION_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "execution_timeout_seconds_must_be_positive_finite_and_within_ceiling"
+            )
 
 
 @dataclass(frozen=True)

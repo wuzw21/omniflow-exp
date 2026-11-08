@@ -31,7 +31,7 @@ from src.experiment.mobilegpt_contract import MOBILEGPT_SOURCE_METHOD
 from src.experiment.paths import relative_reference, resolve_path, sha256_file
 from src.experiment.protocol import (
     AUTODROID_MEMORY_METHOD,
-    DEFAULT_DEVICE,
+    DEFAULT_DEVICE_LABEL,
     DEFAULT_METHOD,
     DEFAULT_TASK,
     DEVICE_AVDS,
@@ -432,8 +432,82 @@ def _archive_failed_run(
             _relocate_promoted_evidence_paths(
                 destination, source_root=candidate, destination_root=destination,
             )
+            _append_archive_index(
+                output_root=output_root,
+                destination=destination,
+                task=task,
+                method=method,
+                device=device,
+                archive_kind=archive_kind,
+            )
             return destination
         index += 1
+
+
+ARCHIVE_INDEX_FILENAME = "archive_index.jsonl"
+
+
+def _append_archive_index(
+    *,
+    output_root: str | Path,
+    destination: Path,
+    task: str,
+    method: str,
+    device: tuple[str, str, int],
+    archive_kind: str,
+) -> None:
+    """Append one archived result to a flat, machine-readable index.
+
+    Archived evidence used to be discoverable only by walking
+    ``.archive/<task>/<method>/<device>/<kind>_<n>`` and guessing the kind from
+    the directory name.  That made every offline analysis depend on layout
+    trivia, and it hid the failure side of a batch: an analysis could report
+    success rates while silently omitting failures that were present on disk.
+
+    One append-only JSONL keeps the existing archive layout untouched (so old
+    results and their paths stay valid) while giving analysis a single ordered
+    record of what was archived, why, and with what outcome.
+    """
+
+    record: dict[str, Any] = {
+        "task": str(task),
+        "method": canonical_method_name(method),
+        "device": device[0],
+        "serial": device[1],
+        "console_port": int(device[2]),
+        "archive_kind": str(archive_kind),
+        "path": str(destination.relative_to(resolve_path(output_root))),
+    }
+    run_log = destination / "run_log.json"
+    if run_log.is_file():
+        try:
+            payload = json.loads(run_log.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            record["success"] = payload.get("success")
+            validator = payload.get("validator")
+            record["validator_success"] = (
+                validator.get("success") if isinstance(validator, dict) else None
+            )
+            record["steps"] = len(payload.get("steps") or [])
+            diagnostics = payload.get("diagnostics")
+            if isinstance(diagnostics, dict):
+                summary = diagnostics.get("execution_summary")
+                summary = summary if isinstance(summary, dict) else {}
+                record["failure_reason"] = str(
+                    summary.get("failure_reason")
+                    or diagnostics.get("done_reason")
+                    or ""
+                )[:200]
+    index_path = resolve_path(output_root) / ARCHIVE_INDEX_FILENAME
+    try:
+        with index_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        # The index is an analysis convenience; never fail a run because it
+        # could not be written.  The archived evidence itself is the record.
+        pass
 
 
 def _promote_mobilegpt_source_memory(
@@ -1253,7 +1327,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--task", default=DEFAULT_TASK)
     parser.add_argument("--method", default=DEFAULT_METHOD)
-    parser.add_argument("--device", default=DEFAULT_DEVICE)
+    parser.add_argument("--device", default=DEFAULT_DEVICE_LABEL,
+                        help="Configured device label, comma-separated labels, or 'all'")
     parser.add_argument("--memory", default="")
     parser.add_argument("--harness", default=os.environ.get("OMNIFLOW_HARNESS", "builtin"),
                         help="OmniFlow task harness: builtin, codex, claude, or module:factory")

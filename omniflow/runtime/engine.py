@@ -262,7 +262,9 @@ class OmniFlow:
         if not self._operation_lock.acquire(blocking=False):
             result = RunResult(False, error="execution_busy", detail={"done_reason": "execution_busy"})
             return replace(result, detail={**result.detail, "feedback": invocation_feedback(result)})
-        control = CURRENT_CONTROL.get() or ExecutionControl()
+        control = CURRENT_CONTROL.get() or ExecutionControl(
+            timeout_seconds=self.config.runtime.execution_timeout_seconds
+        )
         token = CURRENT_CONTROL.set(control)
         self._active_control = control
         trace_offset, action_offset = len(control.trace), control.actions_executed

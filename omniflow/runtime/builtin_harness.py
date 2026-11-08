@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import inspect
 import json
+import os
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -30,7 +31,25 @@ from omniflow.runtime.protocol import invocation_feedback
 from omniflow.vlm.usage import merge_usage, token_usage_status
 from omniflow.vlm_coordinates import display_size
 
-_FUNCTION_CACHE_CONFIDENCE_THRESHOLD = 0.95
+def _env_float(name: str, default: float) -> float:
+    """Threshold override for controlled ablations only.
+
+    The deployed value is the default. A rebuttal threshold sweep sets the
+    environment variable explicitly; every run records the effective value in
+    its RunLog, so a swept run can never be mistaken for the deployed one.
+    """
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a float, got {raw!r}")
+
+
+_FUNCTION_CACHE_CONFIDENCE_THRESHOLD = _env_float(
+    "OMNIFLOW_FUNCTION_CACHE_THRESHOLD", 0.95
+)
 
 @dataclass
 class _FunctionSession:

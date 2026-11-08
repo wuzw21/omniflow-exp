@@ -200,8 +200,13 @@ class VLMPlanner:
         if self._client is None:
             self._client = self._build_client()
         with measure("model.planner.request_until_response"):
+            # ``self.timeout`` is the one agreed per-request budget, set from the
+            # experiment protocol.  It used to be silently truncated to 30s here,
+            # which defeated the 60s default on the CLI and turned ordinary
+            # endpoint latency into ``vlm_planner_failed:Request timed out.``
+            # epilogue failures.  Only the episode deadline may lower it.
             response = self._client.chat.completions.create(
-                **request, timeout=bounded_timeout(min(self.timeout or 30.0, 30.0))
+                **request, timeout=bounded_timeout(float(self.timeout or 60.0))
             )
         return normalize_openai_model_turn_response(
             response,

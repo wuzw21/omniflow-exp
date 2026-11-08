@@ -28,6 +28,15 @@ DEVICES = tuple(
     for device in ANDROIDWORLD_PROTOCOL["devices"]
 )
 DEFAULT_METHOD = METHODS[0]
+# The two entry points take different --device grammars and used to share one
+# constant, which made it wrong for at least one of them:
+#
+# * ``run_tasks`` (the launcher) takes a configured *label* such as
+#   ``standard45562``.  Joining the tuple gave
+#   ``standard45562:emulator-45562:45562``, so every run that omitted --device
+#   died in _devices() with ``unknown_configured_device:...``.
+# * ``run_task`` (the inner result command) takes ``LABEL:SERIAL:PORT``.
+DEFAULT_DEVICE_LABEL = DEVICES[0][0]
 DEFAULT_DEVICE = ":".join(str(value) for value in DEVICES[0])
 _SOURCE_DEVICE = ANDROIDWORLD_PROTOCOL["source_device"]
 SOURCE_DEVICE = (
@@ -61,11 +70,29 @@ TASK_DEADLINE_SEC = int(ANDROIDWORLD_PROTOCOL["task_deadline_sec"])
 STEP_TIMEOUT_SEC = int(ANDROIDWORLD_PROTOCOL["step_timeout_sec"])
 # Formal AndroidWorld runs do not accept a per-run planner timeout.  Keep the
 # one request budget here with the rest of the protocol constants.
+#
+# These numbers used to be mutually unreachable: 30 steps x 60s of step timeout
+# (1800s) plus the 300s validator flush grace was 2100s against a 600s deadline,
+# and the planner separately clamped every request to 30s regardless of this
+# value.  ``task_deadline_sec`` is now exactly the guaranteed planner budget plus
+# the flush grace, so one full request per step is provably affordable.
 PLANNER_TIMEOUT_SEC = 30.0
 VALIDATOR_FLUSH_GRACE_SEC = int(
     ANDROIDWORLD_PROTOCOL["validator_flush_grace_sec"]
 )
-EPISODE_TIMEOUT_SEC = MAX_STEPS * STEP_TIMEOUT_SEC + VALIDATOR_FLUSH_GRACE_SEC
+# The guaranteed budget is one planner request per allowed step.  Transport
+# retries are not reserved on top of it: they spend the same episode deadline
+# through ``bounded_timeout``, so a persistent endpoint hang ends the episode as
+# ``deadline_exceeded`` instead of silently overrunning the wall clock.
+EPISODE_TIMEOUT_SEC = MAX_STEPS * PLANNER_TIMEOUT_SEC + VALIDATOR_FLUSH_GRACE_SEC
+if EPISODE_TIMEOUT_SEC > TASK_DEADLINE_SEC:
+    raise ValueError(
+        "androidworld_protocol_budget_infeasible:"
+        f"episode={int(EPISODE_TIMEOUT_SEC)}:deadline={TASK_DEADLINE_SEC}"
+    )
+# One transport retry budget for every method row.  It is a protocol constant so
+# a baseline cannot be run with a different error tolerance than OmniFlow.
+PLANNER_ERROR_RETRIES = 2
 FIXED_TASK_SEED = bool(ANDROIDWORLD_PROTOCOL["fixed_task_seed"])
 FIXED_TASK_PARAMS = bool(ANDROIDWORLD_PROTOCOL["fixed_task_params"])
 FOLD_STATE = int(ANDROIDWORLD_PROTOCOL["fold_state"])

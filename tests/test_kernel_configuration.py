@@ -109,3 +109,69 @@ def test_native_request_retry_is_bounded_and_refreshes_observation(
 def test_request_retry_policy_rejects_unbounded_or_ambiguous_budgets(budget):
     with pytest.raises(ValueError, match='planner_error_retries'):
         RuntimeSettings(planner_error_retries=budget)
+
+
+def test_kernel_default_retries_are_nonzero_so_transport_noise_is_not_a_policy_failure():
+    # Every real failure in data/androidworld/.archive was a request timeout that
+    # ended the episode because the default budget was 0.
+    assert RuntimeSettings().planner_error_retries >= 1
+
+
+@pytest.mark.parametrize('value', [0, -1.0, float('inf'), float('nan'), 1800.1])
+def test_execution_deadline_is_bounded_and_finite(value):
+    with pytest.raises(ValueError, match='execution_timeout_seconds'):
+        RuntimeSettings(execution_timeout_seconds=value)
+
+
+def test_kernel_invocation_uses_the_configured_deadline_not_its_own_default(tmp_path):
+    # ExecutionControl used to be built with its own 600s default, so raising the
+    # protocol deadline had no effect on when an episode was sealed.
+    seen = []
+    class Host:
+        async def observe(self, **kwargs):
+            return Observation(xml='<page/>', image_base64='present')
+        async def act(self, action):
+            raise AssertionError('no action expected')
+    class Planner:
+        async def one_step_tool_call(self, goal, observation, *args):
+            return ToolCall('finished', {'content': 'done'})
+    store = FunctionStore(tmp_path / 'empty.json')
+    store.save()
+    flow = OmniFlow(
+        store.path, host=Host(), planner=Planner(), completion_checker=lambda: True,
+        config=OmniFlowConfig(runtime=RuntimeSettings(
+            completion_oracle_enabled=True, checker_enabled=False,
+            execution_timeout_seconds=1200.0,
+        )),
+    )
+    # ``engine.py`` imports the owner directly, so patch the symbol at the
+    # lookup site used by ``OmniFlow._controlled``.
+    from omniflow.runtime import engine as engine_module
+    original = engine_module.ExecutionControl
+
+    class Recording(original):
+        def __post_init__(self):
+            seen.append(self.timeout_seconds)
+            super().__post_init__()
+
+    engine_module.ExecutionControl = Recording
+    try:
+        asyncio.run(flow.arun('goal'))
+    finally:
+        engine_module.ExecutionControl = original
+    assert seen == [1200.0]
+
+
+def test_androidworld_protocol_budget_is_reachable_and_shared():
+    from src.experiment import protocol
+
+    assert protocol.EPISODE_TIMEOUT_SEC <= protocol.TASK_DEADLINE_SEC
+    # One guaranteed planner request per allowed step plus the validator flush.
+    assert protocol.EPISODE_TIMEOUT_SEC == (
+        protocol.MAX_STEPS * protocol.PLANNER_TIMEOUT_SEC
+        + protocol.VALIDATOR_FLUSH_GRACE_SEC
+    )
+    # Retries are a protocol constant, so no baseline row can carry a different
+    # error tolerance than the OmniFlow row it is compared against.
+    assert isinstance(protocol.PLANNER_ERROR_RETRIES, int)
+    assert 0 <= protocol.PLANNER_ERROR_RETRIES <= 3

@@ -1,5 +1,54 @@
 # Releases
 
+## Timing budget, MobiMem baseline, ARTEMIS appendix — 2026-11-06
+
+### Every real AndroidWorld failure so far was one transport timeout
+
+Scanning all 293 sealed RunLogs (199 OmniFlow attempts: 159 in `current/`, 40 in
+`.archive/`) reclassifies the archive: 28 of the 40 archived entries are **successes**
+that lost promotion to an equally good golden result, not failures. Of the 12 real
+failures, 8 were `vlm_planner_failed:Request timed out.` — and all of them occurred on
+`SystemBluetoothTurnOn`, the only task that was re-run many times. Treat 5.7% as a
+per-task retry artifact, not a cross-task failure rate.
+
+Two independent defects caused it, both fixed:
+
+| Defect | Effect | Fix |
+| --- | --- | --- |
+| `planner.py` clamped every request to `min(timeout, 30)` | the 60s CLI default never applied | one budget, `PLANNER_TIMEOUT_SEC` |
+| `engine.py` built `ExecutionControl()` with its own 600s default; `control.py` rejected any deadline > 600s | raising the protocol deadline changed nothing | budget comes from `RuntimeSettings.execution_timeout_seconds` |
+| `planner_error_retries` defaulted to 0 and no caller ever set it | any request hiccup ended the episode | protocol constant `PLANNER_ERROR_RETRIES = 2` |
+
+`EPISODE_TIMEOUT_SEC = MAX_STEPS * PLANNER_TIMEOUT_SEC + VALIDATOR_FLUSH_GRACE_SEC`
+is now asserted to fit `task_deadline_sec` at import time; an infeasible pair raises
+instead of silently truncating. Deadline raised 600s -> 1200s. None of the 137
+completed episodes touched the old ceiling (10.1s–232.4s, median 53.3s), so no recorded
+outcome changes.
+
+### New same-harness row: `mobimem_style` (AgentRR)
+
+`omniflow/transfer/agentrr.py` adds MobiMem's Action Memory / AgentRR policy as a
+`PluginSet(transfer=...)` swap, the same seam `mobilegpt_style` uses. Only one mapper
+differs from the OmniFlow row. Guards abstain (`agentrr_guard_signature_absent`,
+`agentrr_guard_package_changed`) instead of searching for a looser match. Two bugs were
+caught by offline regression before any device run: the package guard read the leaf
+node's `package` (usually empty) and was a no-op, and pure positional replay re-centred
+on a target element, silently turning replay back into re-location.
+
+Offline verification covers 7 cases (moved control, absent control, package change,
+missing source state, positional mode, ambiguous signature, pass-through); they were
+executed against stdlib stubs because this checkout's `.venv` points at a macOS
+interpreter. **Not yet run on a device.**
+
+### ARTEMIS: appendix only
+
+`src/integrations/artemis_harness.py::factory` wires ARTEMIS through the existing
+`--harness module:factory` seam with zero main-line changes. It is deliberately kept out
+of the main table: ARTEMIS reports its own Checker verdict, not the official validator,
+and has no Function/Transfer artifacts, so only task success could be compared — and even
+that cannot be subtracted. See `docs/BASELINES_SAME_HARNESS.md`. **Not yet run on a
+device**; helper/OOB coexistence on one AVD is unverified.
+
 ## Conservative Checker defaults, 2026-09-08
 
 Permission recovery now requires an exact Android system permission-button

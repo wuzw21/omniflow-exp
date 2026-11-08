@@ -64,6 +64,88 @@ def test_appagent_docs_render_only_for_elements_on_screen(tmp_path):
     assert rendered == "- Save [[0,0][200,100]]: tap: stores the note"
 
 
+def test_launcher_default_device_is_a_label_not_a_serialised_tuple():
+    # The launcher's --device takes a configured label.  It used to default to
+    # "label:serial:port", so every run that omitted --device died in _devices()
+    # with unknown_configured_device before any task started.
+    from src.experiment import protocol, run_tasks
+
+    assert ":" not in protocol.DEFAULT_DEVICE_LABEL
+    selected = run_tasks._devices(protocol.DEFAULT_DEVICE_LABEL)
+    assert selected == (protocol.DEVICES[0],)
+    # The inner result command still takes the serialised form.
+    assert protocol.DEFAULT_DEVICE == ":".join(str(v) for v in protocol.DEVICES[0])
+
+
+def test_launcher_defaults_resolve_without_an_explicit_device(monkeypatch):
+    from src.experiment import run_tasks
+
+    monkeypatch.delenv("OMNIFLOW_BASELINE", raising=False)
+    parsed = run_tasks.build_parser().parse_args([])
+    assert run_tasks._devices(parsed.device)
+
+
+def test_archive_index_records_outcome_not_just_a_directory_name(tmp_path):
+    # Archived evidence used to be discoverable only by walking .archive/ and
+    # guessing the kind from the folder name.  That hid the failure side of a
+    # batch from offline analysis, so every analysis reported success rates
+    # while failures sat on disk unread.
+    import json as _json
+
+    from src.experiment.run_tasks import ARCHIVE_INDEX_FILENAME, _append_archive_index
+
+    destination = tmp_path / ".archive" / "T" / "M" / "dev" / "failure_001"
+    destination.mkdir(parents=True)
+    (destination / "run_log.json").write_text(_json.dumps({
+        "success": False,
+        "validator": {"success": False},
+        "steps": [1, 2, 3],
+        "diagnostics": {
+            "done_reason": "max_steps_exceeded",
+            "execution_summary": {"failure_reason": "vlm_planner_failed:Request timed out."},
+        },
+    }))
+    _append_archive_index(
+        output_root=tmp_path, destination=destination, task="T", method="M",
+        device=("dev", "emulator-1", 5554), archive_kind="failure",
+    )
+    _append_archive_index(
+        output_root=tmp_path, destination=destination, task="T", method="M",
+        device=("dev", "emulator-1", 5554), archive_kind="superseded",
+    )
+    lines = (tmp_path / ARCHIVE_INDEX_FILENAME).read_text().strip().splitlines()
+    # Append-only: a second archive must not overwrite the first record.
+    assert len(lines) == 2
+    record = _json.loads(lines[0])
+    assert record["success"] is False
+    assert record["validator_success"] is False
+    assert record["archive_kind"] == "failure"
+    assert record["failure_reason"] == "vlm_planner_failed:Request timed out."
+    assert record["path"] == ".archive/T/M/dev/failure_001"
+
+
+def test_analysis_prefers_the_archive_index_over_directory_walking(tmp_path):
+    import json as _json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from failure_side_coverage import build
+
+    destination = tmp_path / ".archive" / "T" / "M" / "dev" / "failure_001"
+    destination.mkdir(parents=True)
+    (destination / "run_log.json").write_text(_json.dumps({"success": False, "steps": []}))
+    (tmp_path / "archive_index.jsonl").write_text(
+        _json.dumps({"path": ".archive/T/M/dev/failure_001", "archive_kind": "failure"}) + "\n"
+    )
+    payload = build(tmp_path)
+    assert payload["archive_index_source"] == "archive_index"
+    # Without an index the same data is still found, but the caller is told the
+    # outcome had to be inferred from the payload rather than from the index.
+    (tmp_path / "archive_index.jsonl").unlink()
+    assert build(tmp_path)["archive_index_source"] == "directory_walk"
+
+
 def test_same_harness_baseline_requires_builtin_omniflow_with_store(monkeypatch):
     from src.experiment import run_tasks
 
