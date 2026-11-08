@@ -41,7 +41,15 @@ def resolve_openai_compatible_config(
             env.get("OMNIFLOW_MODEL_BASE_URL"),
         )
     elif resolved_profile == "openai":
-        key_candidates = (api_key, env.get("OPENAI_API_KEY"))
+        dashscope_endpoint = any(
+            "dashscope.aliyuncs.com" in str(candidate or "").lower()
+            for candidate in (base_url, env.get("OPENAI_BASE_URL"))
+        )
+        key_candidates = (
+            (api_key, env.get("DASHSCOPE_API_KEY"), env.get("OPENAI_API_KEY"))
+            if dashscope_endpoint
+            else (api_key, env.get("OPENAI_API_KEY"))
+        )
         base_url_candidates = (base_url, env.get("OPENAI_BASE_URL"))
     else:
         key_candidates = (
