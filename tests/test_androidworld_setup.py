@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from types import SimpleNamespace
 
@@ -117,6 +118,30 @@ def test_experimental_dashscope_environment_aliases_native_key(monkeypatch):
     )
     assert env["OPENAI_MODEL"] == "qwen3.6-plus"
     assert env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] == "openai"
+
+
+def test_direct_lifecycle_prefers_dashscope_key(monkeypatch):
+    from src.integrations.android_world.run_episode import (
+        _configure_direct_model_environment,
+    )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-openai-key")
+    monkeypatch.setenv("LLMTHU_API_KEY", "stale-llmthu-key")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+    monkeypatch.setenv(
+        "OMNIFLOW_EXPERIMENTAL_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+
+    _configure_direct_model_environment(
+        experimental_omniflow=True,
+        experimental_model="qwen3.6-plus",
+    )
+
+    assert os.environ["OPENAI_API_KEY"] == "dashscope-key"
+    assert os.environ["OPENAI_BASE_URL"] == (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
 
 
 from src.integrations.android_world.run_episode import (

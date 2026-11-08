@@ -3518,6 +3518,27 @@ def _canonical_task_parameters(
     return parameters
 
 
+def _configure_direct_model_environment(
+    *,
+    experimental_omniflow: bool,
+    experimental_model: str,
+) -> None:
+    """Keep direct lifecycle calls on the same provider contract as the launcher."""
+
+    base_url = omniflow_base_url() if experimental_omniflow else FORMAL_MODEL_BASE_URL
+    model = experimental_model if experimental_omniflow else FORMAL_MODEL
+    os.environ["OPENAI_BASE_URL"] = base_url
+    os.environ["OPENAI_MODEL"] = model
+    dashscope_key = str(os.environ.get("DASHSCOPE_API_KEY") or "").strip()
+    if experimental_omniflow and "dashscope.aliyuncs.com" in base_url.lower() and dashscope_key:
+        # A stale shell provider must not override an explicit DashScope run.
+        os.environ["OPENAI_API_KEY"] = dashscope_key
+    elif not str(os.environ.get("OPENAI_API_KEY") or "").strip() and str(
+        os.environ.get("LLMTHU_API_KEY") or ""
+    ).strip():
+        os.environ["OPENAI_API_KEY"] = str(os.environ["LLMTHU_API_KEY"])
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     if args.environment == "androidworld":
@@ -3569,18 +3590,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             args.model = require_formal_model()
         # Keep direct lifecycle invocation on the same provider seam as the
-        # unified launcher; otherwise the wrapper could fall back to a stale
-        # shell OPENAI_BASE_URL when this module is invoked directly.
-        os.environ["OPENAI_BASE_URL"] = (
-            omniflow_base_url() if experimental_omniflow else FORMAL_MODEL_BASE_URL
+        # unified launcher, including DashScope credential precedence.
+        _configure_direct_model_environment(
+            experimental_omniflow=experimental_omniflow,
+            experimental_model=experimental_model,
         )
-        os.environ["OPENAI_MODEL"] = (
-            experimental_model if experimental_omniflow else FORMAL_MODEL
-        )
-        if not str(os.environ.get("OPENAI_API_KEY") or "").strip() and str(
-            os.environ.get("LLMTHU_API_KEY") or ""
-        ).strip():
-            os.environ["OPENAI_API_KEY"] = str(os.environ["LLMTHU_API_KEY"])
     selected_agent = str(args.agent or MODE_OMNIFLOW).strip() or MODE_OMNIFLOW
     if str(args.planner_provider or "").strip():
         os.environ["OMNIFLOW_PLANNER_PROVIDER"] = str(args.planner_provider).strip()
