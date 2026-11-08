@@ -96,6 +96,29 @@ def test_mobilegpt_native_environment_does_not_alias_provider_credentials(monkey
     assert env["OPENAI_BASE_URL"] == "https://example.invalid/v1"
 
 
+def test_experimental_dashscope_environment_aliases_native_key(monkeypatch):
+    from src.experiment import run_task
+
+    monkeypatch.setattr(run_task, "_local_dotenv_env", lambda **kwargs: {})
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+    monkeypatch.setenv("OMNIFLOW_EXPERIMENTAL_MODEL", "qwen3.6-plus")
+    monkeypatch.setenv(
+        "OMNIFLOW_EXPERIMENTAL_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+    monkeypatch.setenv("OMNIFLOW_EXPERIMENTAL_ENDPOINT_PROFILE", "openai")
+
+    env = run_task._subprocess_env({})
+
+    assert env["OPENAI_API_KEY"] == "dashscope-key"
+    assert env["OPENAI_BASE_URL"] == (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    assert env["OPENAI_MODEL"] == "qwen3.6-plus"
+    assert env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] == "openai"
+
+
 from src.integrations.android_world.run_episode import (
     _patch_androidworld_expense_setup_timeout,
 )

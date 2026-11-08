@@ -263,6 +263,13 @@ def _subprocess_env(
         env["OPENAI_MODEL"] = experimental_model
         env["OMNIFLOW_PLANNER_MODEL"] = experimental_model
         env["OMNIFLOW_MODEL_ENDPOINT_PROFILE"] = omniflow_endpoint_profile()
+        if (
+            "dashscope.aliyuncs.com" in env["OPENAI_BASE_URL"].lower()
+            and str(env.get("DASHSCOPE_API_KEY") or "").strip()
+        ):
+            # A long-lived shell may still expose an unrelated OpenAI or
+            # LLMTHU key. DashScope must own this explicit experimental path.
+            env["OPENAI_API_KEY"] = str(env["DASHSCOPE_API_KEY"])
     else:
         env["OPENAI_BASE_URL"] = FORMAL_MODEL_BASE_URL
         env["OPENAI_MODEL"] = FORMAL_MODEL
