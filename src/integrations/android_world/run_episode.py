@@ -1232,6 +1232,50 @@ def _ensure_oob_control_app(*, console_port: int, adb_path: str) -> bool:
     )
     if enabled_flag.returncode != 0:
         raise RuntimeError(f"oob_control_accessibility_flag_failed:{serial}")
+    # AndroidWorld setup can leave the accessibility setting enabled while
+    # the resident OOB service process is still stopped.  Re-applying the
+    # same setting is a no-op on Android, so force one bounded service
+    # restart before the first Observe.  This keeps OOB as the sole physical
+    # owner and prevents an empty state from reaching the host normalizer.
+    restart_off = subprocess.run(
+        [
+            adb_bin,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "accessibility_enabled",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if restart_off.returncode != 0:
+        raise RuntimeError(f"oob_control_accessibility_restart_failed:{serial}")
+    restart_on = subprocess.run(
+        [
+            adb_bin,
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "accessibility_enabled",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if restart_on.returncode != 0:
+        raise RuntimeError(f"oob_control_accessibility_restart_failed:{serial}")
+    time.sleep(1.0)
     return True
 
 
