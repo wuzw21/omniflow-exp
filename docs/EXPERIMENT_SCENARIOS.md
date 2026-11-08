@@ -225,6 +225,39 @@ overwritten during validation. A formal rerun requires the canonical checkout
 and its sibling state catalog to be synchronized as one explicit Memory
 bundle.
 
+### 2026-11-08 canonical Memory synchronization and rerun
+
+The canonical `SystemBluetoothTurnOn` bundle was synchronized to the 4090
+workspace before rerunning the task. The post-sync `store.json` SHA-256 is
+`89f5091756068e1591e908c8d15994b42e78ac6681ce9231fbd6f7530d587a48` and the
+`transfer_states.json` SHA-256 is
+`b4f9d2f53b3589b106164016471a265e705bb31cf5e142d9d19fde5f7c6c92e2`. All
+five Function references now resolve to five catalog states.
+
+The first fixed-replay attempt timed out during the initial OOB observation
+because the emulator Accessibility service was unbound after a process stop.
+After rebinding the service, the repeat dispatched all five OOB actions and
+reported no stale-state error. The official validator remained 0/1 and the
+final observation contained a checked Bluetooth switch. A post-run device
+query reported `settings get global bluetooth_on = 1`, so the validator sampled
+before the setting settled. This is physical dispatch evidence with a
+validator timing gap that requires a lifecycle stabilization fix before it can
+count as official task success.
+
+The OmniFlow rerun loaded the synchronized Store, recalled
+`turn_bluetooth_on`, and recorded no missing-source-state exception. It issued
+two Qwen3.6-Plus calls, then stopped with `team_model_access_denied` (HTTP
+403) before any physical action. This remains an environment failure rather
+than a method success or failure result.
+
+The synchronized Memory, both rerun RunLogs, hashes, and offline snapshots are
+stored under
+`data/runtime/validation/20261108-systembluetooth-memory-sync-4090/`. The
+offline snapshots reproduce 155 traces and 1004 steps, 29 V10 failure inputs,
+137 stores with 1648 source-state references, and the same failure-side
+coverage result. Physical-phone acceptance remains
+`pending_physical_device`.
+
 `diagnostics.function_resume.events` records actual fresh/resumed Function
 invocations and whether a previous invocation failed. Event success means
 execution completion, not semantic correctness. An event's trace interval
