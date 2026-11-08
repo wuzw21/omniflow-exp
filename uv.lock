@@ -2552,7 +2552,7 @@ wheels = [
 
 [[package]]
 name = "mobilerun-sdk"
-version = "5.1.0"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2562,9 +2562,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/05/237a08ad0eb6e6418176a69db49902ee5b85c8f78dbb4fbd0c86f8aa6676/mobilerun_sdk-5.1.0.tar.gz", hash = "sha256:3ac974a621042559ca130d058ed1f597d70259c118fbea37ef7056ca9faa022d", size = 228134, upload-time = "2026-06-23T17:57:15.219Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/4b/d4ab471e0f88564a425acda466ffbdb40a02afc780bf9251fb62965d225c/mobilerun_sdk-2.1.0.tar.gz", hash = "sha256:49a97731f1933ffb6b73c50fb4d37f35c2089bbd8f41c00a12d76b0427928111", size = 143005, upload-time = "2026-02-19T16:57:41.089Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/b6/36adb62838cb469877b06cb4da88a392bd58200de31ba33bc7a62021f2fc/mobilerun_sdk-5.1.0-py3-none-any.whl", hash = "sha256:46ab40d0ee00ff164af40057260597447903478e8d92f84417d59dfea9850f84", size = 332975, upload-time = "2026-06-23T17:57:14.065Z" },
+    { url = "https://files.pythonhosted.org/packages/16/bf/49884748fa494392c76af4d35aec9fc94c06572bef429fe00da10bb0438d/mobilerun_sdk-2.1.0-py3-none-any.whl", hash = "sha256:75085dbfba05b828f8ba788a15dcd40ae5da53920d4377420a3fc0f5c8108de3", size = 151939, upload-time = "2026-02-19T16:57:39.769Z" },
 ]
 
 [[package]]
@@ -2900,7 +2900,7 @@ wheels = [
 
 [[package]]
 name = "omniflow-exp"
-version = "0.1.0"
+version = "1.1.0.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "absl-py" },
@@ -2936,6 +2936,10 @@ dependencies = [
 [package.optional-dependencies]
 bmoca = [
     { name = "droidrun" },
+    { name = "mobilerun-sdk" },
+]
+mcp = [
+    { name = "mcp" },
 ]
 
 [package.dev-dependencies]
@@ -2960,6 +2964,8 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "lxml", specifier = ">=5" },
     { name = "matplotlib", specifier = ">=3.6" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0.0,<3" },
+    { name = "mobilerun-sdk", marker = "extra == 'bmoca'", specifier = "==2.1.0" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "openai", specifier = ">=1.99.9" },
     { name = "opencv-python", specifier = ">=4.11" },
@@ -2975,7 +2981,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.2" },
     { name = "uiautomator2", specifier = ">=3.7" },
 ]
-provides-extras = ["bmoca", "llm"]
+provides-extras = ["bmoca", "llm", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = ">=0.12" }]
