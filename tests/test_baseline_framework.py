@@ -83,3 +83,46 @@ def test_suite_runner_uses_fixed_order_and_restores_environment(monkeypatch):
     assert [row["baseline"] for row in result["baselines"]] == list(BASELINE_SUITE)
     assert result["status"] == "completed"
     assert __import__("os").environ["OMNIFLOW_BASELINE"] == previous
+
+
+def test_explicit_memory_reuse_skips_authoring_compiler(tmp_path, monkeypatch):
+    source = tmp_path / "source_run_log.json"
+    source.write_text('{"task_name": "T", "steps": []}\n', encoding="utf-8")
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "store.json").write_text(
+        '{"schema_version": "omniflow.store.v2", "functions": {"f": {}}}\n',
+        encoding="utf-8",
+    )
+    (memory / "run_log.json").write_bytes(source.read_bytes())
+    (memory / "compile_report.json").write_text(
+        '{"model": "Qwen3.6-Plus"}\n',
+        encoding="utf-8",
+    )
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("authoring compiler must not run for an explicit hit")
+
+    monkeypatch.setattr(run_tasks, "compile_function_v2", fail_if_called)
+    monkeypatch.setattr(
+        run_tasks,
+        "write_function_review",
+        lambda **_kwargs: memory / "REVIEW.md",
+    )
+    args = SimpleNamespace(
+        method="omniflow",
+        source_run_log=str(source),
+        memory=str(memory),
+        task="T",
+        mobilegpt_root="",
+        appagent_root="",
+        autodroid_utg="",
+        autodroid_official_memory="",
+        autodroid_official_app="",
+        autodroid_source_memory="",
+    )
+
+    result = run_tasks._convert_memory(args)
+
+    assert result["method"] == "omniflow"
+    assert result["memory"].endswith("/store.json")
