@@ -71,21 +71,19 @@ STEP_TIMEOUT_SEC = int(ANDROIDWORLD_PROTOCOL["step_timeout_sec"])
 # Formal AndroidWorld runs do not accept a per-run planner timeout.  Keep the
 # one request budget here with the rest of the protocol constants.
 #
-# These numbers used to be mutually unreachable: 30 steps x 60s of step timeout
-# (1800s) plus the 300s validator flush grace was 2100s against a 600s deadline,
-# and the planner separately clamped every request to 30s regardless of this
-# value.  ``task_deadline_sec`` is now exactly the guaranteed planner budget plus
-# the flush grace, so one full request per step is provably affordable.
+# AndroidWorld has one hard wall deadline shared by setup, Planner requests,
+# device actions, recovery, and final validation.  A Planner request may use up
+# to 30 seconds, but the total request count cannot reserve a second wall clock
+# budget beyond the task deadline.
 PLANNER_TIMEOUT_SEC = 30.0
 VALIDATOR_FLUSH_GRACE_SEC = int(
     ANDROIDWORLD_PROTOCOL["validator_flush_grace_sec"]
 )
-# The guaranteed budget is one planner request per allowed step.  Transport
-# retries are not reserved on top of it: they spend the same episode deadline
-# through ``bounded_timeout``, so a persistent endpoint hang ends the episode as
-# ``deadline_exceeded`` instead of silently overrunning the wall clock.
-EPISODE_TIMEOUT_SEC = MAX_STEPS * PLANNER_TIMEOUT_SEC + VALIDATOR_FLUSH_GRACE_SEC
-if EPISODE_TIMEOUT_SEC > TASK_DEADLINE_SEC:
+# Transport retries and validator flushing spend the same episode deadline
+# through ``bounded_timeout``.  A persistent endpoint hang therefore ends the
+# episode as ``deadline_exceeded`` instead of silently overrunning the wall clock.
+EPISODE_TIMEOUT_SEC = TASK_DEADLINE_SEC
+if TASK_DEADLINE_SEC > 600 or EPISODE_TIMEOUT_SEC > TASK_DEADLINE_SEC:
     raise ValueError(
         "androidworld_protocol_budget_infeasible:"
         f"episode={int(EPISODE_TIMEOUT_SEC)}:deadline={TASK_DEADLINE_SEC}"

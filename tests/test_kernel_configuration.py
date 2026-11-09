@@ -165,12 +165,11 @@ def test_kernel_invocation_uses_the_configured_deadline_not_its_own_default(tmp_
 def test_androidworld_protocol_budget_is_reachable_and_shared():
     from src.experiment import protocol
 
+    assert protocol.TASK_DEADLINE_SEC == 600
     assert protocol.EPISODE_TIMEOUT_SEC <= protocol.TASK_DEADLINE_SEC
-    # One guaranteed planner request per allowed step plus the validator flush.
-    assert protocol.EPISODE_TIMEOUT_SEC == (
-        protocol.MAX_STEPS * protocol.PLANNER_TIMEOUT_SEC
-        + protocol.VALIDATOR_FLUSH_GRACE_SEC
-    )
+    assert protocol.EPISODE_TIMEOUT_SEC == protocol.TASK_DEADLINE_SEC
+    assert protocol.PLANNER_TIMEOUT_SEC == 30.0
+    assert protocol.VALIDATOR_FLUSH_GRACE_SEC <= protocol.TASK_DEADLINE_SEC
     # Retries are a protocol constant, so no baseline row can carry a different
     # error tolerance than the OmniFlow row it is compared against.
     assert isinstance(protocol.PLANNER_ERROR_RETRIES, int)
