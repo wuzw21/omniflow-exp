@@ -1,0 +1,139 @@
+\section{Introduction}
+\label{sec:intro}
+
+% Mobile GUI agents powered by vision-language models (VLMs) are commonly designed for open-ended task execution.
+% At each step, the agent observes the current screen, invokes a model to decide the next action, executes one GUI operation, and repeats this loop until the task is complete.
+% This design is effective for novel tasks because the agent can reason over arbitrary screens and user goals.
+% However, it is an inefficient serving path for a large class of real mobile workloads: repeated GUI execution.
+
+% In daily mobile use, many tasks recur with similar structure.
+% Users repeatedly open the same app pages, search for similar content, fill similar forms, change common settings, confirm routine operations, and navigate through familiar workflows.
+% For these recurring tasks, step-wise reasoning forces every user and every repetition to solve nearly the same interaction sequence again.
+% This repeated model invocation introduces computation, memory, energy, and thermal overheads on edge devices.
+% When the model is served in the cloud, it can also expose screenshots, view hierarchies, and private app content to an external planner.
+% These costs motivate a different serving target for mobile GUI agents:
+% \textit{successful execution histories should be reused whenever the current task and live environments are compatible.}
+
+Mobile GUI agents powered by vision-language models (VLMs) have demonstrated impressive capabilities in open-ended task execution.
+However, when deployed in the real world, users rarely utilize these agents solely for open-ended exploration.
+Instead, users expect them to act as intelligent assistants that accelerate daily, repeated routines--such as checking schedules, filling out common forms, or navigating familiar app workflows--fast and reliably.
+Currently, mobile GUI agents address these tasks using a standard observe-reason-act loop~\cite{abhyankar2025osworld,rawles2025androidworld,wen2024autodroid,wang2023enabling}: observing the current screen, invoking a massive model to decide the next action, executing the operation, and repeating until completion.
+While this design is highly effective for novel tasks with the support of performant VLMs, applying step-wise VLM reasoning to recurring routines forces every user and every repetition to solve nearly the same interaction sequence from scratch.
+This repeated model invocation introduces severe computation, memory, energy, and thermal overheads on edge devices.
+This reality motivates a new serving target for mobile GUI agents:
+\textit{successful execution histories of daily routines should be efficiently reused to bypass expensive model invocations whenever possible.}
+
+Existing systems have attempted to address this serving target through various approaches, as summarized in Table~\ref{tab:comparison}. 
+(1) Per-step acceleration methods~\cite{chen2025less,dai2025advancing,lin2025showui,gomez2013reran} reduce the latency of individual model calls but fail to break the expensive observe-reason-act loop.
+(2) Traditional RPA-style replay and script-based tools~\cite{li2017sugilite,gomez2013reran,maestro2026,openatx_uiautomator2_2026} eliminate model calls by binding execution to fixed coordinates or fixed UI selectors, yet they are highly brittle to GUI dynamics.
+(3) Meanwhile, memory-based agents~\cite{wen2024autodroid,zhang2025appagent,lee2024mobilegpt} retrieve prior task knowledge but still require online VLM reinterpretation, leaving them too heavy for seamless on-device execution.
+
+Crucially, these prior studies fall short because they cannot accommodate the complex realities of real-world mobile environments, which are driven by two fundamental dynamics.
+First, \textbf{workflow-level dynamics} mean that live tasks frequently diverge from recorded trajectories due to unpredictable interruptions like login screens, pop-up ads, loading delays, or alternative app entry points.
+A rigid script fails entirely when the exact path breaks.
+Second, \textbf{GUI-state-level dynamics} dictate that even when the overall workflow aligns, the concrete target on the screen may shift due to different device resolutions, font scales, dynamic content, or app updates.
+Existing approaches mismatch this reality: they are either too expensive by re-planning every step, or too brittle by blindly replaying actions without adapting to shifting GUI states.
+
+To this end, we propose \textsc{OmniFlow}, an adaptive on-device replay system for mobile GUI agents.
+OmniFlow is designed to seamlessly reuse historical execution fragments while gracefully falling back to VLM reasoning when necessary.
+The system is built around two core components:
+(1) the Omni representation layer, which decomposes past executions into a fine-grained UI transition graph of reusable functions, and
+(2) the Flow execution layer, which dynamically grounds and verifies recalled actions into the live GUI state before execution.
+
+
+These two components are specifically designed to solve the aforementioned dynamics through two core technical innovations.
+First, to tackle workflow dynamics and efficiency, OmniFlow employs a fine-grained transition graph coupled with a fast on-device node matching mechanism.
+Unlike prior memory systems that rely on computation-heavy visual embeddings, OmniFlow's node encoding relies entirely on feature-engineered page vectors derived from the accessibility-tree structure.
+This allows for rapid, lightweight node matching executed completely on the mobile device.
+By matching fine-grained UI states rather than monolithic trajectories, OmniFlow can smoothly alternate between trajectory reuse and VLM reasoning.
+This maximizes the utilization of stored memories: if a workflow diverges due to a pop-up ad, the system falls back to the VLM to clear it, and instantly resumes replay-based execution once a recognized GUI state is reached.
+
+Second, to address GUI-state dynamics, OmniFlow introduces an anchor-based action transfer design within the Flow execution layer.
+Instead of executing actions via static coordinates, this mechanism grounds a recorded action in the live GUI by comparing structural, visual, and geometric features between the recorded state and the current screen.
+It identifies stable neighboring elements as anchors and uses local layout relations and GUI-tree structures to dynamically locate the intended target.
+If the target match lacks confidence or is blocked by runtime conditions, the system abstains and defers to VLM generation, ensuring robust adaptation to shifting layouts and device variations.
+
+We implement OmniFlow as a plug-in cache and execution layer integrated into mobile GUI agents.
+We evaluate OmniFlow on the AndroidWorld benchmark, comparing it against \zl{xxx} baselines.
+Our experimental results demonstrate that \zl{yyy}.
+
+% Existing systems only partially address this target, as we summarized in Table~\ref{tab:comparison}.
+% Step-wise GUI agents improve action generation or verification, but still invoke a model for each interaction.
+% (1) Per-step acceleration methods~\cite{chen2025less,dai2025advancing,lin2025showui,gomez2013reran} reduce the cost of each model call, while retaining the same observe-reason-act loop.
+% (2) RPA-style replay and script-based systems avoid model calls, but bind execution to a fixed trajectory, coordinate sequence, selector set, or app state~\cite{li2017sugilite,gomez2013reran,maestro2026,openatx_uiautomator2_2026}.
+% (3) Memory-based agents~\cite{wen2024autodroid,zhang2025appagent,lee2024mobilegpt} retrieve prior task knowledge or UI transition graphs, but the retrieved memory often requires online reinterpretation and provides limited support for execution under dynamic layouts, devices, users, and app versions.
+% As a result, existing approaches mismatch the repeated-execution workload: they either remain too expensive by re-planning for every step, or become too brittle by replaying stored actions without sufficient adaptation.
+
+% We revisit the objective of repeated mobile GUI execution.
+% For recurring tasks, the system does not need to reproduce an entire historical trajectory, nor does it need to re-invoke the VLM for every step.
+% Instead, it should preserve and re-execute the task effect of reusable interaction fragments.
+% For example, a prior execution that opens a search page, enters a query, selects a result, or confirms a form should become a callable operation that can be reused in later tasks.
+% This objective requires adaptive replay: the system must decide when a historical operation is applicable, transfer it to the current GUI state, execute it safely, and fall back to the underlying GUI agent when reuse is uncertain.
+
+% Adaptive replay is difficult because mobile GUI execution is dynamic at two levels.
+% First, repeated tasks exhibit workflow-level dynamics.
+% A live task may diverge from a recorded path because of login state, permission dialogs, advertisements, pop-ups, loading delays, personalized content, or alternative app entry points.
+% A complete recorded trace may no longer match the live workflow, even though many of its local fragments remain useful.
+% Second, mobile apps exhibit GUI-state-level dynamics.
+% Even when the current screen corresponds to a memorized state, the concrete action target may shift because of device size, density, font scale, orientation, app version, language, user content, or missing accessibility attributes.
+% Thus, a useful replay system must support both partial workflow reuse and state-aware action transfer.
+
+% We present \textsc{OmniFlow}, an adaptive replay system for mobile GUI agents.
+% \textsc{OmniFlow} wraps an existing agent-device loop with a cache-first execution layer.
+% When a compatible reusable operation is found, \textsc{OmniFlow} executes it directly without invoking the VLM for the matched steps.
+% When the memory is missing, unsafe, or ambiguous, \textsc{OmniFlow} returns control to the original GUI agent.
+% This design preserves the open-ended capability of step-wise agents while amortizing the cost of recurring GUI workflows.
+
+% \textsc{OmniFlow} is built around two components.
+% The first is the \emph{Omni representation layer}, which converts successful run logs into reusable execution knowledge.
+% Instead of storing a whole task as a monolithic trajectory, Omni decomposes executions into UDEG nodes and callable Functions.
+% A UDEG node represents an action-compatible GUI state cluster, while a Function represents a task-carrying transition with a start condition, argument schema, action sequence, and compact execution evidence.
+% This granularity allows the system to reuse matched fragments of a historical execution, fall back to VLM reasoning when the live workflow diverges, and resume memory-guided execution when another compatible state is reached.
+
+% The second component is the \emph{Flow execution layer}, which applies recalled Functions to the live device state.
+% Flow executes each Function through an observe-check-transfer-act loop.
+% Before dispatching a cached action, Flow observes the current screen, checks whether the pending operation is safe, transfers the recorded target to the live GUI, and executes only when the target is sufficiently confident.
+% To support this transfer, Flow uses anchor-based action grounding.
+% It matches stable source-current GUI elements as anchors, projects the recorded target through these anchors, and selects the live target using element similarity, local geometry, and UI-tree relations.
+% If the evidence is weak or ambiguous, Flow abstains and falls back to recovery or VLM-based action generation.
+
+% \textsc{OmniFlow} builds on two cooperating components.  The first component, Omni representation layer, organizes past executions into reusable execution fragments.
+% A successful run is decomposed into compact state descriptions and callable Functions, where each Function captures a task-relevant operation, such as opening a search page, entering a query, selecting an item, or confirming a form.
+% Each Function is associated with the state condition under which it can be applied, the arguments that should be rebound at runtime, and the action sequence needed to produce the intended task effect.
+% This representation gives the system a finer-grained reuse unit than a full historical trajectory.
+% During a live task, Omni representation layer can recall a Function from any compatible intermediate state, execute the reusable fragment, and return control to the underlying GUI agent when the current workflow moves outside the recalled context.
+% If the execution later reaches another compatible state, reuse can resume from that point.
+% In this way, the memory layer makes replay less dependent on the live task following the same end-to-end path as the original execution.
+
+% The second component, Flow execution layer, grounds each recalled Function in the current GUI before execution.
+% A recalled Function describes what operation was useful in the past, while the live screen determines whether and how that operation can be executed now.
+% Therefore, it runs each cached action through an observe-check-transfer-act loop.
+% It observes the current screen, checks whether the pending action is valid under the live state, maps the recorded target to a current GUI element, and dispatches the action only when the match is sufficiently confident.
+% For target mapping, Flow uses anchor-based transfer.
+% It compares the recorded screen and the live screen through element-level visual, structural, geometric, and interaction features, then uses stable neighboring elements as anchors to locate the current target.
+% The final target is selected using local layout relations, tree structure, element compatibility, and confidence-margin checks.
+% When the evidence is weak, ambiguous, or blocked by runtime conditions such as dialogs or advertisements, Flow abstains and hands control back to recovery logic or VLM-based action generation.
+
+% Together, these mechanisms make adaptive replay possible under dynamic mobile execution.
+% The Omni representation layer increases the chance that useful parts of a prior execution can still be reused after workflow divergence.
+% The Flow execution layer checks and transfers each recalled action against the live screen before it is performed.
+% This separation lets \textsc{OmniFlow} exploit repeated structure in mobile tasks while preserving the underlying GUI agent as the fallback path for novel, unsafe, or semantically ambiguous states.
+
+% We implement \textsc{OmniFlow} as a plug-in cache and execution layer for Android GUI agents.
+% \zl{
+% Our current evaluation shows that \textsc{OmniFlow} can convert successful prior executions into zero-model-call Function replay on matched tasks, while retaining fallback for uncertain states.
+% On the accepted AndroidWorld replay set, \textsc{OmniFlow} completes all \task-nums validator-scored reuse runs with zero online model calls and zero online model tokens.
+% For cross-device UDEG retrieval, \textsc{OmniFlow} achieves 98.63\% Hit@1 and 100.0\% Hit@3 on the currently reviewed subset, with sub-millisecond lookup latency.
+% These results suggest that adaptive replay is a practical complement to VLM-based GUI agents: step-wise reasoning handles novel or ambiguous states, while \textsc{OmniFlow} serves recurring GUI fragments through verified reusable Functions.
+% }
+
+This paper makes the following contributions.
+
+\begin{itemize}
+    \item We identify repeated mobile GUI execution as a critical real-world serving workload for VLM-powered GUI agents, and formally characterize the workflow-level and GUI-state-level dynamics that render existing replay-based methods insufficient.
+    \item We design \textsc{OmniFlow}, an adaptive on-device replay system that overcomes mobile GUI dynamics through two cooperating mechanisms: fast on-device node matching on fine-grained execution trajectories to seamlessly alternate between memory reuse and VLM reasoning, and anchor-based action transfer to robustly execute recorded actions on live screens.
+    \item We implement and evaluate OmniFlow on several mobile GUI agents and representative benchmarks. Results show that \zl{xxx}.
+    % \item We design \textsc{OmniFlow}, an adaptive on-device replay system that leverages a fine-grained UI transition graph and fast on-device node matching to seamlessly alternate between trajectory reuse and VLM reasoning.
+    % \item We implement and evaluate \textsc{OmniFlow} on repeated mobile GUI tasks, showing that reusable Functions can reduce online model invocation cost while preserving fallback to the underlying GUI agent.
+    % \item OmniFlow's replay path requires no VLM and no embedding model: state matching and action transfer rely entirely on feature-engineered page vectors derived from accessibility-tree structure, so the full reuse pipeline runs on mobile CPU hardware with zero online model tokens on a cache hit, retaining only a lightweight chat LLM for cache-miss fallback.
+\end{itemize}

@@ -1,0 +1,40 @@
+{
+  "status": "passed",
+  "old_torch": "2.6.0",
+  "new_torch": "2.13.0",
+  "checks": [
+    {
+      "query_index": 0,
+      "fields_equal": {
+        "input_ids": true,
+        "attention_mask": true,
+        "pixel_values_videos": true,
+        "video_grid_thw": true,
+        "second_per_grid_ts": true
+      },
+      "sampling_trace_equal": true
+    },
+    {
+      "query_index": 1,
+      "fields_equal": {
+        "input_ids": true,
+        "attention_mask": true,
+        "pixel_values_videos": true,
+        "video_grid_thw": true,
+        "second_per_grid_ts": true
+      },
+      "sampling_trace_equal": true
+    },
+    {
+      "query_index": 2,
+      "fields_equal": {
+        "input_ids": true,
+        "attention_mask": true,
+        "pixel_values_videos": true,
+        "video_grid_thw": true,
+        "second_per_grid_ts": true
+      },
+      "sampling_trace_equal": true
+    }
+  ]
+}

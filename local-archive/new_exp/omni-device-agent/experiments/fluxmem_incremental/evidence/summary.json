@@ -1,0 +1,126 @@
+{
+  "status": "completed",
+  "schedules": {
+    "dense": {
+      "checkpoints": 41,
+      "all_visual_exact": true,
+      "all_memory_exact": true,
+      "conditions": {
+        "A": {
+          "vision_blocks": 861,
+          "match_calls": 1523,
+          "match_query_tokens": 182760,
+          "prune_frames": 703,
+          "merge_frames": 15,
+          "persistent_tensor_bytes": 0,
+          "python_object_bytes": 56,
+          "visual_seconds_total": 561.6353624139738,
+          "memory_seconds_total": 40.105069833036396
+        },
+        "B": {
+          "vision_blocks": 41,
+          "match_calls": 1523,
+          "match_query_tokens": 182760,
+          "prune_frames": 703,
+          "merge_frames": 15,
+          "persistent_tensor_bytes": 20152320,
+          "python_object_bytes": 3424,
+          "visual_seconds_total": 26.015782662958372,
+          "memory_seconds_total": 38.14576070998737
+        },
+        "C": {
+          "vision_blocks": 41,
+          "match_calls": 77,
+          "match_query_tokens": 9240,
+          "prune_frames": 37,
+          "merge_frames": 5,
+          "persistent_tensor_bytes": 60685064,
+          "python_object_bytes": 15468,
+          "visual_seconds_total": 26.873137998976745,
+          "memory_seconds_total": 2.3976356270577526
+        }
+      }
+    },
+    "questions": {
+      "checkpoints": 3,
+      "all_visual_exact": true,
+      "all_memory_exact": true,
+      "conditions": {
+        "A": {
+          "vision_blocks": 69,
+          "match_calls": 125,
+          "match_query_tokens": 15000,
+          "prune_frames": 59,
+          "merge_frames": 5,
+          "persistent_tensor_bytes": 0,
+          "python_object_bytes": 56,
+          "visual_seconds_total": 49.159674626003834,
+          "memory_seconds_total": 4.521863085014047
+        },
+        "B": {
+          "vision_blocks": 41,
+          "match_calls": 125,
+          "match_query_tokens": 15000,
+          "prune_frames": 59,
+          "merge_frames": 5,
+          "persistent_tensor_bytes": 20152320,
+          "python_object_bytes": 3424,
+          "visual_seconds_total": 26.95280583301792,
+          "memory_seconds_total": 3.065403125001467
+        },
+        "C": {
+          "vision_blocks": 41,
+          "match_calls": 77,
+          "match_query_tokens": 9240,
+          "prune_frames": 37,
+          "merge_frames": 5,
+          "persistent_tensor_bytes": 60685064,
+          "python_object_bytes": 15468,
+          "visual_seconds_total": 27.593265792005695,
+          "memory_seconds_total": 2.3096105409931624
+        }
+      }
+    }
+  },
+  "qa_calls": 9,
+  "qa_exact": true,
+  "copy_replay": {
+    "blocks": 41,
+    "equivalence": {
+      "indices_equal": true,
+      "features_bitwise_equal": true,
+      "max_abs_error": 0.0,
+      "tokens_a": 3087,
+      "tokens_b": 3087
+    },
+    "cat_clone_calls": {
+      "aten.clone.default": 87,
+      "aten.cat.default": 280
+    },
+    "cat_clone_logical_output_bytes": {
+      "aten.clone.default": 21167440,
+      "aten.cat.default": 848200800
+    },
+    "state": {
+      "tensor_storage_bytes": 60685064,
+      "storages": 131,
+      "python_object_bytes": 15468,
+      "components": {
+        "raw": 20152320,
+        "merged": 20152320,
+        "norm": 20152320,
+        "height": 39360,
+        "width": 39360,
+        "times": 39360,
+        "distance": 9840,
+        "keep": 4920,
+        "indices": 39360,
+        "grids": 55760,
+        "offsets": 144,
+        "frames": 0,
+        "short": 0,
+        "mid": 0
+      }
+    }
+  }
+}

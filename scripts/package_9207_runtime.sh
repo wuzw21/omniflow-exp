@@ -131,11 +131,9 @@ install_release() {
     codex/runtime-api:refs/remotes/runtime/release
   git -C "$transfer_root" merge --ff-only refs/remotes/runtime/release
 
-  mkdir -p "$flow_root/data/runtime/oob"
-  install -m 0644 "$payload/assets/oob/OOB-Experiment.apk" \
+  install -D -m 0644 "$payload/assets/oob/OOB-Experiment.apk" \
     "$flow_root/data/runtime/oob/OOB-Experiment.apk"
-  mkdir -p "$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17"
-  install -m 0644 "$payload/assets/omnitransfer/model.pt" \
+  install -D -m 0644 "$payload/assets/omnitransfer/model.pt" \
     "$transfer_root/output/point_sparse_graph_original_multimodal_v1/full_seed17/model.pt"
   home_root="$(cd "$omni_root/../.." && pwd)"
   sed \

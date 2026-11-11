@@ -1,0 +1,8 @@
+% Copy experience_reuse.pdf to your paper's figures/ directory.
+% Place this figure near the end of the motivation in the Introduction.
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/experience_reuse.pdf}
+  \caption{Experience reuse in OmniFlow. (a) Step-wise VLM reasoning creates a practical trade-off among task success, latency, and inference cost; the triangle is a conceptual illustration rather than an impossibility theorem. (b) Historical paths provide successful actions and source states that can be segmented into parameterized Functions. Intuitive transfer reasoning denotes learned cross-device action mapping: the intended action remains the same while the target layout changes. Reliable mappings enable direct execution, while uncertainty or failure returns control to the Planner/VLM. Reuse resumes when an applicable state is reached. The objective is to reduce VLM calls while preserving task success; net latency also depends on mapping and recovery overhead.}
+  \label{fig:experience-reuse-concept}
+\end{figure*}

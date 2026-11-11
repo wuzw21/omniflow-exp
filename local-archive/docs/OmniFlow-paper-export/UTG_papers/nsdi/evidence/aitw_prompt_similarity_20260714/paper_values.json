@@ -1,0 +1,102 @@
+{
+  "snapshot_date": "2026-07-14",
+  "experiment": "AITW prompt similarity characterization",
+  "sources": {
+    "official": "https://github.com/google-research/google-research/tree/master/android_in_the_wild",
+    "processed_index": "https://huggingface.co/datasets/KMK040412/aitw-processed-labeled-full",
+    "processed_steps": 5687349,
+    "processed_episodes": 714327,
+    "vocabulary_check": "The processed index matches the official unique-prompt count for each of the five AITW subsets."
+  },
+  "denominator": {
+    "definition": "Sum of the official unique-prompt counts within the five AITW subsets.",
+    "subset_level_prompt_entries": 30378,
+    "global_distinct_prompt_strings": 30165,
+    "cross_subset_duplicate_entries": 213
+  },
+  "method": {
+    "parameter_template": "Canonicalize case and punctuation, then mask URLs, email addresses, quoted values, and numeric values.",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "strict_semantic_threshold": 0.98,
+    "sensitivity_semantic_threshold": 0.95,
+    "similar_prompt_rule": "A prompt is counted when at least one other prompt shares its parameter template or passes the semantic threshold after contradiction filtering.",
+    "contradiction_filters": [
+      "on/off",
+      "enable/disable",
+      "install/uninstall",
+      "add/remove/delete",
+      "create/delete",
+      "open/close",
+      "show/hide",
+      "login/logout",
+      "subscribe/unsubscribe",
+      "allow/block",
+      "accept/reject",
+      "increase/decrease"
+    ]
+  },
+  "results": {
+    "parameter_template": {
+      "similar": 11052,
+      "total": 30378,
+      "rate": 0.3638159194153664,
+      "reported_rate_percent": 36.4
+    },
+    "strict_template_or_semantic_0_98": {
+      "similar": 22834,
+      "total": 30378,
+      "rate": 0.7516623872539338,
+      "reported_rate_percent": 75.2
+    },
+    "sensitivity_template_or_semantic_0_95": {
+      "similar": 26386,
+      "total": 30378,
+      "rate": 0.8685891105405228,
+      "reported_rate_percent": 86.9
+    }
+  },
+  "strict_by_subset": [
+    {
+      "subset": "General",
+      "similar": 69,
+      "total": 545,
+      "reported_rate_percent": 12.7
+    },
+    {
+      "subset": "GoogleApps",
+      "similar": 81,
+      "total": 306,
+      "reported_rate_percent": 26.5
+    },
+    {
+      "subset": "Install",
+      "similar": 549,
+      "total": 688,
+      "reported_rate_percent": 79.8
+    },
+    {
+      "subset": "Single",
+      "similar": 9151,
+      "total": 15366,
+      "reported_rate_percent": 59.6
+    },
+    {
+      "subset": "WebShopping",
+      "similar": 12984,
+      "total": 13473,
+      "reported_rate_percent": 96.4
+    }
+  ],
+  "interpretation": "Prompt-level similarity estimate and Function-reuse candidate workload upper bound.",
+  "not_supported": [
+    "paired-trace executable equivalence",
+    "Function cache-hit rate",
+    "end-to-end replay success",
+    "production workload coverage"
+  ],
+  "local_working_artifacts": {
+    "aitw_prompts_json_sha256": "811aa76f93fc746f88991424f62f72c5cb2a27a2aba0c9a9ed4ce0ba2bcb3e77",
+    "aitw_template_groups_json_sha256": "c0826eaf7972ddecc881cf3afede9b4c857cfffb9625aa462b1ffcc093562e72",
+    "aitw_prompt_embeddings_npy_sha256": "3b0c6f367fa5deb796b35f9d23d481d55701e95cd76aa72e29cf7a14c8077a1b"
+  }
+}

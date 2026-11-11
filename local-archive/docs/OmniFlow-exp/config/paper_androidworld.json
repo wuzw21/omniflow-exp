@@ -1,0 +1,65 @@
+{
+  "schema_version": "omniflow.androidworld.formal_protocol.v1",
+  "description": "The single formal AndroidWorld experiment configuration.",
+  "protocol": {
+    "task": "SystemBluetoothTurnOn",
+    "methods": [
+      "fixed_replay",
+      "omniflow",
+      "mobilegpt",
+      "appagent",
+      "t3a_hint"
+    ],
+    "enabled_methods": [
+      "fixed_replay",
+      "omniflow",
+      "mobilegpt",
+      "appagent",
+      "t3a_hint"
+    ],
+    "devices": [
+      {"label": "standard45562", "serial": "emulator-45562", "console_port": 45562, "avd": "OmniFlowTargetPixel6Pro", "api_level": 33, "profile": "pixel_6_pro", "resolution": "1440x3120"},
+      {"label": "fold45564", "serial": "emulator-45564", "console_port": 45564, "avd": "OmniFlowTargetFold", "api_level": 34, "profile": "pixel_fold", "resolution": "1768x2208"},
+      {"label": "tablet45554", "serial": "emulator-45554", "console_port": 45554, "avd": "WXGA_Tablet_test_00", "api_level": 33, "profile": "tablet", "resolution": "1280x800"}
+    ],
+    "source_device": {
+      "label": "source5560",
+      "serial": "emulator-5560",
+      "console_port": 5560,
+      "avd": "OmniFlowSourceSmall",
+      "api_level": 33,
+      "profile": "small_phone",
+      "resolution": "720x1280"
+    },
+    "source_seed": 111,
+    "evaluation_seed": 113,
+    "source_max_steps": 30,
+    "max_steps": 30,
+    "max_fallback_steps": 30,
+    "max_function_tools": 8,
+    "checker": {
+      "target_probability_threshold": 0.9
+    },
+    "droidrun": {
+      "version": "0.5.6",
+      "commit": "f726708fed2af56ef9311981effd74658fbf77c7",
+      "portal_version": "0.6.1",
+      "portal_commit": "db73fc7c2ff617e47e8952b2872674358da6c694"
+    },
+    "function_enhancement_timeout_sec": 300,
+    "bmoca_result_timeout_sec": 600,
+    "task_deadline_sec": 600,
+    "step_timeout_sec": 60,
+    "validator_flush_grace_sec": 300,
+    "fixed_task_seed": true,
+    "fixed_task_params": true,
+    "fold_state": 2,
+    "fold_size": "2208x1840",
+    "model": "Qwen3.6-Plus",
+    "omniflow_planner_model": "Qwen3.6-Plus",
+    "appagent_model": "Qwen3.6-Plus",
+    "model_endpoint_profile": "llmthu",
+    "model_base_url": "https://llmapi.paratera.com/v1",
+    "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef"
+  }
+}

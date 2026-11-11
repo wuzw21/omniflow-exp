@@ -1,0 +1,66 @@
+\documentclass[sigplan,10pt]{acmart}
+
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+\settopmatter{printfolios=true}
+
+\graphicspath{{../figures/}{figures/}}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}
+\usepackage{stfloats}
+\usepackage{xspace}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{comment}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+\newcommand{\zl}[1]{{\color{red}{#1}}}
+\newcommand{\wzw}[2]{{\color{blue}{#2}}}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+
+% Observation callout box
+\newcommand{\observation}[1]{%
+  \smallskip\noindent\fbox{\parbox{0.96\columnwidth}{%
+    \small\textbf{Observation.}~#1}}\smallskip}
+
+\newcommand{\sysname}{OmniFlow\xspace}
+\def\task-nums{30}
+
+\title{\sysname: Adaptive On-device Replay System for Mobile GUI Agents}
+
+\begin{document}
+
+\input{abstract}
+\maketitle
+\input{intro}
+\input{background}
+\input{design}
+\input{implementation}
+\input{evaluation}
+\input{discussion}
+\input{related}
+\input{conclusion}
+
+\appendix
+\input{appendix}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

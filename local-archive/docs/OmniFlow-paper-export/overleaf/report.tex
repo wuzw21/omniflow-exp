@@ -1,0 +1,414 @@
+\documentclass[sigplan,10pt]{acmart}
+
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+\settopmatter{printfolios=true}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xspace}
+\usepackage{microtype}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+
+\newcommand{\sysname}{OmniFlow\xspace}
+
+\title{Expanded Background and Related Work for \sysname}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Background: Mobile GUI Agents as Repeated Observe-Reason-Act Systems}
+
+Recent mobile GUI agents usually execute tasks through an
+observe-reason-act loop. At each step, the system observes the current screen
+through a screenshot, an accessibility tree, or both; constructs a prompt or
+structured state; asks an LLM or VLM to choose the next action; dispatches a
+tap, swipe, text input, back action, or app-level command; and repeats after the
+environment changes. AndroidWorld formalizes this setting as a dynamic Android
+benchmark with programmatic initialization, success checking, and teardown logic
+for 116 tasks across 20 real-world Android apps~\cite{rawles2025androidworld}.
+Android in the Wild (AITW) provides a much larger demonstration corpus with
+715K episodes, around 30K unique instructions, Android versions 10--13, and
+eight Pixel device types~\cite{rawles2023android}. These benchmarks make two
+facts clear. First, GUI agents need semantic interpretation of natural language
+and visual state. Second, the execution substrate is heterogeneous: device size,
+OS version, app state, account data, and available widget metadata all affect
+whether a recorded action can still be used.
+
+The cost profile of this loop is important for systems work. A step-wise agent
+pays model latency and token cost every time it asks the model to select the
+next action. V-Droid reports that prior high-performing agents on AndroidWorld
+can take tens of seconds per step, while its verifier-based design reaches
+4.3\,s per step and 59.5\% task success on
+AndroidWorld~\cite{dai2025advancing}. The key point for \sysname is that this is
+still per-step online decision making: the agent reduces the cost of each
+decision, yet a repeated routine still passes through the model or verifier for
+each screen transition. AndroidWorld also reports that its best baseline in the
+original benchmark completed 30.6\% of tasks, leaving significant headroom for
+robust mobile control~\cite{rawles2025androidworld}. In practice, even a fast
+per-step policy creates cumulative cost for long workflows, especially when the
+same or similar routines are repeated by many users.
+
+Repeated mobile behavior is not a corner case. Smartphone-use studies describe
+brief, repetitive checking behavior as a common usage
+pattern~\cite{oulasvirta2012habits}. App launching itself is sufficiently
+predictable that FALCON used location and temporal access patterns to prelaunch
+likely apps and reduce perceived launch delay~\cite{yan2012fast}. AITW's 715K
+episodes over roughly 30K unique instructions further suggests that
+device-control workloads contain repeated task forms even when the concrete
+screen state and parameters vary~\cite{rawles2023android}. This motivates a
+cache-system view of GUI agents. If a user, device, or prior execution has
+already produced a verified route through a repeated GUI segment, later
+executions should be able to reuse that segment without asking the online model
+to reinterpret every screen.
+
+The challenge is that GUI reuse is harder than replaying an API call. Android
+accessibility trees expose bounds and hierarchy reliably when elements are
+visible, while semantic fields such as \texttt{resource-id}, \texttt{text}, and
+\texttt{content-desc} depend on developer annotation, framework behavior, and
+app implementation. WebView, custom-rendered views, obfuscated identifiers,
+dynamic list content, dialogs, IME overlays, and account-specific state make raw
+coordinate replay and exact selector replay fragile. A UI transition graph
+(UTG) captures useful structure: nodes represent GUI states and edges represent
+actions or transitions. However, a graph built from raw XML snapshots or static
+window transitions records possible movement through an interface; it does not
+by itself decide whether a historical action has the same task effect in the
+current state. For \sysname, the reusable object therefore has to combine state
+localization, target transfer, and effect checking. The paper's current
+abstraction is a \texttt{Function}: a reusable executable task segment tied to a
+start condition, action evidence, transfer logic, and terminal/effect
+verification. \texttt{PageVectorSet} provides a privacy-bounded state key for
+candidate recall, and \texttt{run\_log -> function asset} turns successful
+executions into future cache entries.
+
+\section{Related Work}
+
+\subsection{Record-and-Replay and Programming by Demonstration}
+
+Classic mobile automation systems show the value of executable reuse. RERAN
+records low-level Android input events and replays timing-sensitive gestures and
+sensor events~\cite{gomez2013reran}. Its strength is fidelity: it captures the
+real event stream rather than a symbolic approximation of user input. This makes
+it valuable for reproducing executions during testing or debugging. Its
+limitation follows from the same design. The replay is tied to the recorded
+device state, timing, layout, and app behavior. When an element shifts, a dialog
+appears, or a list item moves, replaying the same event stream can target the
+wrong location or fail to produce the intended task effect.
+
+SUGILITE takes a higher-level programming-by-demonstration approach for
+smartphone automation~\cite{li2017sugilite}. A user demonstrates a task directly
+in Android apps, and the system uses the accessibility API to construct an
+automation script that can later be invoked through natural language. This line
+of work is important because it treats repeated GUI work as something that users
+should not have to reperform manually. It also shows a limitation that remains
+central for GUI-agent cache systems: demonstrations must be generalized from
+observed widgets and states to future states. If the future UI lacks stable
+attributes or appears in a different layout/context, the demonstration needs
+repair, clarification, or a fallback path.
+
+DroidBot and related GUI-testing tools construct state-transition models during
+exploration~\cite{droidbot}. DroidBot can generate a UTG from UI-guided testing
+and use that graph to guide future exploration. Static analysis work such as
+GATOR's window transition graph estimates possible Android GUI transitions from
+application code~\cite{gator}. These systems provide graph structure, but their
+objective is testing or static modeling rather than executing user goals from
+natural language under dynamic state. Static graphs can over-approximate
+infeasible transitions or miss runtime-only transitions; dynamic exploration
+graphs depend on coverage and collected app states. \sysname uses a graph
+vocabulary because state and transition structure are useful, while the cache
+object is a verified \texttt{Function} with start-node preconditions and
+terminal/effect checks.
+
+\subsection{Memory-Based Mobile GUI Agents}
+
+AutoDroid is a representative memory-augmented mobile GUI
+agent~\cite{wen2024autodroid}. Its method combines LLM commonsense with
+app-specific knowledge collected through automated dynamic analysis. The system
+builds a functionality-aware UI representation, injects exploration-based
+memory to augment the LLM with app knowledge, and uses multi-granularity query
+optimization to reduce inference cost. It reports 90.9\% action accuracy and
+71.3\% task success on a benchmark of 158 common tasks, outperforming
+GPT-4-powered baselines by 36.4\% in action accuracy and 39.7\% in task
+success. AutoDroid therefore demonstrates that app memory and structured UI
+representation can materially improve task automation.
+
+The limitation for \sysname's target problem is the execution boundary.
+AutoDroid still treats memory mainly as knowledge for the LLM's decision
+process. The memory helps the model understand app-specific states and actions,
+but a repeated task is not necessarily served as a directly executable cache hit
+that skips online reasoning for the matched segment. The app-specific
+exploration phase also creates a cold-start cost and a deployment question:
+users or hosts need a way to collect, store, and update app memory before reuse
+becomes available. For a cache-first system, the reusable unit has to be
+callable by the execution runtime, guarded by state/effect evidence, and written
+back from accepted run logs instead of existing only as prompt context.
+
+MobileGPT makes the reuse goal more explicit through a human-like app memory
+pipeline~\cite{lee2024mobilegpt}. It frames mobile task learning as explore,
+select, derive, and recall. The agent explores an app, selects relevant
+knowledge, derives reusable subtask procedures, and recalls them for later
+tasks. It evaluates on 185 tasks across 18 apps and reports 82.7\% accuracy for
+automating and learning new tasks, 98.75\% adaptation accuracy across contexts,
+and latency/cost reductions of 62.5\% and 68.8\% relative to a GPT-4 baseline.
+This is strong evidence that memory over prior task experience can reduce
+repeated cost.
+
+MobileGPT's limitation is also instructive. A human-like memory stores
+procedures and app knowledge that the LLM can recall and adapt. The online agent
+still needs to bind recalled knowledge to the current screen, and the memory is
+not the same object as a guarded executable cache entry. When UI attributes are
+missing, list content changes, or app state diverges from the learned procedure,
+the system has to adapt through the current reasoning loop. \sysname's
+\texttt{Function} boundary targets a narrower but more directly executable form
+of reuse: if the current state satisfies the start precondition and transfer
+checks, the runtime executes the cached segment under
+\texttt{control-aware execution}; if checks fail, the host agent remains the
+fallback.
+
+AppAgent uses autonomous exploration or human demonstrations to build an app
+knowledge base for a multimodal smartphone agent~\cite{zhang2025appagent}. It
+operates through a simplified action space that mimics user interactions such as
+taps and swipes, and it was tested on 50 tasks across 10 applications. AppAgent
+is relevant because it shows that exploration documents and demonstrations can
+help a general multimodal agent operate unfamiliar apps. Its reuse unit,
+however, remains knowledge for future decisions. It does not define a shared,
+privacy-bounded \texttt{PageVectorSet} state key or a
+\texttt{run\_log -> function asset} lifecycle in which verified executions
+become executable cache assets.
+
+\subsection{Programmatic and State-Machine GUI Agents}
+
+Programmatic GUI agents move beyond prompting by converting task knowledge into
+executable code or state-machine plans. AutoDroid-V2 adopts a full task-level
+script generation approach for mobile GUI agents~\cite{autodroid-v2}. Its
+motivation is to make small-language-model GUI agents more effective by
+generating code that can execute task logic. This direction is useful for
+repeated workflows because executable scripts can reduce repeated
+natural-language reasoning. The tradeoff is that task-level scripts need a
+stable enough app model, current-state alignment, and error handling when the
+live UI deviates from the generated assumptions. A complete task script is also
+a relatively coarse reuse object: if the beginning of a workflow changes while
+the effect-carrying middle segment is still valid, the script needs repair or
+regeneration.
+
+ActionEngine is a recent state-machine-memory system that shifts GUI agents
+from reactive step-by-step operation to programmatic
+execution~\cite{zhong2026actionengine}. It uses a Crawling Agent to construct an
+updatable state-machine memory through offline exploration and an Execution
+Agent to synthesize complete Python programs for online task execution. On
+Reddit tasks from WebArena, it reports 95\% task success with about one LLM call
+on average, 11.8$\times$ cost reduction, and 2$\times$ end-to-end latency
+reduction compared with a strong vision-only baseline. ActionEngine is close to
+\sysname in recognizing that a GUI can be reused through a state-machine-like
+memory rather than reinterpreted at every step.
+
+The boundary remains different. ActionEngine's reported result is a web task
+setting, and the method depends on an offline crawler building a state-machine
+memory from the target GUI. Execution failures trigger vision-based re-grounding
+and memory updates. \sysname's mobile setting has stronger device heterogeneity,
+privacy, and app-state constraints. The paper's current contribution should
+therefore avoid claiming a broad superiority over state-machine agents. The
+precise gap is that \sysname makes the cache unit a \texttt{Function} derived
+from accepted run logs, uses \texttt{PageVectorSet} as the privacy-bounded
+state-recall object, and requires start-node, route-only bridge, action
+transfer, and terminal/effect verification before a cache hit is counted as
+successful.
+
+AgentProg addresses long-horizon GUI tasks from the context-management
+angle~\cite{tian2025agentprog}. It represents interaction history as a program
+with variables and control flow, and it adds a global belief state to handle
+partial observability and environmental change. This is important because long
+GUI tasks quickly accumulate history that can overflow or dilute model context.
+AgentProg's limitation relative to \sysname is that it optimizes what the online
+agent retains and reasons over, while \sysname aims to bypass online reasoning
+for already matched \texttt{Function} segments. Program-guided context
+management and cache-first execution are complementary: a host agent can use
+program-style memory for misses and long-horizon fallback, while \sysname serves
+verified repeated segments as function-cache hits.
+
+\subsection{Verifier-Based and Per-Step Acceleration}
+
+V-Droid changes the role of the model from generator to
+verifier~\cite{dai2025advancing}. Instead of asking the LLM to
+autoregressively produce an action, it constructs a discretized action space and
+asks a trained verifier to score candidate actions. The method includes
+prefilling-only verification for speed, pair-wise progress-preference training,
+and a scalable human-agent annotation loop. The reported model uses
+Llama-3.1-8B and 110K collaboratively annotated samples across four rounds. It
+reports 59.5\% success on AndroidWorld, 38.3\% on AndroidLab, and 49\% on
+MobileAgentBench; the paper also reports 4.3\,s step-wise latency and 0.74\,s
+decision latency in the AndroidWorld comparison table.
+
+V-Droid is strong evidence that mobile GUI agents can be made faster and more
+accurate without relying on very large cloud models for every action. Its
+limitation for repeated-work reuse is structural: a verifier still evaluates
+candidates on each step. A cache-first system asks a different question. For a
+matched repeated segment, can the system skip the online decision and execute a
+previously accepted \texttt{Function} directly, with only local checks and
+effect verification? \sysname should be framed as complementary to V-Droid
+rather than as a replacement. A verifier-based agent can serve as the host
+fallback for misses, ambiguous matches, unsafe transfers, or novel states.
+
+Other per-step acceleration methods reduce the amount of visual or historical
+context sent into the model. ShowUI builds a vision-language-action model for
+GUI agents with UI-guided visual-token selection and interleaved
+vision-language-action streaming~\cite{lin2025showui}. It reports a 2B model
+trained with 256K data, 75.1\% zero-shot screenshot grounding accuracy, 33\%
+redundant visual-token reduction during training, and 1.4$\times$ speedup.
+FocusUI targets efficient UI grounding by selecting instruction-relevant visual
+tokens while preserving positional continuity through
+PosPad~\cite{ouyang2026focusui}. It reports that FocusUI-7B improves
+ScreenSpot-Pro performance by 3.7\% over GUI-Actor-7B and, with 30\% visual-token
+retention, drops only 3.2\% while achieving up to 1.44$\times$ faster inference
+and 17\% lower peak GPU memory.
+
+These methods are valuable because high-resolution UI screenshots create heavy
+visual-token workloads. Their limitation is that they optimize the current model
+call rather than removing the need for the model call on repeated segments. They
+help a host agent decide what to do on a screen; they do not by themselves turn
+a successful historical run into a callable \texttt{Function} cache entry.
+\sysname's benefit should be stated at the segment boundary: a cache hit skips
+online reasoning for the matched \texttt{Function}, while per-step accelerators
+remain useful for miss handling, fallback, and new or ambiguous states.
+
+\subsection{GUI Grounding Models}
+
+GUI grounding models address the target-localization subproblem. SeeClick
+trains a visual GUI agent that relies only on screenshots and introduces
+ScreenSpot, a grounding benchmark spanning mobile, desktop, and web
+environments~\cite{cheng2024seeclick}. Its key insight is that many GUI agents
+depend on long structured representations such as HTML or accessibility trees,
+while screenshots are universal across platforms. UGround similarly advocates
+visual-only GUI grounding and trains on 10M elements from 1.3M screenshots; it
+reports up to 20\% absolute improvement over prior GUI visual grounding models
+and shows gains in downstream agent settings~\cite{gou2024uground}. These
+models are especially relevant when accessibility metadata is missing, noisy, or
+unavailable.
+
+The limitation is runtime and problem scope. A visual grounding model receives
+an instruction and current screenshot, then predicts a coordinate or element.
+This solves the zero-prior grounding problem. \sysname's transfer setting has a
+different prior: the system already has a successful source run, a source
+action, neighboring anchors, and a candidate current state. The task is to
+rebind a recorded action to the current GUI under a cache-hit contract. A
+grounding model could be used as a fallback oracle when structural transfer is
+ambiguous, but using a VLM for every cached step would reintroduce the per-step
+model cost that cache-first execution is designed to avoid.
+
+This distinction is important for fair related work. GUI grounding papers should
+not be described as weak baselines. They solve a broad and difficult
+generalization problem from screenshot and language alone. \sysname narrows the
+online problem by spending prior execution evidence: a \texttt{Function} carries
+source context and effect evidence, \texttt{PageVectorSet} narrows the candidate
+state family, and \texttt{control-aware execution} rejects or falls back when the
+transfer evidence is insufficient.
+
+\subsection{Benchmarks, Datasets, and What They Measure}
+
+AndroidWorld and AITW support different evaluation questions. AITW measures
+learning from large-scale demonstrations across device versions, screen sizes,
+applications, and natural-language instructions~\cite{rawles2023android}. It
+highlights visual robustness and variation in user commands. AndroidWorld
+measures live task execution with programmatic success signals over 116 tasks
+and 20 apps~\cite{rawles2025androidworld}. It is stronger for end-to-end
+validation because each task has initialization and success-checking logic, but
+it still evaluates agents under benchmark-specific task definitions.
+
+MobileViews contributes scale for representation and grounding
+analysis~\cite{mobileviews}. Recent descriptions report a million-scale mobile
+GUI dataset with over 1.2M unique screens from more than 30K Android apps, and
+earlier versions report hundreds of thousands of screenshot-view-hierarchy pairs
+over more than 20K apps. Such datasets are useful for studying how often UI
+attributes are present, how often WebView or container controls obscure semantic
+signals, and how representation methods behave across app families. They do not
+directly certify task success unless paired with action, state transition, and
+effect labels.
+
+For \sysname, this means the evaluation narrative should keep three measurements
+separate. First, representation recall asks whether \texttt{PageVectorSet}
+retrieves the correct state family or \texttt{Function} candidates. Second,
+action transfer asks whether a recorded action can be safely rebound to the
+current GUI. Third, end-to-end success asks whether the whole task reaches a
+terminal/effect condition under the benchmark oracle or app-specific verifier. A
+high recall number alone is not a live execution guarantee, and a live success
+number from one bounded workload is not a production-scale network-effect
+result.
+
+\subsection{Positioning of \sysname}
+
+The related work suggests a precise gap. Record-and-replay systems provide
+executable reuse, but their memory is tightly bound to the recorded path and
+device state. Memory-based GUI agents reuse app knowledge, but much of the reuse
+remains prompt or procedure context for online model decisions. Programmatic
+agents synthesize executable plans, but they commonly depend on upfront
+exploration or coarse task programs that need repair when the live GUI diverges.
+Per-step acceleration and visual grounding make each decision cheaper or more
+accurate, while repeated workflows still incur online decisions.
+
+\sysname's paper should state a narrow affirmative claim. It treats successful
+GUI executions as a cache construction source. A canonical \texttt{run\_log}
+becomes a reusable \texttt{Function} asset. A cache lookup retrieves candidate
+\texttt{Functions} and compact state evidence. \texttt{PageVectorSet} provides
+privacy-bounded state recall without sharing raw screenshots, raw XML, or raw
+text as the primary shared object. On a cache hit, Flow checks the start-node
+precondition, optionally uses route-only navigation to reach the start state,
+transfers recorded actions through source-current evidence, and verifies
+terminal/effect evidence under \texttt{control-aware execution}. Misses, unsafe
+matches, ambiguous transfers, or failed checks return to the host agent or
+fallback path.
+
+This positioning avoids overclaiming. \sysname does not need to be a new
+foundation GUI planner. It does not need to make first-run exploration free. It
+does not need to prove that \texttt{PageVectorSet} alone guarantees correct
+execution. The contribution is a cache-system boundary for repeated GUI work:
+accepted execution evidence becomes callable assets, cache hits skip online
+reasoning for matched \texttt{Function} segments, and shared reuse is governed
+by compact state representation plus verification rather than raw replay.
+
+
+\begin{table*}[t]
+\centering
+\small
+\caption{Method-level comparison for background and related work. Metrics in
+this table are reported by the cited papers and are not \sysname evaluation
+results.}
+\label{tab:expanded-related-summary}
+\begin{tabularx}{\textwidth}{@{}p{0.12\textwidth}p{0.15\textwidth}X X X@{}}
+\toprule
+\textbf{Direction} & \textbf{Representative work} & \textbf{Method} & \textbf{Reported metrics from source} & \textbf{Limitation for \sysname's target problem} \\
+\midrule
+Record/replay & RERAN~\cite{gomez2013reran} & Captures and replays low-level Android input and sensor events with timing fidelity. & Focuses on replay fidelity for Android executions. & Tied to recorded timing, device state, and layout; lacks semantic/effect verification for changed GUI state. \\
+\addlinespace
+Programming by demonstration & SUGILITE~\cite{li2017sugilite} & User demonstrates an Android task; accessibility APIs support later automation from a verbal command. & Demonstrates end-user smartphone automation by demonstration. & Generalization depends on future UI attributes and state compatibility. \\
+\addlinespace
+App-memory agent & AutoDroid~\cite{wen2024autodroid} & Automated exploration builds app-specific memory and functionality-aware UI representation for LLM execution. & 90.9\% action accuracy and 71.3\% task success on 158 tasks. & Memory guides online decisions; app exploration is a cold-start cost; direct executable cache-hit semantics are outside its main boundary. \\
+\addlinespace
+Human-like memory & MobileGPT~\cite{lee2024mobilegpt} & Explore, select, derive, and recall; stores modular procedures and app memory. & 82.7\% task learning/automation accuracy; 98.75\% context adaptation; 62.5\% latency and 68.8\% cost reduction vs. GPT-4 baseline. & Recalled memory still needs current-state binding and online adaptation. \\
+\addlinespace
+Knowledge-base multimodal agent & AppAgent~\cite{zhang2025appagent} & Exploration or demonstrations build a knowledge base for a multimodal smartphone agent. & Tested on 50 tasks in 10 apps. & Knowledge base supports reasoning; it is not a verified \texttt{Function} cache store. \\
+\addlinespace
+Programmatic state memory & ActionEngine~\cite{zhong2026actionengine} & Crawling Agent builds state-machine memory; Execution Agent synthesizes Python programs. & 95\% success on Reddit/WebArena tasks; about one LLM call on average; 11.8$\times$ cost reduction and 2$\times$ latency reduction. & Depends on offline crawling and program repair; reported setting is web tasks; live mobile heterogeneity and privacy-bounded sharing require separate treatment. \\
+\addlinespace
+Long-horizon context management & AgentProg~\cite{tian2025agentprog} & Represents interaction history as program variables/control flow with a global belief state. & Reports state-of-the-art results on AndroidWorld and extended long-horizon tasks. & Optimizes retained context for the online agent; repeated matched segments still need a cache-execution boundary to skip online reasoning. \\
+\addlinespace
+Verifier agent & V-Droid~\cite{dai2025advancing} & Scores discrete candidate actions with a trained verifier and prefilling-only workflow. & 59.5\% AndroidWorld success; 38.3\% AndroidLab; 49\% MobileAgentBench; 4.3\,s step latency; 0.74\,s decision latency in the reported table. & Strong per-step decision method; repeated routines still involve verifier calls at each step. \\
+\addlinespace
+Visual grounding & SeeClick and UGround~\cite{cheng2024seeclick,gou2024uground} & Screenshot-only GUI grounding to locate actionable elements. & SeeClick introduces ScreenSpot; UGround trains on 10M elements from 1.3M screenshots and reports up to 20\% absolute improvement over prior GUI grounding models. & Solves zero-prior grounding; using it on every cached step reintroduces model inference. \\
+\addlinespace
+Visual-token acceleration & ShowUI and FocusUI~\cite{lin2025showui,ouyang2026focusui} & Selects or preserves important visual tokens for faster GUI grounding/agent inference. & ShowUI reports 75.1\% zero-shot grounding, 33\% redundant-token reduction, and 1.4$\times$ speedup; FocusUI reports 1.44$\times$ faster inference and 17\% lower peak GPU memory with 30\% token retention. & Reduces model-call cost; cache-first reuse removes model calls for matched \texttt{Function} segments. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

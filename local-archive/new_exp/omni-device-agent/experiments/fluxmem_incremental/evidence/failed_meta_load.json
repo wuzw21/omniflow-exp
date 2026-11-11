@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "torch": "2.13.0",
+  "hardware": {
+    "chip": "Apple M4",
+    "ram_bytes": 17179869184
+  },
+  "upstream_commit": "6fdbf65b6f2af1a94ca41d542be5be86a565d338",
+  "upstream_diff": "",
+  "input_manifest_sha256": "b1140e7185106a5120a6d27db3fe4338da41d1c22bbc700df80f32030f57355b",
+  "records": [],
+  "snapshots": [],
+  "source_hashes": {
+    "audit.py": "64eb506e4263464d09b096ed14d4d243ac948e16bc4238161113e08f0de7296e",
+    "state.py": "502cf404e39f21648f49b104cf48ae74853f3c0d13ed9e70af8cfdddbdfe527c",
+    "prepare.py": "1e827ca38512b5fc1c7ca7e76f110eadb32b58b43080ef442cca0eb7973b1d99",
+    "PROTOCOL.md": "7380f21850021e8574a19b6e99827cb38cb4471804467939792a8696e159eaf6"
+  },
+  "error": "Traceback (most recent call last):\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/experiments/fluxmem_incremental/audit.py\", line 36, in <module>\n    info=vision.load_state_dict(weights,strict=True,assign=True);vision=vision.to('mps').eval();del weights\n                                                                        ^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/transformers/modeling_utils.py\", line 3712, in to\n    return super().to(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1383, in to\n    return self._apply(convert)\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 933, in _apply\n    module._apply(fn)\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1034, in _apply\n    self._buffers[key] = fn(buf)\n                         ^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1376, in convert\n    raise NotImplementedError(\nNotImplementedError: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.\n"
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OmniFlow failure input manifest (gzip JSON)",
+  "type": "object",
+  "required": ["schema_version", "action", "source", "target"],
+  "properties": {
+    "schema_version": {"const": "omniflow.failure-inputs.v1"},
+    "action": {
+      "type": "object", "required": ["tool", "args"],
+      "properties": {"tool": {"type": "string"}, "args": {"type": "object"}},
+      "additionalProperties": false
+    },
+    "source": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}\\.json\\.gz$"},
+    "target": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}\\.json\\.gz$"}
+  },
+  "additionalProperties": false
+}

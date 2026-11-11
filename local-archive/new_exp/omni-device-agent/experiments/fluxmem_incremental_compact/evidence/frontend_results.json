@@ -1,0 +1,3373 @@
+{
+  "status": "completed",
+  "mode": "frontend",
+  "pairs_requested": 6,
+  "torch": "2.13.0",
+  "chip": "Apple M4",
+  "ram_bytes": 17179869184,
+  "input_manifest_sha256": "b1140e7185106a5120a6d27db3fe4338da41d1c22bbc700df80f32030f57355b",
+  "audit_sha256": "059af0313894ed7669cf458b43df3b12c97a53dd6a727506815376d3f89f62af",
+  "source_hashes": {
+    "benchmark.py": "e62f87876a75911f882ee1b0c1c3667f2868d30c727314913de57bfc71e6dece",
+    "compact.py": "4d0ea7688344df264a98ddd7cf70c1fdfa266a810baab38ecdd25138573a1838",
+    "PROTOCOL.md": "7303da2abf3610128dc54abf92ddf6f11281e6f3d0a60f7481654d71878084b1"
+  },
+  "runs": [
+    {
+      "condition": "B",
+      "pair": -1,
+      "warmup": true,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 277741568,
+              "physical_footprint_bytes": 3431040752,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2458337280
+            },
+            "sampled_peak": {
+              "rss_bytes": 398000128,
+              "physical_footprint_bytes": 3461203936,
+              "mps_allocated_bytes": 1408201728,
+              "mps_driver_bytes": 2469150720
+            },
+            "samples": 90,
+            "seconds": 1.3384201250009937,
+            "after": {
+              "rss_bytes": 398000128,
+              "physical_footprint_bytes": 3461203936,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2469134336
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 398000128,
+              "physical_footprint_bytes": 3461203936,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2469134336
+            },
+            "sampled_peak": {
+              "rss_bytes": 412418048,
+              "physical_footprint_bytes": 3480700896,
+              "mps_allocated_bytes": 1406342656,
+              "mps_driver_bytes": 2478637056
+            },
+            "samples": 6,
+            "seconds": 0.04324029199779034,
+            "after": {
+              "rss_bytes": 412418048,
+              "physical_footprint_bytes": 3480700896,
+              "mps_allocated_bytes": 1397766656,
+              "mps_driver_bytes": 2478637056
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 413859840,
+              "physical_footprint_bytes": 3481634784,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2478653440
+            },
+            "sampled_peak": {
+              "rss_bytes": 451379200,
+              "physical_footprint_bytes": 3482830816,
+              "mps_allocated_bytes": 1427227136,
+              "mps_driver_bytes": 2487058432
+            },
+            "samples": 970,
+            "seconds": 14.74292725000123,
+            "after": {
+              "rss_bytes": 421216256,
+              "physical_footprint_bytes": 3242886920,
+              "mps_allocated_bytes": 1409094144,
+              "mps_driver_bytes": 2487042048
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 421216256,
+              "physical_footprint_bytes": 3242886920,
+              "mps_allocated_bytes": 1409094144,
+              "mps_driver_bytes": 2487042048
+            },
+            "sampled_peak": {
+              "rss_bytes": 438714368,
+              "physical_footprint_bytes": 3269248776,
+              "mps_allocated_bytes": 1472487424,
+              "mps_driver_bytes": 2503901184
+            },
+            "samples": 123,
+            "seconds": 1.5002525000018068,
+            "after": {
+              "rss_bytes": 438714368,
+              "physical_footprint_bytes": 3269248776,
+              "mps_allocated_bytes": 1442551296,
+              "mps_driver_bytes": 2503884800
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 439533568,
+              "physical_footprint_bytes": 3269379848,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2503901184
+            },
+            "sampled_peak": {
+              "rss_bytes": 465731584,
+              "physical_footprint_bytes": 3270067976,
+              "mps_allocated_bytes": 1430865408,
+              "mps_driver_bytes": 2505031680
+            },
+            "samples": 618,
+            "seconds": 9.356966624996858,
+            "after": {
+              "rss_bytes": 347783168,
+              "physical_footprint_bytes": 3269805832,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2503901184
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 347815936,
+              "physical_footprint_bytes": 3269805832,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2503901184
+            },
+            "sampled_peak": {
+              "rss_bytes": 355975168,
+              "physical_footprint_bytes": 3303098168,
+              "mps_allocated_bytes": 1507135744,
+              "mps_driver_bytes": 2512437248
+            },
+            "samples": 175,
+            "seconds": 2.1215403329988476,
+            "after": {
+              "rss_bytes": 326828032,
+              "physical_footprint_bytes": 3303098168,
+              "mps_allocated_bytes": 1456804864,
+              "mps_driver_bytes": 2512420864
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 25.43831399999908,
+      "memory_seconds": 3.6650331249984447,
+      "total_seconds": 29.103347124997526,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "C2",
+      "pair": -1,
+      "warmup": true,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 489455616,
+              "physical_footprint_bytes": 3303835448,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512437248
+            },
+            "sampled_peak": {
+              "rss_bytes": 492044288,
+              "physical_footprint_bytes": 3305080632,
+              "mps_allocated_bytes": 1416872448,
+              "mps_driver_bytes": 2512453632
+            },
+            "samples": 81,
+            "seconds": 1.2217483340064064,
+            "after": {
+              "rss_bytes": 492044288,
+              "physical_footprint_bytes": 3304900408,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512437248
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 492044288,
+              "physical_footprint_bytes": 3304900408,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512437248
+            },
+            "sampled_peak": {
+              "rss_bytes": 497238016,
+              "physical_footprint_bytes": 3309963064,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            },
+            "samples": 4,
+            "seconds": 0.018138042010832578,
+            "after": {
+              "rss_bytes": 497238016,
+              "physical_footprint_bytes": 3309963064,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 497352704,
+              "physical_footprint_bytes": 3309963064,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 497352704,
+              "physical_footprint_bytes": 3310241592,
+              "mps_allocated_bytes": 1424998144,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 968,
+            "seconds": 14.647313417008263,
+            "after": {
+              "rss_bytes": 433094656,
+              "physical_footprint_bytes": 3310110520,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 433192960,
+              "physical_footprint_bytes": 3310110520,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 435552256,
+              "physical_footprint_bytes": 3310438200,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 103,
+            "seconds": 1.2293764999922132,
+            "after": {
+              "rss_bytes": 422412288,
+              "physical_footprint_bytes": 3310323512,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 423280640,
+              "physical_footprint_bytes": 3310339896,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 437141504,
+              "physical_footprint_bytes": 3310421816,
+              "mps_allocated_bytes": 1433317376,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 618,
+            "seconds": 9.427790832996834,
+            "after": {
+              "rss_bytes": 244187136,
+              "physical_footprint_bytes": 3310176056,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 244187136,
+              "physical_footprint_bytes": 3310176056,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 244596736,
+              "physical_footprint_bytes": 3310651192,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 84,
+            "seconds": 1.0150868750060908,
+            "after": {
+              "rss_bytes": 240549888,
+              "physical_footprint_bytes": 3310651192,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 25.296852584011503,
+      "memory_seconds": 2.2626014170091366,
+      "total_seconds": 27.55945400102064,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "B",
+      "pair": 0,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 405078016,
+              "physical_footprint_bytes": 3310651192,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 408485888,
+              "physical_footprint_bytes": 3310683960,
+              "mps_allocated_bytes": 1409730048,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 83,
+            "seconds": 1.2449625410081353,
+            "after": {
+              "rss_bytes": 394838016,
+              "physical_footprint_bytes": 3310683960,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 394838016,
+              "physical_footprint_bytes": 3310683960,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 398557184,
+              "physical_footprint_bytes": 3311109944,
+              "mps_allocated_bytes": 1398196992,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 4,
+            "seconds": 0.020847667008638382,
+            "after": {
+              "rss_bytes": 398557184,
+              "physical_footprint_bytes": 3311109944,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 398835712,
+              "physical_footprint_bytes": 3311109944,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 422068224,
+              "physical_footprint_bytes": 3311109944,
+              "mps_allocated_bytes": 1420543488,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1006,
+            "seconds": 15.110336249999818,
+            "after": {
+              "rss_bytes": 209584128,
+              "physical_footprint_bytes": 3310520120,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 209731584,
+              "physical_footprint_bytes": 3310520120,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 218988544,
+              "physical_footprint_bytes": 3311388472,
+              "mps_allocated_bytes": 1467071232,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 99,
+            "seconds": 1.1930452920059906,
+            "after": {
+              "rss_bytes": 199737344,
+              "physical_footprint_bytes": 3311388472,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 200753152,
+              "physical_footprint_bytes": 3311388472,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 200753152,
+              "physical_footprint_bytes": 3311404856,
+              "mps_allocated_bytes": 1431356928,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 636,
+            "seconds": 9.581170207995456,
+            "after": {
+              "rss_bytes": 169017344,
+              "physical_footprint_bytes": 3310700344,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 169181184,
+              "physical_footprint_bytes": 3310700344,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 181026816,
+              "physical_footprint_bytes": 3311585080,
+              "mps_allocated_bytes": 1496954112,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 177,
+            "seconds": 2.119460791000165,
+            "after": {
+              "rss_bytes": 179716096,
+              "physical_footprint_bytes": 3311044408,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 25.93646899900341,
+      "memory_seconds": 3.333353750014794,
+      "total_seconds": 29.269822749018203,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "C2",
+      "pair": 0,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 342704128,
+              "physical_footprint_bytes": 3311044408,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 346685440,
+              "physical_footprint_bytes": 3311159096,
+              "mps_allocated_bytes": 1407272704,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 82,
+            "seconds": 1.2421527080005035,
+            "after": {
+              "rss_bytes": 346685440,
+              "physical_footprint_bytes": 3310946104,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 346685440,
+              "physical_footprint_bytes": 3310946104,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 348930048,
+              "physical_footprint_bytes": 3311208248,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            },
+            "samples": 3,
+            "seconds": 0.0053627919987775385,
+            "after": {
+              "rss_bytes": 348930048,
+              "physical_footprint_bytes": 3311208248,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 349208576,
+              "physical_footprint_bytes": 3311208248,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 360513536,
+              "physical_footprint_bytes": 3311486776,
+              "mps_allocated_bytes": 1422064384,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 972,
+            "seconds": 14.691000125007122,
+            "after": {
+              "rss_bytes": 193200128,
+              "physical_footprint_bytes": 3311093560,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 193347584,
+              "physical_footprint_bytes": 3311093560,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 199426048,
+              "physical_footprint_bytes": 3311339320,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 94,
+            "seconds": 1.1327432499965653,
+            "after": {
+              "rss_bytes": 199426048,
+              "physical_footprint_bytes": 3311224632,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 200736768,
+              "physical_footprint_bytes": 3311224632,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 233635840,
+              "physical_footprint_bytes": 3311306552,
+              "mps_allocated_bytes": 1436354816,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 591,
+            "seconds": 8.96734612500586,
+            "after": {
+              "rss_bytes": 233635840,
+              "physical_footprint_bytes": 3311306552,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 233635840,
+              "physical_footprint_bytes": 3311306552,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 244400128,
+              "physical_footprint_bytes": 3311667000,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 74,
+            "seconds": 0.8787602079974022,
+            "after": {
+              "rss_bytes": 244400128,
+              "physical_footprint_bytes": 3311667000,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 24.900498958013486,
+      "memory_seconds": 2.016866249992745,
+      "total_seconds": 26.91736520800623,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "C2",
+      "pair": 1,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 410370048,
+              "physical_footprint_bytes": 3311667000,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 415170560,
+              "physical_footprint_bytes": 3311699768,
+              "mps_allocated_bytes": 1407272704,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 81,
+            "seconds": 1.2179227079905104,
+            "after": {
+              "rss_bytes": 415170560,
+              "physical_footprint_bytes": 3311667000,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 415170560,
+              "physical_footprint_bytes": 3311667000,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 417923072,
+              "physical_footprint_bytes": 3311896376,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.006657958001596853,
+            "after": {
+              "rss_bytes": 417923072,
+              "physical_footprint_bytes": 3311896376,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 418201600,
+              "physical_footprint_bytes": 3311896376,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 431800320,
+              "physical_footprint_bytes": 3311896376,
+              "mps_allocated_bytes": 1427225344,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 987,
+            "seconds": 15.02844270800415,
+            "after": {
+              "rss_bytes": 384303104,
+              "physical_footprint_bytes": 3311617848,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 384450560,
+              "physical_footprint_bytes": 3311617848,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 390283264,
+              "physical_footprint_bytes": 3311830840,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 88,
+            "seconds": 1.0671129590045894,
+            "after": {
+              "rss_bytes": 390283264,
+              "physical_footprint_bytes": 3311830840,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 391561216,
+              "physical_footprint_bytes": 3311830840,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 407977984,
+              "physical_footprint_bytes": 3311847224,
+              "mps_allocated_bytes": 1433317376,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 621,
+            "seconds": 9.429525874991668,
+            "after": {
+              "rss_bytes": 216727552,
+              "physical_footprint_bytes": 3311814456,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 216727552,
+              "physical_footprint_bytes": 3311814456,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 227459072,
+              "physical_footprint_bytes": 3312158520,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 69,
+            "seconds": 0.8299796249921201,
+            "after": {
+              "rss_bytes": 227459072,
+              "physical_footprint_bytes": 3312158520,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 25.67589129098633,
+      "memory_seconds": 1.9037505419983063,
+      "total_seconds": 27.579641832984635,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "B",
+      "pair": 1,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 390299648,
+              "physical_footprint_bytes": 3312158520,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 393510912,
+              "physical_footprint_bytes": 3312174904,
+              "mps_allocated_bytes": 1407272704,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 80,
+            "seconds": 1.2198457079939544,
+            "after": {
+              "rss_bytes": 393510912,
+              "physical_footprint_bytes": 3312174904,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 393510912,
+              "physical_footprint_bytes": 3312174904,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 397230080,
+              "physical_footprint_bytes": 3312600888,
+              "mps_allocated_bytes": 1398191104,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.00801250000949949,
+            "after": {
+              "rss_bytes": 397230080,
+              "physical_footprint_bytes": 3312600888,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 397508608,
+              "physical_footprint_bytes": 3312600888,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 431226880,
+              "physical_footprint_bytes": 3312600888,
+              "mps_allocated_bytes": 1423984128,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 972,
+            "seconds": 14.911253459009458,
+            "after": {
+              "rss_bytes": 431210496,
+              "physical_footprint_bytes": 3312142136,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 431210496,
+              "physical_footprint_bytes": 3312142136,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 433864704,
+              "physical_footprint_bytes": 3313010488,
+              "mps_allocated_bytes": 1467058944,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 93,
+            "seconds": 1.1172031660098583,
+            "after": {
+              "rss_bytes": 431259648,
+              "physical_footprint_bytes": 3313010488,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 431292416,
+              "physical_footprint_bytes": 3313010488,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 433946624,
+              "physical_footprint_bytes": 3313010488,
+              "mps_allocated_bytes": 1436779008,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 698,
+            "seconds": 10.561554290994536,
+            "after": {
+              "rss_bytes": 168509440,
+              "physical_footprint_bytes": 3312322360,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 168673280,
+              "physical_footprint_bytes": 3312322360,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 190431232,
+              "physical_footprint_bytes": 3313239864,
+              "mps_allocated_bytes": 1503331584,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 171,
+            "seconds": 2.1011148749967106,
+            "after": {
+              "rss_bytes": 190431232,
+              "physical_footprint_bytes": 3312830264,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 26.69265345799795,
+      "memory_seconds": 3.2263305410160683,
+      "total_seconds": 29.918983999014017,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "B",
+      "pair": 2,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 355729408,
+              "physical_footprint_bytes": 3312830264,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 360316928,
+              "physical_footprint_bytes": 3312928568,
+              "mps_allocated_bytes": 1408693248,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 81,
+            "seconds": 1.2346805830020458,
+            "after": {
+              "rss_bytes": 360316928,
+              "physical_footprint_bytes": 3312813880,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 360316928,
+              "physical_footprint_bytes": 3312813880,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 362496000,
+              "physical_footprint_bytes": 3313239864,
+              "mps_allocated_bytes": 1398196992,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.010281583003234118,
+            "after": {
+              "rss_bytes": 362496000,
+              "physical_footprint_bytes": 3313239864,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 362774528,
+              "physical_footprint_bytes": 3313239864,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 403521536,
+              "physical_footprint_bytes": 3313239864,
+              "mps_allocated_bytes": 1424245248,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1116,
+            "seconds": 16.957714250005665,
+            "after": {
+              "rss_bytes": 165511168,
+              "physical_footprint_bytes": 3312781112,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 165675008,
+              "physical_footprint_bytes": 3312781112,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 176488448,
+              "physical_footprint_bytes": 3313665848,
+              "mps_allocated_bytes": 1462853120,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 140,
+            "seconds": 1.685005249993992,
+            "after": {
+              "rss_bytes": 168689664,
+              "physical_footprint_bytes": 3313092408,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 169689088,
+              "physical_footprint_bytes": 3313092408,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 188956672,
+              "physical_footprint_bytes": 3313223480,
+              "mps_allocated_bytes": 1431126528,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 796,
+            "seconds": 12.060157250001794,
+            "after": {
+              "rss_bytes": 149241856,
+              "physical_footprint_bytes": 3313223480,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 149405696,
+              "physical_footprint_bytes": 3313223480,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 156008448,
+              "physical_footprint_bytes": 3313846072,
+              "mps_allocated_bytes": 1498690048,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 249,
+            "seconds": 3.038968915992882,
+            "after": {
+              "rss_bytes": 150372352,
+              "physical_footprint_bytes": 3313420088,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 30.252552083009505,
+      "memory_seconds": 4.734255748990108,
+      "total_seconds": 34.98680783199961,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "C2",
+      "pair": 2,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 319700992,
+              "physical_footprint_bytes": 3313436472,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 326713344,
+              "physical_footprint_bytes": 3313551160,
+              "mps_allocated_bytes": 1412187648,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 80,
+            "seconds": 1.2318249579984695,
+            "after": {
+              "rss_bytes": 324665344,
+              "physical_footprint_bytes": 3313436472,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 324665344,
+              "physical_footprint_bytes": 3313436472,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 328007680,
+              "physical_footprint_bytes": 3313682232,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            },
+            "samples": 4,
+            "seconds": 0.015840874999412335,
+            "after": {
+              "rss_bytes": 328007680,
+              "physical_footprint_bytes": 3313682232,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 328286208,
+              "physical_footprint_bytes": 3313682232,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 345997312,
+              "physical_footprint_bytes": 3313698616,
+              "mps_allocated_bytes": 1428699904,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1164,
+            "seconds": 17.84437049999542,
+            "after": {
+              "rss_bytes": 163627008,
+              "physical_footprint_bytes": 3313403704,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 163807232,
+              "physical_footprint_bytes": 3313403704,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 169607168,
+              "physical_footprint_bytes": 3313600312,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 102,
+            "seconds": 1.2305794170097215,
+            "after": {
+              "rss_bytes": 167493632,
+              "physical_footprint_bytes": 3313600312,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 168853504,
+              "physical_footprint_bytes": 3313600312,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 198361088,
+              "physical_footprint_bytes": 3313616696,
+              "mps_allocated_bytes": 1432088576,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 662,
+            "seconds": 10.133745416998863,
+            "after": {
+              "rss_bytes": 189218816,
+              "physical_footprint_bytes": 3313616696,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 189218816,
+              "physical_footprint_bytes": 3313616696,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 200015872,
+              "physical_footprint_bytes": 3313977144,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 71,
+            "seconds": 0.8560097080044216,
+            "after": {
+              "rss_bytes": 200015872,
+              "physical_footprint_bytes": 3313977144,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 29.209940874992753,
+      "memory_seconds": 2.1024300000135554,
+      "total_seconds": 31.31237087500631,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "C2",
+      "pair": 3,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 366313472,
+              "physical_footprint_bytes": 3314042680,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 370884608,
+              "physical_footprint_bytes": 3314059064,
+              "mps_allocated_bytes": 1409730048,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 82,
+            "seconds": 1.2304967910022242,
+            "after": {
+              "rss_bytes": 370884608,
+              "physical_footprint_bytes": 3313829688,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 370884608,
+              "physical_footprint_bytes": 3313829688,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 373751808,
+              "physical_footprint_bytes": 3314091832,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.007237458994495682,
+            "after": {
+              "rss_bytes": 373751808,
+              "physical_footprint_bytes": 3314091832,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 374030336,
+              "physical_footprint_bytes": 3314091832,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 405438464,
+              "physical_footprint_bytes": 3314140984,
+              "mps_allocated_bytes": 1426472704,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 1099,
+            "seconds": 16.88559137498669,
+            "after": {
+              "rss_bytes": 375373824,
+              "physical_footprint_bytes": 3314009912,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 375537664,
+              "physical_footprint_bytes": 3314009912,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 381403136,
+              "physical_footprint_bytes": 3314222904,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 91,
+            "seconds": 1.1036275000078604,
+            "after": {
+              "rss_bytes": 381403136,
+              "physical_footprint_bytes": 3314222904,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 382713856,
+              "physical_footprint_bytes": 3314222904,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 387350528,
+              "physical_footprint_bytes": 3314517816,
+              "mps_allocated_bytes": 1433317376,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 749,
+            "seconds": 11.447603125008754,
+            "after": {
+              "rss_bytes": 76578816,
+              "physical_footprint_bytes": 3314485048,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 76759040,
+              "physical_footprint_bytes": 3314485048,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 80068608,
+              "physical_footprint_bytes": 3314714424,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 159,
+            "seconds": 2.06827529099246,
+            "after": {
+              "rss_bytes": 54345728,
+              "physical_footprint_bytes": 3314714424,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 29.563691290997667,
+      "memory_seconds": 3.1791402499948163,
+      "total_seconds": 32.74283154099248,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "B",
+      "pair": 3,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 224083968,
+              "physical_footprint_bytes": 3314763576,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 234766336,
+              "physical_footprint_bytes": 3314763576,
+              "mps_allocated_bytes": 1411465728,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 101,
+            "seconds": 1.4678806250012713,
+            "after": {
+              "rss_bytes": 233684992,
+              "physical_footprint_bytes": 3314698040,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 233684992,
+              "physical_footprint_bytes": 3314698040,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 237600768,
+              "physical_footprint_bytes": 3315140408,
+              "mps_allocated_bytes": 1399237632,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.015173624997260049,
+            "after": {
+              "rss_bytes": 237600768,
+              "physical_footprint_bytes": 3315140408,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 237895680,
+              "physical_footprint_bytes": 3315140408,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 246382592,
+              "physical_footprint_bytes": 3315140408,
+              "mps_allocated_bytes": 1428668928,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 1248,
+            "seconds": 18.776871750000282,
+            "after": {
+              "rss_bytes": 61063168,
+              "physical_footprint_bytes": 3126560376,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 61243392,
+              "physical_footprint_bytes": 3126560376,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 72302592,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1462853120,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 131,
+            "seconds": 1.6096770410076715,
+            "after": {
+              "rss_bytes": 62177280,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 63324160,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 84475904,
+              "physical_footprint_bytes": 3127412344,
+              "mps_allocated_bytes": 1430865408,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 704,
+            "seconds": 10.792993499999284,
+            "after": {
+              "rss_bytes": 63258624,
+              "physical_footprint_bytes": 3126707832,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 63438848,
+              "physical_footprint_bytes": 3126707832,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 75333632,
+              "physical_footprint_bytes": 3127559800,
+              "mps_allocated_bytes": 1496954368,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 225,
+            "seconds": 2.715035417000763,
+            "after": {
+              "rss_bytes": 75333632,
+              "physical_footprint_bytes": 3127150200,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 31.037745875000837,
+      "memory_seconds": 4.339886083005695,
+      "total_seconds": 35.37763195800653,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "B",
+      "pair": 4,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 236421120,
+              "physical_footprint_bytes": 3127166584,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 246792192,
+              "physical_footprint_bytes": 3127281272,
+              "mps_allocated_bytes": 1407272704,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 84,
+            "seconds": 1.2761159170040628,
+            "after": {
+              "rss_bytes": 246693888,
+              "physical_footprint_bytes": 3126953592,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 246693888,
+              "physical_footprint_bytes": 3126953592,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 248987648,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1398199040,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.010305417003110051,
+            "after": {
+              "rss_bytes": 248987648,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 249266176,
+              "physical_footprint_bytes": 3127395960,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 253870080,
+              "physical_footprint_bytes": 3127641720,
+              "mps_allocated_bytes": 1425228288,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1153,
+            "seconds": 17.60020645800978,
+            "after": {
+              "rss_bytes": 63127552,
+              "physical_footprint_bytes": 3127150200,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 63307776,
+              "physical_footprint_bytes": 3127150200,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 71286784,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1462853120,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 116,
+            "seconds": 1.4248279579915106,
+            "after": {
+              "rss_bytes": 66240512,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 67141632,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 75186176,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1431356928,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 812,
+            "seconds": 12.48766975000035,
+            "after": {
+              "rss_bytes": 54116352,
+              "physical_footprint_bytes": 3127297656,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 54296576,
+              "physical_footprint_bytes": 3127297656,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 70680576,
+              "physical_footprint_bytes": 3128198776,
+              "mps_allocated_bytes": 1498690048,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 239,
+            "seconds": 2.898320042004343,
+            "after": {
+              "rss_bytes": 70680576,
+              "physical_footprint_bytes": 3127740024,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 31.363992125014192,
+      "memory_seconds": 4.333453416998964,
+      "total_seconds": 35.697445542013156,
+      "final_state_bytes": 20152320
+    },
+    {
+      "condition": "C2",
+      "pair": 4,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 233914368,
+              "physical_footprint_bytes": 3127756408,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 244531200,
+              "physical_footprint_bytes": 3127887480,
+              "mps_allocated_bytes": 1411696128,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 86,
+            "seconds": 1.292232541993144,
+            "after": {
+              "rss_bytes": 235552768,
+              "physical_footprint_bytes": 3127887480,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 235552768,
+              "physical_footprint_bytes": 3127887480,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 240500736,
+              "physical_footprint_bytes": 3128133240,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            },
+            "samples": 2,
+            "seconds": 0.008005083989701234,
+            "after": {
+              "rss_bytes": 240500736,
+              "physical_footprint_bytes": 3128133240,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 240779264,
+              "physical_footprint_bytes": 3128133240,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 244809728,
+              "physical_footprint_bytes": 3128133240,
+              "mps_allocated_bytes": 1425489664,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 1152,
+            "seconds": 17.603240083000856,
+            "after": {
+              "rss_bytes": 97501184,
+              "physical_footprint_bytes": 3127723640,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 97648640,
+              "physical_footprint_bytes": 3127723640,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 103448576,
+              "physical_footprint_bytes": 3128100472,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 110,
+            "seconds": 1.3499681659886846,
+            "after": {
+              "rss_bytes": 101400576,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 102711296,
+              "physical_footprint_bytes": 3127985784,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 107380736,
+              "physical_footprint_bytes": 3128182392,
+              "mps_allocated_bytes": 1434300416,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 748,
+            "seconds": 11.446680708002532,
+            "after": {
+              "rss_bytes": 65683456,
+              "physical_footprint_bytes": 3127920248,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 65830912,
+              "physical_footprint_bytes": 3127920248,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 79020032,
+              "physical_footprint_bytes": 3128264312,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 80,
+            "seconds": 0.9609554999915417,
+            "after": {
+              "rss_bytes": 79020032,
+              "physical_footprint_bytes": 3128264312,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 30.34215333299653,
+      "memory_seconds": 2.3189287499699276,
+      "total_seconds": 32.66108208296646,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "C2",
+      "pair": 5,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 246595584,
+              "physical_footprint_bytes": 3128329848,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 247529472,
+              "physical_footprint_bytes": 3128346232,
+              "mps_allocated_bytes": 1408270848,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 89,
+            "seconds": 1.320179125003051,
+            "after": {
+              "rss_bytes": 242876416,
+              "physical_footprint_bytes": 3128346232,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 242876416,
+              "physical_footprint_bytes": 3128346232,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 245792768,
+              "physical_footprint_bytes": 3128591992,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.01124362500559073,
+            "after": {
+              "rss_bytes": 245792768,
+              "physical_footprint_bytes": 3128591992,
+              "mps_allocated_bytes": 1399264256,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 3465704,
+            "storages": 20,
+            "python_object_bytes": 4535,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 984960,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 1920,
+              "grids": 2720
+            }
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 246087680,
+              "physical_footprint_bytes": 3128591992,
+              "mps_allocated_bytes": 1397295872,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 264749056,
+              "physical_footprint_bytes": 3128608376,
+              "mps_allocated_bytes": 1433211904,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1232,
+            "seconds": 18.753065583005082,
+            "after": {
+              "rss_bytes": 70713344,
+              "physical_footprint_bytes": 3128297080,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 70860800,
+              "physical_footprint_bytes": 3128297080,
+              "mps_allocated_bytes": 1409092352,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 76775424,
+              "physical_footprint_bytes": 3128739448,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 91,
+            "seconds": 1.1005312909983331,
+            "after": {
+              "rss_bytes": 76775424,
+              "physical_footprint_bytes": 3128739448,
+              "mps_allocated_bytes": 1428980736,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 11353592,
+            "storages": 68,
+            "python_object_bytes": 13671,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 8872848,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 78184448,
+              "physical_footprint_bytes": 3128739448,
+              "mps_allocated_bytes": 1408303104,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 112279552,
+              "physical_footprint_bytes": 3128755832,
+              "mps_allocated_bytes": 1433317376,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 663,
+            "seconds": 10.159155291999923,
+            "after": {
+              "rss_bytes": 112279552,
+              "physical_footprint_bytes": 3128460920,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 112312320,
+              "physical_footprint_bytes": 3128460920,
+              "mps_allocated_bytes": 1415675904,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 123142144,
+              "physical_footprint_bytes": 3128821368,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 73,
+            "seconds": 0.864482416989631,
+            "after": {
+              "rss_bytes": 123142144,
+              "physical_footprint_bytes": 3128821368,
+              "mps_allocated_bytes": 1434034176,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 15149792,
+            "storages": 98,
+            "python_object_bytes": 19271,
+            "components": {
+              "hw": 0,
+              "short_limit": 0,
+              "mid_limit": 0,
+              "count": 0,
+              "short": 0,
+              "mid": 0,
+              "blocks": 12669048,
+              "norm": 2457600,
+              "distance": 1200,
+              "keep": 600,
+              "height": 4800,
+              "width": 4800,
+              "offsets": 144,
+              "slot_indices": 4800,
+              "slot_grids": 6800,
+              "indices": 3840,
+              "grids": 5440
+            }
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 30.232400000008056,
+      "memory_seconds": 1.9762573329935549,
+      "total_seconds": 32.20865733300161,
+      "final_state_bytes": 15149792
+    },
+    {
+      "condition": "B",
+      "pair": 5,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 289751040,
+              "physical_footprint_bytes": 3128870520,
+              "mps_allocated_bytes": 1393824256,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 294289408,
+              "physical_footprint_bytes": 3128886904,
+              "mps_allocated_bytes": 1407733248,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 80,
+            "seconds": 1.219227666995721,
+            "after": {
+              "rss_bytes": 294273024,
+              "physical_footprint_bytes": 3128870520,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 294273024,
+              "physical_footprint_bytes": 3128870520,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 298024960,
+              "physical_footprint_bytes": 3129312888,
+              "mps_allocated_bytes": 1398189824,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 3,
+            "seconds": 0.010737417003838345,
+            "after": {
+              "rss_bytes": 298024960,
+              "physical_footprint_bytes": 3129312888,
+              "mps_allocated_bytes": 1397766912,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 240,
+            "tokens_b": 240
+          },
+          "state": {
+            "tensor_storage_bytes": 983040,
+            "storages": 2,
+            "python_object_bytes": 264
+          }
+        },
+        {
+          "blocks": 26,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 298303488,
+              "physical_footprint_bytes": 3129312888,
+              "mps_allocated_bytes": 1394807296,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 332038144,
+              "physical_footprint_bytes": 3129312888,
+              "mps_allocated_bytes": 1421050368,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 1038,
+            "seconds": 15.896144208993064,
+            "after": {
+              "rss_bytes": 330924032,
+              "physical_footprint_bytes": 3128854136,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 330924032,
+              "physical_footprint_bytes": 3128854136,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 333676544,
+              "physical_footprint_bytes": 3129755256,
+              "mps_allocated_bytes": 1462107904,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 89,
+            "seconds": 1.0883046249946347,
+            "after": {
+              "rss_bytes": 333479936,
+              "physical_footprint_bytes": 3129755256,
+              "mps_allocated_bytes": 1440060928,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 2162,
+            "tokens_b": 2162
+          },
+          "state": {
+            "tensor_storage_bytes": 12779520,
+            "storages": 26,
+            "python_object_bytes": 2152
+          }
+        },
+        {
+          "blocks": 41,
+          "visual": {
+            "stage": "incoming_visual",
+            "before": {
+              "rss_bytes": 333496320,
+              "physical_footprint_bytes": 3129755256,
+              "mps_allocated_bytes": 1406603776,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 333561856,
+              "physical_footprint_bytes": 3129771640,
+              "mps_allocated_bytes": 1427862528,
+              "mps_driver_bytes": 2513616896
+            },
+            "samples": 633,
+            "seconds": 9.674051499998313,
+            "after": {
+              "rss_bytes": 333447168,
+              "physical_footprint_bytes": 3129050744,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "memory": {
+            "stage": "memory_insertion_and_readout",
+            "before": {
+              "rss_bytes": 333447168,
+              "physical_footprint_bytes": 3129050744,
+              "mps_allocated_bytes": 1413976576,
+              "mps_driver_bytes": 2512486400
+            },
+            "sampled_peak": {
+              "rss_bytes": 336347136,
+              "physical_footprint_bytes": 3130001016,
+              "mps_allocated_bytes": 1499524864,
+              "mps_driver_bytes": 2512502784
+            },
+            "samples": 162,
+            "seconds": 1.9734489170077723,
+            "after": {
+              "rss_bytes": 336347136,
+              "physical_footprint_bytes": 3129443960,
+              "mps_allocated_bytes": 1454871552,
+              "mps_driver_bytes": 2512486400
+            }
+          },
+          "equivalence": {
+            "indices_equal": true,
+            "features_bitwise_equal": true,
+            "max_abs_error": 0.0,
+            "tokens_a": 3087,
+            "tokens_b": 3087
+          },
+          "state": {
+            "tensor_storage_bytes": 20152320,
+            "storages": 41,
+            "python_object_bytes": 3360
+          }
+        }
+      ],
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 59,
+        "merge_frames": 5
+      },
+      "vision_calls": 41,
+      "visual_seconds": 26.7894233759871,
+      "memory_seconds": 3.0724909590062452,
+      "total_seconds": 29.861914334993344,
+      "final_state_bytes": 20152320
+    }
+  ],
+  "vision_parameter_bytes": 1337368576,
+  "source_feature_bank_bytes": 20152320,
+  "process_peaks_are_not_single_condition_deployment": true,
+  "summary": {
+    "total_seconds": {
+      "conditions": {
+        "B": {
+          "median": 32.452895915506815,
+          "mean": 32.51876773584081,
+          "min": 29.269822749018203,
+          "max": 35.697445542013156,
+          "values": [
+            29.269822749018203,
+            29.918983999014017,
+            34.98680783199961,
+            35.37763195800653,
+            35.697445542013156,
+            29.861914334993344
+          ]
+        },
+        "C2": {
+          "median": 31.76051410400396,
+          "mean": 30.570324812159622,
+          "min": 26.91736520800623,
+          "max": 32.74283154099248,
+          "values": [
+            26.91736520800623,
+            27.579641832984635,
+            31.31237087500631,
+            32.74283154099248,
+            32.66108208296646,
+            32.20865733300161
+          ]
+        }
+      },
+      "paired_B_minus_C2_seconds": [
+        2.3524575410119724,
+        2.3393421660293825,
+        3.674436956993304,
+        2.6348004170140484,
+        3.0363634590466972,
+        -2.346742998008267
+      ],
+      "mean_paired_saving": 1.9484429236811895,
+      "mean_paired_saving_bootstrap_95": [
+        0.11465569534387517,
+        3.125245672844661
+      ],
+      "C2_faster_pairs": 5
+    },
+    "memory_seconds": {
+      "conditions": {
+        "B": {
+          "median": 3.833403583506879,
+          "mean": 3.8399617498386456,
+          "min": 3.0724909590062452,
+          "max": 4.734255748990108,
+          "values": [
+            3.333353750014794,
+            3.2263305410160683,
+            4.734255748990108,
+            4.339886083005695,
+            4.333453416998964,
+            3.0724909590062452
+          ]
+        },
+        "C2": {
+          "median": 2.05964812500315,
+          "mean": 2.2495621874938174,
+          "min": 1.9037505419983063,
+          "max": 3.1791402499948163,
+          "values": [
+            2.016866249992745,
+            1.9037505419983063,
+            2.1024300000135554,
+            3.1791402499948163,
+            2.3189287499699276,
+            1.9762573329935549
+          ]
+        }
+      },
+      "paired_B_minus_C2_seconds": [
+        1.316487500022049,
+        1.322579999017762,
+        2.631825748976553,
+        1.1607458330108784,
+        2.014524667029036,
+        1.0962336260126904
+      ],
+      "mean_paired_saving": 1.5903995623448282,
+      "mean_paired_saving_bootstrap_95": [
+        1.1931864860137769,
+        2.0672431875088173
+      ],
+      "C2_faster_pairs": 6
+    },
+    "visual_seconds": {
+      "conditions": {
+        "B": {
+          "median": 28.5209877294983,
+          "mean": 28.678805986002164,
+          "min": 25.93646899900341,
+          "max": 31.363992125014192,
+          "values": [
+            25.93646899900341,
+            26.69265345799795,
+            30.252552083009505,
+            31.037745875000837,
+            31.363992125014192,
+            26.7894233759871
+          ]
+        },
+        "C2": {
+          "median": 29.38681608299521,
+          "mean": 28.320762624665804,
+          "min": 24.900498958013486,
+          "max": 30.34215333299653,
+          "values": [
+            24.900498958013486,
+            25.67589129098633,
+            29.209940874992753,
+            29.563691290997667,
+            30.34215333299653,
+            30.232400000008056
+          ]
+        }
+      },
+      "paired_B_minus_C2_seconds": [
+        1.0359700409899233,
+        1.0167621670116205,
+        1.0426112080167513,
+        1.47405458400317,
+        1.021838792017661,
+        -3.4429766240209574
+      ],
+      "mean_paired_saving": 0.35804336133636144,
+      "mean_paired_saving_bootstrap_95": [
+        -1.2055977426740963,
+        1.2503018961724592
+      ],
+      "C2_faster_pairs": 5
+    }
+  }
+}

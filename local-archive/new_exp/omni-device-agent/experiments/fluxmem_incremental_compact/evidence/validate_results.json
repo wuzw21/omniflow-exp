@@ -1,0 +1,3187 @@
+{
+  "status": "completed",
+  "device": "mps",
+  "torch": "2.13.0",
+  "chip": "Apple M4",
+  "upstream_commit": "6fdbf65b6f2af1a94ca41d542be5be86a565d338",
+  "upstream_diff": "",
+  "input_manifest_sha256": "b1140e7185106a5120a6d27db3fe4338da41d1c22bbc700df80f32030f57355b",
+  "parent_audit_sha256": "a97e3f6e287a72c4bb381be8fba50ad7af29af10aea2b5b085700709dfbaebc0",
+  "snapshots": [
+    {
+      "blocks": 2,
+      "condition": "A",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_2_A.pt",
+      "sha256": "2cdf2b14d9edbdeadbb173786efcf4bca00124b5957c4e29415956f31ad996d7"
+    },
+    {
+      "blocks": 2,
+      "condition": "B",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_2_B.pt",
+      "sha256": "9ee84bc919458c67400d23bb6f613f798f8e9c1d1c9912665c33f947fd36400c"
+    },
+    {
+      "blocks": 2,
+      "condition": "C",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_compact_validate_001/question_2_C.pt",
+      "sha256": "5ae6883d27c5845175375aa28769d0a8a2565f53ae33e6d602ec54742aaf96d3"
+    },
+    {
+      "blocks": 26,
+      "condition": "A",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_26_A.pt",
+      "sha256": "45f1eb9eb2359bb43cb16218ece5613ccdf63651e779bf3d384bc33d42e6f274"
+    },
+    {
+      "blocks": 26,
+      "condition": "B",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_26_B.pt",
+      "sha256": "fe179fdcc24134580d3b888a1b9d0028d8e904bd56d70e2d3e284dba4c0899d2"
+    },
+    {
+      "blocks": 26,
+      "condition": "C",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_compact_validate_001/question_26_C.pt",
+      "sha256": "05e760219ba4bc74c6a941593494ccec13076fbd900e2d5babeff19f7c2e88ca"
+    },
+    {
+      "blocks": 41,
+      "condition": "A",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_41_A.pt",
+      "sha256": "0c5e1e9fa2c69b546b21f2c61451633c252225389a288ba8701f2dcf893f3df3"
+    },
+    {
+      "blocks": 41,
+      "condition": "B",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_incremental_audit_001/question_41_B.pt",
+      "sha256": "1127d7b0bf0dd1dfe444787d700b24716f47de1df2ca613b8ee60cbd323f2504"
+    },
+    {
+      "blocks": 41,
+      "condition": "C",
+      "path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_compact_validate_001/question_41_C.pt",
+      "sha256": "5c63cb2221692377c65428bb2b9c725a1cd3220602ec6f22b70b82f0b294676d"
+    }
+  ],
+  "records": [
+    {
+      "blocks": 1,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 120,
+        "tokens_b": 120
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 120,
+        "tokens_b": 120
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 120,
+        "tokens_b": 120
+      },
+      "counts": {
+        "match_calls": 0,
+        "match_query_tokens": 0,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 1480264,
+        "storages": 11,
+        "python_object_bytes": 2700,
+        "components": {
+          "raw": 491520,
+          "merged": 491520,
+          "norm": 491520,
+          "height": 960,
+          "width": 960,
+          "times": 960,
+          "distance": 240,
+          "keep": 120,
+          "indices": 960,
+          "grids": 1360,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 2973224,
+        "storages": 18,
+        "python_object_bytes": 4207,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 492480,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 960,
+          "grids": 1360
+        }
+      }
+    },
+    {
+      "blocks": 2,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 240,
+        "tokens_b": 240
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 240,
+        "tokens_b": 240
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 240,
+        "tokens_b": 240
+      },
+      "counts": {
+        "match_calls": 1,
+        "match_query_tokens": 120,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 2960384,
+        "storages": 14,
+        "python_object_bytes": 2944,
+        "components": {
+          "raw": 983040,
+          "merged": 983040,
+          "norm": 983040,
+          "height": 1920,
+          "width": 1920,
+          "times": 1920,
+          "distance": 480,
+          "keep": 240,
+          "indices": 1920,
+          "grids": 2720,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 3465704,
+        "storages": 20,
+        "python_object_bytes": 4535,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 984960,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 1920,
+          "grids": 2720
+        }
+      }
+    },
+    {
+      "blocks": 3,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 360,
+        "tokens_b": 360
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 360,
+        "tokens_b": 360
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 360,
+        "tokens_b": 360
+      },
+      "counts": {
+        "match_calls": 2,
+        "match_query_tokens": 240,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 4440504,
+        "storages": 17,
+        "python_object_bytes": 3188,
+        "components": {
+          "raw": 1474560,
+          "merged": 1474560,
+          "norm": 1474560,
+          "height": 2880,
+          "width": 2880,
+          "times": 2880,
+          "distance": 720,
+          "keep": 360,
+          "indices": 2880,
+          "grids": 4080,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 3958184,
+        "storages": 22,
+        "python_object_bytes": 4863,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 1477440,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 2880,
+          "grids": 4080
+        }
+      }
+    },
+    {
+      "blocks": 4,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 480,
+        "tokens_b": 480
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 480,
+        "tokens_b": 480
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 480,
+        "tokens_b": 480
+      },
+      "counts": {
+        "match_calls": 3,
+        "match_query_tokens": 360,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 5920624,
+        "storages": 20,
+        "python_object_bytes": 3432,
+        "components": {
+          "raw": 1966080,
+          "merged": 1966080,
+          "norm": 1966080,
+          "height": 3840,
+          "width": 3840,
+          "times": 3840,
+          "distance": 960,
+          "keep": 480,
+          "indices": 3840,
+          "grids": 5440,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 4450664,
+        "storages": 24,
+        "python_object_bytes": 5191,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 1969920,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 5,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 557,
+        "tokens_b": 557
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 557,
+        "tokens_b": 557
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 557,
+        "tokens_b": 557
+      },
+      "counts": {
+        "match_calls": 5,
+        "match_query_tokens": 600,
+        "prune_frames": 1,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 7400744,
+        "storages": 23,
+        "python_object_bytes": 3804,
+        "components": {
+          "raw": 2457600,
+          "merged": 2457600,
+          "norm": 2457600,
+          "height": 4800,
+          "width": 4800,
+          "times": 4800,
+          "distance": 1200,
+          "keep": 600,
+          "indices": 4800,
+          "grids": 6800,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 4766672,
+        "storages": 26,
+        "python_object_bytes": 5643,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 2285928,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 6,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 663,
+        "tokens_b": 663
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 663,
+        "tokens_b": 663
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 663,
+        "tokens_b": 663
+      },
+      "counts": {
+        "match_calls": 7,
+        "match_query_tokens": 840,
+        "prune_frames": 2,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 8880864,
+        "storages": 26,
+        "python_object_bytes": 4304,
+        "components": {
+          "raw": 2949120,
+          "merged": 2949120,
+          "norm": 2949120,
+          "height": 5760,
+          "width": 5760,
+          "times": 5760,
+          "distance": 1440,
+          "keep": 720,
+          "indices": 5760,
+          "grids": 8160,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 5201696,
+        "storages": 28,
+        "python_object_bytes": 6255,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 2720952,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 7,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 751,
+        "tokens_b": 751
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 751,
+        "tokens_b": 751
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 751,
+        "tokens_b": 751
+      },
+      "counts": {
+        "match_calls": 9,
+        "match_query_tokens": 1080,
+        "prune_frames": 3,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 10360984,
+        "storages": 29,
+        "python_object_bytes": 4548,
+        "components": {
+          "raw": 3440640,
+          "merged": 3440640,
+          "norm": 3440640,
+          "height": 6720,
+          "width": 6720,
+          "times": 6720,
+          "distance": 1680,
+          "keep": 840,
+          "indices": 6720,
+          "grids": 9520,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 5562848,
+        "storages": 30,
+        "python_object_bytes": 6611,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3082104,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 8,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 843,
+        "tokens_b": 843
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 843,
+        "tokens_b": 843
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 843,
+        "tokens_b": 843
+      },
+      "counts": {
+        "match_calls": 11,
+        "match_query_tokens": 1320,
+        "prune_frames": 4,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 11841104,
+        "storages": 32,
+        "python_object_bytes": 4792,
+        "components": {
+          "raw": 3932160,
+          "merged": 3932160,
+          "norm": 3932160,
+          "height": 7680,
+          "width": 7680,
+          "times": 7680,
+          "distance": 1920,
+          "keep": 960,
+          "indices": 7680,
+          "grids": 10880,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 5940416,
+        "storages": 32,
+        "python_object_bytes": 6939,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3459672,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 9,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 931,
+        "tokens_b": 931
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 931,
+        "tokens_b": 931
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 931,
+        "tokens_b": 931
+      },
+      "counts": {
+        "match_calls": 13,
+        "match_query_tokens": 1560,
+        "prune_frames": 5,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 13321224,
+        "storages": 35,
+        "python_object_bytes": 5196,
+        "components": {
+          "raw": 4423680,
+          "merged": 4423680,
+          "norm": 4423680,
+          "height": 8640,
+          "width": 8640,
+          "times": 8640,
+          "distance": 2160,
+          "keep": 1080,
+          "indices": 8640,
+          "grids": 12240,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 6301568,
+        "storages": 34,
+        "python_object_bytes": 7391,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3820824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 10,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 998,
+        "tokens_b": 998
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 998,
+        "tokens_b": 998
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 998,
+        "tokens_b": 998
+      },
+      "counts": {
+        "match_calls": 15,
+        "match_query_tokens": 1800,
+        "prune_frames": 6,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 14801344,
+        "storages": 38,
+        "python_object_bytes": 5440,
+        "components": {
+          "raw": 4915200,
+          "merged": 4915200,
+          "norm": 4915200,
+          "height": 9600,
+          "width": 9600,
+          "times": 9600,
+          "distance": 2400,
+          "keep": 1200,
+          "indices": 9600,
+          "grids": 13600,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 6576536,
+        "storages": 36,
+        "python_object_bytes": 7747,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4095792,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 11,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1057,
+        "tokens_b": 1057
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1057,
+        "tokens_b": 1057
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1057,
+        "tokens_b": 1057
+      },
+      "counts": {
+        "match_calls": 17,
+        "match_query_tokens": 2040,
+        "prune_frames": 7,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 16281464,
+        "storages": 41,
+        "python_object_bytes": 6244,
+        "components": {
+          "raw": 5406720,
+          "merged": 5406720,
+          "norm": 5406720,
+          "height": 10560,
+          "width": 10560,
+          "times": 10560,
+          "distance": 2640,
+          "keep": 1320,
+          "indices": 10560,
+          "grids": 14960,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 6818672,
+        "storages": 38,
+        "python_object_bytes": 8103,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4337928,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 12,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1108,
+        "tokens_b": 1108
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1108,
+        "tokens_b": 1108
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1108,
+        "tokens_b": 1108
+      },
+      "counts": {
+        "match_calls": 19,
+        "match_query_tokens": 2280,
+        "prune_frames": 8,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 17761584,
+        "storages": 44,
+        "python_object_bytes": 6488,
+        "components": {
+          "raw": 5898240,
+          "merged": 5898240,
+          "norm": 5898240,
+          "height": 11520,
+          "width": 11520,
+          "times": 11520,
+          "distance": 2880,
+          "keep": 1440,
+          "indices": 11520,
+          "grids": 16320,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 7027976,
+        "storages": 40,
+        "python_object_bytes": 8459,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4547232,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 13,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1157,
+        "tokens_b": 1157
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1157,
+        "tokens_b": 1157
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1157,
+        "tokens_b": 1157
+      },
+      "counts": {
+        "match_calls": 21,
+        "match_query_tokens": 2520,
+        "prune_frames": 9,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 19241704,
+        "storages": 47,
+        "python_object_bytes": 6796,
+        "components": {
+          "raw": 6389760,
+          "merged": 6389760,
+          "norm": 6389760,
+          "height": 12480,
+          "width": 12480,
+          "times": 12480,
+          "distance": 3120,
+          "keep": 1560,
+          "indices": 12480,
+          "grids": 17680,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 7229072,
+        "storages": 42,
+        "python_object_bytes": 8879,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4748328,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 14,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1219,
+        "tokens_b": 1219
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1219,
+        "tokens_b": 1219
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1219,
+        "tokens_b": 1219
+      },
+      "counts": {
+        "match_calls": 23,
+        "match_query_tokens": 2760,
+        "prune_frames": 10,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 20721824,
+        "storages": 50,
+        "python_object_bytes": 7040,
+        "components": {
+          "raw": 6881280,
+          "merged": 6881280,
+          "norm": 6881280,
+          "height": 13440,
+          "width": 13440,
+          "times": 13440,
+          "distance": 3360,
+          "keep": 1680,
+          "indices": 13440,
+          "grids": 19040,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 7483520,
+        "storages": 44,
+        "python_object_bytes": 9235,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5002776,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 15,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1270,
+        "tokens_b": 1270
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1270,
+        "tokens_b": 1270
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1270,
+        "tokens_b": 1270
+      },
+      "counts": {
+        "match_calls": 25,
+        "match_query_tokens": 3000,
+        "prune_frames": 11,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 22201944,
+        "storages": 53,
+        "python_object_bytes": 7284,
+        "components": {
+          "raw": 7372800,
+          "merged": 7372800,
+          "norm": 7372800,
+          "height": 14400,
+          "width": 14400,
+          "times": 14400,
+          "distance": 3600,
+          "keep": 1800,
+          "indices": 14400,
+          "grids": 20400,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 7692824,
+        "storages": 46,
+        "python_object_bytes": 9563,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5212080,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 16,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1335,
+        "tokens_b": 1335
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1335,
+        "tokens_b": 1335
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1335,
+        "tokens_b": 1335
+      },
+      "counts": {
+        "match_calls": 27,
+        "match_query_tokens": 3240,
+        "prune_frames": 12,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 23682064,
+        "storages": 56,
+        "python_object_bytes": 7528,
+        "components": {
+          "raw": 7864320,
+          "merged": 7864320,
+          "norm": 7864320,
+          "height": 15360,
+          "width": 15360,
+          "times": 15360,
+          "distance": 3840,
+          "keep": 1920,
+          "indices": 15360,
+          "grids": 21760,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 7959584,
+        "storages": 48,
+        "python_object_bytes": 9919,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5478840,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 17,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1401,
+        "tokens_b": 1401
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1401,
+        "tokens_b": 1401
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1401,
+        "tokens_b": 1401
+      },
+      "counts": {
+        "match_calls": 29,
+        "match_query_tokens": 3480,
+        "prune_frames": 13,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 25162184,
+        "storages": 59,
+        "python_object_bytes": 7900,
+        "components": {
+          "raw": 8355840,
+          "merged": 8355840,
+          "norm": 8355840,
+          "height": 16320,
+          "width": 16320,
+          "times": 16320,
+          "distance": 4080,
+          "keep": 2040,
+          "indices": 16320,
+          "grids": 23120,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 8230448,
+        "storages": 50,
+        "python_object_bytes": 10339,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5749704,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 18,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1460,
+        "tokens_b": 1460
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1460,
+        "tokens_b": 1460
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1460,
+        "tokens_b": 1460
+      },
+      "counts": {
+        "match_calls": 31,
+        "match_query_tokens": 3720,
+        "prune_frames": 14,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 26642304,
+        "storages": 62,
+        "python_object_bytes": 8144,
+        "components": {
+          "raw": 8847360,
+          "merged": 8847360,
+          "norm": 8847360,
+          "height": 17280,
+          "width": 17280,
+          "times": 17280,
+          "distance": 4320,
+          "keep": 2160,
+          "indices": 17280,
+          "grids": 24480,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 8472584,
+        "storages": 52,
+        "python_object_bytes": 10695,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5991840,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 19,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1540,
+        "tokens_b": 1540
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1540,
+        "tokens_b": 1540
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1540,
+        "tokens_b": 1540
+      },
+      "counts": {
+        "match_calls": 33,
+        "match_query_tokens": 3960,
+        "prune_frames": 15,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 28122424,
+        "storages": 65,
+        "python_object_bytes": 8388,
+        "components": {
+          "raw": 9338880,
+          "merged": 9338880,
+          "norm": 9338880,
+          "height": 18240,
+          "width": 18240,
+          "times": 18240,
+          "distance": 4560,
+          "keep": 2280,
+          "indices": 18240,
+          "grids": 25840,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 8800904,
+        "storages": 54,
+        "python_object_bytes": 11051,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 6320160,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 20,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1631,
+        "tokens_b": 1631
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1631,
+        "tokens_b": 1631
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1631,
+        "tokens_b": 1631
+      },
+      "counts": {
+        "match_calls": 35,
+        "match_query_tokens": 4200,
+        "prune_frames": 16,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 29602544,
+        "storages": 68,
+        "python_object_bytes": 8632,
+        "components": {
+          "raw": 9830400,
+          "merged": 9830400,
+          "norm": 9830400,
+          "height": 19200,
+          "width": 19200,
+          "times": 19200,
+          "distance": 4800,
+          "keep": 2400,
+          "indices": 19200,
+          "grids": 27200,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 9174368,
+        "storages": 56,
+        "python_object_bytes": 11407,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 6693624,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 21,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1714,
+        "tokens_b": 1714
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1714,
+        "tokens_b": 1714
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1714,
+        "tokens_b": 1714
+      },
+      "counts": {
+        "match_calls": 37,
+        "match_query_tokens": 4440,
+        "prune_frames": 17,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 31082664,
+        "storages": 71,
+        "python_object_bytes": 8940,
+        "components": {
+          "raw": 10321920,
+          "merged": 10321920,
+          "norm": 10321920,
+          "height": 20160,
+          "width": 20160,
+          "times": 20160,
+          "distance": 5040,
+          "keep": 2520,
+          "indices": 20160,
+          "grids": 28560,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 9515000,
+        "storages": 58,
+        "python_object_bytes": 11827,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7034256,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 22,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1806,
+        "tokens_b": 1806
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1806,
+        "tokens_b": 1806
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1806,
+        "tokens_b": 1806
+      },
+      "counts": {
+        "match_calls": 39,
+        "match_query_tokens": 4680,
+        "prune_frames": 18,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 32562784,
+        "storages": 74,
+        "python_object_bytes": 10256,
+        "components": {
+          "raw": 10813440,
+          "merged": 10813440,
+          "norm": 10813440,
+          "height": 21120,
+          "width": 21120,
+          "times": 21120,
+          "distance": 5280,
+          "keep": 2640,
+          "indices": 21120,
+          "grids": 29920,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 9892568,
+        "storages": 60,
+        "python_object_bytes": 12183,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7411824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 23,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1893,
+        "tokens_b": 1893
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1893,
+        "tokens_b": 1893
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1893,
+        "tokens_b": 1893
+      },
+      "counts": {
+        "match_calls": 41,
+        "match_query_tokens": 4920,
+        "prune_frames": 19,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 34042904,
+        "storages": 77,
+        "python_object_bytes": 10500,
+        "components": {
+          "raw": 11304960,
+          "merged": 11304960,
+          "norm": 11304960,
+          "height": 22080,
+          "width": 22080,
+          "times": 22080,
+          "distance": 5520,
+          "keep": 2760,
+          "indices": 22080,
+          "grids": 31280,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 10249616,
+        "storages": 62,
+        "python_object_bytes": 12539,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7768872,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 24,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1989,
+        "tokens_b": 1989
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1989,
+        "tokens_b": 1989
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1989,
+        "tokens_b": 1989
+      },
+      "counts": {
+        "match_calls": 43,
+        "match_query_tokens": 5160,
+        "prune_frames": 20,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 35523024,
+        "storages": 80,
+        "python_object_bytes": 10744,
+        "components": {
+          "raw": 11796480,
+          "merged": 11796480,
+          "norm": 11796480,
+          "height": 23040,
+          "width": 23040,
+          "times": 23040,
+          "distance": 5760,
+          "keep": 2880,
+          "indices": 23040,
+          "grids": 32640,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 10643600,
+        "storages": 64,
+        "python_object_bytes": 12895,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8162856,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 25,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2081,
+        "tokens_b": 2081
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2081,
+        "tokens_b": 2081
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2081,
+        "tokens_b": 2081
+      },
+      "counts": {
+        "match_calls": 45,
+        "match_query_tokens": 5400,
+        "prune_frames": 21,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 37003144,
+        "storages": 83,
+        "python_object_bytes": 11116,
+        "components": {
+          "raw": 12288000,
+          "merged": 12288000,
+          "norm": 12288000,
+          "height": 24000,
+          "width": 24000,
+          "times": 24000,
+          "distance": 6000,
+          "keep": 3000,
+          "indices": 24000,
+          "grids": 34000,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 11021168,
+        "storages": 66,
+        "python_object_bytes": 13315,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8540424,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 26,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2162,
+        "tokens_b": 2162
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2162,
+        "tokens_b": 2162
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2162,
+        "tokens_b": 2162
+      },
+      "counts": {
+        "match_calls": 47,
+        "match_query_tokens": 5640,
+        "prune_frames": 22,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 38483264,
+        "storages": 86,
+        "python_object_bytes": 11360,
+        "components": {
+          "raw": 12779520,
+          "merged": 12779520,
+          "norm": 12779520,
+          "height": 24960,
+          "width": 24960,
+          "times": 24960,
+          "distance": 6240,
+          "keep": 3120,
+          "indices": 24960,
+          "grids": 35360,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 11353592,
+        "storages": 68,
+        "python_object_bytes": 13671,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8872848,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 27,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2241,
+        "tokens_b": 2241
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2241,
+        "tokens_b": 2241
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2241,
+        "tokens_b": 2241
+      },
+      "counts": {
+        "match_calls": 49,
+        "match_query_tokens": 5880,
+        "prune_frames": 23,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 39963384,
+        "storages": 89,
+        "python_object_bytes": 11604,
+        "components": {
+          "raw": 13271040,
+          "merged": 13271040,
+          "norm": 13271040,
+          "height": 25920,
+          "width": 25920,
+          "times": 25920,
+          "distance": 6480,
+          "keep": 3240,
+          "indices": 25920,
+          "grids": 36720,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 11677808,
+        "storages": 70,
+        "python_object_bytes": 14027,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9197064,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 28,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2306,
+        "tokens_b": 2306
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2306,
+        "tokens_b": 2306
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2306,
+        "tokens_b": 2306
+      },
+      "counts": {
+        "match_calls": 51,
+        "match_query_tokens": 6120,
+        "prune_frames": 24,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 41443504,
+        "storages": 92,
+        "python_object_bytes": 11848,
+        "components": {
+          "raw": 13762560,
+          "merged": 13762560,
+          "norm": 13762560,
+          "height": 26880,
+          "width": 26880,
+          "times": 26880,
+          "distance": 6720,
+          "keep": 3360,
+          "indices": 26880,
+          "grids": 38080,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 11944568,
+        "storages": 72,
+        "python_object_bytes": 14383,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9463824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 29,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2389,
+        "tokens_b": 2389
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2389,
+        "tokens_b": 2389
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2389,
+        "tokens_b": 2389
+      },
+      "counts": {
+        "match_calls": 53,
+        "match_query_tokens": 6360,
+        "prune_frames": 25,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 42923624,
+        "storages": 95,
+        "python_object_bytes": 12156,
+        "components": {
+          "raw": 14254080,
+          "merged": 14254080,
+          "norm": 14254080,
+          "height": 27840,
+          "width": 27840,
+          "times": 27840,
+          "distance": 6960,
+          "keep": 3480,
+          "indices": 27840,
+          "grids": 39440,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 12285200,
+        "storages": 74,
+        "python_object_bytes": 14803,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9804456,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 30,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2485,
+        "tokens_b": 2485
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2485,
+        "tokens_b": 2485
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2485,
+        "tokens_b": 2485
+      },
+      "counts": {
+        "match_calls": 55,
+        "match_query_tokens": 6600,
+        "prune_frames": 26,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 44403744,
+        "storages": 98,
+        "python_object_bytes": 12400,
+        "components": {
+          "raw": 14745600,
+          "merged": 14745600,
+          "norm": 14745600,
+          "height": 28800,
+          "width": 28800,
+          "times": 28800,
+          "distance": 7200,
+          "keep": 3600,
+          "indices": 28800,
+          "grids": 40800,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 12679184,
+        "storages": 76,
+        "python_object_bytes": 15159,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10198440,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 31,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2584,
+        "tokens_b": 2584
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2584,
+        "tokens_b": 2584
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2584,
+        "tokens_b": 2584
+      },
+      "counts": {
+        "match_calls": 57,
+        "match_query_tokens": 6840,
+        "prune_frames": 27,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 45883864,
+        "storages": 101,
+        "python_object_bytes": 12644,
+        "components": {
+          "raw": 15237120,
+          "merged": 15237120,
+          "norm": 15237120,
+          "height": 29760,
+          "width": 29760,
+          "times": 29760,
+          "distance": 7440,
+          "keep": 3720,
+          "indices": 29760,
+          "grids": 42160,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 13085480,
+        "storages": 78,
+        "python_object_bytes": 15515,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10604736,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 32,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2671,
+        "tokens_b": 2671
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2671,
+        "tokens_b": 2671
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2671,
+        "tokens_b": 2671
+      },
+      "counts": {
+        "match_calls": 59,
+        "match_query_tokens": 7080,
+        "prune_frames": 28,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 47363984,
+        "storages": 104,
+        "python_object_bytes": 12888,
+        "components": {
+          "raw": 15728640,
+          "merged": 15728640,
+          "norm": 15728640,
+          "height": 30720,
+          "width": 30720,
+          "times": 30720,
+          "distance": 7680,
+          "keep": 3840,
+          "indices": 30720,
+          "grids": 43520,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 13442528,
+        "storages": 80,
+        "python_object_bytes": 15843,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10961784,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 33,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2753,
+        "tokens_b": 2753
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2753,
+        "tokens_b": 2753
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2753,
+        "tokens_b": 2753
+      },
+      "counts": {
+        "match_calls": 61,
+        "match_query_tokens": 7320,
+        "prune_frames": 29,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 48844104,
+        "storages": 107,
+        "python_object_bytes": 13260,
+        "components": {
+          "raw": 16220160,
+          "merged": 16220160,
+          "norm": 16220160,
+          "height": 31680,
+          "width": 31680,
+          "times": 31680,
+          "distance": 7920,
+          "keep": 3960,
+          "indices": 31680,
+          "grids": 44880,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 13779056,
+        "storages": 82,
+        "python_object_bytes": 16263,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 11298312,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 34,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2840,
+        "tokens_b": 2840
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2840,
+        "tokens_b": 2840
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2840,
+        "tokens_b": 2840
+      },
+      "counts": {
+        "match_calls": 63,
+        "match_query_tokens": 7560,
+        "prune_frames": 30,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 50324224,
+        "storages": 110,
+        "python_object_bytes": 13504,
+        "components": {
+          "raw": 16711680,
+          "merged": 16711680,
+          "norm": 16711680,
+          "height": 32640,
+          "width": 32640,
+          "times": 32640,
+          "distance": 8160,
+          "keep": 4080,
+          "indices": 32640,
+          "grids": 46240,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 14136104,
+        "storages": 84,
+        "python_object_bytes": 16619,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 11655360,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 35,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2940,
+        "tokens_b": 2940
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2940,
+        "tokens_b": 2940
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2940,
+        "tokens_b": 2940
+      },
+      "counts": {
+        "match_calls": 65,
+        "match_query_tokens": 7800,
+        "prune_frames": 31,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 51804344,
+        "storages": 113,
+        "python_object_bytes": 13748,
+        "components": {
+          "raw": 17203200,
+          "merged": 17203200,
+          "norm": 17203200,
+          "height": 33600,
+          "width": 33600,
+          "times": 33600,
+          "distance": 8400,
+          "keep": 4200,
+          "indices": 33600,
+          "grids": 47600,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 14546504,
+        "storages": 86,
+        "python_object_bytes": 16975,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12065760,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 36,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3040,
+        "tokens_b": 3040
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3040,
+        "tokens_b": 3040
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3040,
+        "tokens_b": 3040
+      },
+      "counts": {
+        "match_calls": 67,
+        "match_query_tokens": 8040,
+        "prune_frames": 32,
+        "merge_frames": 0
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 53284464,
+        "storages": 116,
+        "python_object_bytes": 13992,
+        "components": {
+          "raw": 17694720,
+          "merged": 17694720,
+          "norm": 17694720,
+          "height": 34560,
+          "width": 34560,
+          "times": 34560,
+          "distance": 8640,
+          "keep": 4320,
+          "indices": 34560,
+          "grids": 48960,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 14956904,
+        "storages": 88,
+        "python_object_bytes": 17331,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12476160,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 37,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3066,
+        "tokens_b": 3066
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3066,
+        "tokens_b": 3066
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3066,
+        "tokens_b": 3066
+      },
+      "counts": {
+        "match_calls": 69,
+        "match_query_tokens": 8280,
+        "prune_frames": 33,
+        "merge_frames": 1
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 54764584,
+        "storages": 119,
+        "python_object_bytes": 14300,
+        "components": {
+          "raw": 18186240,
+          "merged": 18186240,
+          "norm": 18186240,
+          "height": 35520,
+          "width": 35520,
+          "times": 35520,
+          "distance": 8880,
+          "keep": 4440,
+          "indices": 35520,
+          "grids": 50320,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 15063608,
+        "storages": 90,
+        "python_object_bytes": 17751,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12582864,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 38,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3063,
+        "tokens_b": 3063
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3063,
+        "tokens_b": 3063
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3063,
+        "tokens_b": 3063
+      },
+      "counts": {
+        "match_calls": 71,
+        "match_query_tokens": 8520,
+        "prune_frames": 34,
+        "merge_frames": 2
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 56244704,
+        "storages": 122,
+        "python_object_bytes": 14544,
+        "components": {
+          "raw": 18677760,
+          "merged": 18677760,
+          "norm": 18677760,
+          "height": 36480,
+          "width": 36480,
+          "times": 36480,
+          "distance": 9120,
+          "keep": 4560,
+          "indices": 36480,
+          "grids": 51680,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 15051296,
+        "storages": 92,
+        "python_object_bytes": 18107,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12570552,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 39,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3074,
+        "tokens_b": 3074
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3074,
+        "tokens_b": 3074
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3074,
+        "tokens_b": 3074
+      },
+      "counts": {
+        "match_calls": 73,
+        "match_query_tokens": 8760,
+        "prune_frames": 35,
+        "merge_frames": 3
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 57724824,
+        "storages": 125,
+        "python_object_bytes": 14788,
+        "components": {
+          "raw": 19169280,
+          "merged": 19169280,
+          "norm": 19169280,
+          "height": 37440,
+          "width": 37440,
+          "times": 37440,
+          "distance": 9360,
+          "keep": 4680,
+          "indices": 37440,
+          "grids": 53040,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 15096440,
+        "storages": 94,
+        "python_object_bytes": 18463,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12615696,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 40,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3071,
+        "tokens_b": 3071
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3071,
+        "tokens_b": 3071
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3071,
+        "tokens_b": 3071
+      },
+      "counts": {
+        "match_calls": 75,
+        "match_query_tokens": 9000,
+        "prune_frames": 36,
+        "merge_frames": 4
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 59204944,
+        "storages": 128,
+        "python_object_bytes": 15032,
+        "components": {
+          "raw": 19660800,
+          "merged": 19660800,
+          "norm": 19660800,
+          "height": 38400,
+          "width": 38400,
+          "times": 38400,
+          "distance": 9600,
+          "keep": 4800,
+          "indices": 38400,
+          "grids": 54400,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 15084128,
+        "storages": 96,
+        "python_object_bytes": 18819,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12603384,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    },
+    {
+      "blocks": 41,
+      "vs_original": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3087,
+        "tokens_b": 3087
+      },
+      "vs_C1": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3087,
+        "tokens_b": 3087
+      },
+      "repeat_read": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3087,
+        "tokens_b": 3087
+      },
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      },
+      "C1_state": {
+        "tensor_storage_bytes": 60685064,
+        "storages": 131,
+        "python_object_bytes": 15468,
+        "components": {
+          "raw": 20152320,
+          "merged": 20152320,
+          "norm": 20152320,
+          "height": 39360,
+          "width": 39360,
+          "times": 39360,
+          "distance": 9840,
+          "keep": 4920,
+          "indices": 39360,
+          "grids": 55760,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      },
+      "C2_state": {
+        "tensor_storage_bytes": 15149792,
+        "storages": 98,
+        "python_object_bytes": 19271,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12669048,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      }
+    }
+  ],
+  "source_hashes": {
+    "validate.py": "962bedb0c635ed1408d7111fdab0e3b4dcc1e8d9794c92a0c621326b3defe407",
+    "compact.py": "4d0ea7688344df264a98ddd7cf70c1fdfa266a810baab38ecdd25138573a1838",
+    "check_append.py": "c5947749767003f7b2d2146e7b05893e5789c4a5c6d11af7748e935074c34912",
+    "PROTOCOL.md": "7303da2abf3610128dc54abf92ddf6f11281e6f3d0a60f7481654d71878084b1"
+  },
+  "append_copies": {
+    "C1": {
+      "calls": {
+        "aten.clone.default": 87,
+        "aten.copy_.default": 41,
+        "aten.cat.default": 280
+      },
+      "logical_bytes": {
+        "aten.clone.default": 21167440,
+        "aten.copy_.default": 39360,
+        "aten.cat.default": 848200800
+      }
+    },
+    "C2": {
+      "calls": {
+        "aten.copy_.default": 46,
+        "aten.clone.default": 80
+      },
+      "logical_bytes": {
+        "aten.copy_.default": 20157120,
+        "aten.clone.default": 20181160
+      }
+    }
+  },
+  "reset_replay": {
+    "indices_equal": true,
+    "features_bitwise_equal": true,
+    "max_abs_error": 0.0,
+    "tokens_a": 557,
+    "tokens_b": 557
+  },
+  "snapshot_mutation_isolated": {
+    "indices_equal": true,
+    "features_bitwise_equal": true,
+    "max_abs_error": 0.0,
+    "tokens_a": 557,
+    "tokens_b": 557
+  }
+}

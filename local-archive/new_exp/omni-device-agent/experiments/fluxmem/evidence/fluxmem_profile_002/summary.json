@@ -1,0 +1,346 @@
+{
+  "source": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_profile_002/results.json",
+  "source_status": "completed",
+  "statistic": "median of three interleaved measured repeats; first shape use retained",
+  "hardware": {
+    "chip": "Apple M4",
+    "ram_bytes": 17179869184,
+    "macos": "26.5.1"
+  },
+  "config": {
+    "dtype": "bfloat16",
+    "device": "mps",
+    "attention": "sdpa",
+    "short_frames": 8,
+    "medium_frames": 64,
+    "video_chunk_t": 2,
+    "max_new_tokens": 32,
+    "do_sample": false
+  },
+  "rows": [
+    {
+      "query_index": 0,
+      "timestamp": "00:00:04",
+      "fluxmem": false,
+      "n": 3,
+      "vision_seconds": 1.3887754999886965,
+      "memory_seconds": 0,
+      "language_prefill_and_other_seconds": 0.9720307920215419,
+      "qa_after_visual_memory_seconds": 1.083667166007217,
+      "generation_seconds": 2.4724426659959136,
+      "decode_forward_seconds": 0.09217708400683478,
+      "first_forward_kv_bytes": 14635008,
+      "generation_seconds_min": 2.3194620830036,
+      "generation_seconds_max": 48.46504462500161,
+      "generation_seconds_each": [
+        2.3194620830036,
+        2.4724426659959136,
+        48.46504462500161
+      ],
+      "prefill_kv_tokens_each": [
+        397,
+        397,
+        397
+      ],
+      "answers": [
+        "D",
+        "D",
+        "D"
+      ],
+      "gold": "D",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 248381440,
+          "physical_footprint_bytes": 9296714496,
+          "mps_allocated_bytes": 143448832,
+          "mps_driver_bytes": 8814395392
+        },
+        "prefill_forward": {
+          "rss_bytes": 248381440,
+          "physical_footprint_bytes": 9279970048,
+          "mps_allocated_bytes": 141475072,
+          "mps_driver_bytes": 8797585408
+        },
+        "vision": {
+          "rss_bytes": 248381440,
+          "physical_footprint_bytes": 8579177192,
+          "mps_allocated_bytes": 32555776,
+          "mps_driver_bytes": 7673528320
+        }
+      }
+    },
+    {
+      "query_index": 0,
+      "timestamp": "00:00:04",
+      "fluxmem": true,
+      "n": 3,
+      "vision_seconds": 6.580858957997407,
+      "memory_seconds": 0.0209198750089854,
+      "language_prefill_and_other_seconds": 1.2240633740002522,
+      "qa_after_visual_memory_seconds": 1.3680418330040993,
+      "generation_seconds": 8.011978417009232,
+      "decode_forward_seconds": 0.0946124170004623,
+      "first_forward_kv_bytes": 14635008,
+      "generation_seconds_min": 2.287436540995259,
+      "generation_seconds_max": 10.606230250006774,
+      "generation_seconds_each": [
+        2.287436540995259,
+        8.011978417009232,
+        10.606230250006774
+      ],
+      "prefill_kv_tokens_each": [
+        397,
+        397,
+        397
+      ],
+      "answers": [
+        "D",
+        "D",
+        "D"
+      ],
+      "gold": "D",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 272842752,
+          "physical_footprint_bytes": 9296845568,
+          "mps_allocated_bytes": 144046336,
+          "mps_driver_bytes": 8814395392
+        },
+        "prefill_forward": {
+          "rss_bytes": 272842752,
+          "physical_footprint_bytes": 9280035584,
+          "mps_allocated_bytes": 142072832,
+          "mps_driver_bytes": 8797585408
+        },
+        "vision": {
+          "rss_bytes": 272842752,
+          "physical_footprint_bytes": 8770558816,
+          "mps_allocated_bytes": 34920960,
+          "mps_driver_bytes": 7673528320
+        },
+        "memory_compression": {
+          "rss_bytes": 271286272,
+          "physical_footprint_bytes": 8114019072,
+          "mps_allocated_bytes": 21935104,
+          "mps_driver_bytes": 7631568896
+        }
+      }
+    },
+    {
+      "query_index": 1,
+      "timestamp": "00:00:53",
+      "fluxmem": false,
+      "n": 3,
+      "vision_seconds": 15.325020914009656,
+      "memory_seconds": 0,
+      "language_prefill_and_other_seconds": 10.388362585988943,
+      "qa_after_visual_memory_seconds": 11.699843043985311,
+      "generation_seconds": 27.024863957994967,
+      "decode_forward_seconds": 1.269592290991568,
+      "first_forward_kv_bytes": 120508416,
+      "generation_seconds_min": 25.496390041997074,
+      "generation_seconds_max": 77.12867229100084,
+      "generation_seconds_each": [
+        25.496390041997074,
+        27.024863957994967,
+        77.12867229100084
+      ],
+      "prefill_kv_tokens_each": [
+        3269,
+        3269,
+        3269
+      ],
+      "answers": [
+        "C",
+        "C",
+        "C"
+      ],
+      "gold": "C",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 303431680,
+          "physical_footprint_bytes": 11287976776,
+          "mps_allocated_bytes": 1994610944,
+          "mps_driver_bytes": 10831872000
+        },
+        "prefill_forward": {
+          "rss_bytes": 303431680,
+          "physical_footprint_bytes": 11283192648,
+          "mps_allocated_bytes": 1992652800,
+          "mps_driver_bytes": 10831822848
+        },
+        "vision": {
+          "rss_bytes": 303431680,
+          "physical_footprint_bytes": 9104513816,
+          "mps_allocated_bytes": 147308288,
+          "mps_driver_bytes": 8646606848
+        }
+      }
+    },
+    {
+      "query_index": 1,
+      "timestamp": "00:00:53",
+      "fluxmem": true,
+      "n": 3,
+      "vision_seconds": 18.77644929100643,
+      "memory_seconds": 1.128767041998799,
+      "language_prefill_and_other_seconds": 7.252906542023993,
+      "qa_after_visual_memory_seconds": 7.748755667009391,
+      "generation_seconds": 27.221994042003644,
+      "decode_forward_seconds": 0.8195317499921657,
+      "first_forward_kv_bytes": 87699456,
+      "generation_seconds_min": 25.099937541992404,
+      "generation_seconds_max": 81.55414074999862,
+      "generation_seconds_each": [
+        27.221994042003644,
+        25.099937541992404,
+        81.55414074999862
+      ],
+      "prefill_kv_tokens_each": [
+        2379,
+        2379,
+        2379
+      ],
+      "answers": [
+        "C",
+        "C",
+        "C"
+      ],
+      "gold": "C",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 296599552,
+          "physical_footprint_bytes": 9918389016,
+          "mps_allocated_bytes": 1331862272,
+          "mps_driver_bytes": 9458270208
+        },
+        "prefill_forward": {
+          "rss_bytes": 296599552,
+          "physical_footprint_bytes": 9913015112,
+          "mps_allocated_bytes": 1329903872,
+          "mps_driver_bytes": 9458221056
+        },
+        "vision": {
+          "rss_bytes": 296599552,
+          "physical_footprint_bytes": 9068469016,
+          "mps_allocated_bytes": 145403648,
+          "mps_driver_bytes": 8646606848
+        },
+        "memory_compression": {
+          "rss_bytes": 64552960,
+          "physical_footprint_bytes": 9069075272,
+          "mps_allocated_bytes": 154301440,
+          "mps_driver_bytes": 8621473792
+        }
+      }
+    },
+    {
+      "query_index": 2,
+      "timestamp": "00:01:22",
+      "fluxmem": false,
+      "n": 3,
+      "vision_seconds": 28.53301766703953,
+      "memory_seconds": 0,
+      "language_prefill_and_other_seconds": 20.71935045796272,
+      "qa_after_visual_memory_seconds": 57.36378979100846,
+      "generation_seconds": 92.42876662500203,
+      "decode_forward_seconds": 5.564227958006086,
+      "first_forward_kv_bytes": 186384384,
+      "generation_seconds_min": 47.77454920799937,
+      "generation_seconds_max": 124.2903796669998,
+      "generation_seconds_each": [
+        47.77454920799937,
+        92.42876662500203,
+        124.2903796669998
+      ],
+      "prefill_kv_tokens_each": [
+        5056,
+        5056,
+        5056
+      ],
+      "answers": [
+        "D",
+        "D",
+        "D"
+      ],
+      "gold": "D",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 340328448,
+          "physical_footprint_bytes": 11876817712,
+          "mps_allocated_bytes": 2300370176,
+          "mps_driver_bytes": 11383439360
+        },
+        "prefill_forward": {
+          "rss_bytes": 340328448,
+          "physical_footprint_bytes": 11871542064,
+          "mps_allocated_bytes": 2298157312,
+          "mps_driver_bytes": 11383390208
+        },
+        "vision": {
+          "rss_bytes": 340328448,
+          "physical_footprint_bytes": 9153600352,
+          "mps_allocated_bytes": 212368640,
+          "mps_driver_bytes": 8717910016
+        }
+      }
+    },
+    {
+      "query_index": 2,
+      "timestamp": "00:01:22",
+      "fluxmem": true,
+      "n": 3,
+      "vision_seconds": 30.85645324899815,
+      "memory_seconds": 2.172656750000897,
+      "language_prefill_and_other_seconds": 24.431112374935765,
+      "qa_after_visual_memory_seconds": 27.626874583933386,
+      "generation_seconds": 59.5375205839955,
+      "decode_forward_seconds": 0.8827934160071891,
+      "first_forward_kv_bytes": 117706752,
+      "generation_seconds_min": 45.947473624997656,
+      "generation_seconds_max": 108.02192962499976,
+      "generation_seconds_each": [
+        59.5375205839955,
+        45.947473624997656,
+        108.02192962499976
+      ],
+      "prefill_kv_tokens_each": [
+        3193,
+        3193,
+        3193
+      ],
+      "answers": [
+        "D",
+        "D",
+        "D"
+      ],
+      "gold": "D",
+      "stage_peak_medians_bytes": {
+        "generation": {
+          "rss_bytes": 334413824,
+          "physical_footprint_bytes": 10321713968,
+          "mps_allocated_bytes": 1729080320,
+          "mps_driver_bytes": 9806643200
+        },
+        "prefill_forward": {
+          "rss_bytes": 334413824,
+          "physical_footprint_bytes": 10315684680,
+          "mps_allocated_bytes": 1727514624,
+          "mps_driver_bytes": 9806479360
+        },
+        "vision": {
+          "rss_bytes": 334413824,
+          "physical_footprint_bytes": 9102990152,
+          "mps_allocated_bytes": 214657280,
+          "mps_driver_bytes": 8722104320
+        },
+        "memory_compression": {
+          "rss_bytes": 89309184,
+          "physical_footprint_bytes": 9131907888,
+          "mps_allocated_bytes": 237283328,
+          "mps_driver_bytes": 8630009856
+        }
+      }
+    }
+  ]
+}

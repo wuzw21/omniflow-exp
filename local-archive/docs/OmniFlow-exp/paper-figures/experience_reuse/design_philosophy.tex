@@ -1,0 +1,7 @@
+% Place design_philosophy.pdf in the paper's figures directory.
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/design_philosophy.pdf}
+  \caption{OmniFlow's design philosophy. (a) Repeated VLM inference creates a practical trade-off among task success, latency, and inference cost; the triangle is a conceptual illustration, not an impossibility theorem. (b) Historical paths supply successful actions, while intuitive transfer reasoning denotes learned action mapping conditioned on the current GUI state. Reliable reuse enables execution without a new VLM call for every action. The Planner/VLM handles novel decisions and recovery, after which execution can resume reuse. This separation aims to reduce repeated inference while preserving task success.}
+  \label{fig:omniflow-design-philosophy}
+\end{figure*}

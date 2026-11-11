@@ -1,0 +1,17 @@
+% Discussion
+
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Execution flywheel: every run refines the shared cache.}
+A key property of \sysname is that the shared Function cache improves with natural usage---no dedicated exploration phase is required.
+Each accepted run is written back through the same write-back path: \textsc{Omni} projects the new observation into the existing UDEG node family, adds the run as additional evidence, and refines the Function's precondition and action evidence offline.
+The consequence is that the same UDEG node accumulates observations from diverse devices, users, app versions, and screen configurations over time.
+A Function that was originally recorded on one device and screen size gradually acquires anchor evidence from foldable displays, different OEM skins, and varying font scales.
+This makes subsequent cache hits more robust---not because the system was trained on more data, but because the PageVector and anchor evidence naturally span a wider layout manifold.
+The cost structure follows: the per-Function online model cost is paid once, on the first execution that discovers the Function.
+Every subsequent cache hit amortizes that cost across all future users.
+In workloads where the same recurring Function is triggered by many users, the marginal online model cost per invocation approaches zero as the cache matures.
+This flywheel is absent in existing memory-based systems that build per-user, per-app memory from dedicated exploration: each new user resets the cold-start cost, and the memory does not cross-fertilize across users or devices.
+
+Our efficient page matching and anchor relocation algorithms make repeated write-back practical at runtime. As a result, every successful execution can be incorporated into the shared cache with little additional overhead, allowing execution knowledge to accumulate continuously through normal usage.

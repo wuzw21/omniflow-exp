@@ -1,0 +1,4057 @@
+{
+  "status": "completed",
+  "device": "mps",
+  "chip": "Apple M4",
+  "features_sha256": "03bfdb70285f1a6dc13887cc488b201eca1ad8423e3fe0c4edc1ef4efd8e40df",
+  "queries": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94
+  ],
+  "records": [
+    {
+      "blocks": 1,
+      "seconds": 2,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 120,
+        "tokens_b": 120
+      },
+      "retained_tokens": 120,
+      "state": {
+        "tensor_storage_bytes": 2973224,
+        "storages": 18,
+        "python_object_bytes": 4207,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 492480,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 960,
+          "grids": 1360
+        }
+      },
+      "counts": {
+        "match_calls": 0,
+        "match_query_tokens": 0,
+        "prune_frames": 0,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 2,
+      "seconds": 4,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 240,
+        "tokens_b": 240
+      },
+      "retained_tokens": 240,
+      "state": {
+        "tensor_storage_bytes": 3465704,
+        "storages": 20,
+        "python_object_bytes": 4535,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 984960,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 1920,
+          "grids": 2720
+        }
+      },
+      "counts": {
+        "match_calls": 1,
+        "match_query_tokens": 120,
+        "prune_frames": 0,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 3,
+      "seconds": 6,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 360,
+        "tokens_b": 360
+      },
+      "retained_tokens": 360,
+      "state": {
+        "tensor_storage_bytes": 3958184,
+        "storages": 22,
+        "python_object_bytes": 4863,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 1477440,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 2880,
+          "grids": 4080
+        }
+      },
+      "counts": {
+        "match_calls": 2,
+        "match_query_tokens": 240,
+        "prune_frames": 0,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 4,
+      "seconds": 8,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 480,
+        "tokens_b": 480
+      },
+      "retained_tokens": 480,
+      "state": {
+        "tensor_storage_bytes": 4450664,
+        "storages": 24,
+        "python_object_bytes": 5191,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 1969920,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 3,
+        "match_query_tokens": 360,
+        "prune_frames": 0,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 5,
+      "seconds": 10,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 557,
+        "tokens_b": 557
+      },
+      "retained_tokens": 557,
+      "state": {
+        "tensor_storage_bytes": 4766672,
+        "storages": 26,
+        "python_object_bytes": 5643,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 2285928,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 5,
+        "match_query_tokens": 600,
+        "prune_frames": 1,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 6,
+      "seconds": 12,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 663,
+        "tokens_b": 663
+      },
+      "retained_tokens": 663,
+      "state": {
+        "tensor_storage_bytes": 5201696,
+        "storages": 28,
+        "python_object_bytes": 6255,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 2720952,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 7,
+        "match_query_tokens": 840,
+        "prune_frames": 2,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 7,
+      "seconds": 14,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 751,
+        "tokens_b": 751
+      },
+      "retained_tokens": 751,
+      "state": {
+        "tensor_storage_bytes": 5562848,
+        "storages": 30,
+        "python_object_bytes": 6611,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3082104,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 9,
+        "match_query_tokens": 1080,
+        "prune_frames": 3,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 8,
+      "seconds": 16,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 843,
+        "tokens_b": 843
+      },
+      "retained_tokens": 843,
+      "state": {
+        "tensor_storage_bytes": 5940416,
+        "storages": 32,
+        "python_object_bytes": 6939,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3459672,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 11,
+        "match_query_tokens": 1320,
+        "prune_frames": 4,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 9,
+      "seconds": 18,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 931,
+        "tokens_b": 931
+      },
+      "retained_tokens": 931,
+      "state": {
+        "tensor_storage_bytes": 6301568,
+        "storages": 34,
+        "python_object_bytes": 7391,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 3820824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 13,
+        "match_query_tokens": 1560,
+        "prune_frames": 5,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 10,
+      "seconds": 20,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 998,
+        "tokens_b": 998
+      },
+      "retained_tokens": 998,
+      "state": {
+        "tensor_storage_bytes": 6576536,
+        "storages": 36,
+        "python_object_bytes": 7747,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4095792,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 15,
+        "match_query_tokens": 1800,
+        "prune_frames": 6,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 11,
+      "seconds": 22,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1057,
+        "tokens_b": 1057
+      },
+      "retained_tokens": 1057,
+      "state": {
+        "tensor_storage_bytes": 6818672,
+        "storages": 38,
+        "python_object_bytes": 8103,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4337928,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 17,
+        "match_query_tokens": 2040,
+        "prune_frames": 7,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 12,
+      "seconds": 24,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1108,
+        "tokens_b": 1108
+      },
+      "retained_tokens": 1108,
+      "state": {
+        "tensor_storage_bytes": 7027976,
+        "storages": 40,
+        "python_object_bytes": 8459,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4547232,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 19,
+        "match_query_tokens": 2280,
+        "prune_frames": 8,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 13,
+      "seconds": 26,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1157,
+        "tokens_b": 1157
+      },
+      "retained_tokens": 1157,
+      "state": {
+        "tensor_storage_bytes": 7229072,
+        "storages": 42,
+        "python_object_bytes": 8879,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 4748328,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 21,
+        "match_query_tokens": 2520,
+        "prune_frames": 9,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 14,
+      "seconds": 28,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1219,
+        "tokens_b": 1219
+      },
+      "retained_tokens": 1219,
+      "state": {
+        "tensor_storage_bytes": 7483520,
+        "storages": 44,
+        "python_object_bytes": 9235,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5002776,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 23,
+        "match_query_tokens": 2760,
+        "prune_frames": 10,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 15,
+      "seconds": 30,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1270,
+        "tokens_b": 1270
+      },
+      "retained_tokens": 1270,
+      "state": {
+        "tensor_storage_bytes": 7692824,
+        "storages": 46,
+        "python_object_bytes": 9563,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5212080,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 25,
+        "match_query_tokens": 3000,
+        "prune_frames": 11,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 16,
+      "seconds": 32,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1335,
+        "tokens_b": 1335
+      },
+      "retained_tokens": 1335,
+      "state": {
+        "tensor_storage_bytes": 7959584,
+        "storages": 48,
+        "python_object_bytes": 9919,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5478840,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 27,
+        "match_query_tokens": 3240,
+        "prune_frames": 12,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 17,
+      "seconds": 34,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1401,
+        "tokens_b": 1401
+      },
+      "retained_tokens": 1401,
+      "state": {
+        "tensor_storage_bytes": 8230448,
+        "storages": 50,
+        "python_object_bytes": 10339,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5749704,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 29,
+        "match_query_tokens": 3480,
+        "prune_frames": 13,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 18,
+      "seconds": 36,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1460,
+        "tokens_b": 1460
+      },
+      "retained_tokens": 1460,
+      "state": {
+        "tensor_storage_bytes": 8472584,
+        "storages": 52,
+        "python_object_bytes": 10695,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 5991840,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 31,
+        "match_query_tokens": 3720,
+        "prune_frames": 14,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 19,
+      "seconds": 38,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1540,
+        "tokens_b": 1540
+      },
+      "retained_tokens": 1540,
+      "state": {
+        "tensor_storage_bytes": 8800904,
+        "storages": 54,
+        "python_object_bytes": 11051,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 6320160,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 33,
+        "match_query_tokens": 3960,
+        "prune_frames": 15,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 20,
+      "seconds": 40,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1631,
+        "tokens_b": 1631
+      },
+      "retained_tokens": 1631,
+      "state": {
+        "tensor_storage_bytes": 9174368,
+        "storages": 56,
+        "python_object_bytes": 11407,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 6693624,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 35,
+        "match_query_tokens": 4200,
+        "prune_frames": 16,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 21,
+      "seconds": 42,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1714,
+        "tokens_b": 1714
+      },
+      "retained_tokens": 1714,
+      "state": {
+        "tensor_storage_bytes": 9515000,
+        "storages": 58,
+        "python_object_bytes": 11827,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7034256,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 37,
+        "match_query_tokens": 4440,
+        "prune_frames": 17,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 22,
+      "seconds": 44,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1806,
+        "tokens_b": 1806
+      },
+      "retained_tokens": 1806,
+      "state": {
+        "tensor_storage_bytes": 9892568,
+        "storages": 60,
+        "python_object_bytes": 12183,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7411824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 39,
+        "match_query_tokens": 4680,
+        "prune_frames": 18,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 23,
+      "seconds": 46,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1893,
+        "tokens_b": 1893
+      },
+      "retained_tokens": 1893,
+      "state": {
+        "tensor_storage_bytes": 10249616,
+        "storages": 62,
+        "python_object_bytes": 12539,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 7768872,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 41,
+        "match_query_tokens": 4920,
+        "prune_frames": 19,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 24,
+      "seconds": 48,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 1989,
+        "tokens_b": 1989
+      },
+      "retained_tokens": 1989,
+      "state": {
+        "tensor_storage_bytes": 10643600,
+        "storages": 64,
+        "python_object_bytes": 12895,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8162856,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 43,
+        "match_query_tokens": 5160,
+        "prune_frames": 20,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 25,
+      "seconds": 50,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2081,
+        "tokens_b": 2081
+      },
+      "retained_tokens": 2081,
+      "state": {
+        "tensor_storage_bytes": 11021168,
+        "storages": 66,
+        "python_object_bytes": 13315,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8540424,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 45,
+        "match_query_tokens": 5400,
+        "prune_frames": 21,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 26,
+      "seconds": 52,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2162,
+        "tokens_b": 2162
+      },
+      "retained_tokens": 2162,
+      "state": {
+        "tensor_storage_bytes": 11353592,
+        "storages": 68,
+        "python_object_bytes": 13671,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 8872848,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 47,
+        "match_query_tokens": 5640,
+        "prune_frames": 22,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 27,
+      "seconds": 54,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2241,
+        "tokens_b": 2241
+      },
+      "retained_tokens": 2241,
+      "state": {
+        "tensor_storage_bytes": 11677808,
+        "storages": 70,
+        "python_object_bytes": 14027,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9197064,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 49,
+        "match_query_tokens": 5880,
+        "prune_frames": 23,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 28,
+      "seconds": 56,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2306,
+        "tokens_b": 2306
+      },
+      "retained_tokens": 2306,
+      "state": {
+        "tensor_storage_bytes": 11944568,
+        "storages": 72,
+        "python_object_bytes": 14383,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9463824,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 51,
+        "match_query_tokens": 6120,
+        "prune_frames": 24,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 29,
+      "seconds": 58,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2389,
+        "tokens_b": 2389
+      },
+      "retained_tokens": 2389,
+      "state": {
+        "tensor_storage_bytes": 12285200,
+        "storages": 74,
+        "python_object_bytes": 14803,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 9804456,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 53,
+        "match_query_tokens": 6360,
+        "prune_frames": 25,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 30,
+      "seconds": 60,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2485,
+        "tokens_b": 2485
+      },
+      "retained_tokens": 2485,
+      "state": {
+        "tensor_storage_bytes": 12679184,
+        "storages": 76,
+        "python_object_bytes": 15159,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10198440,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 55,
+        "match_query_tokens": 6600,
+        "prune_frames": 26,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 31,
+      "seconds": 62,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2584,
+        "tokens_b": 2584
+      },
+      "retained_tokens": 2584,
+      "state": {
+        "tensor_storage_bytes": 13085480,
+        "storages": 78,
+        "python_object_bytes": 15515,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10604736,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 57,
+        "match_query_tokens": 6840,
+        "prune_frames": 27,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 32,
+      "seconds": 64,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2671,
+        "tokens_b": 2671
+      },
+      "retained_tokens": 2671,
+      "state": {
+        "tensor_storage_bytes": 13442528,
+        "storages": 80,
+        "python_object_bytes": 15843,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 10961784,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 59,
+        "match_query_tokens": 7080,
+        "prune_frames": 28,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 33,
+      "seconds": 66,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2753,
+        "tokens_b": 2753
+      },
+      "retained_tokens": 2753,
+      "state": {
+        "tensor_storage_bytes": 13779056,
+        "storages": 82,
+        "python_object_bytes": 16263,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 11298312,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 61,
+        "match_query_tokens": 7320,
+        "prune_frames": 29,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 34,
+      "seconds": 68,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2840,
+        "tokens_b": 2840
+      },
+      "retained_tokens": 2840,
+      "state": {
+        "tensor_storage_bytes": 14136104,
+        "storages": 84,
+        "python_object_bytes": 16619,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 11655360,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 63,
+        "match_query_tokens": 7560,
+        "prune_frames": 30,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 35,
+      "seconds": 70,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2940,
+        "tokens_b": 2940
+      },
+      "retained_tokens": 2940,
+      "state": {
+        "tensor_storage_bytes": 14546504,
+        "storages": 86,
+        "python_object_bytes": 16975,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12065760,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 65,
+        "match_query_tokens": 7800,
+        "prune_frames": 31,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 36,
+      "seconds": 72,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3040,
+        "tokens_b": 3040
+      },
+      "retained_tokens": 3040,
+      "state": {
+        "tensor_storage_bytes": 14956904,
+        "storages": 88,
+        "python_object_bytes": 17331,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12476160,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 67,
+        "match_query_tokens": 8040,
+        "prune_frames": 32,
+        "merge_frames": 0
+      }
+    },
+    {
+      "blocks": 37,
+      "seconds": 74,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3066,
+        "tokens_b": 3066
+      },
+      "retained_tokens": 3066,
+      "state": {
+        "tensor_storage_bytes": 15063608,
+        "storages": 90,
+        "python_object_bytes": 17751,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12582864,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 69,
+        "match_query_tokens": 8280,
+        "prune_frames": 33,
+        "merge_frames": 1
+      }
+    },
+    {
+      "blocks": 38,
+      "seconds": 76,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3063,
+        "tokens_b": 3063
+      },
+      "retained_tokens": 3063,
+      "state": {
+        "tensor_storage_bytes": 15051296,
+        "storages": 92,
+        "python_object_bytes": 18107,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12570552,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 71,
+        "match_query_tokens": 8520,
+        "prune_frames": 34,
+        "merge_frames": 2
+      }
+    },
+    {
+      "blocks": 39,
+      "seconds": 78,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3074,
+        "tokens_b": 3074
+      },
+      "retained_tokens": 3074,
+      "state": {
+        "tensor_storage_bytes": 15096440,
+        "storages": 94,
+        "python_object_bytes": 18463,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12615696,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 73,
+        "match_query_tokens": 8760,
+        "prune_frames": 35,
+        "merge_frames": 3
+      }
+    },
+    {
+      "blocks": 40,
+      "seconds": 80,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3071,
+        "tokens_b": 3071
+      },
+      "retained_tokens": 3071,
+      "state": {
+        "tensor_storage_bytes": 15084128,
+        "storages": 96,
+        "python_object_bytes": 18819,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12603384,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 75,
+        "match_query_tokens": 9000,
+        "prune_frames": 36,
+        "merge_frames": 4
+      }
+    },
+    {
+      "blocks": 41,
+      "seconds": 82,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3087,
+        "tokens_b": 3087
+      },
+      "retained_tokens": 3087,
+      "state": {
+        "tensor_storage_bytes": 15149792,
+        "storages": 98,
+        "python_object_bytes": 19271,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12669048,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 77,
+        "match_query_tokens": 9240,
+        "prune_frames": 37,
+        "merge_frames": 5
+      }
+    },
+    {
+      "blocks": 42,
+      "seconds": 84,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3113,
+        "tokens_b": 3113
+      },
+      "retained_tokens": 3113,
+      "state": {
+        "tensor_storage_bytes": 15256496,
+        "storages": 100,
+        "python_object_bytes": 19599,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12775752,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 79,
+        "match_query_tokens": 9480,
+        "prune_frames": 38,
+        "merge_frames": 6
+      }
+    },
+    {
+      "blocks": 43,
+      "seconds": 86,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3146,
+        "tokens_b": 3146
+      },
+      "retained_tokens": 3146,
+      "state": {
+        "tensor_storage_bytes": 15391928,
+        "storages": 102,
+        "python_object_bytes": 19927,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 12911184,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 81,
+        "match_query_tokens": 9720,
+        "prune_frames": 39,
+        "merge_frames": 7
+      }
+    },
+    {
+      "blocks": 44,
+      "seconds": 88,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3193,
+        "tokens_b": 3193
+      },
+      "retained_tokens": 3193,
+      "state": {
+        "tensor_storage_bytes": 15584816,
+        "storages": 104,
+        "python_object_bytes": 20255,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13104072,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 83,
+        "match_query_tokens": 9960,
+        "prune_frames": 40,
+        "merge_frames": 8
+      }
+    },
+    {
+      "blocks": 45,
+      "seconds": 90,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3257,
+        "tokens_b": 3257
+      },
+      "retained_tokens": 3257,
+      "state": {
+        "tensor_storage_bytes": 15847472,
+        "storages": 106,
+        "python_object_bytes": 20611,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13366728,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 85,
+        "match_query_tokens": 10200,
+        "prune_frames": 41,
+        "merge_frames": 9
+      }
+    },
+    {
+      "blocks": 46,
+      "seconds": 92,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3298,
+        "tokens_b": 3298
+      },
+      "retained_tokens": 3298,
+      "state": {
+        "tensor_storage_bytes": 16015736,
+        "storages": 108,
+        "python_object_bytes": 20939,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13534992,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 87,
+        "match_query_tokens": 10440,
+        "prune_frames": 42,
+        "merge_frames": 10
+      }
+    },
+    {
+      "blocks": 47,
+      "seconds": 94,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3334,
+        "tokens_b": 3334
+      },
+      "retained_tokens": 3334,
+      "state": {
+        "tensor_storage_bytes": 16163480,
+        "storages": 110,
+        "python_object_bytes": 21267,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13682736,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 89,
+        "match_query_tokens": 10680,
+        "prune_frames": 43,
+        "merge_frames": 11
+      }
+    },
+    {
+      "blocks": 48,
+      "seconds": 96,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3359,
+        "tokens_b": 3359
+      },
+      "retained_tokens": 3359,
+      "state": {
+        "tensor_storage_bytes": 16266080,
+        "storages": 112,
+        "python_object_bytes": 21595,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13785336,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 91,
+        "match_query_tokens": 10920,
+        "prune_frames": 44,
+        "merge_frames": 12
+      }
+    },
+    {
+      "blocks": 49,
+      "seconds": 98,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3359,
+        "tokens_b": 3359
+      },
+      "retained_tokens": 3359,
+      "state": {
+        "tensor_storage_bytes": 16266080,
+        "storages": 114,
+        "python_object_bytes": 21923,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13785336,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 93,
+        "match_query_tokens": 11160,
+        "prune_frames": 45,
+        "merge_frames": 13
+      }
+    },
+    {
+      "blocks": 50,
+      "seconds": 100,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3369,
+        "tokens_b": 3369
+      },
+      "retained_tokens": 3369,
+      "state": {
+        "tensor_storage_bytes": 16307120,
+        "storages": 116,
+        "python_object_bytes": 22251,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13826376,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 95,
+        "match_query_tokens": 11400,
+        "prune_frames": 46,
+        "merge_frames": 14
+      }
+    },
+    {
+      "blocks": 51,
+      "seconds": 102,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3368,
+        "tokens_b": 3368
+      },
+      "retained_tokens": 3368,
+      "state": {
+        "tensor_storage_bytes": 16303016,
+        "storages": 118,
+        "python_object_bytes": 22579,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13822272,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 97,
+        "match_query_tokens": 11640,
+        "prune_frames": 47,
+        "merge_frames": 15
+      }
+    },
+    {
+      "blocks": 52,
+      "seconds": 104,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3331,
+        "tokens_b": 3331
+      },
+      "retained_tokens": 3331,
+      "state": {
+        "tensor_storage_bytes": 16151168,
+        "storages": 120,
+        "python_object_bytes": 22935,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13670424,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 99,
+        "match_query_tokens": 11880,
+        "prune_frames": 48,
+        "merge_frames": 16
+      }
+    },
+    {
+      "blocks": 53,
+      "seconds": 106,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3335,
+        "tokens_b": 3335
+      },
+      "retained_tokens": 3335,
+      "state": {
+        "tensor_storage_bytes": 16167584,
+        "storages": 122,
+        "python_object_bytes": 23359,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13686840,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 101,
+        "match_query_tokens": 12120,
+        "prune_frames": 49,
+        "merge_frames": 17
+      }
+    },
+    {
+      "blocks": 54,
+      "seconds": 108,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3328,
+        "tokens_b": 3328
+      },
+      "retained_tokens": 3328,
+      "state": {
+        "tensor_storage_bytes": 16138856,
+        "storages": 124,
+        "python_object_bytes": 23687,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13658112,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 103,
+        "match_query_tokens": 12360,
+        "prune_frames": 50,
+        "merge_frames": 18
+      }
+    },
+    {
+      "blocks": 55,
+      "seconds": 110,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3318,
+        "tokens_b": 3318
+      },
+      "retained_tokens": 3318,
+      "state": {
+        "tensor_storage_bytes": 16097816,
+        "storages": 126,
+        "python_object_bytes": 24015,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13617072,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 105,
+        "match_query_tokens": 12600,
+        "prune_frames": 51,
+        "merge_frames": 19
+      }
+    },
+    {
+      "blocks": 56,
+      "seconds": 112,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3313,
+        "tokens_b": 3313
+      },
+      "retained_tokens": 3313,
+      "state": {
+        "tensor_storage_bytes": 16077296,
+        "storages": 128,
+        "python_object_bytes": 24343,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13596552,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 107,
+        "match_query_tokens": 12840,
+        "prune_frames": 52,
+        "merge_frames": 20
+      }
+    },
+    {
+      "blocks": 57,
+      "seconds": 114,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3290,
+        "tokens_b": 3290
+      },
+      "retained_tokens": 3290,
+      "state": {
+        "tensor_storage_bytes": 15982904,
+        "storages": 130,
+        "python_object_bytes": 24671,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13502160,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 109,
+        "match_query_tokens": 13080,
+        "prune_frames": 53,
+        "merge_frames": 21
+      }
+    },
+    {
+      "blocks": 58,
+      "seconds": 116,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3288,
+        "tokens_b": 3288
+      },
+      "retained_tokens": 3288,
+      "state": {
+        "tensor_storage_bytes": 15974696,
+        "storages": 132,
+        "python_object_bytes": 24999,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13493952,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 111,
+        "match_query_tokens": 13320,
+        "prune_frames": 54,
+        "merge_frames": 22
+      }
+    },
+    {
+      "blocks": 59,
+      "seconds": 118,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3276,
+        "tokens_b": 3276
+      },
+      "retained_tokens": 3276,
+      "state": {
+        "tensor_storage_bytes": 15925448,
+        "storages": 134,
+        "python_object_bytes": 25327,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13444704,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 113,
+        "match_query_tokens": 13560,
+        "prune_frames": 55,
+        "merge_frames": 23
+      }
+    },
+    {
+      "blocks": 60,
+      "seconds": 120,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3278,
+        "tokens_b": 3278
+      },
+      "retained_tokens": 3278,
+      "state": {
+        "tensor_storage_bytes": 15933656,
+        "storages": 136,
+        "python_object_bytes": 25655,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13452912,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 115,
+        "match_query_tokens": 13800,
+        "prune_frames": 56,
+        "merge_frames": 24
+      }
+    },
+    {
+      "blocks": 61,
+      "seconds": 122,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3257,
+        "tokens_b": 3257
+      },
+      "retained_tokens": 3257,
+      "state": {
+        "tensor_storage_bytes": 15847472,
+        "storages": 138,
+        "python_object_bytes": 25983,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13366728,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 117,
+        "match_query_tokens": 14040,
+        "prune_frames": 57,
+        "merge_frames": 25
+      }
+    },
+    {
+      "blocks": 62,
+      "seconds": 124,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3225,
+        "tokens_b": 3225
+      },
+      "retained_tokens": 3225,
+      "state": {
+        "tensor_storage_bytes": 15716144,
+        "storages": 140,
+        "python_object_bytes": 26311,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13235400,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 119,
+        "match_query_tokens": 14280,
+        "prune_frames": 58,
+        "merge_frames": 26
+      }
+    },
+    {
+      "blocks": 63,
+      "seconds": 126,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3208,
+        "tokens_b": 3208
+      },
+      "retained_tokens": 3208,
+      "state": {
+        "tensor_storage_bytes": 15646376,
+        "storages": 142,
+        "python_object_bytes": 26639,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13165632,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 121,
+        "match_query_tokens": 14520,
+        "prune_frames": 59,
+        "merge_frames": 27
+      }
+    },
+    {
+      "blocks": 64,
+      "seconds": 128,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3197,
+        "tokens_b": 3197
+      },
+      "retained_tokens": 3197,
+      "state": {
+        "tensor_storage_bytes": 15601232,
+        "storages": 144,
+        "python_object_bytes": 26967,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13120488,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 123,
+        "match_query_tokens": 14760,
+        "prune_frames": 60,
+        "merge_frames": 28
+      }
+    },
+    {
+      "blocks": 65,
+      "seconds": 130,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3187,
+        "tokens_b": 3187
+      },
+      "retained_tokens": 3187,
+      "state": {
+        "tensor_storage_bytes": 15560192,
+        "storages": 146,
+        "python_object_bytes": 27391,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13079448,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 125,
+        "match_query_tokens": 15000,
+        "prune_frames": 61,
+        "merge_frames": 29
+      }
+    },
+    {
+      "blocks": 66,
+      "seconds": 132,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3188,
+        "tokens_b": 3188
+      },
+      "retained_tokens": 3188,
+      "state": {
+        "tensor_storage_bytes": 15564296,
+        "storages": 148,
+        "python_object_bytes": 27719,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13083552,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 127,
+        "match_query_tokens": 15240,
+        "prune_frames": 62,
+        "merge_frames": 30
+      }
+    },
+    {
+      "blocks": 67,
+      "seconds": 134,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3193,
+        "tokens_b": 3193
+      },
+      "retained_tokens": 3193,
+      "state": {
+        "tensor_storage_bytes": 15584816,
+        "storages": 150,
+        "python_object_bytes": 28047,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13104072,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 129,
+        "match_query_tokens": 15480,
+        "prune_frames": 63,
+        "merge_frames": 31
+      }
+    },
+    {
+      "blocks": 68,
+      "seconds": 136,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3206,
+        "tokens_b": 3206
+      },
+      "retained_tokens": 3206,
+      "state": {
+        "tensor_storage_bytes": 15638168,
+        "storages": 152,
+        "python_object_bytes": 28375,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13157424,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 131,
+        "match_query_tokens": 15720,
+        "prune_frames": 64,
+        "merge_frames": 32
+      }
+    },
+    {
+      "blocks": 69,
+      "seconds": 138,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3236,
+        "tokens_b": 3236
+      },
+      "retained_tokens": 3236,
+      "state": {
+        "tensor_storage_bytes": 15761288,
+        "storages": 154,
+        "python_object_bytes": 28731,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13280544,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 133,
+        "match_query_tokens": 15960,
+        "prune_frames": 65,
+        "merge_frames": 33
+      }
+    },
+    {
+      "blocks": 70,
+      "seconds": 140,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3258,
+        "tokens_b": 3258
+      },
+      "retained_tokens": 3258,
+      "state": {
+        "tensor_storage_bytes": 15851576,
+        "storages": 156,
+        "python_object_bytes": 29059,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13370832,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 135,
+        "match_query_tokens": 16200,
+        "prune_frames": 66,
+        "merge_frames": 34
+      }
+    },
+    {
+      "blocks": 71,
+      "seconds": 142,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3291,
+        "tokens_b": 3291
+      },
+      "retained_tokens": 3291,
+      "state": {
+        "tensor_storage_bytes": 15987008,
+        "storages": 158,
+        "python_object_bytes": 29387,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13506264,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 137,
+        "match_query_tokens": 16440,
+        "prune_frames": 67,
+        "merge_frames": 35
+      }
+    },
+    {
+      "blocks": 72,
+      "seconds": 144,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3331,
+        "tokens_b": 3331
+      },
+      "retained_tokens": 3331,
+      "state": {
+        "tensor_storage_bytes": 16151168,
+        "storages": 160,
+        "python_object_bytes": 29715,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13670424,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 139,
+        "match_query_tokens": 16680,
+        "prune_frames": 68,
+        "merge_frames": 36
+      }
+    },
+    {
+      "blocks": 73,
+      "seconds": 146,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3356,
+        "tokens_b": 3356
+      },
+      "retained_tokens": 3356,
+      "state": {
+        "tensor_storage_bytes": 16253768,
+        "storages": 162,
+        "python_object_bytes": 30043,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13773024,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 141,
+        "match_query_tokens": 16920,
+        "prune_frames": 69,
+        "merge_frames": 37
+      }
+    },
+    {
+      "blocks": 74,
+      "seconds": 148,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3406,
+        "tokens_b": 3406
+      },
+      "retained_tokens": 3406,
+      "state": {
+        "tensor_storage_bytes": 16458968,
+        "storages": 164,
+        "python_object_bytes": 30371,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 13978224,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 143,
+        "match_query_tokens": 17160,
+        "prune_frames": 70,
+        "merge_frames": 38
+      }
+    },
+    {
+      "blocks": 75,
+      "seconds": 150,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3449,
+        "tokens_b": 3449
+      },
+      "retained_tokens": 3449,
+      "state": {
+        "tensor_storage_bytes": 16635440,
+        "storages": 166,
+        "python_object_bytes": 30699,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14154696,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 145,
+        "match_query_tokens": 17400,
+        "prune_frames": 71,
+        "merge_frames": 39
+      }
+    },
+    {
+      "blocks": 76,
+      "seconds": 152,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3483,
+        "tokens_b": 3483
+      },
+      "retained_tokens": 3483,
+      "state": {
+        "tensor_storage_bytes": 16774976,
+        "storages": 168,
+        "python_object_bytes": 31027,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14294232,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 147,
+        "match_query_tokens": 17640,
+        "prune_frames": 72,
+        "merge_frames": 40
+      }
+    },
+    {
+      "blocks": 77,
+      "seconds": 154,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3491,
+        "tokens_b": 3491
+      },
+      "retained_tokens": 3491,
+      "state": {
+        "tensor_storage_bytes": 16807808,
+        "storages": 170,
+        "python_object_bytes": 31483,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14327064,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 149,
+        "match_query_tokens": 17880,
+        "prune_frames": 73,
+        "merge_frames": 41
+      }
+    },
+    {
+      "blocks": 78,
+      "seconds": 156,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3529,
+        "tokens_b": 3529
+      },
+      "retained_tokens": 3529,
+      "state": {
+        "tensor_storage_bytes": 16963760,
+        "storages": 172,
+        "python_object_bytes": 31811,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14483016,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 151,
+        "match_query_tokens": 18120,
+        "prune_frames": 74,
+        "merge_frames": 42
+      }
+    },
+    {
+      "blocks": 79,
+      "seconds": 158,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3575,
+        "tokens_b": 3575
+      },
+      "retained_tokens": 3575,
+      "state": {
+        "tensor_storage_bytes": 17152544,
+        "storages": 174,
+        "python_object_bytes": 32139,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14671800,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 153,
+        "match_query_tokens": 18360,
+        "prune_frames": 75,
+        "merge_frames": 43
+      }
+    },
+    {
+      "blocks": 80,
+      "seconds": 160,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3600,
+        "tokens_b": 3600
+      },
+      "retained_tokens": 3600,
+      "state": {
+        "tensor_storage_bytes": 17255144,
+        "storages": 176,
+        "python_object_bytes": 32467,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14774400,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 155,
+        "match_query_tokens": 18600,
+        "prune_frames": 76,
+        "merge_frames": 44
+      }
+    },
+    {
+      "blocks": 81,
+      "seconds": 162,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3640,
+        "tokens_b": 3640
+      },
+      "retained_tokens": 3640,
+      "state": {
+        "tensor_storage_bytes": 17419304,
+        "storages": 178,
+        "python_object_bytes": 32795,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 14938560,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 157,
+        "match_query_tokens": 18840,
+        "prune_frames": 77,
+        "merge_frames": 45
+      }
+    },
+    {
+      "blocks": 82,
+      "seconds": 164,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3682,
+        "tokens_b": 3682
+      },
+      "retained_tokens": 3682,
+      "state": {
+        "tensor_storage_bytes": 17591672,
+        "storages": 180,
+        "python_object_bytes": 33123,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 15110928,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 159,
+        "match_query_tokens": 19080,
+        "prune_frames": 78,
+        "merge_frames": 46
+      }
+    },
+    {
+      "blocks": 83,
+      "seconds": 166,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3753,
+        "tokens_b": 3753
+      },
+      "retained_tokens": 3753,
+      "state": {
+        "tensor_storage_bytes": 17883056,
+        "storages": 182,
+        "python_object_bytes": 33451,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 15402312,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 161,
+        "match_query_tokens": 19320,
+        "prune_frames": 79,
+        "merge_frames": 47
+      }
+    },
+    {
+      "blocks": 84,
+      "seconds": 168,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3836,
+        "tokens_b": 3836
+      },
+      "retained_tokens": 3836,
+      "state": {
+        "tensor_storage_bytes": 18223688,
+        "storages": 184,
+        "python_object_bytes": 33779,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 15742944,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 163,
+        "match_query_tokens": 19560,
+        "prune_frames": 80,
+        "merge_frames": 48
+      }
+    },
+    {
+      "blocks": 85,
+      "seconds": 170,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3880,
+        "tokens_b": 3880
+      },
+      "retained_tokens": 3880,
+      "state": {
+        "tensor_storage_bytes": 18404264,
+        "storages": 186,
+        "python_object_bytes": 34107,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 15923520,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 165,
+        "match_query_tokens": 19800,
+        "prune_frames": 81,
+        "merge_frames": 49
+      }
+    },
+    {
+      "blocks": 86,
+      "seconds": 172,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3886,
+        "tokens_b": 3886
+      },
+      "retained_tokens": 3886,
+      "state": {
+        "tensor_storage_bytes": 18428888,
+        "storages": 188,
+        "python_object_bytes": 34435,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 15948144,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 167,
+        "match_query_tokens": 20040,
+        "prune_frames": 82,
+        "merge_frames": 50
+      }
+    },
+    {
+      "blocks": 87,
+      "seconds": 174,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3900,
+        "tokens_b": 3900
+      },
+      "retained_tokens": 3900,
+      "state": {
+        "tensor_storage_bytes": 18486344,
+        "storages": 190,
+        "python_object_bytes": 34763,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16005600,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 169,
+        "match_query_tokens": 20280,
+        "prune_frames": 83,
+        "merge_frames": 51
+      }
+    },
+    {
+      "blocks": 88,
+      "seconds": 176,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3905,
+        "tokens_b": 3905
+      },
+      "retained_tokens": 3905,
+      "state": {
+        "tensor_storage_bytes": 18506864,
+        "storages": 192,
+        "python_object_bytes": 35091,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16026120,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 171,
+        "match_query_tokens": 20520,
+        "prune_frames": 84,
+        "merge_frames": 52
+      }
+    },
+    {
+      "blocks": 89,
+      "seconds": 178,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3920,
+        "tokens_b": 3920
+      },
+      "retained_tokens": 3920,
+      "state": {
+        "tensor_storage_bytes": 18568424,
+        "storages": 194,
+        "python_object_bytes": 35419,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16087680,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 173,
+        "match_query_tokens": 20760,
+        "prune_frames": 85,
+        "merge_frames": 53
+      }
+    },
+    {
+      "blocks": 90,
+      "seconds": 180,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3980,
+        "tokens_b": 3980
+      },
+      "retained_tokens": 3980,
+      "state": {
+        "tensor_storage_bytes": 18814664,
+        "storages": 196,
+        "python_object_bytes": 35747,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16333920,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 175,
+        "match_query_tokens": 21000,
+        "prune_frames": 86,
+        "merge_frames": 54
+      }
+    },
+    {
+      "blocks": 91,
+      "seconds": 182,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 4043,
+        "tokens_b": 4043
+      },
+      "retained_tokens": 4043,
+      "state": {
+        "tensor_storage_bytes": 19073216,
+        "storages": 198,
+        "python_object_bytes": 36075,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16592472,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 177,
+        "match_query_tokens": 21240,
+        "prune_frames": 87,
+        "merge_frames": 55
+      }
+    },
+    {
+      "blocks": 92,
+      "seconds": 184,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 4119,
+        "tokens_b": 4119
+      },
+      "retained_tokens": 4119,
+      "state": {
+        "tensor_storage_bytes": 19385120,
+        "storages": 200,
+        "python_object_bytes": 36403,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 16904376,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 179,
+        "match_query_tokens": 21480,
+        "prune_frames": 88,
+        "merge_frames": 56
+      }
+    },
+    {
+      "blocks": 93,
+      "seconds": 186,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 4171,
+        "tokens_b": 4171
+      },
+      "retained_tokens": 4171,
+      "state": {
+        "tensor_storage_bytes": 19598528,
+        "storages": 202,
+        "python_object_bytes": 36859,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 17117784,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 181,
+        "match_query_tokens": 21720,
+        "prune_frames": 89,
+        "merge_frames": 57
+      }
+    },
+    {
+      "blocks": 94,
+      "seconds": 188,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 4258,
+        "tokens_b": 4258
+      },
+      "retained_tokens": 4258,
+      "state": {
+        "tensor_storage_bytes": 19955576,
+        "storages": 204,
+        "python_object_bytes": 37187,
+        "components": {
+          "hw": 0,
+          "short_limit": 0,
+          "mid_limit": 0,
+          "count": 0,
+          "short": 0,
+          "mid": 0,
+          "blocks": 17474832,
+          "norm": 2457600,
+          "distance": 1200,
+          "keep": 600,
+          "height": 4800,
+          "width": 4800,
+          "offsets": 144,
+          "slot_indices": 4800,
+          "slot_grids": 6800,
+          "indices": 3840,
+          "grids": 5440
+        }
+      },
+      "counts": {
+        "match_calls": 183,
+        "match_query_tokens": 21960,
+        "prune_frames": 90,
+        "merge_frames": 58
+      }
+    }
+  ],
+  "source_hashes": {
+    "audit.py": "c3938edc685fc4ed35648ee92ccab5aedc4f7c60c25fa801516794d9b2599362",
+    "common.py": "0970297efa9633ffe7a9d260b686972849e5ea7fc89d33d06809131c79d2a460",
+    "PROTOCOL.md": "e63048ca5536f25a8491d373df6fa1514057a58174283d2c55620ee697000bc0"
+  }
+}

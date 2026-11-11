@@ -1,0 +1,30 @@
+% Conclusion
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented OmniFlow, an adaptive replay system for mobile GUI agents that
+turns past successful executions into reusable \texttt{Functions}.
+The core design separates reusable execution knowledge from live execution
+control.   \textsc{Flow} applies those Functions
+on the live device by observing the current state, checking pending actions,
+transferring recorded targets to current screens, and falling back when the
+evidence is insufficient.
+
+This representation/execution split changes the cost model of repeated GUI serving.  A
+successful run can write back a reusable \texttt{Function}; later compatible
+users, devices, or task variants can execute the matched Function without
+re-planning it.  Cache hits skip online reasoning for the matched Function,
+while misses and unsafe transfers return compact page and execution context to
+the host agent.  The online cost is therefore amortized over newly discovered
+reusable Functions rather than over every user, goal, and repetition.
+
+OmniFlow currently focuses on Android GUI execution and still depends on
+sufficient state similarity for safe reuse.  Large UI redesigns, highly dynamic
+content regions, and true cold-start goals require fallback to the host agent
+and later write-back.  Its adaptation also has a clear scope: Flow can transfer
+source actions across current GUI states when structure, geometry, and effect
+evidence support a confident target, while open semantic decisions can remain
+VLM, script, or host-agent boundaries.  This makes OmniFlow a practical
+adaptive replay layer: executable, privacy-safe \texttt{Function}s are shared,
+transferred, checked, and refined from future run logs.

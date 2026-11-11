@@ -1,0 +1,10 @@
+# Existing local runtime used for the 2026-10-31 run; no new environment installed.
+# Python 3.14; Apple Vision OCR comes from macOS 26.5.1.
+huggingface_hub==1.33.0
+numpy==2.5.4
+pillow==13.0.0
+safetensors==0.8.0
+tokenizers==0.23.3
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.16.1

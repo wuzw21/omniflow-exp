@@ -1,0 +1,52 @@
+{
+  "status": "completed",
+  "scope": "one manually inspected post-hoc failure; selected after gate evaluation, not an unbiased QA success estimate",
+  "model": "Qwen/Qwen3-VL-2B-Instruct",
+  "revision": "89644892e4d85e24eaac8bacfd4f463576704203",
+  "device": "M4 MPS",
+  "id": "expenseaddsingle-0-ca36846c",
+  "query_step": 11,
+  "human_verified_answer": "Health Care",
+  "question": "These are screenshots retained from one expense-entry session, in chronological order. What category label is immediately to the right of 'Clothes'? Answer only the exact label visible in the screenshots, or UNKNOWN if it is not visible. Do not guess from general knowledge.",
+  "records": [
+    {
+      "kind": "all",
+      "param": 0,
+      "retained_steps": [
+        8,
+        9,
+        10,
+        11
+      ],
+      "answer": "Health Care",
+      "seconds": 14.483373249997385,
+      "input_tokens": 2970
+    },
+    {
+      "kind": "last",
+      "param": 0.01,
+      "retained_steps": [
+        5,
+        6,
+        7,
+        11
+      ],
+      "answer": "UNKNOWN",
+      "seconds": 12.679932500002906,
+      "input_tokens": 2969
+    },
+    {
+      "kind": "memory",
+      "param": 0.01,
+      "retained_steps": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "answer": "Social",
+      "seconds": 12.728315125001245,
+      "input_tokens": 2968
+    }
+  ]
+}

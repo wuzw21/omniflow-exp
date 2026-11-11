@@ -1,0 +1,39 @@
+{
+  "purpose": "Establish whether stronger local inference completes predefined upstream collaboration examples, then attribute costs before proposing KV transfer",
+  "upstream_commit": "a87d0ee9063485ae2c065679c0471fd559aa5f4c",
+  "local_model": "Qwen/Qwen2.5-3B-Instruct@aa8e72537993ba99e69dfaafa59ed015b17504d1",
+  "remote_model": "Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28",
+  "case_order": ["code", "long_documents", "finance"],
+  "source_policy": "Use the entire original sample.txt and task question, no truncation, retrieval, reordering, padding or reference-answer prompt",
+  "execution": {
+    "max_rounds": 2,
+    "greedy": true,
+    "local_max_new_tokens": 512,
+    "remote_max_new_tokens": 768,
+    "local_prefill_chunk_tokens": 512,
+    "remote_prefill_chunk_tokens": 1024,
+    "cross_request_cache": false,
+    "original_generic_client_JSON_parser": true,
+    "automatic_output_repair": false,
+    "automatic_retry": false
+  },
+  "controls": [
+    "Independent full-context direct local and remote answers for every case",
+    "Independent question-only local and remote answers for long_documents and finance",
+    "Short code sample full-vs-chunked final-position logits on both real models"
+  ],
+  "quality_adjudication": {
+    "protocol": "Record returned final answer vs protocol exception separately from answer correctness",
+    "code": "Compare explicitly identified buggy-method set against upstream four-method reference; mention-only matching is not accuracy; reference semantics may be underspecified",
+    "long_documents": "Final answer must identify FinanceBench, LongHealth and QASPER as the three evaluation datasets; a matching no-document control weakens evidence of document dependence",
+    "finance": "Answer must identify 2019 net property/equipment as 72,705 million USD, or equivalent rounded 72.7 billion; mere incidental numeric occurrence is insufficient",
+    "truncation": "Report all length-capped outputs; do not silently extend budgets after inspecting quality"
+  },
+  "cost_interpretation": "Report observed full prefill and remaining generation separately. Same-endpoint exact-prefix eligibility is not measured cache benefit. No speedup claim from failed tasks, single cold measurements, or weak uncached serving baselines.",
+  "scope_limits": [
+    "Three examples are not benchmark accuracy or OSDI-level validation",
+    "Public source documents do not establish local-only necessity",
+    "Two-round collaboration is upstream Q&A protocol, not a device action workflow",
+    "No new state-transfer mechanism or privacy guarantee is implemented"
+  ]
+}

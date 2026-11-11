@@ -1,0 +1,26 @@
+{
+  "scope": "Two deterministic dataset-length probes, not representative quality evaluation",
+  "source_revision": "9981b49b6ced0033988a224b6712895ebf119294",
+  "file": "PUPA_New.csv",
+  "file_sha256": "72d7659c717706bc987f0d296d9714f63db5e75c6645376ec75380e6638b8f91",
+  "selection": "Nearest raw-record median and p95 query lengths; ties by SHA256 then row; frozen before model outputs",
+  "cases": [
+    {
+      "target": 87,
+      "row": 409,
+      "query_sha256": "7ddd72569e40e52367839f70f97897ef76d28a108e09c04c3e74ba22fc09d253",
+      "tokens": 87,
+      "category": "financial and corporate info"
+    },
+    {
+      "target": 1613,
+      "row": 75,
+      "query_sha256": "30adb6a2699cd184533d69a1afe8b69c32336fe647697cb4213bf49f61da91d5",
+      "tokens": 1613,
+      "category": "job, visa, and other applications"
+    }
+  ],
+  "generation": "greedy; creator and aggregation 512 tokens; remote 768 tokens; preserve upstream parse fallback and failure",
+  "max_initial_cases": 1,
+  "note": "Start median case first as a real integration pilot; p95 selected now but runs only after integration path works. No scientific outcome filtering."
+}

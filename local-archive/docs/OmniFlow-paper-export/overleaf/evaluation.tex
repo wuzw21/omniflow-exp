@@ -1,0 +1,174 @@
+% Evaluation
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{E2E replay experiment}
+\label{sec:eval-setup}
+
+\paragraph{Tasks Setting.}
+
+The comparative study measures whether a human-collected source
+execution can be reused on similar tasks with lower latency and online
+model cost.
+
+We use AndroidWorld as a validator. This set contains \task-nums accepted replay task instances covering system-level apps
+and settings, such as SMS/Phone, Contacts, Camera, Recorder, Clock, Bluetooth,
+Wi-Fi, and brightness controls.  Each source execution is successfully recorded, and each reuse execution is scored by the AndroidWorld validator with a different replay seed and different device from the source run.
+
+We use qwen3-vl-plus as agent backend for all systems, including the baselines, to ensure a fair comparison of the reuse strategies rather than differences in underlying model capabilities.
+
+
+\paragraph{Baselines.}
+
+% 我们首先androidworld上手动为每个任务收集了一份原始runlog，作为成功范例，并测试方法能否学习到任务的信息。不同方法离线处理后，在两个设备、不同seed上进行在线重新执行，以控制配置的不同。检测不同方法对历史信息的利用能力。
+For each method, we record and provide a raw runlog as human-teacher. Methods only know tasks' descriptions. We choose these methods as our baseline:
+% 固定重放对应操作。我们直接记录了对应的动作，并根据坐标和时间重放。
+(1) A simple RPA baseline. We
+
+% M3A是怎么做的。我们用一个M3A原始实现 + 历史动作作为提示。
+(2) AndroidWorld baseline. We use a M3A Androidworld original implementation with hint.
+
+% Autodroid。Autodroid为每个app构建应用转移图。在执行的时候用selector复用。
+(3) AutoDroid. It builds a reusable transition structure from the source run and attempts to reuse actions through UI selectors and observed app transitions. This baseline tests whether selector-level reuse is sufficient when GUI states shift.
+% mobilegpt的核心思想是在冷启动的过程中构建局部记忆，并在下次复用。我们用模拟成功动作作为mobilegpt的冷启动方式。
+(4) MobileGPT. It convert source runlog as subtasks and reuse them.
+
+\paragraph{Metrics.}
+The primary metrics are task-level success rate (SR), average fallback count per run (the number of steps that could not be served from cache and fell back to the host agent), total token consumption, and end-to-end latency.
+
+% ─────────────────────────────────────────────────────────────────────────────
+% TODO讲清楚我们是怎么设计的。
+
+\begin{table}[t]
+  \centering
+  \caption{AndroidWorld E2E report
+  }
+  \label{tab:e2e-workflow}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lccccc}
+    \toprule
+    System & SR & Total time & Calls & Tokens \\
+    \midrule
+    M3A (Qwen-VL)         & 70.0\%          & 146.4 min  & 415 & 2,120,446 \\
+    AutoDroid              & 36.7\%          & 64.9 min   & 81  & 62,029    \\
+    MobileGPT $^\dagger$ & 53.3\%$^\dagger$ & 85.2 min & 576 & 476,257 \\
+    \sysname               & \textbf{100.0\%} & \textbf{6.1 min} & 14 & 5,275 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+
+% 我们统计成功样例的平均tool call和token开销，这旨在平衡因错误探索带来的大量误差。我们发现我们不仅实现了成功率的TOP-1。也实现了token开销的极小。在大多数工作中，
+
+We calculate the average tool call and token overhead of successful examples to balance the large amount of error caused by incorrect exploration. We found that we not only achieved a TOP-1 success rate. It also achieves minimal token overhead. In most jobs, Our \sysname's cache gate successfully recalls the correct reusable state and function for all tasks. while parameters slotting is necessary and not important component for GUI tasks. On execution we do not use any other model calls.
+
+%与之相对的，mobilegpt在执行过程中需要频繁的调用embedding模型，fallback模型等。
+
+On the other hand, other methods requires frequent calls to embedding models, fallback models, etc. Without checker and source context retrieval, they often failed on each easy tasks.
+
+
+
+% 补充：端到端实验（端侧模型，端侧跑全流程，对比，我们，UI-Tars，mobilegpt），需要测试能耗，功耗   
+\subsection{On-Device Replay Workload}
+\label{sec:eval-on-device}
+
+AndroidWorld primarily covers system built-in app tasks. To evaluate the deployment setting targeted by \sysname, we also prepare an app-level reuse workload on real devices. This workload contains repeated workflows in common third-party black-box apps, such as searching, opening a merchant page, selecting an item, dismissing popups, filling a form, and navigating dynamic list or card interfaces. These cases stress WebView pages, account-specific content, personalized lists, popups, and layout shifts that are less central in system-app benchmarks.
+
+The on-device experiment asks whether \sysname can preserve the replay service model when the host agent and auxiliary models run under realistic device constraints. We compare \sysname with on-device variants of VLM-driven agents and memory-based replay systems. The key measurement is not only task success, but also whether each method repeatedly invokes screenshot/XML understanding models during execution.
+
+\begin{table}[t]
+  \centering
+  \caption{Device pool for on-device replay evaluation.}
+  \label{tab:on-device-pool}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lcccc}
+    \toprule
+    Device & OS Family & Display & Resolution & Form Factor \\
+    \midrule
+    OnePlus 12 & OxygenOS & 6.82'' & 3168$\times$1440 & Phone \\
+    Pixel 9 Pro & Android & 6.3'' & 2856$\times$1280 & Phone \\
+    vivo X300 Pro & OriginOS & 6.78'' & 2800$\times$1260 & Phone \\
+    HONOR Magic V5 & MagicOS & 7.95'' & 2352$\times$2172 & Foldable \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+For each task, we record one source execution on one device and replay the extracted Function on held-out devices. We measure task success, end-to-end latency, model calls, token consumption, active device time, and resource counters such as CPU time, memory, and battery delta when available. This protocol tests the central systems claim: \sysname moves most replay work into structured Function recall, PageVector matching, and control-aware execution, so repeated screenshot/XML reasoning is avoided on the hot path.
+
+\begin{figure}[t]
+  \centering
+  \fbox{%
+    \begin{minipage}[c][1.65in][c]{0.92\columnwidth}
+      \centering
+      \textbf{TODO: on-device component cost case study}\\[0.5em]
+      Plot per-system or per-stage cost for one representative replay run.\\[0.25em]
+      Suggested stages: Function recall, PageVector match, action transfer, device I/O,
+      verifier, and fallback model calls.
+    \end{minipage}}
+  \caption{Placeholder for the on-device replay cost breakdown. Fill this figure with measured latency, active device time, and energy/resource counters after the physical-device protocol is frozen.}
+  \label{fig:on-device-cost-breakdown}
+\end{figure}
+
+\begin{table*}[t]
+  \centering
+  \caption{Placeholder for on-device end-to-end replay and resource accounting. All values should be filled from the same task set, device pool, account state, and measurement protocol.}
+  \label{tab:on-device-resource}
+  \scriptsize
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lcccccccc}
+    \toprule
+    System & Mode & Source context & SR & Latency & Model calls & Tokens & Active time & Battery / energy \\
+    \midrule
+    \sysname & Function replay & run\_log $\rightarrow$ function asset & TBD & TBD & TBD & TBD & TBD & TBD \\
+    UI-TARS-2 & End-to-end GUI agent & none / prompt / demo & TBD & TBD & TBD & TBD & TBD & TBD \\
+    Mobile-Agent-v3.5 (GUI-Owl) & End-to-end GUI agent & none / prompt / demo & TBD & TBD & TBD & TBD & TBD & TBD \\
+    Mobile-Agent-v2 & End-to-end mobile agent & none / prompt / demo & TBD & TBD & TBD & TBD & TBD & TBD \\
+    OS-Atlas & GUI action model & none / prompt / demo & TBD & TBD & TBD & TBD & TBD & TBD \\
+    AutoGLM-Phone & Phone GUI agent & none / prompt / demo & TBD & TBD & TBD & TBD & TBD & TBD \\
+    MobileGPT & Memory-based replay & source run log / memory & TBD & TBD & TBD & TBD & TBD & TBD \\
+    M3A (Qwen-VL) & Step-wise VLM agent & task prompt / hint & TBD & TBD & TBD & TBD & TBD & TBD \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Ablation Study}
+\label{sec:eval-transfer}
+
+\paragraph{UDEG accuracy}
+We evaluate the representation layer independently from final task execution.
+The goal of this experiment is to test whether UDEG can group cross-device
+observations of the same action-compatible GUI state and retrieve the correct
+cluster for a held-out page.
+
+We compare two representation methods: (1)~a screen-only VL embedding baseline that encodes the raw screenshot using a vision-language model, and (2)~our designed UDEG/PageVector method that combines visual and structural information.  The results show that our method significantly outperforms the baseline, achieving a much higher cross-device representation recall.  This is because the baseline only captures the visual features of the screen, while our method captures both visual and structural information, allowing it to more accurately identify similar page states across different devices and achieve higher cross-device reuse rates. In 10k node UDEG, one-time localization recall use only %TODO% ms avg.
+\begin{table}[t]
+  \centering
+  \caption{Cross-device representation recall and encoding cost.}
+  \label{tab:udeg-equivalence}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lcccccc}
+    \toprule
+    Method & Hit@1 & Hit@3 &  Avg encode time & Avg tokens \\
+    \midrule
+    Qwen-VL-embedding & 69.44\% & 87.50\% &  188.69 ms  & 1,009 \\
+    PageVector & 98.63\% & 100.0\% &  4.13 ms  & 0 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+
+
+\paragraph{action-transfer accuracy.}
+% 消融实验：我们构造了一个专门的消融实验来评估动作转移的效果。xxx数据集包含了几千组widget mapping相关的数据，我们测试了我们的方法想对于传统结构化方法带来的性能提升
+Dataset construction. We evaluate action-transfer on a public cross-platform widget-mapping dataset, converted into a unified source-conditioned grounding format. Each example contains a recorded source screen, the source UI element operated by the trace, a target replay screen, a set of target UI candidates, and one gold target element. We do not manually create synthetic labels. Instead, we use the published widget correspondences as gold source-target grounding pairs. For each target screen, candidates are extracted from the UI hierarchy/accessibility XML, including text, content description, resource id, class, action flags, and normalized bounding boxes. The source side is represented by the operated element and its local context. If multiple extracted candidates correspond to the same public gold widget, for example an XML node and a public mapped widget with the same bounds, they are treated as equivalent correct targets.
+
+This produces 6,730 source-target grounding queries with 265,590 target candidates, averaging about 39 candidates per query. The dataset is split into train, validation, and test subsets. Training queries are used only to fit the structured action-transfer ranker and select fusion weights on validation data; all headline numbers are reported on the held-out test split. Screenshots are retained for inspection and possible visual baselines, but our deployed action-transfer model only uses structured UI evidence from XML and metadata, matching the on-device replay setting.
+
+Evaluation. The task is candidate-level grounding, not action prediction. Given a source element and a target candidate set, the model outputs a ranked list of target candidates. The primary metric is Top-1 grounding accuracy:
+\[
+\mathrm{Top1} = \frac{1}{N}\sum_{q=1}^{N}
+\mathbf{1}\left[\arg\max_i s_\theta(q, c_i) \in \mathcal{G}_q\right],
+\]
+where \(s_\theta(q,c_i)\) is the action-transfer score for candidate \(c_i\), and \(\mathcal{G}_q\) is the set of gold-equivalent target candidates. We also report average and p95 latency, because the matcher is used in the replay hot path. A method is considered better only if it improves Top-1 accuracy without exceeding the latency budget required for interactive replay. In addition to aggregate accuracy, we analyze failure cases by candidate ambiguity, duplicated labels, weak source text, layout drift, and missing local context. This lets us distinguish true grounding errors from dataset ambiguity and shows whether the method is robust under realistic UI changes.

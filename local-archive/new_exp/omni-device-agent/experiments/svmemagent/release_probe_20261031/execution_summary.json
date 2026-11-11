@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-31",
+  "status": "blocked_missing_verified_original_implementation",
+  "writer_forward_executed": false,
+  "qa_forward_executed": false,
+  "performance_measurements": null,
+  "native_load_attempts": [
+    {
+      "transformers": "4.57.6",
+      "exit_code": 2
+    },
+    {
+      "transformers": "5.16.1",
+      "exit_code": 2
+    }
+  ],
+  "regression": {
+    "command": "python3 -m unittest discover -s tests -v",
+    "tests": 4,
+    "failures": 0,
+    "skipped": 0,
+    "scope": "prerequisite and recorded-failure regression, not inference acceptance"
+  },
+  "files_sha256": {
+    "experiments/svmemagent/release_probe_20261031/author_publications.json": "17db5b9a02fb4229845327c3ade78809faff022e7b0a61901ca3ef2f36b4a859",
+    "experiments/svmemagent/release_probe_20261031/candidate_metadata.json": "be484e25009099349e43f12099ac2eafebbc0b436fa65622cf842715d0793948",
+    "experiments/svmemagent/release_probe_20261031/commits.json": "e8f501d045ef8870e84fb1f81ed6b42fbb01e2ac993c480e84571ca5a885ee51",
+    "experiments/svmemagent/release_probe_20261031/config.json": "73b47e60aeca4a6b1c7cb534f9f81d50d45fdf17a31138532f3f08d8d3cde3bc",
+    "experiments/svmemagent/release_probe_20261031/github_class_search.json": "78754cd760c5c61fc94c68067d2e87e54dd2c0ed97ab59a15a5d354255aff1e0",
+    "experiments/svmemagent/release_probe_20261031/github_python_search.json": "4b505860bc51be75833b2135f9e3e34f29d9fff46081dc60322645d6212c295f",
+    "experiments/svmemagent/release_probe_20261031/github_repo_search.json": "def8c10301222031375a42e523392a16bc2d042da435d504213cd4f2395810f9",
+    "experiments/svmemagent/release_probe_20261031/lab_publications.json": "94d21ea5ebf4a7d3e6829dd1c6c97d06ca14580b436c8db7f503d587fbe93a1e",
+    "experiments/svmemagent/release_probe_20261031/load_transformers_4.json": "5496b3258ef4646e9c63ae4a672d8045b5abb1b8aafae7d8cce25a25bedfaa6e",
+    "experiments/svmemagent/release_probe_20261031/load_transformers_5.json": "0921f90dfcb9846c5ad1c7621489253517d10e5a515db174e7eb63f4aaa6b1ac",
+    "experiments/svmemagent/release_probe_20261031/preprocessor_config.json": "696236e2d5937991eeb8dd1d2b5029fa4dff2f609db5f639868f8dbb9732d5cb"
+  }
+}

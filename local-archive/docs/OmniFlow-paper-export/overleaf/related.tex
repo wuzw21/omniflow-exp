@@ -1,0 +1,67 @@
+% Related Work
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Step-wise and verifier GUI agents.}
+VLM-based mobile GUI agents usually follow an observe--reason--act loop: each
+screen update is converted into a new model decision, and the system issues one
+concrete GUI action before observing again.  \textsc{V-Droid}~\cite{dai2025advancing}
+improves this loop by shifting the LLM role from action generation to action
+verification over a discrete action set, reporting 4.3\,s per step and 59.5\%
+success on AndroidWorld.  \textsc{VeriSafe}~\cite{verisafe} similarly focuses
+on action safety by checking LLM-generated actions against logic constraints
+derived from the user's goal.  These systems improve the cost or correctness of
+individual steps, but repeated routines still pass through online decision or
+verification for each interaction.  OmniFlow is complementary: a step-wise or
+verifier-based agent remains the fallback, while matched repeated Functions are
+served as executable Function cache hits.
+
+\paragraph{Memory-based and programmatic GUI agents.}
+\textsc{AutoDroid}~\cite{wen2024autodroid},
+\textsc{MobileGPT}~\cite{lee2024mobilegpt}, and
+\textsc{AppAgent}~\cite{zhang2025appagent} reduce repeated GUI-agent work by
+building app- or task-specific memory from exploration and prior executions.
+AndroidWorld's M3A baseline~\cite{rawles2025androidworld} also exposes the
+benefit of carrying previous actions and reasoning into future attempts.
+These systems reduce per-goal LLM cost when a warm-start match is found, but
+their memory is primarily used to guide online reasoning or replay app-specific
+subtasks.  Reuse is limited by per-app cold-start exploration and
+UI-attribute-based action grounding: XML selectors break on WebViews,
+custom-rendered feeds, and cross-device layout variation, which forces repair,
+new exploration, or online LLM calls.
+\textsc{ActionEngine}~\cite{zhong2026actionengine} and
+\textsc{AutoDroid-V2}~\cite{autodroid-v2}, as well as
+\textsc{AgentProg}~\cite{tian2025agentprog}, move toward programmatic
+execution, building app-level state knowledge or generated scripts to
+reduce online planning.
+Their reuse unit is a broad app model or complete task program that
+requires substantial upfront exploration and assumes a stable live
+app structure.
+\sysname takes a narrower boundary: it treats a verified source run as the
+asset, caches a Function-level action list, and focuses on transferring each
+recorded source action to the target GUI instance.
+
+
+\paragraph{GUI grounding.}
+Visual grounding models for GUI, such as
+\textsc{SeeClick}~\cite{cheng2024seeclick},
+\textsc{UGround}~\cite{gou2024uground}, and
+\textsc{ShowUI}~\cite{lin2025showui},
+train VLMs to map a natural-language element description to a screen
+coordinate or bounding box.
+These models optimize for the \emph{zero-prior} setting: given only a
+task instruction and the current screenshot, they locate the target
+element without any recorded demonstration.
+This makes them general-purpose and immediately applicable to novel apps
+and screens.
+OmniFlow addresses the complementary setting: a human demonstration
+already exists, and the goal is to rebind its recorded actions to the
+current screen without a model call.
+GUI grounding models could in principle serve as the transfer oracle in
+OmniFlow's execution loop, but their per-step inference cost reintroduces
+the model overhead that OmniFlow is designed to eliminate.
+Feature-engineered element vectors let \textsc{Flow} transfer recorded
+targets through structural similarity alone, reserving model calls for
+genuinely ambiguous or novel states.
+ 

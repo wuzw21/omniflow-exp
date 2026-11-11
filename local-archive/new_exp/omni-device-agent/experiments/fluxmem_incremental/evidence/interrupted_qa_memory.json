@@ -1,0 +1,447 @@
+{
+  "status": "interrupted",
+  "torch": "2.13.0",
+  "device": "mps",
+  "chip": "Apple M4",
+  "input_manifest_sha256": "b1140e7185106a5120a6d27db3fe4338da41d1c22bbc700df80f32030f57355b",
+  "audit_sha256": "a97e3f6e287a72c4bb381be8fba50ad7af29af10aea2b5b085700709dfbaebc0",
+  "records": [
+    {
+      "query_index": 0,
+      "blocks": 2,
+      "condition": "A",
+      "answer": "D",
+      "gold": "D",
+      "generated_ids": [
+        35,
+        151645
+      ],
+      "generated_ids_equal_to_A": true,
+      "memory_outputs_vs_A": {
+        "features": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397,
+            2048
+          ],
+          "shape_b": [
+            1,
+            397,
+            2048
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_cos": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_sin": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "position_ids": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397
+          ],
+          "shape_b": [
+            3,
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "attention_mask": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397
+          ],
+          "shape_b": [
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "kept_indices": {
+          "bitwise_equal": true,
+          "shape_a": [
+            397
+          ],
+          "shape_b": [
+            397
+          ],
+          "max_abs_error": 0.0
+        }
+      },
+      "first_logits_bitwise_equal": true,
+      "first_logits_max_abs_error": 0.0,
+      "first_logits_argmax_equal": true,
+      "actual_vision_calls": 2,
+      "cached_vision_block_reads": 0,
+      "memory_counts": {
+        "match_calls": 1,
+        "match_query_tokens": 120,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "measurement": {
+        "stage": "generate_equivalence_check",
+        "before": {
+          "rss_bytes": 188448768,
+          "physical_footprint_bytes": 15958251904,
+          "mps_allocated_bytes": 6500608,
+          "mps_driver_bytes": 15651782656
+        },
+        "sampled_peak": {
+          "rss_bytes": 304021504,
+          "physical_footprint_bytes": 16119470704,
+          "mps_allocated_bytes": 145462272,
+          "mps_driver_bytes": 15739207680
+        },
+        "samples": 11586,
+        "query_index": 0,
+        "condition": "A",
+        "blocks": 2,
+        "seconds": 142.48089904199878,
+        "after": {
+          "rss_bytes": 16384000,
+          "physical_footprint_bytes": 16083376752,
+          "mps_allocated_bytes": 6504192,
+          "mps_driver_bytes": 15697248256
+        }
+      }
+    },
+    {
+      "query_index": 0,
+      "blocks": 2,
+      "condition": "B",
+      "answer": "D",
+      "gold": "D",
+      "generated_ids": [
+        35,
+        151645
+      ],
+      "generated_ids_equal_to_A": true,
+      "memory_outputs_vs_A": {
+        "features": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397,
+            2048
+          ],
+          "shape_b": [
+            1,
+            397,
+            2048
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_cos": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_sin": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "position_ids": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397
+          ],
+          "shape_b": [
+            3,
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "attention_mask": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397
+          ],
+          "shape_b": [
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "kept_indices": {
+          "bitwise_equal": true,
+          "shape_a": [
+            397
+          ],
+          "shape_b": [
+            397
+          ],
+          "max_abs_error": 0.0
+        }
+      },
+      "first_logits_bitwise_equal": true,
+      "first_logits_max_abs_error": 0.0,
+      "first_logits_argmax_equal": true,
+      "actual_vision_calls": 0,
+      "cached_vision_block_reads": 2,
+      "memory_counts": {
+        "match_calls": 1,
+        "match_query_tokens": 120,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "measurement": {
+        "stage": "generate_equivalence_check",
+        "before": {
+          "rss_bytes": 212926464,
+          "physical_footprint_bytes": 15994083952,
+          "mps_allocated_bytes": 6500864,
+          "mps_driver_bytes": 15653093376
+        },
+        "sampled_peak": {
+          "rss_bytes": 221347840,
+          "physical_footprint_bytes": 16115882608,
+          "mps_allocated_bytes": 145532672,
+          "mps_driver_bytes": 15739158528
+        },
+        "samples": 12452,
+        "query_index": 0,
+        "condition": "B",
+        "blocks": 2,
+        "seconds": 155.64241250000487,
+        "after": {
+          "rss_bytes": 15024128,
+          "physical_footprint_bytes": 16079526512,
+          "mps_allocated_bytes": 6504192,
+          "mps_driver_bytes": 15697199104
+        }
+      }
+    },
+    {
+      "query_index": 0,
+      "blocks": 2,
+      "condition": "C",
+      "answer": "D",
+      "gold": "D",
+      "generated_ids": [
+        35,
+        151645
+      ],
+      "generated_ids_equal_to_A": true,
+      "memory_outputs_vs_A": {
+        "features": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397,
+            2048
+          ],
+          "shape_b": [
+            1,
+            397,
+            2048
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_cos": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "rope_sin": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "shape_b": [
+            3,
+            1,
+            397,
+            128
+          ],
+          "max_abs_error": 0.0
+        },
+        "position_ids": {
+          "bitwise_equal": true,
+          "shape_a": [
+            3,
+            1,
+            397
+          ],
+          "shape_b": [
+            3,
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "attention_mask": {
+          "bitwise_equal": true,
+          "shape_a": [
+            1,
+            397
+          ],
+          "shape_b": [
+            1,
+            397
+          ],
+          "max_abs_error": 0.0
+        },
+        "kept_indices": {
+          "bitwise_equal": true,
+          "shape_a": [
+            397
+          ],
+          "shape_b": [
+            397
+          ],
+          "max_abs_error": 0.0
+        }
+      },
+      "first_logits_bitwise_equal": true,
+      "first_logits_max_abs_error": 0.0,
+      "first_logits_argmax_equal": true,
+      "actual_vision_calls": 0,
+      "cached_vision_block_reads": 2,
+      "memory_counts": {
+        "match_calls": 0,
+        "match_query_tokens": 0,
+        "prune_frames": 0,
+        "merge_frames": 0
+      },
+      "measurement": {
+        "stage": "generate_equivalence_check",
+        "before": {
+          "rss_bytes": 210059264,
+          "physical_footprint_bytes": 15986825840,
+          "mps_allocated_bytes": 6500864,
+          "mps_driver_bytes": 15655190528
+        },
+        "sampled_peak": {
+          "rss_bytes": 217006080,
+          "physical_footprint_bytes": 16114408048,
+          "mps_allocated_bytes": 144026112,
+          "mps_driver_bytes": 15739158528
+        },
+        "samples": 9074,
+        "query_index": 0,
+        "condition": "C",
+        "blocks": 2,
+        "seconds": 110.96212029200979,
+        "after": {
+          "rss_bytes": 15450112,
+          "physical_footprint_bytes": 16078559856,
+          "mps_allocated_bytes": 6504192,
+          "mps_driver_bytes": 15697199104
+        }
+      }
+    }
+  ],
+  "source_hashes": {
+    "qa.py": "7d059e63604e98649f6fd4ccc90f281703a9b4470f70119d95dd129cf653bfa1",
+    "state.py": "502cf404e39f21648f49b104cf48ae74853f3c0d13ed9e70af8cfdddbdfe527c",
+    "PROTOCOL.md": "7380f21850021e8574a19b6e99827cb38cb4471804467939792a8696e159eaf6"
+  },
+  "loading_info": {
+    "missing_keys": [],
+    "unexpected_keys": [],
+    "mismatched_keys": [],
+    "error_msgs": []
+  },
+  "load": {
+    "stage": "load_model",
+    "before": {
+      "rss_bytes": 324534272,
+      "physical_footprint_bytes": 266486768,
+      "mps_allocated_bytes": 0,
+      "mps_driver_bytes": 475136
+    },
+    "sampled_peak": {
+      "rss_bytes": 4386652160,
+      "physical_footprint_bytes": 7836834032,
+      "mps_allocated_bytes": 9728,
+      "mps_driver_bytes": 15651815424
+    },
+    "samples": 256,
+    "seconds": 23.76405004200933,
+    "after": {
+      "rss_bytes": 376324096,
+      "physical_footprint_bytes": 7836834032,
+      "mps_allocated_bytes": 9728,
+      "mps_driver_bytes": 15651799040
+    }
+  },
+  "parameter_devices": [
+    "mps:0"
+  ],
+  "stop_reason": "SIGINT after observing pre-generation footprint doubling; three completed first-question records preserved; not full QA acceptance"
+}

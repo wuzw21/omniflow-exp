@@ -1,0 +1,19 @@
+{
+  "schema_version": "cross_device_ours_annotation_export_v1",
+  "exported_at": "2026-06-05T02:36:50.848881+00:00",
+  "source_payload": "runtime/evals/cross_device_page_pairs/androidworld_task_apps_merged_5554_to_5556_annotation_20260604/review.payload.json",
+  "source_annotations": "runtime/evals/cross_device_page_pairs/androidworld_task_apps_merged_5554_to_5556_annotation_20260604/review.annotations.json",
+  "total_pairs_in_payload": 255,
+  "annotated_count": 94,
+  "unannotated_count": 161,
+  "verdict_counts": {
+    "top1_correct": 72,
+    "invalid_data": 21,
+    "top3_correct": 1
+  },
+  "valid_annotated_count": 73,
+  "top1_correct_count_excluding_invalid": 72,
+  "top3_contains_count_excluding_invalid": 73,
+  "top1_accuracy_excluding_invalid": 0.9863013698630136,
+  "top3_recall_excluding_invalid": 1.0
+}

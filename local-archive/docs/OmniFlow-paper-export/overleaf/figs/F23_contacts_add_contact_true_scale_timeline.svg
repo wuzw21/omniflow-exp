@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="390" viewBox="0 0 1260 390">
+<rect x="0.0" y="0.0" width="1260.0" height="390.0" rx="0.0" fill="#ffffff" stroke="#ffffff" stroke-width="0.0"/>
+<text x="630.0" y="42.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#0f172a">ContactsAddContact time breakdown</text>
+<line x1="220.0" y1="90.0" x2="220.0" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="220.0" y1="320.0" x2="220.0" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="220.0" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">0.0000ms</text>
+<line x1="311.4" y1="90.0" x2="311.4" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="311.4" y1="320.0" x2="311.4" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="311.4" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">5.000s</text>
+<line x1="402.7" y1="90.0" x2="402.7" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="402.7" y1="320.0" x2="402.7" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="402.7" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">10.000s</text>
+<line x1="494.1" y1="90.0" x2="494.1" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="494.1" y1="320.0" x2="494.1" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="494.1" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">15.000s</text>
+<line x1="585.4" y1="90.0" x2="585.4" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="585.4" y1="320.0" x2="585.4" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="585.4" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">20.000s</text>
+<line x1="676.8" y1="90.0" x2="676.8" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="676.8" y1="320.0" x2="676.8" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="676.8" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">25.000s</text>
+<line x1="768.1" y1="90.0" x2="768.1" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="768.1" y1="320.0" x2="768.1" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="768.1" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">30.000s</text>
+<line x1="859.5" y1="90.0" x2="859.5" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="859.5" y1="320.0" x2="859.5" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="859.5" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">35.000s</text>
+<line x1="950.9" y1="90.0" x2="950.9" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="950.9" y1="320.0" x2="950.9" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="950.9" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">40.000s</text>
+<line x1="1042.2" y1="90.0" x2="1042.2" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="1042.2" y1="320.0" x2="1042.2" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="1042.2" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">45.000s</text>
+<line x1="1110.0" y1="90.0" x2="1110.0" y2="328.0" stroke="#e2e8f0" stroke-width="1.0"/>
+<line x1="1110.0" y1="320.0" x2="1110.0" y2="327.0" stroke="#64748b" stroke-width="1.0"/>
+<text x="1110.0" y="348.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#475569">48.710s</text>
+<line x1="220.0" y1="320.0" x2="1110.0" y2="320.0" stroke="#334155" stroke-width="1.4"/>
+<text x="190.0" y="125.0" text-anchor="end" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#991b1b">VLM step-by-step</text>
+<rect x="220.0" y="102.0" width="178.0" height="36.0" rx="3.0" fill="#fee2e2" stroke="#dc2626" stroke-width="1.2"/>
+<text x="309.0" y="126.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#991b1b">step 1</text>
+<rect x="398.0" y="102.0" width="178.0" height="36.0" rx="3.0" fill="#fecaca" stroke="#dc2626" stroke-width="1.2"/>
+<text x="487.0" y="126.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#991b1b">step 2</text>
+<rect x="576.0" y="102.0" width="178.0" height="36.0" rx="3.0" fill="#fee2e2" stroke="#dc2626" stroke-width="1.2"/>
+<text x="665.0" y="126.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#991b1b">step 3</text>
+<rect x="754.0" y="102.0" width="178.0" height="36.0" rx="3.0" fill="#fecaca" stroke="#dc2626" stroke-width="1.2"/>
+<text x="843.0" y="126.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#991b1b">step 4</text>
+<rect x="932.0" y="102.0" width="178.0" height="36.0" rx="3.0" fill="#fee2e2" stroke="#dc2626" stroke-width="1.2"/>
+<text x="1021.0" y="126.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#991b1b">step 5</text>
+<text x="1118.0" y="126.0" text-anchor="start" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#dc2626">48.710s</text>
+<text x="190.0" y="237.0" text-anchor="end" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a">OmniFlow A+B+C</text>
+<line x1="220.0" y1="211.0" x2="220.0" y2="253.0" stroke="#16a34a" stroke-width="2.0"/>
+<rect x="220.0" y="214.0" width="21.2" height="36.0" rx="3.0" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<rect x="241.2" y="214.0" width="287.1" height="36.0" rx="3.0" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="228.0" y="204.0" text-anchor="start" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#16a34a">A 0.0062ms</text>
+<text x="249.2" y="270.0" text-anchor="start" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#2563eb">B 1.161s</text>
+<text x="384.8" y="238.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#ea580c">C 15.713s</text>
+<text x="536.3" y="238.0" text-anchor="start" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a">16.874s</text>
+<text x="630.0" y="368.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="400" fill="#64748b">A=lookup p50; B=llm/qwen-turbo p50; C=replay run log</text>
+</svg>

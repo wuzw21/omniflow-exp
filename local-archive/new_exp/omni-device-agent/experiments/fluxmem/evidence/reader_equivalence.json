@@ -1,0 +1,66 @@
+{
+  "equal_pixels": true,
+  "original_shape": [
+    4,
+    3,
+    1080,
+    1920
+  ],
+  "bounded_shape": [
+    4,
+    3,
+    1080,
+    1920
+  ],
+  "original_fps": 0.9900990099009901,
+  "bounded_fps": 0.9900990099009901,
+  "trace": {
+    "total_decoded_prefix_frames": 101,
+    "selected_indices": [
+      0,
+      33,
+      67,
+      100
+    ],
+    "selected_pts_seconds": [
+      0.0,
+      1.32,
+      2.68,
+      4.0
+    ],
+    "cutoff_seconds": 4.0,
+    "source_fps": 25.0,
+    "sampled_frames": 4,
+    "backend": "PyAV two passes; author smart_nframes/linspace"
+  },
+  "events": [
+    {
+      "stage": "upstream_torchvision",
+      "before": {
+        "rss_bytes": 270516224
+      },
+      "sampled_peak": {
+        "rss_bytes": 1699758080
+      },
+      "samples": 37,
+      "seconds": 0.6366123329935363,
+      "after": {
+        "rss_bytes": 1674706944
+      }
+    },
+    {
+      "stage": "bounded_reader",
+      "before": {
+        "rss_bytes": 1674706944
+      },
+      "sampled_peak": {
+        "rss_bytes": 1699938304
+      },
+      "samples": 35,
+      "seconds": 0.40076166699873284,
+      "after": {
+        "rss_bytes": 1699938304
+      }
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "status": "passed",
+  "device": "mps",
+  "torch": "2.13.0",
+  "audit_sha256": "a97e3f6e287a72c4bb381be8fba50ad7af29af10aea2b5b085700709dfbaebc0",
+  "state_sha256": "502cf404e39f21648f49b104cf48ae74853f3c0d13ed9e70af8cfdddbdfe527c",
+  "checks": [
+    {
+      "blocks": 2,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 240,
+        "tokens_b": 240
+      },
+      "cat_clone_calls": {
+        "aten.clone.default": 9,
+        "aten.cat.default": 7
+      },
+      "cat_clone_logical_output_bytes": {
+        "aten.clone.default": 1969320,
+        "aten.cat.default": 1972560
+      },
+      "state": {
+        "tensor_storage_bytes": 2960384,
+        "storages": 14,
+        "python_object_bytes": 2944,
+        "components": {
+          "raw": 983040,
+          "merged": 983040,
+          "norm": 983040,
+          "height": 1920,
+          "width": 1920,
+          "times": 1920,
+          "distance": 480,
+          "keep": 240,
+          "indices": 1920,
+          "grids": 2720,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      }
+    },
+    {
+      "blocks": 26,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 2162,
+        "tokens_b": 2162
+      },
+      "cat_clone_calls": {
+        "aten.clone.default": 33,
+        "aten.cat.default": 175
+      },
+      "cat_clone_logical_output_bytes": {
+        "aten.clone.default": 13765800,
+        "aten.cat.default": 345198000
+      },
+      "state": {
+        "tensor_storage_bytes": 38483264,
+        "storages": 86,
+        "python_object_bytes": 11360,
+        "components": {
+          "raw": 12779520,
+          "merged": 12779520,
+          "norm": 12779520,
+          "height": 24960,
+          "width": 24960,
+          "times": 24960,
+          "distance": 6240,
+          "keep": 3120,
+          "indices": 24960,
+          "grids": 35360,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      }
+    },
+    {
+      "blocks": 41,
+      "equivalence": {
+        "indices_equal": true,
+        "features_bitwise_equal": true,
+        "max_abs_error": 0.0,
+        "tokens_a": 3087,
+        "tokens_b": 3087
+      },
+      "cat_clone_calls": {
+        "aten.clone.default": 87,
+        "aten.cat.default": 280
+      },
+      "cat_clone_logical_output_bytes": {
+        "aten.clone.default": 21167440,
+        "aten.cat.default": 848200800
+      },
+      "state": {
+        "tensor_storage_bytes": 60685064,
+        "storages": 131,
+        "python_object_bytes": 15468,
+        "components": {
+          "raw": 20152320,
+          "merged": 20152320,
+          "norm": 20152320,
+          "height": 39360,
+          "width": 39360,
+          "times": 39360,
+          "distance": 9840,
+          "keep": 4920,
+          "indices": 39360,
+          "grids": 55760,
+          "offsets": 144,
+          "frames": 0,
+          "short": 0,
+          "mid": 0
+        }
+      }
+    }
+  ],
+  "reset_and_replay_passed": true,
+  "injected_read_mask_fault_detected": {
+    "indices_equal": false,
+    "features_bitwise_equal": false,
+    "max_abs_error": null,
+    "tokens_a": 557,
+    "tokens_b": 600
+  },
+  "first_prune_boundary_vs_original": {
+    "indices_equal": true,
+    "features_bitwise_equal": true,
+    "max_abs_error": 0.0,
+    "tokens_a": 557,
+    "tokens_b": 557
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "schema_version": "omniflow.function_lookup_microbench.v2",
+  "created_at": "2026-06-11T18:41:53+08:00",
+  "purpose": "Measure local UTGRuntime.recall(goal) Function recall lookup cost; no device action, VLM call, or replay execution is included.",
+  "task": "contacts_add_contact",
+  "source_task": "AndroidWorld ContactsAddContact / Contacts form",
+  "goal": "Create a new contact for Ada Lovelace. Their number is 5551234567.",
+  "code_repo": "/Users/wuzewen/Projects/Omni/clone/OmniFlow",
+  "code_commit": "52e13bf806d833c39786d03795def182f7ba5c62",
+  "utg_store": "/Users/wuzewen/Projects/Omni/OmniFlow/runtime/utg/contacts_official_success_5554_latest.json",
+  "store_summary": {
+    "version": "1.0.0",
+    "node_count": 7,
+    "global_function_count": 1,
+    "node_function_count": 6,
+    "function_ids": [
+      "aw_function_515be7bf7e"
+    ]
+  },
+  "expected_function_id": "aw_function_515be7bf7e",
+  "expected_function_seen": true,
+  "iterations": 1000,
+  "warmup_iterations": 20,
+  "cold_runtime_init_ms": 53.810417,
+  "warmup_result": {
+    "decision": "recall",
+    "reason": "template_recall",
+    "function_id": "",
+    "score": 0.0,
+    "latency_ms_field": 0.005499983672052622,
+    "candidate_function_ids": [
+      "aw_function_515be7bf7e"
+    ],
+    "candidates": [
+      {
+        "function_id": "aw_function_515be7bf7e",
+        "description": "Create a new contact for ${first_name} ${last_name}. Their number is ${phone}.",
+        "source_app": null,
+        "parameter_names": [
+          "first_name",
+          "last_name",
+          "phone"
+        ]
+      }
+    ]
+  },
+  "last_result": {
+    "decision": "recall",
+    "reason": "template_recall",
+    "function_id": "",
+    "score": 0.0,
+    "latency_ms_field": 0.005333014996722341,
+    "candidate_function_ids": [
+      "aw_function_515be7bf7e"
+    ],
+    "candidates": [
+      {
+        "function_id": "aw_function_515be7bf7e",
+        "description": "Create a new contact for ${first_name} ${last_name}. Their number is ${phone}.",
+        "source_app": null,
+        "parameter_names": [
+          "first_name",
+          "last_name",
+          "phone"
+        ]
+      }
+    ]
+  },
+  "compile_latency_ms": {
+    "min": 0.005959,
+    "p50": 0.006167,
+    "p90": 0.006292,
+    "p95": 0.007586049999999998,
+    "p99": 0.00970884,
+    "max": 0.011875,
+    "mean": 0.0063337490000000005,
+    "stdev": 0.0007105831225120675
+  },
+  "param_fill": {
+    "mode": "llm",
+    "available": true,
+    "description": "Small text-only LLM parameter extraction; no screenshot/VLM planner.",
+    "provider": "dashscope",
+    "model": "qwen-turbo",
+    "iterations": 3,
+    "arguments": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "phone": "5551234567"
+    },
+    "errors": [],
+    "latency_ms": {
+      "min": 490.7445,
+      "p50": 1160.884458,
+      "p90": 1979.117058,
+      "p95": 2081.396133,
+      "p99": 2163.2193930000003,
+      "max": 2183.675208,
+      "mean": 1278.434722,
+      "stdev": 696.1164385106837
+    }
+  },
+  "replay_run": {
+    "source": "runlog_db",
+    "runlog_db": "/Users/wuzewen/Projects/Omni/OmniFlow/runtime/logs/run_logs.db",
+    "run_id": "androidworld_verified_ContactsAddContact_1780778560",
+    "goal": "Create a new contact for Oob Added. Their number is 5552346701.",
+    "started_at": "2026-06-07T04:42:40.409000+08:00",
+    "finished_at": "2026-06-07T04:42:56.122000+08:00",
+    "success": true,
+    "steps_count": 5,
+    "actions_count": 5,
+    "run_source": "oob_androidworld_goal_reuse",
+    "duration_ms": 15712.970495223999
+  },
+  "vlm_step_by_step": {
+    "source": "excluded_full_vlm_planner_probe",
+    "step_ms": 9742.0,
+    "step_count": 5,
+    "duration_ms": 48710.0,
+    "label": "VLM step-by-step",
+    "boundary": "The 9.742s probe is a full VLMPlanner step, not parameter fill. It is used only as the repeated VLM-step comparison row."
+  },
+  "result_counts": [
+    {
+      "decision": "recall",
+      "reason": "template_recall",
+      "function_id_or_candidate": "aw_function_515be7bf7e",
+      "count": 1000
+    }
+  ],
+  "sidecar_replay_context": {
+    "schema_version": "omniflow.nsdi.harder_contacts_add.v1",
+    "task": "ContactsAddContact",
+    "why_harder_than_open_app": "Parameterized multi-action AndroidWorld task: open Contacts, tap create, focus first/last/phone fields, type values, save, then verify actual Contacts provider record.",
+    "device": "emulator-5554",
+    "function_asset": "runtime/utg/contacts_official_success_5554_latest.json#aw_function_515be7bf7e",
+    "execution_mode": "device_cli replay-function with control enabled and explicit terminal verify; successful rows use __utg_skip_start_node_precondition__=1 as a bounded ablation because the current composite asset lacks a route-only bridge into its synthetic open_app start node.",
+    "aggregate": {
+      "successful_verified_replay_count": 3,
+      "terminal_verify_success_count": 3,
+      "online_model_tokens_for_replay": 0,
+      "control_enabled_for_successful_replays": true,
+      "start_node_precondition_skipped_for_successful_replays": true
+    },
+    "successful_case_ids": [
+      "standalone_fatima_skip_start_precondition",
+      "case_3_omar",
+      "case_4_mila_isolated"
+    ],
+    "boundary_failure_count": 3,
+    "claim_boundary": "bounded replay evidence; successful rows skip start-node precondition, so this is not full AndroidWorld entry success"
+  },
+  "excluded_bad_reference": {
+    "probe_id": "manual_omniflow_vlm_planner_selects_parameterized_function",
+    "provider": "dashscope",
+    "latency_ms": 9742,
+    "prompt_tokens": 3467,
+    "completion_tokens": 156,
+    "total_tokens": 3623,
+    "why_excluded": "This is a full VLMPlanner planning call over candidate selection and action JSON generation. It is not the intended small-LLM parameter-fill component and is not used in the true-scale figure."
+  },
+  "environment": {
+    "python": "3.13.5 | packaged by Anaconda, Inc. | (main, Jun 12 2025, 11:23:37) [Clang 14.0.6 ]",
+    "platform": "macOS-15.5-arm64-arm-64bit-Mach-O"
+  },
+  "interpretation": "ContactsAddContact recall(goal) is a local parameterized Function candidate recall path; measured latency is sub-millisecond. Any multi-second cost in this task comes from planner argument filling, device action/observation, or terminal verification, not Function recall lookup.",
+  "recall_latency_ms": {
+    "min": 0.005959,
+    "p50": 0.006167,
+    "p90": 0.006292,
+    "p95": 0.007586049999999998,
+    "p99": 0.00970884,
+    "max": 0.011875,
+    "mean": 0.0063337490000000005,
+    "stdev": 0.0007105831225120675
+  },
+  "legacy_field_aliases": {
+    "compile_latency_ms": "recall_latency_ms"
+  }
+}

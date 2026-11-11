@@ -1,0 +1,130 @@
+{
+  "schema_version": "cross_device_page_annotation_external_payload_v8_state_weighted_surface_marker",
+  "status": "candidate_diagnostic_manual_review_required",
+  "source_dataset": "runtime/utg/androidworld_task_apps_merged_20260604/candidate_utg_dataset.json",
+  "dataset_counts": {
+    "apps": 23,
+    "pairs": 255,
+    "valid_runs": 62,
+    "rejected_runs": 6,
+    "candidate_nodes": 525,
+    "usable_nodes": 448,
+    "candidate_edges": 623,
+    "selected_edges": 410,
+    "image_evidence_failures": 0
+  },
+  "accuracy_summary": {
+    "requires_manual_annotation": true,
+    "annotation_fields": [
+      "ours_top1_correct",
+      "ours_top3_contains_correct",
+      "embedding_top1_correct",
+      "embedding_top3_contains_correct",
+      "canonical_target_node_id",
+      "notes"
+    ]
+  },
+  "ours_backend": "page_vector_cosine_state_weighted_slice_top_surface",
+  "ours_score_detail": "cosine similarity over normalized 512-dim UTG page vectors from encode_xml_page(); PageVector v9 uses state-aware weighted mean pooling inside 8 functional slices, normalized slice concatenation, light slice-level state weights, refined front-surface pooling, and a compact surface-state marker inside the selected_target slice",
+  "embedding_backend": "simple_image",
+  "embedding_backend_detail": {
+    "name": "simple_image",
+    "modality": "image",
+    "model_source": "local_downsampled_screenshot_histogram",
+    "model_disk_size_bytes": 0,
+    "qwen_status": "not_full_encoded_for_this_large_annotation_queue",
+    "qwen_small_sample": {
+      "artifact": "runtime/evals/cross_device_page_pairs/contacts_5554_to_5556_pagevector_qwen3_vl_20260603/latency_summary.json",
+      "backend": "dashscope_qwen3_vl_embedding",
+      "model": "qwen3-vl-embedding",
+      "cloud_api_calls": 22,
+      "total_tokens": 24422,
+      "input_tokens": 358,
+      "image_tokens": 24064,
+      "avg_total_tokens_per_encode": 1110.090909090909,
+      "request_latency_ms": {
+        "count": 22,
+        "mean": 1053.2629185,
+        "p50": 841.9935835,
+        "p95": 1957.199083
+      }
+    }
+  },
+  "latency_summary_ms": {
+    "ours_lookup": {
+      "count": 255,
+      "mean": 0.006212611764705883,
+      "p50": 0.0035,
+      "p95": 0.006583
+    },
+    "embedding_target_precompute_per_node": {
+      "count": 193,
+      "mean": 9.01860014507772,
+      "p50": 8.189958,
+      "p95": 13.4265
+    },
+    "embedding_query_encode": {
+      "count": 255,
+      "mean": 20.937289705882353,
+      "p50": 19.680083,
+      "p95": 31.728375
+    },
+    "embedding_search": {
+      "count": 255,
+      "mean": 0.01741767450980392,
+      "p50": 0.009917,
+      "p95": 0.021542
+    },
+    "embedding_total": {
+      "count": 255,
+      "mean": 20.954707380392158,
+      "p50": 19.697416999999998,
+      "p95": 31.756457
+    },
+    "page_vector_encode_source_target_nodes": {
+      "count": 448,
+      "mean": 4.160774267857143,
+      "p50": 3.5361874999999996,
+      "p95": 11.027625
+    },
+    "recalled_payload_bytes": {
+      "count": 255,
+      "mean": 5270.862745098039,
+      "p50": 5444.0,
+      "p95": 5949.0
+    }
+  },
+  "target_graph_counts": {
+    "target_nodes_used": 193,
+    "target_nodes_skipped": 40
+  },
+  "regeneration_diagnostics": {
+    "pair_count": 255,
+    "target_nodes_used": 193,
+    "target_nodes_skipped": 40,
+    "missing_source_vector": 0,
+    "missing_target_app": 0,
+    "schema_version": "cross_device_page_annotation_external_payload_v8_state_weighted_surface_marker",
+    "ours_backend": "page_vector_cosine_state_weighted_slice_top_surface",
+    "latency_summary_ms": {
+      "ours_lookup": {
+        "count": 255,
+        "mean": 0.006212611764705883,
+        "p50": 0.0035,
+        "p95": 0.006583
+      },
+      "page_vector_encode_source_target_nodes": {
+        "count": 448,
+        "mean": 4.160774267857143,
+        "p50": 3.5361874999999996,
+        "p95": 11.027625
+      },
+      "recalled_payload_bytes": {
+        "count": 255,
+        "mean": 5270.862745098039,
+        "p50": 5444.0,
+        "p95": 5949.0
+      }
+    }
+  }
+}

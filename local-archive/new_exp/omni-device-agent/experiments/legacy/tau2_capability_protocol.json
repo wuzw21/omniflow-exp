@@ -1,0 +1,97 @@
+{
+  "status": "protocol_frozen_not_executed",
+  "source": {
+    "repo": "amazon-agi/tau2-bench-verified",
+    "revision": "864350a8971a8f8ee9e7b8472e2edc380a806b0c",
+    "files": [
+      {
+        "path": "LICENSE",
+        "git_blob_sha1": "f0323a32227c1327820da33d2fb9d3338a27ac84",
+        "sha256": "e67c5aa0074dfcaefd3c3a1aedb94cb539234aecd15d5a972574e3200e6252fe"
+      },
+      {
+        "path": "pyproject.toml",
+        "git_blob_sha1": "993f0d4e9664cf88b419d9cae680e113a60bcb7e",
+        "sha256": "d9235b9509a960f76d984c5949bed04e233e2553a4deabe21466c31db7ba7574"
+      },
+      {
+        "path": "data/tau2/domains/retail/tasks.json",
+        "git_blob_sha1": "2c6373d7ab16cf1b9543043d31d87f0daf292d92",
+        "sha256": "04cef2fdf59745e1c890d0e722726f103685ce94ba8cd63035d9ff9c2744b157"
+      },
+      {
+        "path": "data/tau2/domains/retail/split_tasks.json",
+        "git_blob_sha1": "8b20704a17aa1940b1e58668f89dcef2ddaeeea3",
+        "sha256": "ed0580ec52575b63fbf76568af42490da6ee7783ecb4aa81af46961291358f20"
+      },
+      {
+        "path": "data/tau2/domains/retail/policy.md",
+        "git_blob_sha1": "d127e6b074654926f337d0d98b0e669ebe90d19e",
+        "sha256": "2c9652afbce57d6e087768d37cda64d31c53d50b3e3225cfdb791bac66466467"
+      },
+      {
+        "path": "src/tau2/evaluator/evaluator.py",
+        "git_blob_sha1": "9e7875d1302f06b5c3206db8d9c398a45579cb9a",
+        "sha256": "8b429ee50150714a5ae29d4c6f8ca466b040cc848334f16b8e8daa38d6f8fba2"
+      },
+      {
+        "path": "src/tau2/evaluator/evaluator_env.py",
+        "git_blob_sha1": "012dfafd04c416eb1cb557052ad5d843c4188006",
+        "sha256": "ee93098f381cb4036bb344da780e5e80f2b0520d0868a5eea7bf420985ca6fb3"
+      }
+    ]
+  },
+  "counts": {
+    "total": 114,
+    "train": 74,
+    "test": 40,
+    "base": 114
+  },
+  "seed": "edgecloud-tau2-capability-20261024",
+  "eligibility": {
+    "cancel_pending_order": 4,
+    "return_delivered_order_items": 9,
+    "exchange_delivered_order_items": 11,
+    "modify_pending_order_items": 7
+  },
+  "selected": [
+    {
+      "id": "66",
+      "family": "cancel_pending_order",
+      "task_sha256": "8018cf7ffecae54a66bf87bc389618ec5e04139ae342a71c71f7ad0a2ce35fc7",
+      "gold_action_count_for_selection_only": 5
+    },
+    {
+      "id": "84",
+      "family": "return_delivered_order_items",
+      "task_sha256": "34d4eb5c58cf7c7b158f00f472f6617abb75163261d45b0d6e171f075c6705d2",
+      "gold_action_count_for_selection_only": 1
+    },
+    {
+      "id": "6",
+      "family": "exchange_delivered_order_items",
+      "task_sha256": "298ac981da2be5c9e84d525a3aaf5303402c5af1604858a21da3e337bdece225",
+      "gold_action_count_for_selection_only": 6
+    },
+    {
+      "id": "41",
+      "family": "modify_pending_order_items",
+      "task_sha256": "cf07d484e28f8c2b00cef5a252edd693cf036c2140bca80a805bc415c4f8bdba",
+      "gold_action_count_for_selection_only": 10
+    }
+  ],
+  "selection": "One train task per listed mutation family, no communication/NL grading requirements; SHA256(seed:id) minimum. Other mutation types may coexist; gold actions are not agent inputs.",
+  "native_user_protocol": "Keep original user simulator, policy, confirmation requirements and messages. Do not expose the full hidden user_scenario to the agent or strip confirmation clauses.",
+  "evaluation": "Use pinned native environment/database evaluator with original termination checks; separately retain exact action/policy/confirmation outcomes. Never overwrite DB mismatch using LLM judgment. No real-world transactions.",
+  "staged_execution": [
+    "First validate native Qwen2.5-3B local-only and Qwen2.5-7B server-only capability under the same native harness and user protocol.",
+    "Server-only full-observation run is a capability reference, not privacy-compliant deployment. Keep public synthetic data separate from user data.",
+    "Only after reliable task completion, compare policy-aware structured filtering/placeholder registry + cloud against local semantic processing + cloud; retain exact failures and per-call costs.",
+    "Measure native per-end prefix reuse, shared token spans, serial local processing, network bytes and outputs. Do not train a KV translator unless actual reusable work survives these baselines."
+  ],
+  "local_necessity_unproven": true,
+  "edge_cloud_speedup_unproven": true,
+  "no_model_outputs_used_for_selection": true,
+  "held_out_test_touched_by_training": false,
+  "raw_gold_inputs_copied_into_protocol": false
+}

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "gh",
+    "search",
+    "code",
+    "SVMemAgent language:Python",
+    "--limit",
+    "100",
+    "--json",
+    "repository,path,url"
+  ],
+  "exit_code": 0,
+  "stdout": "[]\n",
+  "stderr": ""
+}

@@ -1,0 +1,543 @@
+% Appendix
+
+\section{Page-Vector Encoding: Formal Specification}
+\label{app:pvs-encoding}
+
+This appendix formalizes the page-vector construction used by the UDEG
+representation.  The purpose of the encoding is to turn a mobile observation
+into a compact state key that supports fast lookup and action relocation,
+without storing raw screenshots, raw XML, or source-screen text in the shared
+payload.
+
+\paragraph{Element vector.}
+Let $e_i$ denote the $i$-th element in an accessibility tree with $n$ elements.
+OmniFlow maps $e_i$ to a 64-dimensional vector
+$\phi(e_i) \in \mathbb{R}^{64}$, formed by concatenating two feature blocks:
+\[
+\begin{aligned}
+  h(e_i) &= [c_i;t_i;a_i;m_i;s_i] \in
+  \mathbb{R}^{16+4+4+4+4},\\
+  g(e_i) &= [k_i;b_i;u_i;\ell_i;d_i] \in
+  \mathbb{R}^{8+8+12+2+2}.
+\end{aligned}
+\]
+Here $c_i$ is a text or visual-content hash, $t_i$ is content type, $a_i$ is
+affordance, $m_i$ is visual prominence, $s_i$ is visual state, $k_i$ is widget
+class, $b_i$ is boolean attributes, $u_i$ is bounded subtree structure,
+$\ell_i$ is hierarchy position, and $d_i$ is the resource-id hint.  The final
+embedding is:
+\[
+  \phi(e_i)=
+  [\lambda_h\,\nu(h(e_i)) \,;\, \lambda_p\,\nu(g(e_i))],
+  \quad
+  \nu(\mathbf{x})=
+  \begin{cases}
+    \mathbf{x}/\|\mathbf{x}\|_2, & \|\mathbf{x}\|_2>0,\\
+    \mathbf{0}, & \text{otherwise}.
+  \end{cases}
+\]
+The current implementation uses $\lambda_h=0.55$ and $\lambda_p=0.45$.
+
+\emph{Human-view block.}
+The human-view block $h(e_i) \in \mathbb{R}^{32}$ encodes rendered-UI cues:
+a 16-dimensional content hash, 4 content-type dimensions, 4 affordance
+dimensions, 4 visual-prominence dimensions, and 4 visual-state dimensions.
+
+\emph{Programmer-view block.}
+The programmer-view block $g(e_i) \in \mathbb{R}^{32}$ encodes
+accessibility-XML cues: an 8-dimensional widget-class hash, 8 interaction and
+state flags, a 12-dimensional bounded-subtree hash, 2 hierarchy dimensions,
+and 2 resource-id hint dimensions.  Raw \texttt{text} and
+\texttt{content-desc} strings are not serialized in the minimal shared
+payload.  Local XML-built pages may keep hashed text and selector diagnostics
+for action mapping, but these fields are opt-in diagnostics rather than the
+default shared page-vector payload.
+
+\paragraph{Slice pooling.}
+OmniFlow pools element vectors into eight page slices.  The current slice order
+is:
+$R_1$ = global text,
+$R_2$ = top-bar text,
+$R_3$ = footer/navigation text,
+$R_4$ = action text,
+$R_5$ = state text,
+$R_6$ = global UI structure,
+$R_7$ = body structure, and
+$R_8$ = front-surface layout.
+The top-bar and footer cuts are quantile-based rather than fixed 10\% screen
+bands, so the same encoder can adapt to pages with different root heights and
+system UI insets.
+
+For each slice $R_r$, the page-level vector is pooled with state-aware element
+weights:
+\[
+  \bar{\mathbf{p}}_r =
+  \frac{\sum_{e_i \in E_r}\omega_i\phi(e_i)}
+       {\sum_{e_i \in E_r}\omega_i},
+\]
+where $E_r$ is the set of elements assigned to the slice and $\omega_i$ is a
+positive element weight.  If $E_r$ is empty, $\bar{\mathbf{p}}_r =
+\mathbf{0}$.  Each nonzero slice is normalized to $\hat{\mathbf{p}}_r$.
+
+The page-level recall vector is the slice-weighted concatenation:
+\[
+  \mathbf{p} =
+  [w_1\hat{\mathbf{p}}_1;\ldots;w_8\hat{\mathbf{p}}_8]
+  \in \mathbb{R}^{512},
+\]
+with fixed slice weights $w_r$.  The vector store normalizes this final vector
+to unit length for cosine lookup.
+
+\begin{algorithm}[t]
+\caption{XML-to-page vector encoding}
+\label{alg:xml-page-embedding}
+\small
+\begin{algorithmic}[1]
+\Require XML observation $X$ and optional screenshot $I$
+\Ensure normalized page embedding $\mathbf{p}$
+\State $E \gets \textsc{ParseElements}(X)$
+\ForAll{$e_i \in E$}
+  \State $\mathbf{h}_i \gets \textsc{HumanView}(e_i, I)$
+  \State $\mathbf{g}_i \gets \textsc{ProgrammerView}(e_i, X)$
+  \State $\phi(e_i) \gets [\lambda_h\nu(\mathbf{h}_i);\lambda_p\nu(\mathbf{g}_i)]$
+  \State $\omega_i \gets \textsc{ElementWeight}(e_i, X)$
+\EndFor
+\For{$r = 1$ to $8$}
+  \State $E_r \gets \{e_i \in E \mid \textsc{Slice}(e_i, X)=r\}$
+  \If{$E_r = \emptyset$}
+    \State $\mathbf{p}_r \gets \mathbf{0}$
+  \Else
+    \State $\bar{\mathbf{p}}_r \gets \frac{\sum_{e_i\in E_r}\omega_i\phi(e_i)}{\sum_{e_i\in E_r}\omega_i}$
+    \State $\mathbf{p}_r \gets \textsc{NormalizeSlice}(\bar{\mathbf{p}}_r)$
+  \EndIf
+\EndFor
+\State $\mathbf{p} \gets [w_1\mathbf{p}_1;\ldots;w_8\mathbf{p}_8]$
+\State $\mathbf{p} \gets \textsc{NormalizeForLookup}(\mathbf{p})$
+\State \Return $\mathbf{p}$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Page similarity.}
+The similarity between two pages is computed over normalized page-level
+vectors:
+\[
+  \mathrm{sim}(\mathbf{p}^{(1)},\mathbf{p}^{(2)})
+  = \mathbf{p}^{(1)} \cdot \mathbf{p}^{(2)}.
+\]
+This fixed 512-dimensional vector is used for fast candidate recall.  The
+serialized page-vector payload used by action transfer is larger because it
+also contains element vector records, root bounds, and element bounds.  The
+evaluation therefore reports the actual recalled payload size emitted by the
+runner instead of assuming a constant page-vector size.
+
+\paragraph{Privacy invariant.}
+The encoding pipeline satisfies the following operational invariant:
+\emph{the minimal shared page-vector payload contains no raw text or raw
+content-description string from the source accessibility tree}.  Element
+records retain bounds because action relocation needs geometry.  Local
+diagnostic payloads may additionally include resource IDs, class names, flags,
+and text/content-description hashes when action mapping needs exact signature
+evidence.  The default shared serialization omits those identity-bearing
+fields.  This is an operational privacy boundary, not a formal
+differential-privacy claim.
+
+\section{On-Device Observation Description Cost}
+\label{app:on-device-cost}
+
+Table~\ref{tab:appendix-on-device-cost} records the appendix-only diagnostic
+snapshot used to contextualize on-device memory lookup cost.  The snapshot
+measures the time and token scale for converting one mobile observation into a
+complete textual description.  It is not an end-to-end task result, a success
+rate, or an energy measurement.  Its role is to show why repeated
+screenshot/XML description is a bottleneck for an on-device replay system, and
+why OmniFlow uses PageVector lookup as a 0-token state key.
+
+\begin{center}
+  \refstepcounter{table}\label{tab:appendix-on-device-cost}
+  \small\textbf{Table~\thetable.} Appendix-only single-observation description
+  cost snapshot.
+  \vspace{0.4em}
+
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{llllr}
+    \toprule
+    Location & Backend & Input & Tokens & Time \\
+    \midrule
+    On-device & Llama.cpp + 0.8B-W4 + CPU & screenshot & $\sim$2,500 & 60s+ \\
+    On-device & MNN-LMM + 0.8B-W4 + CPU & screenshot & $\sim$2,500 & 10s+ \\
+    On-device & Omniinfer + 0.8B-W4 + NPU & XML & $\sim$1k--10k+ & 3s \\
+    Cloud & Qwen-VL-Plus & screenshot & $\sim$3,200 & 3s \\
+    \midrule
+    OmniFlow & PageVector & XML features & 0 & 4.13 ms/item \\
+    \bottomrule
+  \end{tabular}}
+\end{center}
+
+\section{AITW Prompt Similarity Characterization}
+\label{app:aitw-prompt-similarity}
+
+\paragraph{Dataset and denominator.}
+We use the prompt vocabulary of Android in the Wild (AITW)~\cite{rawles2023android}.
+AITW reports unique-prompt counts separately for General, GoogleApps, Install,
+Single, and WebShopping.  We preserve this official five-subset accounting, so
+the denominator is the sum of the five counts, 30,378.  Merging identical raw
+strings across subsets yields 30,165 globally distinct strings; the difference
+comes from 213 additional cross-subset occurrences.  We extracted the strings
+through a processed public index\footnote{\url{https://huggingface.co/datasets/KMK040412/aitw-processed-labeled-full}},
+which covers 5,687,349 interaction steps and 714,327 episodes.  Its prompt
+vocabulary matches the official count in every subset.  We form candidate
+peers over the global prompt pool and project the resulting indicator back to
+the official subset-level entries.
+
+\paragraph{Parameter templates.}
+We canonicalize case and punctuation, then replace URLs, email addresses,
+quoted values, and numeric values with typed placeholders.  This operation
+groups instructions that express the same operation with different task
+arguments.  A prompt is counted by the template-only statistic when another
+prompt maps to the same canonical template.
+
+\paragraph{Semantic matching.}
+We encode each globally distinct prompt with
+\texttt{BAAI/bge-small-en-v1.5} and compute cosine similarity between normalized
+embeddings.  For threshold $\tau$, prompt $p$ is marked as having a reuse
+candidate when at least one other prompt $q$ satisfies
+\[
+  M_\tau(p)=\mathbf{1}\!\left[
+  \begin{aligned}
+    \exists q\neq p:\quad &T(p)=T(q),\quad\text{or}\\
+    &\cos(z_p,z_q)\geq\tau \land \neg C(p,q)
+  \end{aligned}
+  \right],
+\]
+where $T(\cdot)$ is the parameter template, $z$ is the prompt embedding, and
+$C$ is an explicit contradiction filter.  The filter rejects pairs that
+reverse the requested operation, including on versus off, enable versus
+disable, install versus uninstall, add versus remove or delete, create versus
+delete, open versus close, show versus hide, login versus logout, subscribe
+versus unsubscribe, allow versus block, accept versus reject, and increase
+versus decrease.  We report
+\[
+  R_\tau=\frac{1}{30{,}378}\sum_p M_\tau(p).
+\]
+The main analysis uses $\tau=0.98$; $\tau=0.95$ is reported only as a
+sensitivity point.
+
+\begin{table}[t]
+  \centering
+  \caption{AITW prompt-level reuse-candidate estimate.  The main paper uses the
+  strict $\tau=0.98$ result.}
+  \label{tab:aitw-prompt-sensitivity}
+  \small
+  \begin{tabular}{lrr}
+    \toprule
+    Criterion & Similar / Total & Rate \\
+    \midrule
+    Parameter template only & 11,052 / 30,378 & 36.4\% \\
+    Template or cosine $\geq 0.98$ & 22,834 / 30,378 & 75.2\% \\
+    Template or cosine $\geq 0.95$ & 26,386 / 30,378 & 86.9\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Strict AITW result by official subset ($\tau=0.98$).}
+  \label{tab:aitw-prompt-subsets}
+  \small
+  \begin{tabular}{lrr}
+    \toprule
+    Subset & Similar / Total & Rate \\
+    \midrule
+    General & 69 / 545 & 12.7\% \\
+    GoogleApps & 81 / 306 & 26.5\% \\
+    Install & 549 / 688 & 79.8\% \\
+    Single & 9,151 / 15,366 & 59.6\% \\
+    WebShopping & 12,984 / 13,473 & 96.4\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Scope.}
+The unit above is a prompt, so $R_\tau$ is a Function-reuse candidate upper
+bound rather than an executable-reuse measurement.  The analysis does not
+establish that paired episodes share a compatible start state, action sequence,
+argument binding, or terminal effect.
+
+\paragraph{Trace test.}
+A separate AITW trace-correspondence protocol can sample distinct source and
+target episodes from the same app and
+parameter template, add same-app near-miss and opposite-intent hard negatives,
+and split by held-out templates.  Function Recall@$k$, segment-alignment
+accuracy, and abstain rate then measure offline generalization.  End-to-end
+replay success still requires a live environment with control-aware execution
+and terminal/effect verification.
+
+% % Appendix
+%
+% \appendix
+%
+% \section{Page-Vector Encoding: Formal Specification}
+% \label{app:pvs-encoding}
+%
+% This appendix formalises the page-vector construction described informally
+% in \S\ref{sec:design-offline}.  The goal is to show precisely what
+% information is captured, what is discarded, and why the representation remains
+% available when semantic attributes are absent while preserving the paper's
+% privacy boundary (no raw text or raw screenshots are retained).
+%
+% \paragraph{Element vector.}
+% Let $e_i$ denote the $i$-th element in an accessibility tree with $n$
+% elements.  OmniFlow maps $e_i$ to a 64-dimensional real vector
+% $\phi(e_i) \in \mathbb{R}^{64}$, formed by concatenating the two
+% feature blocks in \texttt{ElementEmbeddingConfig}.  The human-view block
+% encodes visible cues, while the programmer-view block encodes accessibility
+% XML structure and execution cues:
+% \[
+% \begin{aligned}
+%   h(e_i) &= [c_i;t_i;a_i;m_i;s_i] \in
+%   \mathbb{R}^{16+4+4+4+4},\\
+%   g(e_i) &= [k_i;b_i;u_i;\ell_i;d_i] \in
+%   \mathbb{R}^{8+8+12+2+2},
+% \end{aligned}
+% \]
+% where $c_i$ is the text or visual-content hash, $t_i$ is content type,
+% $a_i$ is affordance, $m_i$ is visual prominence, $s_i$ is visual state,
+% $k_i$ is widget class, $b_i$ is boolean attributes, $u_i$ is bounded subtree
+% structure, $\ell_i$ is hierarchy position, and $d_i$ is the resource-id hint.
+% The final element embedding is:
+% \[
+%   \phi(e_i)=
+%   [\lambda_h\,\nu(h(e_i)) \,;\, \lambda_p\,\nu(g(e_i))],
+%   \quad
+%   \nu(\mathbf{x})=
+%   \begin{cases}
+%     \mathbf{x}/\|\mathbf{x}\|_2, & \|\mathbf{x}\|_2>0,\\
+%     \mathbf{0}, & \text{otherwise}.
+%   \end{cases}
+% \]
+% The current implementation uses $\lambda_h=0.55$ and $\lambda_p=0.45$.
+%
+% \emph{Human-view block} $h(e_i) \in \mathbb{R}^{32}$.
+% This block encodes rendered-UI cues: a 16-dimensional content hash, 4
+% content-type dimensions, 4 affordance dimensions, 4 visual-prominence
+% dimensions, and 4 visual-state dimensions.
+%
+% \emph{Programmer-view block} $g(e_i) \in \mathbb{R}^{32}$.
+% This block encodes accessibility-XML cues: an 8-dimensional widget-class hash,
+% 8 interaction/state flags, a 12-dimensional bounded-subtree hash, 2 hierarchy
+% dimensions, and 2 resource-id hint dimensions.
+% Raw \texttt{text} and \texttt{content-desc} strings are not serialized in the
+% minimal shared payload.  Local XML-built pages can keep hashed text and
+% selector/state diagnostics for action mapping, but those fields are opt-in
+% diagnostics rather than the default shared page-vector payload.
+%
+% \paragraph{Slice pooling.}
+% OmniFlow's page-level recall vector pools element vectors into eight slices.
+% The current slice order is:
+% $R_1$ = global text,
+% $R_2$ = top-bar text,
+% $R_3$ = footer/navigation text,
+% $R_4$ = action text,
+% $R_5$ = state text,
+% $R_6$ = global UI structure,
+% $R_7$ = body structure, and
+% $R_8$ = front-surface layout.
+% The top-bar and footer cuts are quantile-based rather than fixed 10\% screen
+% bands, so the same encoder can adapt to pages with different root heights and
+% system UI insets.
+%
+% The page-level vector for slice $R_r$ is pooled with state-aware element
+% weights:
+% \[
+%   \bar{\mathbf{p}}_r =
+%   \frac{\sum_{e_i \in E_r}\omega_i\phi(e_i)}
+%        {\sum_{e_i \in E_r}\omega_i},
+% \]
+% where $E_r$ is the set of elements assigned to slice $R_r$ and $\omega_i$ is a
+% positive element weight.  If $E_r$ is empty, $\bar{\mathbf{p}}_r =
+% \mathbf{0}$.  Each nonzero slice is then normalized to
+% $\hat{\mathbf{p}}_r$.
+%
+% The page-level recall vector is the slice-weighted concatenation
+% \[
+%   \mathbf{p} =
+%   [w_1\hat{\mathbf{p}}_1;\ldots;w_8\hat{\mathbf{p}}_8]
+%   \in \mathbb{R}^{512},
+% \]
+% with fixed slice weights $w_r$.  The vector store normalizes this final vector
+% to unit length for cosine lookup.
+%
+% \begin{algorithm}[t]
+% \caption{XML-to-page embedding}
+% \label{alg:xml-page-embedding}
+% \small
+% \begin{algorithmic}[1]
+% \Require XML observation $X$ and optional screenshot $I$
+% \Ensure normalized page embedding $\mathbf{p}$
+% \State $E \gets \textsc{ParseElements}(X)$
+% \ForAll{$e_i \in E$}
+%   \State $\mathbf{h}_i \gets \textsc{HumanView}(e_i, I)$
+%   \State $\mathbf{g}_i \gets \textsc{ProgrammerView}(e_i, X)$
+%   \State $\phi(e_i) \gets [\lambda_h\nu(\mathbf{h}_i);\lambda_p\nu(\mathbf{g}_i)]$
+%   \State $\omega_i \gets \textsc{ElementWeight}(e_i, X)$
+% \EndFor
+% \For{$r = 1$ to $8$}
+%   \State $E_r \gets \{e_i \in E \mid \textsc{Slice}(e_i, X)=r\}$
+%   \If{$E_r = \emptyset$}
+%     \State $\mathbf{p}_r \gets \mathbf{0}$
+%   \Else
+%     \State $\bar{\mathbf{p}}_r \gets \frac{\sum_{e_i\in E_r}\omega_i\phi(e_i)}{\sum_{e_i\in E_r}\omega_i}$
+%     \State $\mathbf{p}_r \gets \textsc{NormalizeSlice}(\bar{\mathbf{p}}_r)$
+%   \EndIf
+% \EndFor
+% \State $\mathbf{p} \gets [w_1\mathbf{p}_1;\ldots;w_8\mathbf{p}_8]$
+% \State $\mathbf{p} \gets \textsc{NormalizeForLookup}(\mathbf{p})$
+% \State \Return $\mathbf{p}$
+% \end{algorithmic}
+% \end{algorithm}
+%
+% \paragraph{Page similarity.}
+% The similarity between two pages is computed over the normalized page-level
+% vectors, so cosine similarity is the primary page-recall score:
+% \[
+%   \mathrm{sim}(\mathbf{p}^{(1)},\mathbf{p}^{(2)})
+%   = \mathbf{p}^{(1)} \cdot \mathbf{p}^{(2)},
+% \]
+% after both vectors have been normalized.  This fixed 512-dimensional vector
+% is used for fast candidate recall.  The serialized page-vector payload used by
+% action transfer is larger: it also contains element vector records, root
+% bounds, and element bounds, so its byte size still depends on the number of
+% elements.  This is why the evaluation reports the actual recalled payload
+% size emitted by the runner instead of assuming a constant page-vector size.
+%
+% \paragraph{Privacy invariant.}
+% The encoding pipeline satisfies the following invariant by construction:
+% \emph{the minimal shared page-vector payload contains no raw text or raw
+% content-description string from the source accessibility tree}.  Element
+% records retain bounds because coordinate transfer needs geometry; local
+% diagnostic payloads may additionally include resource IDs, class names, flags,
+% and text/content-description hashes when action mapping needs exact signature
+% evidence.  The default shared serialization omits those action-identity fields.
+% This is an operational privacy boundary, not a formal differential-privacy
+% claim.  It also explains a current limitation recorded in the reviewer-risk
+% ledger: a privacy-minimal page-vector payload is sufficient as a page-recall object,
+% but exact action-signature transfer may need local XML context or an
+% identity-bearing diagnostic payload and must otherwise abstain.
+%
+% % ──────────────────────────────────────────────────────────────────────────
+% \section{MobileViews Attribute Completeness Analysis}
+% \label{app:mobileviews-analysis}
+%
+% \S\ref{sec:obs2} states that 32.5\% of real Android touch targets carry no
+% usable semantic attribute (\texttt{resource-id}, \texttt{text}, or
+% \texttt{content-desc}).  This appendix describes the measurement methodology
+% to make the claim reproducible and to clarify what ``usable'' means in
+% practice.
+%
+% \paragraph{Dataset.}
+% The analysis uses MobileViews~\cite{mobileviews}, a large-scale dataset of
+% Android app UI states and recorded interaction traces collected from 30,000+
+% apps.  We extract the 7,378 elements that are the direct targets of
+% recorded touch actions---the set of elements that a replay or
+% attribute-based agent must be able to identify.
+%
+% \paragraph{Attribute filtering.}
+% For each touch-target element, we examine three attributes:
+%
+% \begin{enumerate}
+% \item \texttt{resource-id}: Non-empty and \emph{not obfuscated}.  An
+%   \texttt{resource-id} value is classified as obfuscated if its suffix
+%   (the portion after the last ``\texttt{/}'') consists solely of lower-case
+%   letters and digits and has length $\le 3$.  These are characteristic
+%   outputs of ProGuard and R8 resource renaming; an agent matching on
+%   \texttt{resource-id} = \texttt{a0} on one app version may find
+%   \texttt{resource-id} = \texttt{b1} on the next build.
+%
+% \item \texttt{text}: Non-empty after trimming whitespace.  This includes
+%   visible button labels, input-field content, and list-item text.  Dynamic
+%   content (e.g., a contact name in a list item) is not excluded here because
+%   even dynamic text can serve as a selector when the content is known at
+%   action-generation time.
+%
+% \item \texttt{content-desc}: Non-empty after trimming whitespace.  This
+%   attribute is the primary accessibility label for icon-only controls and
+%   image buttons; its absence is common in apps that do not follow accessibility
+%   best practices.
+% \end{enumerate}
+%
+% An element is classified as \emph{attribute-absent} if all three values are
+% empty or obfuscated after the filters above.  We do not count fallback
+% attributes such as \texttt{hint}, \texttt{view-id-resource-name}, or inferred
+% positional labels, because attribute-only replay baselines do not rely on
+% them for robust cross-version matching.
+%
+% \paragraph{Result.}
+% Of the 7,378 touch-target elements, 2,398 are attribute-absent under the
+% definition above: 32.5\%.  The remaining 67.5\% carry at least one usable
+% attribute.  Broken down by attribute type:
+% \begin{itemize}
+%   \item 3,923 (53.2\%) have a non-obfuscated \texttt{resource-id},
+%   \item 2,224 (30.1\%) have non-empty \texttt{text},
+%   \item 635 (8.6\%) have non-empty \texttt{content-desc}.
+% \end{itemize}
+% Attributes are not mutually exclusive; many elements carry two or all three.
+% The 32.5\% attribute-absent set represents the \emph{structural failure region}
+% of any attribute-based or selector-based approach: no algorithm that requires
+% a stable attribute can address these elements, regardless of its sophistication.
+%
+% \paragraph{Generalisability.}
+% MobileViews was collected from a broad sample of consumer Android apps, not
+% from a curated or enterprise-app subset.  However, it skews toward apps that
+% expose an accessible UI (the accessibility service must be able to observe
+% the UI tree).  Apps built entirely on Unity, Unreal, or custom OpenGL
+% rendering expose no accessibility tree at all; for these, the ``0 usable
+% attributes'' rate is 100\%.  The 32.5\% figure is therefore a \emph{lower
+% bound} on the structural failure rate in the wild.
+%
+% % ──────────────────────────────────────────────────────────────────────────
+% \section{Control Plane Signal Taxonomy}
+% \label{app:control-effects}
+%
+% This appendix lists the full set of correction signals the control plane may
+% return, as referenced in \S\ref{sec:design-online}.  Each signal is a
+% high-level semantic directive interpreted by the executor; no signal issues
+% device commands directly.
+%
+% \begin{description}
+%   \item[\texttt{replace\_action}.]  Substitute a corrected action for the
+%     scheduled one before dispatch.  Used when a detector determines that the
+%     planned action targets the wrong element or uses incorrect parameters for
+%     the current device state (e.g., coordinate drift detected by the anchor
+%     failure detector).
+%
+%   \item[\texttt{run\_actions}.]  Inject a short recovery action sequence
+%     before resuming the Function plan at the current step index.  Used to
+%     handle transient interruptions such as permission dialogs, notification
+%     banners, or loading overlays that must be dismissed before the planned
+%     action can proceed.
+%
+%   \item[\texttt{refresh\_observation}.]  Re-observe the current page without
+%     advancing the plan.  Used when the page state is expected to change
+%     shortly (e.g., a loading spinner is present) and the next planned action
+%     should not be dispatched until the page has stabilised.
+%
+%   \item[\texttt{abort}.]  Stop the Function and return a structured failure
+%     to the caller.  Used when a detector determines that the execution cannot
+%     be recovered locally and the deviation does not warrant a host-agent
+%     handoff (e.g., the package identity is irrecoverably wrong).
+%
+%   \item[\texttt{handoff}.]  Suspend the Function and pass the accumulated
+%     execution context---completed steps as typed action records, the current
+%     page vector, and the remaining plan---to the host agent.
+%     This is the escalation path for deviations that require open-ended
+%     reasoning.  The agent receives a partially-completed trajectory, not a
+%     cold-start observation, and the resulting run log is eligible for
+%     ingestion once the agent completes the task.
+% \end{description}
+%
+% Signals compose: the executor applies signals from all active detectors in
+% sequence before dispatching each action.  A single deviation may trigger
+% \texttt{refresh\_observation} followed by \texttt{run\_actions} in the same
+% step.  Each detector is an independent plugin; adding or removing a detector
+% does not change the executor or the Function format.  The set of active
+% detectors is configurable per deployment.

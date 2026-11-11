@@ -1,0 +1,19 @@
+{
+  "repo": "https://github.com/ShareLab-SII/FluxMem",
+  "commit": "6fdbf65b6f2af1a94ca41d542be5be86a565d338",
+  "files": {
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/fluxmem.py": "3358ef383ce2e5d3acf5f23ce44153fc30401b99c4c7ccc3c2af8eb9594f9e53",
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/__init__.py": "be8d77e4d15cf9622240eeba1dc632f67828c2def0d86bf2c22550369a5dda38",
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/modeling_qwen2_5_vl_fluxmem.py": "5ef3c934c26f413605c7fd0b981c218f0a8686d8f5932f13af2fb7443c34ea02",
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/processing_qwen2_5_vl_fluxmem.py": "4db38ac20cc50d64d33516d5a9fcfcdf16552a74a40869fa41e2c846a486fabe",
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/utils.py": "20f58271a4daa23d745ffba2a124e21250bd21d8a77df4eafa82071d791512db",
+    "models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/configuration_qwen2_5_vl_fluxmem.py": "c64d22f64d3edd05842a93b82d4849cc50daec46d31de9c457438401c70638ff",
+    "models/qwen-vl-utils/src/qwen_vl_utils_fluxmem/__init__.py": "a0c454a56f2ba478731013afe1ba5d5d9caff652fe0ce51be1c315476e5c7905",
+    "models/qwen-vl-utils/src/qwen_vl_utils_fluxmem/vision_process.py": "24d8248ef46ddb5842ebb472de4133f3ef503f46afe815856e4ae3e3de57b7b5",
+    "evaluation/streamingbench/streamingbench.py": "9ecb3a090b4c1a28387ae57524c4c8483c88e2fddf7433a5cf3c208754d7da08",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  "code_license": "Apache-2.0",
+  "weights_license": "Qwen Research License (non-commercial research/evaluation); publicly downloadable, not unrestricted OSS",
+  "upstream_diff": ""
+}

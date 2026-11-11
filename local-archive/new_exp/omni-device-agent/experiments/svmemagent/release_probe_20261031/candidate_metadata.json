@@ -1,0 +1,3203 @@
+{
+  "_id": "6a6d0b2041d1ea80f4d4a039",
+  "id": "temptemp1234/SVMemAgent",
+  "private": false,
+  "tags": [
+    "safetensors",
+    "region:us"
+  ],
+  "downloads": 0,
+  "likes": 0,
+  "modelId": "temptemp1234/SVMemAgent",
+  "author": "temptemp1234",
+  "sha": "7b7ba15a2d35064287f449259607759e36259440",
+  "lastModified": "2026-07-31T21:23:31.000Z",
+  "gated": false,
+  "disabled": false,
+  "config": {},
+  "siblings": [
+    {
+      "rfilename": ".gitattributes"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/baselines/mllm_selector/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/baselines/mllm_selector/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/baselines/mllm_selector/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo3/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_aiad/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_no_sft/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_qwen/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/checkpoint-14313/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/grpo/svmemagent_grpo_reproduce/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-1/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/checkpoint-2/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_no_sft/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/checkpoint-5765/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft2/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/optimizer.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_0.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_1.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_2.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_3.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_4.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_5.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_6.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/rng_state_7.pth"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/scheduler.pt"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/trainer_state.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/checkpoint-5765/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/model.safetensors"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/preprocessor_config.json"
+    },
+    {
+      "rfilename": "src/r1-v/checkpoints/sft/svmemagent_sft3/training_args.bin"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/egoschema.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/longvideobench.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/mlvu.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/ovbench.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/ovo_bench.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/rvs_ego.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/streamingbench.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/videomme.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/evaluation/annotations/vs_ego.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/grpo_114k.json"
+    },
+    {
+      "rfilename": "src/r1-v/data/sft_46k.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/egoschema/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/longvideobench/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/mlvu/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovbench/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/ovo_bench/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/rvs_ego/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/streamingbench/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/videomme/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/InternVL3_5-8B/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/aks.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/clustering.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/contiguous.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/mllm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/random.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/streamchat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo3.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_aiad.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_no_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_qwen.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo_reproduce.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_sft.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/16/vs_ego/Qwen3-VL-8B-Instruct/uniform.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/egoschema/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/longvideobench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/mlvu/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/ovo_bench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/rvs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/streamingbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/videomme/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/32/vs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/egoschema/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/longvideobench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/mlvu/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/ovo_bench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/rvs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/streamingbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/videomme/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/4/vs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/egoschema/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/longvideobench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/mlvu/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/ovo_bench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/rvs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/streamingbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/videomme/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/64/vs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/egoschema/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/longvideobench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/mlvu/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/ovo_bench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/rvs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/streamingbench/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/videomme/Qwen3-VL-8B-Instruct/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/InternVL3_5-8B/timechat.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/fifo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/flash_vstream.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/ma_lmm.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/random16.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/reservoir.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/svmemagent_grpo.json"
+    },
+    {
+      "rfilename": "src/r1-v/evaluation/results/8/vs_ego/Qwen3-VL-8B-Instruct/timechat.json"
+    }
+  ],
+  "spaces": [],
+  "createdAt": "2026-07-31T20:52:48.000Z",
+  "usedStorage": 12128635617
+}

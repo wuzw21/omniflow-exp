@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "features_path": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/runs/fluxmem_scaling_features_001/features.pt",
+  "features_sha256": "03bfdb70285f1a6dc13887cc488b201eca1ad8423e3fe0c4edc1ef4efd8e40df",
+  "blocks": 94,
+  "tokens_per_block": 120,
+  "hidden_size": 2048,
+  "vision_seconds": 61.64492429199163,
+  "vision_parameter_bytes": 1337368576,
+  "inputs_sha256": "6154a146105536798cd70d90dba3373eb3f121f45e84d2b4747134b8ccc6f63c",
+  "source_hashes": {
+    "common.py": "0970297efa9633ffe7a9d260b686972849e5ea7fc89d33d06809131c79d2a460",
+    "PROTOCOL.md": "e63048ca5536f25a8491d373df6fa1514057a58174283d2c55620ee697000bc0",
+    "feature_prepare.py": "36302f0691f736f4f76a0ce8684a27063310631122db0a6cee10c354f6252edf",
+    "state.py": "502cf404e39f21648f49b104cf48ae74853f3c0d13ed9e70af8cfdddbdfe527c",
+    "compact.py": "4d0ea7688344df264a98ddd7cf70c1fdfa266a810baab38ecdd25138573a1838",
+    "measure.py": "44b7a1398d3cdeb75de219f6fe171ee7babb393fc5d409ae1f1b7dc770ff5a66"
+  }
+}

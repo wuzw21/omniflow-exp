@@ -1,0 +1,657 @@
+{
+  "summary": {
+    "pair_count": 80,
+    "apps": [
+      "Gmail",
+      "Google Dialer",
+      "Microsoft To-Do",
+      "Telegram",
+      "TripAdvisor",
+      "Twitter",
+      "Uber Eats",
+      "YT Music"
+    ]
+  },
+  "pairs": [
+    {
+      "app": "Gmail",
+      "task": "Archive Email",
+      "source_goal": "Archive the last email from Sophia",
+      "target_goal": "Archive the last email from cps lab kaist",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Archive Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Archive Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Change Email Settings",
+      "source_goal": "Change the settings to always show Unread emails first in inbox",
+      "target_goal": "Change the settings to always show Important emails first in inbox",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Change Email Settings/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Change Email Settings/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Delete Email",
+      "source_goal": "Delete the last email from Sophia",
+      "target_goal": "Delete the second email from cps lab kaist",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Delete Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Delete Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Get Promotional Emails",
+      "source_goal": "Show me all the promotional emails",
+      "target_goal": "Show me all the promotional emails",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Get Promotional Emails/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Get Promotional Emails/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Mark Email Important",
+      "source_goal": "Mark the last email from Sophia as important",
+      "target_goal": "Mark the second email from cps lab kaist as important",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Mark Email Important/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Mark Email Important/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Read Last Email",
+      "source_goal": "Read me last email from Sophia",
+      "target_goal": "Read me the second email from cps lab kaist",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Read Last Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Read Last Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Recover Deleted Email",
+      "source_goal": "Recover the last deleted email from trash",
+      "target_goal": "Recover the last deleted email from trash",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Recover Deleted Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Recover Deleted Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Reply To Email",
+      "source_goal": "Reply to the last email from Sophia",
+      "target_goal": "Reply to the second email from cps lab kaist",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Reply To Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Reply To Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Schedule Email",
+      "source_goal": "Schedule an email for tomorrow afternoon to Jun",
+      "target_goal": "schedule an email for this afternoon to sophia lee",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Schedule Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Schedule Email/user_instruction2.json"
+    },
+    {
+      "app": "Gmail",
+      "task": "Send Email",
+      "source_goal": "Send email to Jun",
+      "target_goal": "Send email to sophia lee",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Send Email/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Gmail/Send Email/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Add To Favorites",
+      "source_goal": "Add Zelenski to the favorites",
+      "target_goal": "Add Sophia to the favorites",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Add To Favorites/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Add To Favorites/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Call Contact",
+      "source_goal": "Call Junyoung from the contacts",
+      "target_goal": "Call Zelenski from the contacts",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Call Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Call Contact/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Call Recent Contact",
+      "source_goal": "Call most recent call",
+      "target_goal": "Call second one in the recent call",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Call Recent Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Call Recent Contact/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Create Contact",
+      "source_goal": "Create Contact named Sophia",
+      "target_goal": "Create contact named Junyoung with phone number 01055883154",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Create Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Create Contact/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Delete Contact",
+      "source_goal": "Delete Junyoung from the Contact",
+      "target_goal": "Delete Zelenski from the contact",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Delete Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Delete Contact/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Get Call History",
+      "source_goal": "See call history",
+      "target_goal": "See call history",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Get Call History/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Get Call History/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Manage Favorites",
+      "source_goal": "Tell me who’s in the favorites and add Sophia to the favorites",
+      "target_goal": "Tell me who’s in the favorites and add Jun to the favorites",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Manage Favorites/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Manage Favorites/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Modify Contact Number",
+      "source_goal": "Modify Zelenski’s phone number to 01055833154",
+      "target_goal": "Modify Jun’s phone number to 01055553333",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Modify Contact Number/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Modify Contact Number/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Open Contact Info",
+      "source_goal": "Open Zelenski’s contact info",
+      "target_goal": "Open Jun’s contact info",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Open Contact Info/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Open Contact Info/user_instruction2.json"
+    },
+    {
+      "app": "Google Dialer",
+      "task": "Remove From Favorites",
+      "source_goal": "Remove Zelenski from the favorites",
+      "target_goal": "Remove Sophia from the favorites",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Remove From Favorites/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Google Dialer/Remove From Favorites/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Add Group",
+      "source_goal": "Add cs201 to-do list to homework group",
+      "target_goal": "Add Lab to-do list to School group",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Add Group/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Add Group/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Add Task",
+      "source_goal": "Add a task called Lecture 1 which is due Next week to the TA list",
+      "target_goal": "Add a task called Assignment 1 which is due tomorrow to the CS101 list",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Add Task/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Add Task/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Create Group",
+      "source_goal": "Create a new group called homework and add CS101 to the group",
+      "target_goal": "Create a new group called School and add TA to the group",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create Group/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create Group/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Create List",
+      "source_goal": "Create a new to-do list called CS201, add a task called Assignment 2 due next week and remind me Later today",
+      "target_goal": "Create a new to-do list called Lab, add a task called scholarship due tomorrow and remind me later today",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create List/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create List/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Create To Do List",
+      "source_goal": "Create a new to-do list called CS101",
+      "target_goal": "Create a new to-do list called TA",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create To Do List/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Create To Do List/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Mark Important",
+      "source_goal": "Mark Assignment1 in CS101 as important",
+      "target_goal": "Mark Lecture 1 in TA as important",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Mark Important/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Mark Important/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Modify Date",
+      "source_goal": "Modify the due date of the Assignment1 of CS101 to next week",
+      "target_goal": "Modify the due date of the Lecture 1 in TA to tomorrow",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Modify Date/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Modify Date/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Remind Task",
+      "source_goal": "Remind me Assignment 1 in CS101 later today",
+      "target_goal": "Remind me Lecture 1 in TA Tomorrow",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Remind Task/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Remind Task/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Tell Task",
+      "source_goal": "Tell me what I have for my important tasks",
+      "target_goal": "Tell me what I have in my assigned list",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Tell Task/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Tell Task/user_instruction2.json"
+    },
+    {
+      "app": "Microsoft To-Do",
+      "task": "Tell To Do List",
+      "source_goal": "Tell me what is in my CS101 to do list",
+      "target_goal": "Tell me what is in my TA to do list",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Tell To Do List/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Microsoft To-Do/Tell To Do List/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Call Contact",
+      "source_goal": "Video Call Bob",
+      "target_goal": "Call John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Call Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Call Contact/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Clear History",
+      "source_goal": "Clear history with Bob",
+      "target_goal": "Clear history with John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Clear History/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Clear History/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Create Group",
+      "source_goal": "Create new group with Bob",
+      "target_goal": "Create new group with John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Create Group/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Create Group/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Delete Chat",
+      "source_goal": "Delete chat with Bob",
+      "target_goal": "Delete chat with John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Delete Chat/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Delete Chat/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Find People Nearby",
+      "source_goal": "Find people nearby",
+      "target_goal": "Find people nearby",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Find People Nearby/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Find People Nearby/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Open Chat",
+      "source_goal": "Open Chat with Bob",
+      "target_goal": "Open Chat with John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Open Chat/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Open Chat/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Read Last Message",
+      "source_goal": "Read last message with Bob",
+      "target_goal": "Read last message with John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Read Last Message/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Read Last Message/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Read Saved Message",
+      "source_goal": "Read me saved messages",
+      "target_goal": "Read me saved messages",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Read Saved Message/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Read Saved Message/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Send Message",
+      "source_goal": "Send message to Bob",
+      "target_goal": "Send message to John saying ‘hello’",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Send Message/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Send Message/user_instruction2.json"
+    },
+    {
+      "app": "Telegram",
+      "task": "Video Call Contact",
+      "source_goal": "Video Call Bob",
+      "target_goal": "Video Call John",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Video Call Contact/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Telegram/Video Call Contact/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Day Trip Package",
+      "source_goal": "Find me day trip packages in Las vegas",
+      "target_goal": "Find me day trip packages in Washington DC",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Day Trip Package/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Day Trip Package/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Hotels",
+      "source_goal": "Find me available hotels in Las vegas from October 15 to October 20",
+      "target_goal": "Find me available hotels in Washington DC from March 20 to March 25",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Hotels/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Hotels/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Hotels Nearby",
+      "source_goal": "Find me hotels nearby",
+      "target_goal": "Find me hotels nearby",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Hotels Nearby/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Hotels Nearby/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Restaurants",
+      "source_goal": "Find me Asian restaurants in Las Vegas",
+      "target_goal": "Find me American restaurants in Washington DC",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Restaurants Nearby",
+      "source_goal": "Find me restaurants nearby",
+      "target_goal": "Find me restaurants nearby",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants Nearby/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants Nearby/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find Restaurants Reviews",
+      "source_goal": "Search for Primal Steakhouse in Las vegas and read me their reviews",
+      "target_goal": "Search for Martin’s Tavern in Washington DC and read me their reviews",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants Reviews/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find Restaurants Reviews/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Find and Save Hotels",
+      "source_goal": "Find me five star hotel in Las vegas from October 15 to October 20 and save it to my trip plan",
+      "target_goal": "Find me Luxury hotel in Washington DC from October 20 to October 25 and save it to my trip plan",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find and Save Hotels/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Find and Save Hotels/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "Fint Hotels Rating",
+      "source_goal": "Search for Venetian Resort in Las vegas and tell me their ratings",
+      "target_goal": "Search for Hamilton Hotel in Washington DC and tell me their ratings",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Fint Hotels Rating/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/Fint Hotels Rating/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "View Cart Items",
+      "source_goal": "See what is in my cart",
+      "target_goal": "See what is in my cart.",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/View Cart Items/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/View Cart Items/user_instruction2.json"
+    },
+    {
+      "app": "TripAdvisor",
+      "task": "View Trip Plan",
+      "source_goal": "Tell me what is in my trip plan",
+      "target_goal": "Tell me what is in my trip plan",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/View Trip Plan/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/TripAdvisor/View Trip Plan/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Follow User",
+      "source_goal": "Follow Elon Musk",
+      "target_goal": "Follow Jeff Bezos",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Follow User/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Follow User/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Get Trending Tweets",
+      "source_goal": "Tell me whats trending tweets in South Korea",
+      "target_goal": "Tell me whats trending tweets in South Korea",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Get Trending Tweets/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Get Trending Tweets/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Post Photo",
+      "source_goal": "Post a photo",
+      "target_goal": "Post second photo in the gallery",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Photo/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Photo/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Post Reply",
+      "source_goal": "post reply to Elon Musk’s new tweet",
+      "target_goal": "post reply to Jeff Bezos’s new tweet",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Reply/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Reply/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Post Tweet",
+      "source_goal": "Post new tweet saying Hello MobiCom",
+      "target_goal": "Post new tweet saying What up MobiCom",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Tweet/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Post Tweet/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Quote Reply",
+      "source_goal": "Quote Sophia Lee’s post on testing for gpt to post a new tweet saying this is awesome",
+      "target_goal": "Quote Sophia Lee’s post on whatup gpt to post a new tweet saying wow, hi Sophia",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Quote Reply/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Quote Reply/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Read Last Notification",
+      "source_goal": "Read me last notification I got",
+      "target_goal": "Read me all notification I got",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read Last Notification/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read Last Notification/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Read New Tweet",
+      "source_goal": "read Elon Musk’s new tweet",
+      "target_goal": "read Jeff Bezos’s new tweet",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read New Tweet/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read New Tweet/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Read Replies",
+      "source_goal": "Read replies to my post Hello MobiCom",
+      "target_goal": "Read replies to my post What up MobiCom",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read Replies/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Read Replies/user_instruction2.json"
+    },
+    {
+      "app": "Twitter",
+      "task": "Unfollow User",
+      "source_goal": "Unfollow Elon Musk",
+      "target_goal": "Unfollow Jeff Bezos",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Unfollow User/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Twitter/Unfollow User/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Check Order",
+      "source_goal": "Check the status of my order",
+      "target_goal": "How is my order going?",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Check Order/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Check Order/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Chnage Dilevery Location",
+      "source_goal": "Change the delivery location to my house",
+      "target_goal": "Change the delivery location to office",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Chnage Dilevery Location/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Chnage Dilevery Location/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Display Promotion",
+      "source_goal": "Display my available promotions",
+      "target_goal": "Display available promotions for me",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Display Promotion/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Display Promotion/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Order Cart",
+      "source_goal": "Order the items in my cart",
+      "target_goal": "Order things in my cart",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Cart/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Cart/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Order Grocery Store",
+      "source_goal": "Order 10 bananas from a grocery store",
+      "target_goal": "Order 5 apples from any grocery store",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Grocery Store/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Grocery Store/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Order Menu",
+      "source_goal": "Order a 14-inch large pizza from Pizza Hut",
+      "target_goal": "Order a Big Mac from McDonalds",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Menu/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Order Menu/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Recommand Restaurant",
+      "source_goal": "Recommend restaurants with high ratings",
+      "target_goal": "Recommend restaurants with 5 star ratings",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Recommand Restaurant/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Recommand Restaurant/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Remove Cart",
+      "source_goal": "Remove pizza from my cart",
+      "target_goal": "Remove burger from my cart",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Remove Cart/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Remove Cart/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Show Cart",
+      "source_goal": "Show whats in my cart",
+      "target_goal": "Tell me whats in the cart",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Show Cart/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Show Cart/user_instruction2.json"
+    },
+    {
+      "app": "Uber Eats",
+      "task": "Show Fastest Delivery",
+      "source_goal": "show me restaurants that deliver under 30 minutes",
+      "target_goal": "tell me restaurants that can deliver fast",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Show Fastest Delivery/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/Uber Eats/Show Fastest Delivery/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Add Comment",
+      "source_goal": "Add a comment to the currently playing song",
+      "target_goal": "Add a comment saying great song to the currently playing song",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Add Comment/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Add Comment/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Add Playlist",
+      "source_goal": "Add Mozarts song to my playlist classic",
+      "target_goal": "Add a song by Guns n Roses to my playlist metal",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Add Playlist/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Add Playlist/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Delete Playlist",
+      "source_goal": "Delete my playlist called classic",
+      "target_goal": "Delete my playlist called metal",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Delete Playlist/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Delete Playlist/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Like Music",
+      "source_goal": "give like to the currently playing song",
+      "target_goal": "Give like to the song playing right now",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Like Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Like Music/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Pause Music",
+      "source_goal": "pause music",
+      "target_goal": "pause music",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Pause Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Pause Music/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Play Group's Music",
+      "source_goal": "Play me music by Beatles",
+      "target_goal": "Play me music by BTS",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Group's Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Group's Music/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Play Music",
+      "source_goal": "Play the music titled Let it be",
+      "target_goal": "Play the music titled Hey Jude",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Music/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Play Playlist",
+      "source_goal": "Play my playlist called classic",
+      "target_goal": "play my playlist called metal",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Playlist/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Playlist/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Play Teme Music",
+      "source_goal": "play me musics for workout",
+      "target_goal": "play me musics for relax",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Teme Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Play Teme Music/user_instruction2.json"
+    },
+    {
+      "app": "YT Music",
+      "task": "Tell Current Music",
+      "source_goal": "What is the name of the song currently playing",
+      "target_goal": "What song is playing now",
+      "source_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Tell Current Music/user_instruction1.json",
+      "target_json": "Benchmark Dataset_Blur/Benchmark Dataset/YT Music/Tell Current Music/user_instruction2.json"
+    }
+  ]
+}

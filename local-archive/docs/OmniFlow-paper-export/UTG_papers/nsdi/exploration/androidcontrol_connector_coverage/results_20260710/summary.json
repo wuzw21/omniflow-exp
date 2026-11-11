@@ -1,0 +1,814 @@
+{
+  "status": "exploration_only_not_frozen_paper_result",
+  "generated_at": "2026-07-10T12:25:22.778981+00:00",
+  "androidcontrol_root": "/Users/wuzewen/Projects/Omni/android-control",
+  "benchmark_dir": "/Users/wuzewen/Projects/Omni/android-control/data/androidcontrol_curated/benchmark_resource",
+  "primary_benchmark": "android_control_high_bbox.json",
+  "catalogs": {
+    "composio": {
+      "path": "/tmp/composio-research/docs/public/data/toolkits-list.json",
+      "toolkit_count": 1403,
+      "total_tool_count": 44602,
+      "nonempty_toolkits": 1078
+    },
+    "openconnector": {
+      "path": "/tmp/open-connector-research/catalog/apps",
+      "app_count": 1044,
+      "total_action_count": 10090,
+      "nonempty_apps": 1044
+    }
+  },
+  "benchmarks": {
+    "android_control_high_bbox.json": {
+      "trajectory_count": 1543,
+      "step_count": 8435,
+      "avg_steps_per_trajectory": 5.467,
+      "unique_app_count": 528,
+      "unknown_app_trajectories": 300,
+      "catalog_label_counts": {
+        "direct": 92,
+        "empty": 56,
+        "none": 1395
+      },
+      "catalog_direct_or_empty_trajectories": 148,
+      "strict_api_candidate_trajectories": 46,
+      "strict_api_candidate_rate": 0.0298,
+      "task_category_counts": {
+        "media_or_content": 442,
+        "other": 435,
+        "email_or_share": 169,
+        "shopping_or_cart": 151,
+        "calendar_or_reminder": 105,
+        "file_or_document": 85,
+        "local_device_or_utility": 79,
+        "travel_or_maps": 77
+      },
+      "top_apps": [
+        [
+          "<unknown>",
+          300
+        ],
+        [
+          "Artsy",
+          34
+        ],
+        [
+          "Pinterest",
+          33
+        ],
+        [
+          "Gmail",
+          23
+        ],
+        [
+          "Artier",
+          22
+        ],
+        [
+          "Kitchen Stories",
+          21
+        ],
+        [
+          "Google News",
+          17
+        ],
+        [
+          "Art & Culture",
+          17
+        ],
+        [
+          "DeviantArt",
+          16
+        ],
+        [
+          "Flipboard",
+          15
+        ],
+        [
+          "eBay",
+          14
+        ],
+        [
+          "Maps",
+          14
+        ],
+        [
+          "Phases of the Moon",
+          13
+        ],
+        [
+          "Arts & Culture",
+          13
+        ],
+        [
+          "Guardian",
+          13
+        ],
+        [
+          "Stellarium",
+          13
+        ],
+        [
+          "Amazon",
+          13
+        ],
+        [
+          "Clock",
+          12
+        ],
+        [
+          "Flipkart",
+          12
+        ],
+        [
+          "Calculator Unit Converter",
+          11
+        ],
+        [
+          "Hindu",
+          11
+        ],
+        [
+          "Moon Phase",
+          11
+        ],
+        [
+          "SmartNews",
+          10
+        ],
+        [
+          "BBC News",
+          10
+        ],
+        [
+          "SkyView Free",
+          10
+        ],
+        [
+          "Calendar",
+          10
+        ],
+        [
+          "CNN News",
+          9
+        ],
+        [
+          "Behance",
+          9
+        ],
+        [
+          "Reminder",
+          8
+        ],
+        [
+          "Cnn",
+          8
+        ]
+      ],
+      "sample_count": 8435,
+      "action_counts": {
+        "click": 5065,
+        "swipe": 1211,
+        "input_text": 632,
+        "open_app": 608,
+        "wait": 567,
+        "navigate_back": 343,
+        "long_press": 9
+      }
+    },
+    "android_control_high_point.json": {
+      "trajectory_count": 7708,
+      "step_count": 7708,
+      "avg_steps_per_trajectory": 1.0,
+      "unique_app_count": 573,
+      "unknown_app_trajectories": 1443,
+      "catalog_label_counts": {
+        "direct": 405,
+        "empty": 268,
+        "none": 7035
+      },
+      "catalog_direct_or_empty_trajectories": 673,
+      "strict_api_candidate_trajectories": 249,
+      "strict_api_candidate_rate": 0.0323,
+      "task_category_counts": {
+        "other": 2355,
+        "media_or_content": 2219,
+        "email_or_share": 918,
+        "shopping_or_cart": 577,
+        "travel_or_maps": 541,
+        "file_or_document": 376,
+        "local_device_or_utility": 369,
+        "calendar_or_reminder": 353
+      },
+      "top_apps": [
+        [
+          "<unknown>",
+          1443
+        ],
+        [
+          "Pinterest",
+          159
+        ],
+        [
+          "Artsy",
+          143
+        ],
+        [
+          "Art & Culture",
+          108
+        ],
+        [
+          "Gmail",
+          90
+        ],
+        [
+          "eBay",
+          89
+        ],
+        [
+          "Kitchen Stories",
+          87
+        ],
+        [
+          "Artier",
+          84
+        ],
+        [
+          "Google News",
+          82
+        ],
+        [
+          "Calculator Unit Converter",
+          81
+        ],
+        [
+          "Infinite Painter",
+          77
+        ],
+        [
+          "SmartNews",
+          67
+        ],
+        [
+          "Flipboard",
+          64
+        ],
+        [
+          "Clock",
+          62
+        ],
+        [
+          "Sketchar",
+          62
+        ],
+        [
+          "BBC News",
+          61
+        ],
+        [
+          "Amazon",
+          61
+        ],
+        [
+          "Flipkart",
+          58
+        ],
+        [
+          "DeviantArt",
+          58
+        ],
+        [
+          "Maps",
+          57
+        ],
+        [
+          "Behance",
+          57
+        ],
+        [
+          "CNN News",
+          52
+        ],
+        [
+          "Reminder",
+          49
+        ],
+        [
+          "Google Maps",
+          46
+        ],
+        [
+          "Guardian",
+          46
+        ],
+        [
+          "Calendar",
+          46
+        ],
+        [
+          "Recorder",
+          46
+        ],
+        [
+          "Stellarium",
+          44
+        ],
+        [
+          "Arts & Culture",
+          43
+        ],
+        [
+          "Penup",
+          41
+        ]
+      ],
+      "sample_count": 7708,
+      "action_counts": {
+        "click": 4598,
+        "scroll": 1138,
+        "type": 569,
+        "open_app": 554,
+        "wait": 527,
+        "press_back": 315,
+        "long_press": 7
+      }
+    },
+    "android_control_high_task-improved.json": {
+      "trajectory_count": 1540,
+      "step_count": 8377,
+      "avg_steps_per_trajectory": 5.44,
+      "unique_app_count": 526,
+      "unknown_app_trajectories": 299,
+      "catalog_label_counts": {
+        "direct": 93,
+        "empty": 57,
+        "none": 1390
+      },
+      "catalog_direct_or_empty_trajectories": 150,
+      "strict_api_candidate_trajectories": 45,
+      "strict_api_candidate_rate": 0.0292,
+      "task_category_counts": {
+        "media_or_content": 442,
+        "other": 433,
+        "email_or_share": 169,
+        "shopping_or_cart": 150,
+        "calendar_or_reminder": 105,
+        "file_or_document": 85,
+        "local_device_or_utility": 79,
+        "travel_or_maps": 77
+      },
+      "top_apps": [
+        [
+          "<unknown>",
+          299
+        ],
+        [
+          "Artsy",
+          35
+        ],
+        [
+          "Pinterest",
+          34
+        ],
+        [
+          "Gmail",
+          23
+        ],
+        [
+          "Artier",
+          22
+        ],
+        [
+          "Kitchen Stories",
+          20
+        ],
+        [
+          "Art & Culture",
+          18
+        ],
+        [
+          "Google News",
+          17
+        ],
+        [
+          "DeviantArt",
+          16
+        ],
+        [
+          "Flipboard",
+          15
+        ],
+        [
+          "eBay",
+          14
+        ],
+        [
+          "Phases of the Moon",
+          13
+        ],
+        [
+          "Guardian",
+          13
+        ],
+        [
+          "Stellarium",
+          13
+        ],
+        [
+          "Amazon",
+          13
+        ],
+        [
+          "Clock",
+          12
+        ],
+        [
+          "Google Maps",
+          12
+        ],
+        [
+          "Flipkart",
+          12
+        ],
+        [
+          "Arts & Culture",
+          11
+        ],
+        [
+          "Calculator Unit Converter",
+          11
+        ],
+        [
+          "Hindu",
+          11
+        ],
+        [
+          "SmartNews",
+          10
+        ],
+        [
+          "BBC News",
+          10
+        ],
+        [
+          "Maps",
+          10
+        ],
+        [
+          "SkyView Free",
+          10
+        ],
+        [
+          "Moon Phase",
+          10
+        ],
+        [
+          "Calendar",
+          10
+        ],
+        [
+          "CNN News",
+          9
+        ],
+        [
+          "Behance",
+          9
+        ],
+        [
+          "Reminder",
+          8
+        ]
+      ],
+      "sample_count": 8377,
+      "action_counts": {
+        "click": 5009,
+        "swipe": 1211,
+        "input_text": 632,
+        "open_app": 608,
+        "wait": 567,
+        "navigate_back": 343,
+        "long_press": 7
+      }
+    },
+    "android_control_low_bbox.json": {
+      "trajectory_count": 1540,
+      "step_count": 8377,
+      "avg_steps_per_trajectory": 5.44,
+      "unique_app_count": 538,
+      "unknown_app_trajectories": 304,
+      "catalog_label_counts": {
+        "direct": 83,
+        "empty": 57,
+        "none": 1400
+      },
+      "catalog_direct_or_empty_trajectories": 140,
+      "strict_api_candidate_trajectories": 40,
+      "strict_api_candidate_rate": 0.026,
+      "task_category_counts": {
+        "media_or_content": 443,
+        "other": 431,
+        "email_or_share": 169,
+        "shopping_or_cart": 150,
+        "calendar_or_reminder": 105,
+        "file_or_document": 85,
+        "local_device_or_utility": 79,
+        "travel_or_maps": 78
+      },
+      "top_apps": [
+        [
+          "<unknown>",
+          304
+        ],
+        [
+          "Artsy",
+          35
+        ],
+        [
+          "Pinterest",
+          34
+        ],
+        [
+          "Artier",
+          22
+        ],
+        [
+          "Kitchen Stories",
+          21
+        ],
+        [
+          "Gmail",
+          18
+        ],
+        [
+          "Google News",
+          16
+        ],
+        [
+          "DeviantArt",
+          16
+        ],
+        [
+          "Maps",
+          15
+        ],
+        [
+          "Art & Culture",
+          15
+        ],
+        [
+          "Phases of the Moon",
+          14
+        ],
+        [
+          "eBay",
+          14
+        ],
+        [
+          "Hindu",
+          14
+        ],
+        [
+          "Arts & Culture",
+          13
+        ],
+        [
+          "Guardian",
+          13
+        ],
+        [
+          "Stellarium",
+          13
+        ],
+        [
+          "Amazon",
+          13
+        ],
+        [
+          "Cnn",
+          12
+        ],
+        [
+          "Flipboard",
+          12
+        ],
+        [
+          "Flipkart",
+          12
+        ],
+        [
+          "Calculator Unit Converter",
+          11
+        ],
+        [
+          "Clock",
+          11
+        ],
+        [
+          "Moon Phase",
+          11
+        ],
+        [
+          "SmartNews",
+          10
+        ],
+        [
+          "BBC News",
+          10
+        ],
+        [
+          "SkyView Free",
+          10
+        ],
+        [
+          "Calendar",
+          10
+        ],
+        [
+          "Pantaloons",
+          8
+        ],
+        [
+          "Drive",
+          8
+        ],
+        [
+          "Recorder",
+          8
+        ]
+      ],
+      "sample_count": 8377,
+      "action_counts": {
+        "click": 5009,
+        "swipe": 1211,
+        "input_text": 632,
+        "open_app": 608,
+        "wait": 567,
+        "navigate_back": 343,
+        "long_press": 7
+      }
+    },
+    "android_control_low_point.json": {
+      "trajectory_count": 7708,
+      "step_count": 7708,
+      "avg_steps_per_trajectory": 1.0,
+      "unique_app_count": 296,
+      "unknown_app_trajectories": 7023,
+      "catalog_label_counts": {
+        "direct": 57,
+        "empty": 31,
+        "none": 7620
+      },
+      "catalog_direct_or_empty_trajectories": 88,
+      "strict_api_candidate_trajectories": 0,
+      "strict_api_candidate_rate": 0.0,
+      "task_category_counts": {
+        "other": 5834,
+        "media_or_content": 767,
+        "email_or_share": 552,
+        "shopping_or_cart": 161,
+        "file_or_document": 140,
+        "calendar_or_reminder": 101,
+        "local_device_or_utility": 86,
+        "travel_or_maps": 67
+      },
+      "top_apps": [
+        [
+          "<unknown>",
+          7023
+        ],
+        [
+          "Gmail",
+          22
+        ],
+        [
+          "Artsy",
+          20
+        ],
+        [
+          "Pinterest",
+          16
+        ],
+        [
+          "Kitchen Stories",
+          14
+        ],
+        [
+          "Amazon",
+          11
+        ],
+        [
+          "SmartNews",
+          11
+        ],
+        [
+          "Flipboard",
+          11
+        ],
+        [
+          "Google News",
+          10
+        ],
+        [
+          "Art & Culture",
+          10
+        ],
+        [
+          "Yummly",
+          10
+        ],
+        [
+          "Artier",
+          9
+        ],
+        [
+          "Decathlon",
+          9
+        ],
+        [
+          "Maps",
+          8
+        ],
+        [
+          "BBC News",
+          8
+        ],
+        [
+          "DeviantArt",
+          8
+        ],
+        [
+          "Arts & Culture",
+          8
+        ],
+        [
+          "Guardian news",
+          7
+        ],
+        [
+          "Google Maps",
+          7
+        ],
+        [
+          "Zinio",
+          7
+        ],
+        [
+          "Stellarium",
+          7
+        ],
+        [
+          "Clock",
+          7
+        ],
+        [
+          "CNN News",
+          6
+        ],
+        [
+          "Sketchar",
+          6
+        ],
+        [
+          "Guardian",
+          6
+        ],
+        [
+          "Behance",
+          6
+        ],
+        [
+          "Hindu news",
+          5
+        ],
+        [
+          "CNN news",
+          5
+        ],
+        [
+          "Flipboard news",
+          5
+        ],
+        [
+          "Kitchen stories",
+          5
+        ]
+      ],
+      "sample_count": 7708,
+      "action_counts": {
+        "click": 4598,
+        "scroll": 1138,
+        "type": 569,
+        "open_app": 554,
+        "wait": 527,
+        "press_back": 315,
+        "long_press": 7
+      }
+    }
+  },
+  "method_notes": {
+    "dataset_provenance": "Local snapshot is AndroidControl-Curated, not the original Google AndroidControl release.",
+    "catalog_match": "Exact normalized app-name or alias match against catalog toolkit/provider names.",
+    "strict_api_candidate": "Automatic candidate only: direct connector plus API-rich app plus object-mutation verb. Requires manual review.",
+    "limitation": "The dataset does not prove that a connector can reproduce the same mobile GUI terminal state; manual adjudication is needed for final paper numbers."
+  }
+}

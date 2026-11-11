@@ -1,0 +1,38 @@
+% Implementation
+
+\section{Implementation}
+\label{sec:implementation}
+\label{sec:impl-agent}
+\label{sec:impl-pagevector}
+\label{sec:impl-index}
+\label{sec:impl-execution}
+\label{sec:impl-transfer}
+\label{sec:impl-writeback}
+
+OmniFlow is implemented in both Kotlin and Python so the cache layer can be
+deployed at different integration points without changing the host agent.  The
+Kotlin implementation runs close to Android: it binds to the accessibility
+service and input APIs, collects observations, dispatches physical actions, and
+can host the local UDEG index on device.  The Python implementation targets
+host-side agents, evaluation harnesses, and shared stores: it exposes the same
+Function recall, Function execution, and run-log ingestion tools while hosting
+the shared UDEG index and Function store.  Both implementations use the same
+\texttt{run\_log} schema, \texttt{Function} format, and MCP tool definitions, so a
+run log collected from a human, a VLM agent, or a benchmark harness enters the
+same write-back path.
+
+A central integration goal is zero modification to the host agent.  OmniFlow
+attaches at the physical GUI I/O boundary---\texttt{observe}, which reads the
+current screen state, and \texttt{act}, which dispatches one device action.
+Everything above this boundary remains the host system's planner and task loop.
+The three MCP tools wrap this boundary into a cache layer: \emph{Function
+recall} intercepts before planning, \emph{Function execution} drives the device
+after a Function is selected, and \emph{run-log ingestion} writes accepted
+executions back after completion.  The same tool boundary is the measurement
+surface used in \S\ref{sec:evaluation}.
+
+%补充：如何采集数据。
+
+We collect run logs from both human and VLM agents. Human run logs are collected
+by a custom Android app that records the accessibility tree, screenshots, and
+input events during a user session. Different actions are recorded with different input events, such as touch events for taps and swipes, text input events for typing, and key events for hardware buttons. The app also records the timestamps of each action to capture the temporal aspect of the execution trace.

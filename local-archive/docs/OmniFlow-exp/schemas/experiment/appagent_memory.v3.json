@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omniflow.local/schemas/experiment/appagent_memory.v3.json",
+  "title": "OmniFlow AppAgent prepared memory",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "official_appagent_revision",
+    "task_name",
+    "source_seed",
+    "source_run_log",
+    "teacher_source",
+    "demo_root",
+    "native_format",
+    "conversion_mode",
+    "source_emulator_used"
+  ],
+  "properties": {
+    "schema_version": {"const": "omniflow.appagent.memory.v3"},
+    "official_appagent_revision": {"type": "string", "minLength": 1},
+    "task_name": {"type": "string", "minLength": 1},
+    "source_seed": {"type": "integer", "minimum": 0},
+    "source_run_log": {"type": "string", "minLength": 1},
+    "source_run_log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "teacher_source": {"type": "string", "minLength": 1},
+    "teacher_source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "demo_root": {"type": "string", "minLength": 1},
+    "native_format": {"const": "appagent.demo_docs"},
+    "conversion_mode": {"enum": ["source_episode", "canonical_runlog_offline"]},
+    "source_emulator_used": {"type": "boolean"}
+  }
+}

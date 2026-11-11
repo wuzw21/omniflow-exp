@@ -1,0 +1,526 @@
+app,trajectory_count,step_count,strict_api_candidate_trajectories,composio_label,composio_id,composio_tool_count,openconnector_label,openconnector_id,openconnector_action_count,best_catalog_label,top_task_categories
+<unknown>,1443,1443,0,none,,0,none,,0,none,other:629;media_or_content:224;email_or_share:216;file_or_document:127;shopping_or_cart:111
+Pinterest,159,159,0,empty,pinterest,0,none,,0,empty,media_or_content:109;other:25;email_or_share:25
+Artsy,143,143,0,none,,0,none,,0,none,media_or_content:72;other:38;email_or_share:33
+Art & Culture,120,120,0,none,,0,none,,0,none,media_or_content:102;email_or_share:18
+Kitchen Stories,109,109,0,none,,0,none,,0,none,media_or_content:77;other:32
+Gmail,90,90,83,direct,gmail,63,direct,gmail,46,direct,email_or_share:90
+eBay,89,89,0,none,,0,none,,0,none,shopping_or_cart:49;other:33;email_or_share:7
+Artier,84,84,0,none,,0,none,,0,none,media_or_content:33;email_or_share:27;other:17;shopping_or_cart:7
+Google News,82,82,0,none,,0,none,,0,none,media_or_content:55;email_or_share:22;travel_or_maps:5
+Calculator Unit Converter,81,81,0,none,,0,none,,0,none,local_device_or_utility:81
+Infinite Painter,79,79,0,none,,0,none,,0,none,other:48;media_or_content:31
+CNN News,71,71,0,none,,0,none,,0,none,media_or_content:57;email_or_share:14
+SmartNews,70,70,0,none,,0,none,,0,none,media_or_content:52;email_or_share:18
+Flipboard,64,64,0,none,,0,none,,0,none,media_or_content:45;other:12;email_or_share:7
+Clock,62,62,0,none,,0,none,,0,none,local_device_or_utility:57;calendar_or_reminder:5
+Sketchar,62,62,0,none,,0,none,,0,none,media_or_content:49;email_or_share:13
+Amazon,61,61,0,empty,amazon,0,none,,0,empty,other:41;shopping_or_cart:16;media_or_content:4
+BBC News,61,61,0,none,,0,none,,0,none,media_or_content:47;email_or_share:14
+DeviantArt,58,58,0,none,,0,none,,0,none,media_or_content:41;email_or_share:11;shopping_or_cart:4;other:2
+Flipkart,58,58,0,none,,0,none,,0,none,other:40;shopping_or_cart:15;media_or_content:3
+Behance,57,57,0,none,,0,none,,0,none,other:34;media_or_content:23
+Maps,57,57,30,direct,google_maps,23,none,,0,direct,travel_or_maps:33;other:24
+Guardian news,54,54,0,none,,0,none,,0,none,media_or_content:39;email_or_share:15
+New York Times,50,50,0,none,,0,none,,0,none,media_or_content:39;email_or_share:7;other:4
+Reminder,49,49,0,none,,0,none,,0,none,calendar_or_reminder:49
+Phases of the moon,48,48,0,none,,0,none,,0,none,other:41;email_or_share:4;local_device_or_utility:3
+Hindu News,47,47,0,none,,0,none,,0,none,media_or_content:40;email_or_share:7
+Arts & Culture,46,46,0,none,,0,none,,0,none,media_or_content:43;other:3
+Calendar,46,46,46,direct,googlecalendar,49,direct,googlecalendar,37,direct,calendar_or_reminder:46
+Google Maps,46,46,12,direct,google_maps,23,none,,0,direct,travel_or_maps:29;other:9;shopping_or_cart:8
+Guardian,46,46,0,none,,0,none,,0,none,media_or_content:46
+Recorder,46,46,0,none,,0,none,,0,none,local_device_or_utility:42;media_or_content:3;file_or_document:1
+Stellarium,44,44,0,none,,0,none,,0,none,other:44
+Flipboard news,41,41,0,none,,0,none,,0,none,media_or_content:41
+Penup,41,41,0,none,,0,none,,0,none,media_or_content:20;other:18;email_or_share:3
+Cnn,40,40,0,none,,0,none,,0,none,media_or_content:29;email_or_share:6;other:5
+Hindu,38,38,0,none,,0,none,,0,none,email_or_share:20;media_or_content:13;other:5
+Yummly,37,37,0,none,,0,none,,0,none,media_or_content:32;other:5
+Myntra,35,35,0,none,,0,none,,0,none,shopping_or_cart:24;other:11
+Flora,32,32,0,none,,0,none,,0,none,other:32
+Moonly,32,32,0,none,,0,none,,0,none,calendar_or_reminder:24;email_or_share:6;other:2
+NYTimes news,32,32,0,none,,0,none,,0,none,media_or_content:32
+Decathlon,31,31,0,none,,0,none,,0,none,shopping_or_cart:23;other:4;media_or_content:4
+Nike,31,31,0,none,,0,none,,0,none,shopping_or_cart:18;other:13
+SkyView Free,31,31,0,none,,0,none,,0,none,other:31
+Trainline,30,30,0,none,,0,none,,0,none,travel_or_maps:17;calendar_or_reminder:13
+Washington post,30,30,0,none,,0,none,,0,none,media_or_content:21;email_or_share:9
+Zinio,30,30,0,none,,0,none,,0,none,other:24;media_or_content:6
+Adidas,29,29,0,none,,0,none,,0,none,shopping_or_cart:24;other:5
+Reuters,29,29,0,none,,0,none,,0,none,media_or_content:16;email_or_share:7;other:6
+New York Times news,28,28,0,none,,0,none,,0,none,media_or_content:28
+Skyscanner,28,28,0,none,,0,none,,0,none,travel_or_maps:14;other:14
+Agoda,27,27,0,none,,0,none,,0,none,travel_or_maps:27
+Klook,27,27,0,none,,0,none,,0,none,travel_or_maps:27
+Vimeo,27,27,0,none,,0,direct,vimeo,25,direct,other:14;email_or_share:5;media_or_content:5;shopping_or_cart:3
+EduRev,25,25,0,none,,0,none,,0,none,other:25
+Etsy,25,25,0,empty,etsy,0,none,,0,empty,media_or_content:14;other:6;shopping_or_cart:5
+Euronews,25,25,0,none,,0,none,,0,none,media_or_content:13;email_or_share:9;shopping_or_cart:3
+Lambus,25,25,0,none,,0,none,,0,none,travel_or_maps:17;other:8
+Moon Phase,25,25,0,none,,0,none,,0,none,other:19;email_or_share:6
+Pantaloons,25,25,0,none,,0,none,,0,none,shopping_or_cart:16;other:9
+Times Of India,25,25,0,none,,0,none,,0,none,media_or_content:25
+Times of India news,25,25,0,none,,0,none,,0,none,media_or_content:18;email_or_share:7
+Daff Moon,24,24,0,none,,0,none,,0,none,other:19;email_or_share:5
+Daily Art,24,24,0,none,,0,none,,0,none,media_or_content:17;email_or_share:7
+Drive,24,24,19,direct,googledrive,90,direct,googledrive,43,direct,file_or_document:24
+Expedia,24,24,0,none,,0,none,,0,none,other:13;travel_or_maps:11
+MakeMyTrip,24,24,0,none,,0,none,,0,none,travel_or_maps:24
+PDF Reader Pro,24,24,0,none,,0,none,,0,none,file_or_document:24
+Timezone Converter,23,23,0,none,,0,none,,0,none,other:23
+Cafeyn,22,22,0,none,,0,none,,0,none,travel_or_maps:10;other:7;media_or_content:5
+Flipsnack magazine,22,22,0,none,,0,none,,0,none,media_or_content:9;travel_or_maps:9;email_or_share:4
+Keep Notes,22,22,0,none,,0,none,,0,none,email_or_share:18;other:4
+Voice Recorder,22,22,0,none,,0,none,,0,none,local_device_or_utility:8;email_or_share:6;media_or_content:6;file_or_document:2
+Wanderu,22,22,0,none,,0,none,,0,none,travel_or_maps:22
+Cna,21,21,0,none,,0,none,,0,none,media_or_content:11;email_or_share:10
+DeftPDF,21,21,0,none,,0,none,,0,none,email_or_share:12;file_or_document:9
+Readwhere magazine,21,21,0,none,,0,none,,0,none,media_or_content:12;travel_or_maps:6;file_or_document:3
+Moon Phase Calendar,20,20,0,none,,0,none,,0,none,calendar_or_reminder:14;email_or_share:6
+Readly,20,20,0,none,,0,none,,0,none,media_or_content:10;other:10
+Momondo,19,19,0,none,,0,none,,0,none,travel_or_maps:19
+Omio,19,19,0,none,,0,none,,0,none,travel_or_maps:19
+Origami Sekai,19,19,0,none,,0,none,,0,none,other:19
+Redbubble,19,19,0,none,,0,none,,0,none,email_or_share:7;other:6;media_or_content:6
+UN News,19,19,0,none,,0,none,,0,none,media_or_content:12;email_or_share:7
+entertainment category on the Google News,18,18,0,none,,0,none,,0,none,media_or_content:18
+Deccan Herald news,17,17,0,none,,0,none,,0,none,media_or_content:17
+EaseMyTrip,17,17,0,none,,0,none,,0,none,travel_or_maps:17
+Goibibo,17,17,0,none,,0,none,,0,none,travel_or_maps:17
+OneDrive,17,17,17,direct,one_drive,83,direct,one_drive,13,direct,file_or_document:10;email_or_share:7
+PowerPoint,17,17,0,none,,0,none,,0,none,file_or_document:17
+Readly magazine,17,17,0,none,,0,none,,0,none,media_or_content:14;file_or_document:3
+Zinio magazine,17,17,0,none,,0,none,,0,none,media_or_content:12;email_or_share:5
+Zoho Meeting,17,17,0,none,,0,none,,0,none,calendar_or_reminder:17
+Flipsnack,16,16,0,none,,0,none,,0,none,travel_or_maps:9;other:7
+Kayak,16,16,0,none,,0,none,,0,none,travel_or_maps:14;other:2
+Pizza Max,16,16,0,none,,0,none,,0,none,shopping_or_cart:16
+Reuters News,16,16,0,none,,0,none,,0,none,media_or_content:9;email_or_share:7
+Simple Habit,16,16,0,none,,0,none,,0,none,shopping_or_cart:10;calendar_or_reminder:5;other:1
+Smartify Art & Culture,16,16,0,none,,0,none,,0,none,media_or_content:16
+Snapdeal,16,16,0,none,,0,none,,0,none,other:16
+Uniqlo,16,16,0,none,,0,none,,0,none,other:14;shopping_or_cart:2
+Contacts,15,15,13,direct,googlecontacts,24,none,,0,direct,email_or_share:9;local_device_or_utility:6
+Khan Academy,15,15,0,none,,0,none,,0,none,other:15
+OfficeSuite,15,15,0,none,,0,none,,0,none,file_or_document:9;calendar_or_reminder:6
+Polaris Office,15,15,0,none,,0,none,,0,none,file_or_document:14;other:1
+Simple Contacts,15,15,0,none,,0,none,,0,none,local_device_or_utility:15
+TripIt,15,15,0,none,,0,none,,0,none,travel_or_maps:15
+sports and fashion categories on the USA Today,15,15,0,none,,0,none,,0,none,media_or_content:15
+Daily Hunt News,14,14,0,none,,0,none,,0,none,media_or_content:14
+Mega Hardware,14,14,0,none,,0,none,,0,none,other:14
+Reminders,14,14,0,none,,0,none,,0,none,calendar_or_reminder:10;other:4
+Settings,14,14,0,none,,0,none,,0,none,local_device_or_utility:14
+Shopsy,14,14,0,none,,0,none,,0,none,shopping_or_cart:7;other:7
+SideChef,14,14,0,none,,0,none,,0,none,media_or_content:10;other:4
+Smart Recorder,14,14,0,none,,0,none,,0,none,local_device_or_utility:11;calendar_or_reminder:3
+Snapchat,14,14,0,direct,snapchat,139,none,,0,direct,email_or_share:8;other:6
+notification of the Moon phase Calendar,14,14,0,none,,0,none,,0,none,calendar_or_reminder:14
+99Acers,13,13,0,none,,0,none,,0,none,other:13
+Eurostar,13,13,0,none,,0,none,,0,none,travel_or_maps:13
+Google Fit,13,13,0,none,,0,none,,0,none,other:13
+Google Play Books,13,13,0,none,,0,none,,0,none,media_or_content:9;other:4
+Lunar Phase,13,13,0,none,,0,none,,0,none,other:13
+Office Suite Pro,13,13,0,none,,0,none,,0,none,file_or_document:13
+Oxford dictionary,13,13,0,none,,0,none,,0,none,other:13
+RapidBox,13,13,0,none,,0,none,,0,none,other:9;shopping_or_cart:4
+Smart Voice Recorder,13,13,0,none,,0,none,,0,none,file_or_document:8;local_device_or_utility:5
+TataCLiQ,13,13,0,none,,0,none,,0,none,shopping_or_cart:13
+USA Today,13,13,0,none,,0,none,,0,none,media_or_content:7;email_or_share:6
+different categories on the Daily Hunt news,13,13,0,none,,0,none,,0,none,media_or_content:13
+Balance,12,12,0,none,,0,none,,0,none,other:12
+December 16 to 20 on the Trip.com,12,12,0,none,,0,none,,0,none,travel_or_maps:12
+Fitbit,12,12,0,empty,fitbit,0,none,,0,empty,other:12
+Klm,12,12,0,none,,0,none,,0,none,travel_or_maps:12
+Mondly,12,12,0,none,,0,none,,0,none,other:12
+RailYatri,12,12,0,none,,0,none,,0,none,travel_or_maps:12
+Trips.Com,12,12,0,none,,0,none,,0,none,other:12
+Weather Live & Forecast,12,12,0,none,,0,none,,0,none,local_device_or_utility:9;other:3
+different categories on NYTimes news,12,12,0,none,,0,none,,0,none,media_or_content:12
+All trails,11,11,0,empty,alltrails,0,none,,0,empty,other:11
+ArtStation,11,11,0,none,,0,none,,0,none,other:11
+Blossom,11,11,0,none,,0,none,,0,none,other:11
+Business category on The CNN News,11,11,0,none,,0,none,,0,none,media_or_content:11
+Cookpad,11,11,0,none,,0,none,,0,none,media_or_content:11
+Easy Voice Recorder,11,11,0,none,,0,none,,0,none,local_device_or_utility:11
+Go to the Zinio,11,11,0,none,,0,none,,0,none,email_or_share:8;other:2;media_or_content:1
+Makkah to Madinah on November 15 in the HHR train,11,11,0,none,,0,none,,0,none,travel_or_maps:11
+Mindfulness,11,11,0,none,,0,none,,0,none,other:11
+Office Presentation,11,11,0,none,,0,none,,0,none,file_or_document:11
+Sound Recorder Plus,11,11,0,none,,0,none,,0,none,email_or_share:6;file_or_document:5
+To-Do List,11,11,0,none,,0,none,,0,none,calendar_or_reminder:9;shopping_or_cart:2
+Travel Life,11,11,0,none,,0,none,,0,none,travel_or_maps:11
+Unit Converter,11,11,0,none,,0,none,,0,none,other:11
+Wattpad,11,11,0,none,,0,none,,0,none,media_or_content:11
+YouTube,11,11,10,direct,youtube,51,direct,youtube,29,direct,media_or_content:11
+Zara,11,11,0,none,,0,none,,0,none,other:11
+different retailers in Ebay,11,11,0,none,,0,none,,0,none,other:11
+these details in the Jotform,11,11,0,none,,0,none,,0,none,email_or_share:11
+99 Acress,10,10,0,none,,0,none,,0,none,other:10
+Business category on The Hindu News,10,10,0,none,,0,none,,0,none,media_or_content:10
+Deliveroo,10,10,0,none,,0,none,,0,none,other:10
+First Cry,10,10,0,none,,0,none,,0,none,other:10
+Furlenco,10,10,0,none,,0,none,,0,none,other:10
+Gmail using the Deccan Herald news,10,10,0,none,,0,none,,0,none,email_or_share:10
+Go to the Flipboard,10,10,0,none,,0,none,,0,none,email_or_share:7;other:2;media_or_content:1
+Google Docs,10,10,5,direct,googledocs,43,direct,googledocs,32,direct,file_or_document:10
+Industrybuying,10,10,0,none,,0,none,,0,none,other:9;shopping_or_cart:1
+Insight Timer,10,10,0,none,,0,none,,0,none,local_device_or_utility:6;shopping_or_cart:4
+Meditopia,10,10,0,none,,0,none,,0,none,other:5;media_or_content:5
+Mondly Languages,10,10,0,none,,0,none,,0,none,other:10
+NY Times news,10,10,0,none,,0,none,,0,none,email_or_share:7;media_or_content:3
+PocketBook,10,10,0,none,,0,none,,0,none,email_or_share:9;media_or_content:1
+Readera,10,10,0,none,,0,none,,0,none,email_or_share:10
+Sar,10,10,0,none,,0,none,,0,none,travel_or_maps:10
+Star Tracker,10,10,0,none,,0,none,,0,none,email_or_share:9;other:1
+Traveloka,10,10,0,none,,0,none,,0,none,travel_or_maps:10
+Utilize the Snapdeal,10,10,0,none,,0,none,,0,none,other:10
+current sketch on the Sketchbook,10,10,0,none,,0,none,,0,none,other:10
+DHgate,9,9,0,none,,0,none,,0,none,shopping_or_cart:9
+Duolingo,9,9,0,none,,0,none,,0,none,other:9
+Google,9,9,0,none,,0,none,,0,none,other:9
+Google Arts & Culture,9,9,0,none,,0,none,,0,none,other:9
+Google Drive,9,9,3,direct,googledrive,90,direct,googledrive,43,direct,email_or_share:6;file_or_document:3
+I want to use the Calendar Planner,9,9,0,none,,0,none,,0,none,calendar_or_reminder:9
+Moglix,9,9,0,none,,0,none,,0,none,other:9
+Side Chef,9,9,0,none,,0,none,,0,none,other:5;media_or_content:4
+Simplilearn,9,9,0,none,,0,none,,0,none,media_or_content:9
+Sketchbook,9,9,0,none,,0,none,,0,none,other:9
+Vocab.Com Dictionary,9,9,0,none,,0,none,,0,none,other:9
+Weather,9,9,0,none,,0,none,,0,none,media_or_content:9
+Xodo,9,9,0,none,,0,none,,0,none,file_or_document:9
+it in the DeviantArt,9,9,0,none,,0,none,,0,none,media_or_content:9
+Banggood,8,8,0,none,,0,none,,0,none,shopping_or_cart:4;other:4
+Body In Note,8,8,0,none,,0,none,,0,none,other:8
+Booking.com,8,8,0,none,,0,none,,0,none,travel_or_maps:8
+Breethe,8,8,0,none,,0,none,,0,none,shopping_or_cart:8
+Business category on The TOI News,8,8,0,none,,0,none,,0,none,media_or_content:8
+Citymapper,8,8,0,none,,0,none,,0,none,travel_or_maps:4;calendar_or_reminder:4
+Fox news,8,8,0,none,,0,none,,0,none,media_or_content:8
+Gallery In Pinterest,8,8,0,none,,0,none,,0,none,media_or_content:8
+I want to use the Google Slides,8,8,0,none,,0,none,,0,none,email_or_share:8
+I want to use the Khan Academy,8,8,0,none,,0,none,,0,none,media_or_content:8
+Knoxville on the Washington post,8,8,0,none,,0,none,,0,none,media_or_content:8
+L size in the desertcart,8,8,0,none,,0,none,,0,none,shopping_or_cart:8
+Letter Templates,8,8,0,none,,0,none,,0,none,other:8
+M&S,8,8,0,none,,0,none,,0,none,shopping_or_cart:8
+Monefy,8,8,0,none,,0,none,,0,none,other:8
+MyRecorder,8,8,0,none,,0,none,,0,none,email_or_share:6;other:2
+Paint,8,8,0,none,,0,none,,0,none,other:8
+Phase of the moon,8,8,0,none,,0,none,,0,none,other:5;calendar_or_reminder:3
+Politics and sports categories on the Euronews,8,8,0,none,,0,none,,0,none,media_or_content:8
+Smartify,8,8,0,none,,0,none,,0,none,media_or_content:8
+SoundHound,8,8,0,none,,0,none,,0,none,other:8
+Spotify,8,8,8,direct,spotify,88,direct,spotify,88,direct,email_or_share:8
+Utilizing the contacts,8,8,0,none,,0,none,,0,none,local_device_or_utility:8
+Video Audio,8,8,0,none,,0,none,,0,none,media_or_content:8
+Woodenstreet,8,8,0,none,,0,none,,0,none,other:8
+different categories on the BBC News,8,8,0,none,,0,none,,0,none,media_or_content:8
+name Yoga in Microsoft word,8,8,0,none,,0,none,,0,none,file_or_document:8
+Artly,7,7,0,none,,0,none,,0,none,other:4;media_or_content:3
+BBCNews,7,7,0,none,,0,none,,0,none,media_or_content:7
+Bigbasket,7,7,0,none,,0,none,,0,none,shopping_or_cart:7
+Chat,7,7,0,none,,0,none,,0,none,other:7
+ClockBuddy,7,7,0,none,,0,none,,0,none,other:7
+Digital Timer,7,7,0,none,,0,none,,0,none,local_device_or_utility:7
+Dundee to Glasglow for 26 October in the Omio,7,7,0,none,,0,none,,0,none,travel_or_maps:7
+Evolve,7,7,0,none,,0,none,,0,none,shopping_or_cart:7
+Falou,7,7,0,none,,0,none,,0,none,other:7
+FirstAid,7,7,0,none,,0,none,,0,none,other:7
+Go to the,7,7,0,none,,0,none,,0,none,local_device_or_utility:7
+Google map,7,7,0,none,,0,none,,0,none,travel_or_maps:7
+I want to upload the abc.jpg file to the Dropbox,7,7,0,none,,0,none,,0,none,file_or_document:7
+I would like to use the math,7,7,0,none,,0,none,,0,none,other:7
+Knoxville on the Hindu,7,7,0,none,,0,none,,0,none,media_or_content:7
+Knoxville on the USA Today,7,7,0,none,,0,none,,0,none,media_or_content:7
+Local Weather,7,7,0,none,,0,none,,0,none,local_device_or_utility:7
+Map,7,7,0,none,,0,none,,0,none,travel_or_maps:7
+Mechanical engineering projects in the DeviantArt,7,7,0,none,,0,none,,0,none,media_or_content:7
+Men's Running Shoes looked interesting to me. use the Amazon,7,7,0,none,,0,none,,0,none,shopping_or_cart:7
+Mondley language,7,7,0,none,,0,none,,0,none,other:7
+NBC news news,7,7,0,none,,0,none,,0,none,email_or_share:7
+News,7,7,0,none,,0,none,,0,none,media_or_content:7
+Plantora,7,7,0,none,,0,none,,0,none,other:7
+Readwhere,7,7,0,none,,0,none,,0,none,travel_or_maps:7
+Tata Neu,7,7,0,none,,0,none,,0,none,other:7
+TickTick,7,7,0,direct,ticktick,14,direct,ticktick,20,direct,calendar_or_reminder:4;email_or_share:3
+To Do Reminders,7,7,0,none,,0,none,,0,none,calendar_or_reminder:7
+Tunein Radio,7,7,0,none,,0,none,,0,none,media_or_content:7
+Voice Recorder-URecorder,7,7,0,none,,0,none,,0,none,local_device_or_utility:7
+Withings,7,7,0,none,,0,none,,0,none,other:7
+gmail in the Smart Voice Recorder,7,7,0,none,,0,none,,0,none,email_or_share:7
+Ajio,6,6,0,none,,0,none,,0,none,shopping_or_cart:6
+All Recipes,6,6,0,none,,0,none,,0,none,other:6
+Art and Cultural,6,6,0,none,,0,none,,0,none,media_or_content:6
+Calculator,6,6,0,none,,0,none,,0,none,local_device_or_utility:6
+Cx file Explorer,6,6,0,none,,0,none,,0,none,file_or_document:6
+Door Lock Set Category On The Industrybuying,6,6,0,none,,0,none,,0,none,other:6
+Engineering projects in the Artsy,6,6,0,none,,0,none,,0,none,media_or_content:6
+Gallery,6,6,0,none,,0,none,,0,none,local_device_or_utility:6
+Google Earth,6,6,0,none,,0,none,,0,none,other:6
+Headspace,6,6,0,none,,0,none,,0,none,other:6
+HelloTalk,6,6,0,none,,0,none,,0,none,other:6
+History of art,6,6,0,none,,0,none,,0,none,media_or_content:6
+Hungama,6,6,0,none,,0,none,,0,none,other:6
+I wish to utilize the DHgate,6,6,0,none,,0,none,,0,none,local_device_or_utility:6
+I would like to use the oppia,6,6,0,none,,0,none,,0,none,other:6
+Ikea,6,6,0,none,,0,none,,0,none,other:4;shopping_or_cart:2
+Jio Mart,6,6,0,none,,0,none,,0,none,other:6
+Knoxville on the NBC news,6,6,0,none,,0,none,,0,none,media_or_content:6
+Liberty brand in the Amazon,6,6,0,none,,0,none,,0,none,shopping_or_cart:6
+Life & Style notification in the TOI news,6,6,0,none,,0,none,,0,none,media_or_content:6
+Magzter,6,6,0,none,,0,none,,0,none,other:6
+Mechanical engineering projects in the Pinterest,6,6,0,none,,0,none,,0,none,media_or_content:6
+Moon+Reader Books,6,6,0,none,,0,none,,0,none,other:6
+Online Shopping UK,6,6,0,none,,0,none,,0,none,shopping_or_cart:6
+Peggy,6,6,0,none,,0,none,,0,none,media_or_content:4;other:2
+Picsart,6,6,0,none,,0,none,,0,none,email_or_share:6
+See the lastminute.com,6,6,0,none,,0,none,,0,none,travel_or_maps:6
+Starva,6,6,0,none,,0,none,,0,none,other:6
+Strava,6,6,0,direct,strava,36,direct,strava,34,direct,other:6
+TOI News,6,6,0,none,,0,none,,0,none,media_or_content:6
+Tasty,6,6,0,none,,0,none,,0,none,other:6
+Temu,6,6,0,none,,0,none,,0,none,shopping_or_cart:3;other:3
+ZArchiver,6,6,0,none,,0,none,,0,none,file_or_document:6
+different categories on the Google News,6,6,0,none,,0,none,,0,none,media_or_content:6
+it in the Artsy,6,6,0,none,,0,none,,0,none,media_or_content:6
+literature artwork created by Faye on the Pinterest,6,6,0,none,,0,none,,0,none,other:6
+notification of the Phases of the Moon,6,6,0,none,,0,none,,0,none,other:6
+order to compare exchange rates of USD to ZAR using the XE,6,6,0,none,,0,none,,0,none,shopping_or_cart:6
+Adobe Acrobat Reader,5,5,0,none,,0,none,,0,none,file_or_document:5
+Advance English dictionary,5,5,0,none,,0,none,,0,none,other:5
+All recipe,5,5,0,none,,0,none,,0,none,media_or_content:5
+All recipes Cookbook,5,5,0,none,,0,none,,0,none,media_or_content:5
+Audio Video,5,5,0,none,,0,none,,0,none,media_or_content:5
+Cafeyn magazine,5,5,0,none,,0,none,,0,none,email_or_share:5
+Cars24,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+Chinese investment in the CNN News,5,5,0,none,,0,none,,0,none,media_or_content:5
+Crafts DIY,5,5,0,none,,0,none,,0,none,media_or_content:5
+DevianArt,5,5,0,none,,0,none,,0,none,media_or_content:5
+Deviant Art,5,5,0,none,,0,none,,0,none,email_or_share:5
+DoorDash,5,5,0,none,,0,none,,0,none,other:5
+Ermine visual artwork on the Art & Culture,5,5,0,none,,0,none,,0,none,media_or_content:5
+Flexible Padding for Kids and Adults helmet in the Amazon,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+Footshop,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+Hotels.com,5,5,0,none,,0,none,,0,none,travel_or_maps:5
+I need to edit the first sky pictures that I uploaded on the,5,5,0,none,,0,none,,0,none,file_or_document:5
+I want to change the settings of the Tasty,5,5,0,none,,0,none,,0,none,local_device_or_utility:5
+JioMart,5,5,0,none,,0,none,,0,none,other:5
+Knoxville on the Fox news,5,5,0,none,,0,none,,0,none,media_or_content:5
+Knoxville on the Guardian,5,5,0,none,,0,none,,0,none,media_or_content:5
+L size in the ShopClues,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+Lunch Recipes,5,5,0,none,,0,none,,0,none,other:5
+Mechanical engineering projects in the Arts & Culture,5,5,0,none,,0,none,,0,none,media_or_content:5
+Mechanical engineering projects in the Behance,5,5,0,none,,0,none,,0,none,media_or_content:5
+Memrise,5,5,0,none,,0,none,,0,none,other:5
+Merriam Webster,5,5,0,none,,0,none,,0,none,other:5
+Mike for his convenience. Share the OpenTable,5,5,0,none,,0,none,,0,none,email_or_share:5
+MobiDrive,5,5,0,none,,0,none,,0,none,media_or_content:5
+MoonX,5,5,0,none,,0,none,,0,none,other:5
+NBC news,5,5,0,none,,0,none,,0,none,media_or_content:5
+Nykaa,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+NykaaFaishon,5,5,0,none,,0,none,,0,none,other:5
+Own the Run shorts. Use the adidas,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+Rentalia,5,5,0,none,,0,none,,0,none,other:5
+Serenity,5,5,0,none,,0,none,,0,none,other:5
+ShopClues,5,5,0,none,,0,none,,0,none,other:4;shopping_or_cart:1
+Show,5,5,0,none,,0,none,,0,none,file_or_document:5
+Sky View,5,5,0,none,,0,none,,0,none,other:5
+Tech and Media categories on the NBC news,5,5,0,none,,0,none,,0,none,media_or_content:5
+To Do Reminder,5,5,0,none,,0,none,,0,none,calendar_or_reminder:5
+Todoist,5,5,0,direct,todoist,84,direct,todoist,19,direct,local_device_or_utility:5
+ToysPoint,5,5,0,none,,0,none,,0,none,other:5
+Use the Amazon,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+WPS Office,5,5,0,none,,0,none,,0,none,email_or_share:5
+YallaToys,5,5,0,none,,0,none,,0,none,other:5
+business category on the Deccan Herald news,5,5,0,none,,0,none,,0,none,media_or_content:5
+other shoes of the campus brand for me on the Flipkart,5,5,0,none,,0,none,,0,none,shopping_or_cart:5
+technology and science categories on The Hindu,5,5,0,none,,0,none,,0,none,media_or_content:5
+this vertical line to this drawing in the Whiteboard,5,5,0,none,,0,none,,0,none,other:5
+voice Recorder pro,5,5,0,none,,0,none,,0,none,file_or_document:5
+Bosch brand filter in the Shopsy,4,4,0,none,,0,none,,0,none,other:4
+Cavier in the Gmail,4,4,0,none,,0,none,,0,none,email_or_share:4
+ColorNote,4,4,0,none,,0,none,,0,none,other:4
+Drawing pad,4,4,0,none,,0,none,,0,none,other:4
+Dulingo,4,4,0,none,,0,none,,0,none,other:4
+Edmunds,4,4,0,none,,0,none,,0,none,other:4
+Expert Paper,4,4,0,none,,0,none,,0,none,other:4
+Google Files,4,4,0,none,,0,none,,0,none,other:4
+Google Slides,4,4,0,direct,googleslides,8,direct,googleslides,7,direct,file_or_document:4
+Hardware Shack,4,4,0,none,,0,none,,0,none,other:4
+Haymarket in the Moovit,4,4,0,none,,0,none,,0,none,travel_or_maps:4
+Joom,4,4,0,none,,0,none,,0,none,other:4
+KWD to USD using the ClevCal,4,4,0,none,,0,none,,0,none,shopping_or_cart:4
+Kitchenstories,4,4,0,none,,0,none,,0,none,other:4
+Knoxville on the Flipboard,4,4,0,none,,0,none,,0,none,media_or_content:4
+Knoxville on the Newyork times,4,4,0,none,,0,none,,0,none,media_or_content:4
+Men's Black Running Sports Shoes by reading the Shopclues,4,4,0,none,,0,none,,0,none,shopping_or_cart:4
+Notification for the Full moon Phase on the Lunar Phase,4,4,0,none,,0,none,,0,none,other:4
+Pinerest,4,4,0,none,,0,none,,0,none,media_or_content:4
+Presentations,4,4,0,none,,0,none,,0,none,file_or_document:4
+PressReader,4,4,0,none,,0,none,,0,none,other:4
+Puma,4,4,0,none,,0,none,,0,none,other:4
+REI Co-op,4,4,0,none,,0,none,,0,none,other:4
+Ready magazine,4,4,0,none,,0,none,,0,none,email_or_share:4
+Reliance Digital,4,4,0,none,,0,none,,0,none,other:4
+Safeway,4,4,0,none,,0,none,,0,none,other:4
+Sidelineswap,4,4,0,none,,0,none,,0,none,other:4
+Sky Tracker,4,4,0,none,,0,none,,0,none,other:4
+Sleep monitor,4,4,0,none,,0,none,,0,none,other:4
+Smart News,4,4,0,none,,0,none,,0,none,media_or_content:4
+Ubuy,4,4,0,none,,0,none,,0,none,other:4
+Use the decathlon,4,4,0,none,,0,none,,0,none,shopping_or_cart:4
+Wooden Street,4,4,0,none,,0,none,,0,none,other:4
+Yahoo Mail,4,4,0,none,,0,none,,0,none,email_or_share:4
+Zoho Show,4,4,0,none,,0,none,,0,none,file_or_document:4
+different categories on the Flipboard,4,4,0,none,,0,none,,0,none,media_or_content:4
+function of art and crafts using the Arts & Culture,4,4,0,none,,0,none,,0,none,media_or_content:4
+large to small In the Sketchbook,4,4,0,none,,0,none,,0,none,other:4
+notification of moon phases in the Daff Moon,4,4,0,none,,0,none,,0,none,other:4
+size 8 in size filter in JD,4,4,0,none,,0,none,,0,none,shopping_or_cart:4
+sports and science categories on the Fox news,4,4,0,none,,0,none,,0,none,media_or_content:4
+24 September in the calendar,3,3,0,none,,0,none,,0,none,calendar_or_reminder:3
+AccuWeather,3,3,0,none,,0,direct,accuweather,5,direct,other:3
+Alibaba.com,3,3,0,none,,0,none,,0,none,other:3
+Amazon Kindle,3,3,0,none,,0,none,,0,none,media_or_content:3
+Audiomack,3,3,0,none,,0,none,,0,none,other:3
+CarWale,3,3,0,none,,0,none,,0,none,other:3
+DigiCal,3,3,0,none,,0,none,,0,none,calendar_or_reminder:3
+Easy Dialer,3,3,0,none,,0,none,,0,none,other:3
+Expert Paper art,3,3,0,none,,0,none,,0,none,media_or_content:3
+Freshtohome,3,3,0,none,,0,none,,0,none,other:3
+Go to the Magzter,3,3,0,none,,0,none,,0,none,email_or_share:2;other:1
+Google Contacts,3,3,0,direct,googlecontacts,24,none,,0,direct,local_device_or_utility:3
+H&M,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+Hamleys,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+HealthifyMe,3,3,0,none,,0,none,,0,none,other:3
+I fit them. Use the Amazon,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+Kobo books,3,3,0,none,,0,none,,0,none,media_or_content:3
+Lazada,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+NNNow,3,3,0,none,,0,none,,0,none,other:3
+Rail Planner,3,3,0,none,,0,none,,0,none,calendar_or_reminder:3
+Rtistiq,3,3,0,none,,0,none,,0,none,other:3
+Sgraffito,3,3,0,none,,0,none,,0,none,other:3
+Slides,3,3,3,direct,googleslides,8,direct,googleslides,7,direct,file_or_document:3
+Time Zone Converter,3,3,0,none,,0,none,,0,none,other:3
+ToDodo,3,3,0,none,,0,none,,0,none,other:3
+Word office,3,3,0,none,,0,none,,0,none,file_or_document:3
+bottles on the Pinterest,3,3,0,none,,0,none,,0,none,other:3
+calendar in the Gmail,3,3,0,none,,0,none,,0,none,email_or_share:3
+contact list in the Simple Contacts,3,3,0,none,,0,none,,0,none,local_device_or_utility:3
+gallery in the DeviantArt,3,3,0,none,,0,none,,0,none,media_or_content:3
+help of a line shape on the Drawing Pad for Everyone,3,3,0,none,,0,none,,0,none,other:3
+it in the Pinterest,3,3,0,none,,0,none,,0,none,media_or_content:3
+literature artwork created by Tosso-dwi in the DeviantArt,3,3,0,none,,0,none,,0,none,other:3
+other similar shirts in the Pantaloons,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+pCloud,3,3,0,none,,0,none,,0,none,file_or_document:3
+similar shirts in the NNNOW,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+size 8 in the Limeroad,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+size 9 on the Temu,3,3,0,none,,0,none,,0,none,shopping_or_cart:3
+this slide in the Slides,3,3,0,none,,0,none,,0,none,file_or_document:3
+Alarm Clock Xtreme,2,2,0,none,,0,none,,0,none,local_device_or_utility:2
+Dinner Category in the All Recipe,2,2,0,none,,0,none,,0,none,media_or_content:2
+Elizabeth Billingsley to my Flipkart,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+File Manager,2,2,0,none,,0,none,,0,none,file_or_document:2
+Go to the Cafeyn,2,2,0,none,,0,none,,0,none,media_or_content:1;other:1
+Go to the Flipkart,2,2,0,none,,0,none,,0,none,other:2
+Go to the Reminders,2,2,0,none,,0,none,,0,none,calendar_or_reminder:2
+Knoxville on the Euronews,2,2,0,none,,0,none,,0,none,media_or_content:2
+Literature in the Pinterest,2,2,0,none,,0,none,,0,none,other:2
+LoveLocal,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+Messenger,2,2,0,none,,0,none,,0,none,email_or_share:2
+More tab at the bottom right corner of the screen to view the,2,2,0,none,,0,none,,0,none,other:2
+Paris on my trip,2,2,0,none,,0,none,,0,none,travel_or_maps:2
+Radio,2,2,0,none,,0,none,,0,none,other:2
+Shop by size Myntra,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+Sunday. Search for the same for me on the Yummly,2,2,0,none,,0,none,,0,none,other:2
+Trovit Homes,2,2,0,none,,0,none,,0,none,other:2
+Warehouse,2,2,0,none,,0,none,,0,none,other:2
+Weather & Radar,2,2,0,none,,0,none,,0,none,other:2
+World Clock Smart Alarm,2,2,0,none,,0,none,,0,none,local_device_or_utility:2
+Zalando,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+further processing in the Amazon,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+similar items in Pepperfry,2,2,0,none,,0,none,,0,none,other:2
+size 9 to my wishlist on the Adidas,2,2,0,none,,0,none,,0,none,shopping_or_cart:2
+Additional Processing In The Lovelocal,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Blinkit,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Desertcart,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+EverandEbooks,1,1,0,none,,0,none,,0,none,media_or_content:1
+Go to RailYatri,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Go to Weather & Radar,1,1,0,none,,0,none,,0,none,other:1
+Go to the ColorNote,1,1,0,none,,0,none,,0,none,other:1
+Go to the Decathlon,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Go to the Easy Time Zone Converter,1,1,0,none,,0,none,,0,none,other:1
+Go to the Footshop,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Go to the Google Play Books,1,1,0,none,,0,none,,0,none,other:1
+Go to the PressReader,1,1,0,none,,0,none,,0,none,other:1
+Go to the Startracker,1,1,0,none,,0,none,,0,none,other:1
+Go to the time zone converter,1,1,0,none,,0,none,,0,none,other:1
+Go to the withings,1,1,0,none,,0,none,,0,none,other:1
+Go to weather - Live & Forecast,1,1,0,none,,0,none,,0,none,other:1
+Hydra constellation on the SkyView,1,1,0,none,,0,none,,0,none,other:1
+I am looking forward to. Use the SnapDeal,1,1,0,none,,0,none,,0,none,other:1
+I need new ones for my gym workouts. Use the Lazada,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+I need new ones for my gym workouts. Use the Tata CLiQ,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+I used the Deliveroo,1,1,0,none,,0,none,,0,none,other:1
+I utilized the Freshtohome,1,1,0,none,,0,none,,0,none,other:1
+I want to use the easy voice recorder,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+I'd like to use the Flipkart,1,1,0,none,,0,none,,0,none,other:1
+I'd want to add a reminder of a name Riding to the Reminder,1,1,0,none,,0,none,,0,none,calendar_or_reminder:1
+I'd want to utilize the Banggood,1,1,0,none,,0,none,,0,none,other:1
+I'm going to use the Maps,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+I'm going to utilize the Maps,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Idanim,1,1,0,none,,0,none,,0,none,other:1
+Kitchen Stories mobile,1,1,0,none,,0,none,,0,none,media_or_content:1
+Kitchen Story,1,1,0,none,,0,none,,0,none,media_or_content:1
+Knoxville on the CNA,1,1,0,none,,0,none,,0,none,media_or_content:1
+Knoxville on the CNN,1,1,0,none,,0,none,,0,none,media_or_content:1
+Migros,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Moon Phase-Lunar Calendar,1,1,0,none,,0,none,,0,none,calendar_or_reminder:1
+Moon Phases,1,1,0,none,,0,none,,0,none,other:1
+Moon+ Reader,1,1,0,none,,0,none,,0,none,media_or_content:1
+Natalie Larson in the Messenger,1,1,0,none,,0,none,,0,none,other:1
+Riyadh to Dammam for 26 November in the SAR,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Rotterdam for a vacation on the Omio,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Save the traditional potato salad recipe to the Lunch Recipes,1,1,0,none,,0,none,,0,none,media_or_content:1
+Skype,1,1,0,none,,0,none,,0,none,other:1
+Solar Panels In The Sketchbook,1,1,0,none,,0,none,,0,none,other:1
+Sports shoe pair. I want to use Pumas' new,1,1,0,none,,0,none,,0,none,other:1
+Track my progress in the,1,1,0,none,,0,none,,0,none,other:1
+Two Bedrooms On 99Acres,1,1,0,none,,0,none,,0,none,other:1
+US unit so change the measurement in the yummly,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Use Of Freshtohome,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Use the DHgate,1,1,0,none,,0,none,,0,none,other:1
+birthday wishes. Using the Easy Voice Recorder,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+birthday wishes. Using the Voice Recorder,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+contact list in the Contacts,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+craft work in the DeviantArt,1,1,0,none,,0,none,,0,none,media_or_content:1
+existing Blank template word file in the WORD OFFICE,1,1,0,none,,0,none,,0,none,file_or_document:1
+good condition using the CARS24,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+home in the Google maps,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+home to wheat and Rye Steak house in the Maps,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+house in the Furlenco,1,1,0,none,,0,none,,0,none,other:1
+kids category on the Zara,1,1,0,none,,0,none,,0,none,other:1
+location Westerstraat 21 Gouda on the Maps,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+need of trackpants. Search for trackpants in the NNNow,1,1,0,none,,0,none,,0,none,other:1
+night of October 17 and a return trip on the 22nd on the KLM,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+notification about the moon phases in the MoonX,1,1,0,none,,0,none,,0,none,other:1
+rating of four stars or above in the Shopsy,1,1,0,none,,0,none,,0,none,other:1
+residence to Pete's kitchen in the Google Maps,1,1,0,none,,0,none,,0,none,other:1
+sanitary ware and faucets category on the Hardware Shack,1,1,0,none,,0,none,,0,none,other:1
+settings in weather Live & forecast,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+size 40 through the enchanting aisles of the Pantaloons,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+sky for me on the SkyView Free,1,1,0,none,,0,none,,0,none,other:1
+sky for me on the Stellarium,1,1,0,none,,0,none,,0,none,other:1
+sports and fashion categories on the Guardian,1,1,0,none,,0,none,,0,none,media_or_content:1
+sports and science categories on The Washington Post,1,1,0,none,,0,none,,0,none,media_or_content:1
+street art on the Art & Culture,1,1,0,none,,0,none,,0,none,media_or_content:1
+street art on the Artier,1,1,0,none,,0,none,,0,none,media_or_content:1
+street art on the Behance,1,1,0,none,,0,none,,0,none,media_or_content:1
+street art on the Pinterest,1,1,0,none,,0,none,,0,none,media_or_content:1
+street art on the Smartify,1,1,0,none,,0,none,,0,none,media_or_content:1
+to the shopping cart through BigBFS,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+vocal technique. I'd want to use the Smart Voice Recorder,1,1,0,none,,0,none,,0,none,calendar_or_reminder:1
+weekend. Can you get directions from my place using the Maps,1,1,0,none,,0,none,,0,none,other:1
+where to go. Send him the Keep notes,1,1,0,none,,0,none,,0,none,email_or_share:1

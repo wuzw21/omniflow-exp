@@ -1,0 +1,41 @@
+{
+  "schema_version": "representation_screen_vl_baseline_terminal_values_v1",
+  "created_date": "2026-06-10",
+  "source_status": "terminal_collected_value_snapshot",
+  "collection_command": "node UTG_papers/nsdi/evidence/representation_screen_vl_baseline_20260610/collect_terminal_values.mjs",
+  "scope": "Representation-layer comparison between screen-only VL embedding and OmniFlow UDEG/PageVector.",
+  "methods": [
+    {
+      "method": "Screen-only VL embedding",
+      "top1_percent": 69.44,
+      "top3_percent": 87.5,
+      "avg_encode_ms_per_item": 188.69,
+      "total_tokens": 267254,
+      "avg_tokens_per_item": 1008.51,
+      "inferred_item_count_from_tokens": 264.99885970391966,
+      "derived_total_encode_seconds": 50.0026348375326,
+      "paper_total_encode_seconds": 50
+    },
+    {
+      "method": "OmniFlow UDEG / PageVector",
+      "top1_percent": 98.63,
+      "top3_percent": 100,
+      "total_encode_seconds": 1.09,
+      "avg_encode_ms_per_item": 4.13,
+      "total_tokens": 0,
+      "avg_tokens_per_item": 0
+    }
+  ],
+  "reported_comparisons": {
+    "avg_encode_speedup_x": 45.73,
+    "avg_encode_speedup_display_formula": "188.69 / 4.13",
+    "computed_speedup_from_rounded_display_values": 45.68765133171913,
+    "token_reduction_total": 267254,
+    "token_reduction_per_encoded_item": 1008.51
+  },
+  "notes": [
+    "The reported 45.73x speedup is preserved from the terminal collection target values; displayed per-item encode values are rounded.",
+    "The screen-only total encode time is derived as 188.69 ms/item over the inferred item count from total/average token usage.",
+    "The terminal capture log records the exact generated paper-facing values."
+  ]
+}

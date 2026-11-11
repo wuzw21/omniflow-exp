@@ -1,0 +1,189 @@
+{
+  "status": "failed",
+  "mode": "smoke",
+  "hardware": {
+    "chip": "Apple M4",
+    "ram_bytes": 17179869184,
+    "macos": "26.5.1"
+  },
+  "mps_fallback_env": "1",
+  "torch": "2.6.0",
+  "transformers": "4.50.0",
+  "upstream_commit": "6fdbf65b6f2af1a94ca41d542be5be86a565d338",
+  "upstream_diff": "",
+  "model": {
+    "repo": "Qwen/Qwen2.5-VL-3B-Instruct",
+    "revision": "66285546d2b821cf421d4f5eb2576359d3770cd3",
+    "files": [
+      {
+        "path": "LICENSE",
+        "bytes": 7387,
+        "sha256": "b5c0e5cf74cf51af1ecbc4af597cfcd13fd9925611838884a681070838a14a50",
+        "lfs_match": false
+      },
+      {
+        "path": "README.md",
+        "bytes": 18276,
+        "sha256": "0b6da5a154b923da4dc66e416140c9b7f235f9b08fbbcc27fd9df7b586e3150d",
+        "lfs_match": false
+      },
+      {
+        "path": "chat_template.json",
+        "bytes": 1050,
+        "sha256": "ad60d90252ed0b0705ba14e2d0ad0fec0beac1ea955642b54059b36052d8bc96",
+        "lfs_match": false
+      },
+      {
+        "path": "config.json",
+        "bytes": 1373,
+        "sha256": "7ed3eed5be6924cc800e8a5e53fc405c1aab1aaf36bad65c33403b36c56827f5",
+        "lfs_match": false
+      },
+      {
+        "path": "generation_config.json",
+        "bytes": 216,
+        "sha256": "533f191cc257b7de37a4fccd0a7a1706d75e1aa660f93efaa54e5a2a9f9aace9",
+        "lfs_match": false
+      },
+      {
+        "path": "merges.txt",
+        "bytes": 1671839,
+        "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+        "lfs_match": false
+      },
+      {
+        "path": "model-00001-of-00002.safetensors",
+        "bytes": 3982649232,
+        "sha256": "41a8895c164b4d32bae6b302f4603fcbc1797f32dafa45c7e9bcda23c6755df8",
+        "lfs_match": true
+      },
+      {
+        "path": "model-00002-of-00002.safetensors",
+        "bytes": 3526688744,
+        "sha256": "365531ff8752420e89dee707b79d021fb2d6e25abafe486f080555a4fe6972e4",
+        "lfs_match": true
+      },
+      {
+        "path": "model.safetensors.index.json",
+        "bytes": 65448,
+        "sha256": "c7dd78a4c6bea60b51332f1baf37b8f8124ecab2c35395a29a29825bf2619768",
+        "lfs_match": false
+      },
+      {
+        "path": "preprocessor_config.json",
+        "bytes": 350,
+        "sha256": "f2058c716eef96ccaed1cc1e2d0c08306b62586d535b28d9d08e691b2fab7ca0",
+        "lfs_match": false
+      },
+      {
+        "path": "tokenizer.json",
+        "bytes": 7031645,
+        "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+        "lfs_match": false
+      },
+      {
+        "path": "tokenizer_config.json",
+        "bytes": 5702,
+        "sha256": "4abd3520120e266da84c0864fee064d1fb10806f02225911a47253dd38dc5f56",
+        "lfs_match": false
+      },
+      {
+        "path": "vocab.json",
+        "bytes": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "lfs_match": false
+      }
+    ]
+  },
+  "config": {
+    "dtype": "bfloat16",
+    "device": "mps",
+    "attention": "sdpa",
+    "short_frames": 8,
+    "medium_frames": 64,
+    "video_chunk_t": 2,
+    "max_new_tokens": 32,
+    "do_sample": false
+  },
+  "memory_measurement": "10ms sampled peaks plus synchronized boundaries; RSS and MPS overlap on UMA",
+  "prepared_manifest_sha256": "fc78b28d8b11a9dbf3437cdb2e92beb4077434a9562b7e2a7f23845c8f22e724",
+  "source_hashes": {
+    "run_profile.py": "7e0f00725eae1d84f2edfd82539e4ad387785332572383811c44a5c12c4cf0b6",
+    "measure.py": "b56d1ec7b6ad573057260fd4e3f36bc5ea057fac516c84ddae02f3345f4f87f6",
+    "PROTOCOL.md": "dfc9685d97de368ae8b0b447115bd2507220067461694d59042e1779ccfa49d1"
+  },
+  "records": [],
+  "loading_info": {
+    "missing_keys": [],
+    "unexpected_keys": [],
+    "mismatched_keys": [],
+    "error_msgs": []
+  },
+  "load": {
+    "stage": "cold_model_load",
+    "before": {
+      "rss_bytes": 313147392,
+      "mps_allocated_bytes": 0,
+      "mps_driver_bytes": 475136
+    },
+    "sampled_peak": {
+      "rss_bytes": 321273856,
+      "mps_allocated_bytes": 7509260288,
+      "mps_driver_bytes": 8755593216
+    },
+    "samples": 1211,
+    "seconds": 16.95313929200347,
+    "after": {
+      "rss_bytes": 39124992,
+      "mps_allocated_bytes": 7509260288,
+      "mps_driver_bytes": 8217116672
+    }
+  },
+  "parameter_bytes": 7509245952,
+  "resident_after_load": {
+    "rss_bytes": 39288832,
+    "mps_allocated_bytes": 7509260288,
+    "mps_driver_bytes": 8217116672
+  },
+  "error": "Traceback (most recent call last):\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/experiments/fluxmem/run_profile.py\", line 138, in main\n    run_one(0,0,True)\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/experiments/fluxmem/run_profile.py\", line 113, in run_one\n    output=model.generate(**inputs,max_new_tokens=32,do_sample=False,use_fluxmem=enabled,\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 116, in decorate_context\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/transformers/generation/utils.py\", line 2326, in generate\n    result = self._sample(\n             ^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/transformers/generation/utils.py\", line 3286, in _sample\n    outputs = self(**model_inputs, return_dict=True)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1739, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1845, in _call_impl\n    return inner()\n           ^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1793, in inner\n    result = forward_call(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/.agent-reach/research/fluxmem-repro/models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/modeling_qwen2_5_vl_fluxmem.py\", line 1886, in forward\n    video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1739, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1845, in _call_impl\n    return inner()\n           ^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1793, in inner\n    result = forward_call(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/.agent-reach/research/fluxmem-repro/models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/modeling_qwen2_5_vl_fluxmem.py\", line 528, in forward\n    hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens_now, position_embeddings=position_embeddings)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1739, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1750, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/.agent-reach/research/fluxmem-repro/models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/modeling_qwen2_5_vl_fluxmem.py\", line 321, in forward\n    hidden_states = hidden_states + self.attn(\n                                    ^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1739, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/.venv-fluxmem/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1750, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/wuzewen/.agent-reach/research/fluxmem-repro/models/qwen2-5-vl/src/qwen2_5_vl_fluxmem/modeling_qwen2_5_vl_fluxmem.py\", line 290, in forward\n    attn_output = F.scaled_dot_product_attention(q, k, v, attention_mask, dropout_p=0.0)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nIndexError: Dimension out of range (expected to be in range of [-3, 2], but got 3)\n",
+  "process_maxrss_bytes": 393838592,
+  "remaining_active_stages": [
+    {
+      "stage": "prefill_forward",
+      "before": {
+        "rss_bytes": 390119424,
+        "mps_allocated_bytes": 7513790720,
+        "mps_driver_bytes": 8236023808
+      },
+      "sampled_peak": {
+        "rss_bytes": 393789440,
+        "mps_allocated_bytes": 7573591808,
+        "mps_driver_bytes": 8236351488
+      },
+      "samples": 148,
+      "input_tokens": 397
+    },
+    {
+      "stage": "vision",
+      "before": {
+        "rss_bytes": 392511488,
+        "mps_allocated_bytes": 7517674752,
+        "mps_driver_bytes": 8236023808
+      },
+      "sampled_peak": {
+        "rss_bytes": 393789440,
+        "mps_allocated_bytes": 7573591808,
+        "mps_driver_bytes": 8236351488
+      },
+      "samples": 147,
+      "patch_tokens": 960,
+      "grid": [
+        [
+          2,
+          16,
+          30
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "androidworld_revision": "632ac95959ace58c8e2ed2db8e4209cc3d9c26ef",
+  "contains_secrets": false,
+  "model": "Qwen3.6-Plus",
+  "omniflow_commit": "b959d3b7942f112bc401f4867ed4d6a26766d04b",
+  "omnitransfer_architecture": "omnitransfer_point_conditioned_sparse_graph_v10",
+  "omnitransfer_checkpoint_sha256": "3b783ed113fc37397e2f092d133e970ec36bdbf0d26e262d9273389e4729d16f",
+  "omnitransfer_commit": "09fc192be3409a19156fb2b46ec3d1f5362a841b",
+  "oob_apk_name": "OOB-Experiment.apk",
+  "oob_apk_sha256": "fd13e09036038ed00e21e1f1c855f29a9a2e35d2b6160d47d23013662c729d09",
+  "oob_package": "cn.com.omnimind.bot",
+  "release_id": "omniflow-9207-b959d3b7942f-09fc192be340",
+  "schema_version": "omniflow.9207-runtime-release.v1"
+}

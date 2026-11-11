@@ -1,0 +1,274 @@
+app,trajectory_count,step_count,strict_api_candidate_trajectories,composio_label,composio_id,composio_tool_count,openconnector_label,openconnector_id,openconnector_action_count,best_catalog_label,top_task_categories
+<unknown>,7023,7023,0,none,,0,none,,0,none,other:5322;media_or_content:675;email_or_share:525;shopping_or_cart:160;file_or_document:131
+Gmail,22,22,0,direct,gmail,63,direct,gmail,46,direct,email_or_share:22
+Artsy,20,20,0,none,,0,none,,0,none,other:20
+Kitchen Stories,19,19,0,none,,0,none,,0,none,other:19
+Pinterest,16,16,0,empty,pinterest,0,none,,0,empty,other:16
+Amazon,11,11,0,empty,amazon,0,none,,0,empty,other:11
+CNN News,11,11,0,none,,0,none,,0,none,media_or_content:11
+Flipboard,11,11,0,none,,0,none,,0,none,other:11
+SmartNews,11,11,0,none,,0,none,,0,none,other:11
+Art & Culture,10,10,0,none,,0,none,,0,none,media_or_content:10
+Google News,10,10,0,none,,0,none,,0,none,media_or_content:10
+Yummly,10,10,0,none,,0,none,,0,none,other:10
+Artier,9,9,0,none,,0,none,,0,none,other:9
+Arts & Culture,9,9,0,none,,0,none,,0,none,other:9
+Decathlon,9,9,0,none,,0,none,,0,none,other:9
+BBC News,8,8,0,none,,0,none,,0,none,media_or_content:8
+DeviantArt,8,8,0,none,,0,none,,0,none,other:7;media_or_content:1
+Maps,8,8,0,direct,google_maps,23,none,,0,direct,other:8
+Clock,7,7,0,none,,0,none,,0,none,local_device_or_utility:7
+Google Maps,7,7,0,direct,google_maps,23,none,,0,direct,other:7
+Guardian news,7,7,0,none,,0,none,,0,none,media_or_content:7
+Hindu news,7,7,0,none,,0,none,,0,none,media_or_content:7
+New York times,7,7,0,none,,0,none,,0,none,other:7
+Stellarium,7,7,0,none,,0,none,,0,none,other:7
+Zinio,7,7,0,none,,0,none,,0,none,other:7
+Behance,6,6,0,none,,0,none,,0,none,other:6
+Guardian,6,6,0,none,,0,none,,0,none,other:6
+Sketchar,6,6,0,none,,0,none,,0,none,other:6
+Flipboard news,5,5,0,none,,0,none,,0,none,media_or_content:5
+Pantaloons,5,5,0,none,,0,none,,0,none,other:5
+Penup,5,5,0,none,,0,none,,0,none,other:5
+Phases of the moon,5,5,0,none,,0,none,,0,none,other:5
+SideChef,5,5,0,none,,0,none,,0,none,other:5
+Times of India news,5,5,0,none,,0,none,,0,none,media_or_content:5
+Cafeyn,4,4,0,none,,0,none,,0,none,other:4
+Calendar,4,4,0,direct,googlecalendar,49,direct,googlecalendar,37,direct,calendar_or_reminder:4
+Flipkart,4,4,0,none,,0,none,,0,none,other:4
+Keep Notes,4,4,0,none,,0,none,,0,none,other:4
+Mega Hardware,4,4,0,none,,0,none,,0,none,other:4
+Nike,4,4,0,none,,0,none,,0,none,other:4
+Oxford Dictionary,4,4,0,none,,0,none,,0,none,other:4
+Polaris Office,4,4,0,none,,0,none,,0,none,other:4
+Reuters,4,4,0,none,,0,none,,0,none,other:4
+Reuters news,4,4,0,none,,0,none,,0,none,media_or_content:4
+Unit converter,4,4,0,none,,0,none,,0,none,other:4
+Vimeo,4,4,0,none,,0,direct,vimeo,25,direct,other:4
+Agoda,3,3,0,none,,0,none,,0,none,other:3
+Ajio,3,3,0,none,,0,none,,0,none,other:3
+Deliveroo,3,3,0,none,,0,none,,0,none,other:3
+Easy Voice Recorder,3,3,0,none,,0,none,,0,none,local_device_or_utility:3
+Euronews,3,3,0,none,,0,none,,0,none,other:3
+Furlenco,3,3,0,none,,0,none,,0,none,other:3
+Hindu,3,3,0,none,,0,none,,0,none,other:3
+Industrybuying,3,3,0,none,,0,none,,0,none,other:3
+Klook,3,3,0,none,,0,none,,0,none,other:3
+Meditopia,3,3,0,none,,0,none,,0,none,other:3
+Moon Phase,3,3,0,none,,0,none,,0,none,other:3
+Moon Phase Calendar,3,3,0,none,,0,none,,0,none,calendar_or_reminder:3
+Myntra,3,3,0,none,,0,none,,0,none,other:3
+New York Times news,3,3,0,none,,0,none,,0,none,media_or_content:3
+Omio,3,3,0,none,,0,none,,0,none,other:3
+PDF Reader Pro,3,3,0,none,,0,none,,0,none,file_or_document:3
+Readly,3,3,0,none,,0,none,,0,none,other:3
+Recorder,3,3,0,none,,0,none,,0,none,local_device_or_utility:3
+Redbubble,3,3,0,none,,0,none,,0,none,other:3
+Reminder,3,3,0,none,,0,none,,0,none,calendar_or_reminder:3
+Reminders,3,3,0,none,,0,none,,0,none,other:3
+SkyView Free,3,3,0,none,,0,none,,0,none,other:3
+Smartify,3,3,0,none,,0,none,,0,none,other:3
+SnapDeal,3,3,0,none,,0,none,,0,none,other:3
+Times of India,3,3,0,none,,0,none,,0,none,other:3
+Timezone Converter,3,3,0,none,,0,none,,0,none,other:3
+Trainline,3,3,0,none,,0,none,,0,none,other:3
+UN News,3,3,0,none,,0,none,,0,none,media_or_content:3
+Washington post,3,3,0,none,,0,none,,0,none,other:3
+Weather Live & Forecast,3,3,0,none,,0,none,,0,none,other:3
+Zara,3,3,0,none,,0,none,,0,none,other:3
+All recipe,2,2,0,none,,0,none,,0,none,media_or_content:2
+Art and Cultural,2,2,0,none,,0,none,,0,none,media_or_content:2
+ArtStation,2,2,0,none,,0,none,,0,none,other:2
+Artly,2,2,0,none,,0,none,,0,none,other:2
+Banggood,2,2,0,none,,0,none,,0,none,other:2
+Bigbasket,2,2,0,none,,0,none,,0,none,other:2
+Cnn,2,2,0,none,,0,none,,0,none,other:2
+Cx file Explorer,2,2,0,none,,0,none,,0,none,file_or_document:2
+Daff Moon,2,2,0,none,,0,none,,0,none,other:2
+Deccan Herald News,2,2,0,none,,0,none,,0,none,media_or_content:2
+Digital Timer,2,2,0,none,,0,none,,0,none,local_device_or_utility:2
+Drive,2,2,0,direct,googledrive,90,direct,googledrive,43,direct,file_or_document:2
+Etsy,2,2,0,empty,etsy,0,none,,0,empty,other:2
+First Cry,2,2,0,none,,0,none,,0,none,other:2
+Flipsnack,2,2,0,none,,0,none,,0,none,other:2
+Footshop,2,2,0,none,,0,none,,0,none,other:2
+Get back to the previous searched page of the,2,2,0,none,,0,none,,0,none,other:2
+Google Play Books,2,2,0,none,,0,none,,0,none,other:2
+Hardware Shack,2,2,0,none,,0,none,,0,none,other:2
+History of art,2,2,0,none,,0,none,,0,none,media_or_content:2
+Khan Academy,2,2,0,none,,0,none,,0,none,other:2
+Lunar phase,2,2,0,none,,0,none,,0,none,other:2
+Lunch Recipes,2,2,0,none,,0,none,,0,none,other:2
+M&S,2,2,0,none,,0,none,,0,none,other:2
+Magzter,2,2,0,none,,0,none,,0,none,other:2
+Moonly,2,2,0,none,,0,none,,0,none,other:2
+NY Times,2,2,0,none,,0,none,,0,none,other:2
+NykaaFaishon,2,2,0,none,,0,none,,0,none,other:2
+Office Suite Pro,2,2,0,none,,0,none,,0,none,other:2
+OfficeSuite,2,2,0,none,,0,none,,0,none,other:2
+Origami Sekai,2,2,0,none,,0,none,,0,none,other:2
+Peggy,2,2,0,none,,0,none,,0,none,other:2
+Phase Of The Moon,2,2,0,none,,0,none,,0,none,other:2
+Pizza Max,2,2,0,none,,0,none,,0,none,other:2
+PowerPoint,2,2,0,none,,0,none,,0,none,other:2
+Rtistiq,2,2,0,none,,0,none,,0,none,other:2
+Safeway,2,2,0,none,,0,none,,0,none,other:2
+Sar,2,2,0,none,,0,none,,0,none,other:2
+Sketchbook,2,2,0,none,,0,none,,0,none,other:2
+Skyscanner,2,2,0,none,,0,none,,0,none,other:2
+Tasty,2,2,0,none,,0,none,,0,none,other:2
+TataCLiQ,2,2,0,none,,0,none,,0,none,other:2
+To-Do List,2,2,0,none,,0,none,,0,none,other:2
+Vocab.Com,2,2,0,none,,0,none,,0,none,other:2
+Voice recorder,2,2,0,none,,0,none,,0,none,local_device_or_utility:2
+Weather & Radar,2,2,0,none,,0,none,,0,none,other:2
+Xodo,2,2,0,none,,0,none,,0,none,other:2
+Zoho meeting,2,2,0,none,,0,none,,0,none,calendar_or_reminder:2
+eBay,2,2,0,none,,0,none,,0,none,other:2
+24 September in the calendar,1,1,0,none,,0,none,,0,none,calendar_or_reminder:1
+99 Acress,1,1,0,none,,0,none,,0,none,other:1
+Account Icon At The Top-Right Corner Of The,1,1,0,none,,0,none,,0,none,other:1
+AccuWeather,1,1,0,none,,0,direct,accuweather,5,direct,other:1
+Adidas,1,1,0,none,,0,none,,0,none,other:1
+Adobe Acrobat Reader,1,1,0,none,,0,none,,0,none,other:1
+Advance English dictionary,1,1,0,none,,0,none,,0,none,other:1
+All Recipes,1,1,0,none,,0,none,,0,none,other:1
+All recipes Cookbook,1,1,0,none,,0,none,,0,none,other:1
+All trails,1,1,0,empty,alltrails,0,none,,0,empty,other:1
+Audiomack Music,1,1,0,none,,0,none,,0,none,media_or_content:1
+Balance,1,1,0,none,,0,none,,0,none,other:1
+Business Category From The Categories Mentioned Below The,1,1,0,none,,0,none,,0,none,other:1
+Calculator,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Calculator Unit Converter,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Cars24,1,1,0,none,,0,none,,0,none,other:1
+Categories Mentioned Below The Name Of The,1,1,0,none,,0,none,,0,none,other:1
+Citymapper,1,1,0,none,,0,none,,0,none,other:1
+ClevCal,1,1,0,none,,0,none,,0,none,other:1
+Cna,1,1,0,none,,0,none,,0,none,other:1
+ColorNote,1,1,0,none,,0,none,,0,none,other:1
+Cookpad,1,1,0,none,,0,none,,0,none,other:1
+Crafts DIY,1,1,0,none,,0,none,,0,none,other:1
+Daily Art,1,1,0,none,,0,none,,0,none,media_or_content:1
+Daily Hunt news,1,1,0,none,,0,none,,0,none,media_or_content:1
+DeflPDF,1,1,0,none,,0,none,,0,none,other:1
+DeftPDF,1,1,0,none,,0,none,,0,none,other:1
+Desertcart,1,1,0,none,,0,none,,0,none,other:1
+DevianArt,1,1,0,none,,0,none,,0,none,other:1
+DigiCal,1,1,0,none,,0,none,,0,none,other:1
+DoorDash,1,1,0,none,,0,none,,0,none,other:1
+EaseMyTrip,1,1,0,none,,0,none,,0,none,other:1
+Edmunds,1,1,0,none,,0,none,,0,none,other:1
+Email sharing,1,1,0,none,,0,none,,0,none,email_or_share:1
+Eurostar,1,1,0,none,,0,none,,0,none,other:1
+Expedia,1,1,0,none,,0,none,,0,none,other:1
+Expert Paper art,1,1,0,none,,0,none,,0,none,media_or_content:1
+File Manager,1,1,0,none,,0,none,,0,none,file_or_document:1
+Fitbit,1,1,0,empty,fitbit,0,none,,0,empty,other:1
+Flipsnack magazine,1,1,0,none,,0,none,,0,none,media_or_content:1
+Flora,1,1,0,none,,0,none,,0,none,other:1
+Fox news,1,1,0,none,,0,none,,0,none,media_or_content:1
+Freshtohome,1,1,0,none,,0,none,,0,none,other:1
+Gallery,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Gmail icon to share this file through Gmail,1,1,0,none,,0,none,,0,none,email_or_share:1
+Go to the Easy Time Zone Converter,1,1,0,none,,0,none,,0,none,other:1
+Goibibo,1,1,0,none,,0,none,,0,none,other:1
+Google Contacts,1,1,0,direct,googlecontacts,24,none,,0,direct,local_device_or_utility:1
+Google Docs,1,1,0,direct,googledocs,43,direct,googledocs,32,direct,other:1
+Google Drive,1,1,0,direct,googledrive,90,direct,googledrive,43,direct,file_or_document:1
+Google Earth,1,1,0,none,,0,none,,0,none,other:1
+Google Files,1,1,0,none,,0,none,,0,none,other:1
+Google Slides,1,1,0,direct,googleslides,8,direct,googleslides,7,direct,other:1
+Google arts & culture,1,1,0,none,,0,none,,0,none,other:1
+Google map,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+HHR Train,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Headspace,1,1,0,none,,0,none,,0,none,other:1
+HealthifyMe,1,1,0,none,,0,none,,0,none,other:1
+HelloTalk,1,1,0,none,,0,none,,0,none,other:1
+Hotels.com,1,1,0,none,,0,none,,0,none,other:1
+Ikea,1,1,0,none,,0,none,,0,none,other:1
+Infinite Painter,1,1,0,none,,0,none,,0,none,other:1
+Infinite Printer,1,1,0,none,,0,none,,0,none,other:1
+Insight Timer,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+JioMart,1,1,0,none,,0,none,,0,none,other:1
+Kayak,1,1,0,none,,0,none,,0,none,other:1
+Kitchenstories,1,1,0,none,,0,none,,0,none,other:1
+Klm,1,1,0,none,,0,none,,0,none,other:1
+Lambus,1,1,0,none,,0,none,,0,none,other:1
+Lazada,1,1,0,none,,0,none,,0,none,other:1
+MakeMyTrip,1,1,0,none,,0,none,,0,none,other:1
+Map,1,1,0,none,,0,none,,0,none,travel_or_maps:1
+Merriam Webster,1,1,0,none,,0,none,,0,none,other:1
+Messages,1,1,0,none,,0,none,,0,none,email_or_share:1
+Mindfulness,1,1,0,none,,0,none,,0,none,other:1
+MobiDrive,1,1,0,none,,0,none,,0,none,other:1
+Moglix,1,1,0,none,,0,none,,0,none,other:1
+Momondo,1,1,0,none,,0,none,,0,none,other:1
+Mondley language,1,1,0,none,,0,none,,0,none,other:1
+Mondly Languages,1,1,0,none,,0,none,,0,none,other:1
+Monefy,1,1,0,none,,0,none,,0,none,other:1
+Moon Phases,1,1,0,none,,0,none,,0,none,other:1
+Moon+Reader Books,1,1,0,none,,0,none,,0,none,other:1
+MoonX,1,1,0,none,,0,none,,0,none,other:1
+More tab at the bottom right corner of the screen to view the,1,1,0,none,,0,none,,0,none,other:1
+NBC news,1,1,0,none,,0,none,,0,none,media_or_content:1
+NNNow,1,1,0,none,,0,none,,0,none,other:1
+NYTimes news,1,1,0,none,,0,none,,0,none,media_or_content:1
+Notifications Of This,1,1,0,none,,0,none,,0,none,other:1
+Nykaa,1,1,0,none,,0,none,,0,none,other:1
+OneDrive,1,1,0,direct,one_drive,83,direct,one_drive,13,direct,other:1
+Online Shopping UK,1,1,0,none,,0,none,,0,none,shopping_or_cart:1
+Open 99 acers,1,1,0,none,,0,none,,0,none,other:1
+Plantora,1,1,0,none,,0,none,,0,none,other:1
+PocketBook,1,1,0,none,,0,none,,0,none,other:1
+PressReader,1,1,0,none,,0,none,,0,none,other:1
+Puma,1,1,0,none,,0,none,,0,none,other:1
+REI Co-op,1,1,0,none,,0,none,,0,none,other:1
+Rail Planner,1,1,0,none,,0,none,,0,none,other:1
+RailYatri,1,1,0,none,,0,none,,0,none,other:1
+Rapidbox,1,1,0,none,,0,none,,0,none,other:1
+Readera,1,1,0,none,,0,none,,0,none,other:1
+Readwhere,1,1,0,none,,0,none,,0,none,other:1
+Readwhere magazine,1,1,0,none,,0,none,,0,none,media_or_content:1
+Reliance Digital,1,1,0,none,,0,none,,0,none,other:1
+Rentalia,1,1,0,none,,0,none,,0,none,other:1
+Scroll down to view the Maps,1,1,0,none,,0,none,,0,none,other:1
+Settings,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+ShopClues,1,1,0,none,,0,none,,0,none,other:1
+Shopsy,1,1,0,none,,0,none,,0,none,other:1
+Side Chef,1,1,0,none,,0,none,,0,none,other:1
+Sidelineswap,1,1,0,none,,0,none,,0,none,other:1
+Simplilearn,1,1,0,none,,0,none,,0,none,other:1
+Sleep monitor,1,1,0,none,,0,none,,0,none,other:1
+Slides,1,1,0,direct,googleslides,8,direct,googleslides,7,direct,other:1
+Smart Recorder,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Snapchat,1,1,0,direct,snapchat,139,none,,0,direct,other:1
+Sound Icon At The Top Of The,1,1,0,none,,0,none,,0,none,other:1
+Sound Recorder Plus,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Spotify,1,1,0,direct,spotify,88,direct,spotify,88,direct,other:1
+Stars,1,1,0,none,,0,none,,0,none,other:1
+Startracker,1,1,0,none,,0,none,,0,none,other:1
+Starva,1,1,0,none,,0,none,,0,none,other:1
+Strava,1,1,0,direct,strava,36,direct,strava,34,direct,other:1
+Swipe up to Gmail,1,1,0,none,,0,none,,0,none,email_or_share:1
+Tata Neu,1,1,0,none,,0,none,,0,none,other:1
+Three-Lines Icon At The Top Left Corner Of The,1,1,0,none,,0,none,,0,none,other:1
+Time Zone Converter,1,1,0,none,,0,none,,0,none,other:1
+To Do Reminder,1,1,0,none,,0,none,,0,none,calendar_or_reminder:1
+ToDodo,1,1,0,none,,0,none,,0,none,other:1
+ToysPoint,1,1,0,none,,0,none,,0,none,other:1
+Track my progress in the,1,1,0,none,,0,none,,0,none,other:1
+Traveloka,1,1,0,none,,0,none,,0,none,other:1
+TripIt,1,1,0,none,,0,none,,0,none,other:1
+Trips.Com,1,1,0,none,,0,none,,0,none,other:1
+USA Today,1,1,0,none,,0,none,,0,none,other:1
+Video Audio,1,1,0,none,,0,none,,0,none,media_or_content:1
+Voice Recorder-URecorder,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Wanderu,1,1,0,none,,0,none,,0,none,other:1
+Wattpad,1,1,0,none,,0,none,,0,none,other:1
+Withings,1,1,0,none,,0,none,,0,none,other:1
+Word office,1,1,0,none,,0,none,,0,none,other:1
+World Clock Smart Alarm,1,1,0,none,,0,none,,0,none,local_device_or_utility:1
+Yahoo Mail,1,1,0,none,,0,none,,0,none,email_or_share:1
+YallaToys,1,1,0,none,,0,none,,0,none,other:1
+ZArchiver,1,1,0,none,,0,none,,0,none,other:1
+pCloud,1,1,0,none,,0,none,,0,none,other:1

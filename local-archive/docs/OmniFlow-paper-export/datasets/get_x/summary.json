@@ -1,0 +1,135 @@
+{
+  "schema_version": "get_x_mapping_dataset.v1",
+  "generated_date": "2026-06-10",
+  "goal_source": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/goals.json",
+  "omniflow_workspace": "/Users/wuzewen/Projects/Omni/OmniFlow",
+  "benchmark_root": "/Users/wuzewen/Projects/Omni/OmniFlow/Benchmark Dataset_Blur/Benchmark Dataset",
+  "input_pair_count": 80,
+  "case_count": 212,
+  "label_status": "silver_raw_step_aligned",
+  "alignment_rule": "zip source/target steps by raw step index; keep only same-name point actions with an index",
+  "point_actions": [
+    "click",
+    "long-click",
+    "repeat-click"
+  ],
+  "action_counts": {
+    "click": 207,
+    "long-click": 4,
+    "repeat-click": 1
+  },
+  "app_case_counts": {
+    "Gmail": 27,
+    "Google Dialer": 13,
+    "Microsoft To-Do": 36,
+    "Telegram": 23,
+    "TripAdvisor": 29,
+    "Twitter": 28,
+    "Uber Eats": 34,
+    "YT Music": 22
+  },
+  "skip_counts": {
+    "source_html_index_out_of_range": 5,
+    "step_neither_point_action": 112,
+    "step_only_one_side_point_action": 61,
+    "step_point_action_name_mismatch": 5,
+    "trajectory_length_mismatch_pair": 34
+  },
+  "outputs": {
+    "testcase_json": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_cases.json",
+    "get_x_calls_json": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_calls.json",
+    "summary_json": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/summary.json"
+  },
+  "usage": {
+    "get_x_input": "x=source_x, y=source_y, src={page: source_xml, element: metadata.source_action_element}, target={page: target_xml}",
+    "evaluation": "python tests/vector/benchmarks/action_accuracy.py --input-cases /Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_cases.json --adapter omniflow --output <results.json>"
+  },
+  "validation": {
+    "loader_check": "passed: tests.vector.datasets.DatasetLoader.load_cases loaded 212 cases",
+    "json_check": "passed: summary.json and get_x_calls.json parse with python -m json.tool",
+    "fixed_baseline_command": "PYTHONPATH=. python -m tests.vector.benchmarks.action_accuracy --input-cases /Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_cases.json --adapter fixed --output /Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/fixed_baseline_results.json",
+    "fixed_baseline": {
+      "total": 212,
+      "valid": 212,
+      "mean_ce": 243.4227791977834,
+      "median_ce": 0.0,
+      "ta_50": 0.6179245283018868,
+      "node_match_accuracy": 0.6415094339622641,
+      "case_accuracy": 0.6415094339622641,
+      "decision_accuracy": 1.0
+    }
+  },
+  "schema_note": "metadata.source_action is the source action element consumed by action_accuracy.py; raw action is preserved as metadata.source_raw_action.",
+  "action_anchor_accuracy": {
+    "schema_version": "get_x_action_anchor_accuracy.v1",
+    "generated_date": "2026-06-11",
+    "dataset": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_cases.json",
+    "case_count": 212,
+    "label_status": "silver_raw_step_aligned",
+    "note": "All cases are positive silver source/target point-action pairs; fallback counts as incorrect for case/projection accuracy.",
+    "methods": {
+      "fixed": {
+        "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/fixed_baseline_results.json",
+        "total": 212,
+        "mapped_or_valid": 212,
+        "failure_rate": 0.0,
+        "mean_ce": 243.4227791977834,
+        "median_ce": 0.0,
+        "p95_ce": 1130.8847200311798,
+        "ta_10": 0.5849056603773585,
+        "ta_25": 0.6084905660377359,
+        "ta_50": 0.6179245283018868,
+        "node_match_accuracy": 0.6415094339622641,
+        "projection_accuracy": 0.6415094339622641,
+        "case_accuracy": 0.6415094339622641,
+        "decision_accuracy": 1.0
+      },
+      "text_feature": {
+        "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/text_feature_baseline_results.json",
+        "total": 212,
+        "mapped_or_valid": 145,
+        "failure_rate": 0.3160377358490566,
+        "mean_ce": 168.61613053101877,
+        "median_ce": 0.5,
+        "p95_ce": 1179.5,
+        "ta_10": 0.7310344827586207,
+        "ta_25": 0.7379310344827587,
+        "ta_50": 0.7517241379310344,
+        "node_match_accuracy": 0.5188679245283019,
+        "projection_accuracy": 0.5188679245283019,
+        "case_accuracy": 0.5188679245283019,
+        "decision_accuracy": 0.6839622641509434
+      },
+      "omniflow_anchor": {
+        "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/omniflow_anchor_results.json",
+        "total": 212,
+        "mapped_or_valid": 118,
+        "failure_rate": 0.44339622641509435,
+        "mean_ce": 114.84443489842002,
+        "median_ce": 0.0,
+        "p95_ce": 708.4412466817555,
+        "ta_10": 0.788135593220339,
+        "ta_25": 0.7966101694915254,
+        "ta_50": 0.7966101694915254,
+        "node_match_accuracy": 0.4481132075471698,
+        "projection_accuracy": 0.4481132075471698,
+        "case_accuracy": 0.4481132075471698,
+        "decision_accuracy": 0.5566037735849056,
+        "mapped_clicks": 118,
+        "mapped_click_precision": 0.8050847457627118,
+        "fallback_count": 94,
+        "fallback_reasons": {
+          "absent": 68,
+          "ambiguous": 14,
+          "occluded": 12
+        },
+        "fallback_modes": {
+          "absent_action_signature": 65,
+          "ambiguous_action_signature": 14,
+          "target_occluded": 12,
+          "weak_container_source_context_not_found": 3
+        }
+      }
+    }
+  }
+}

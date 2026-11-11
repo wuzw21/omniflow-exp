@@ -1,0 +1,125 @@
+{
+  "schema_version": "omniflow.function-composition-dataset.v1",
+  "dataset_id": "rednote-composition-v1",
+  "language": "zh-CN",
+  "scope": {
+    "kind": "offline_composition_validation",
+    "benchmark_use": "do_not_count_as_benchmark",
+    "app": "小红书",
+    "package_name": "com.xingin.xhs",
+    "note": "历史任务用于构建并冻结可复用的多步能力；复杂任务只测试这些能力能否在新目标中正确组合。正式结果仍需用真实 App RunLog、截图、UI tree 和官方 validator。"
+  },
+  "evaluation_contract": {
+    "history_policy": "每个历史任务独立完成并保存成功证据；不得把五个历史任务预先合成一个固定脚本。",
+    "composition_policy": "复杂任务开始时只提供目标、Function Store 和设备环境；由 Planner 选择能力、填写查询参数并决定顺序。",
+    "required_invariants": [
+      "历史任务产生的是有语义结果的多步能力，不是单个 click 的动作缓存。",
+      "复杂任务中的每次搜索都使用当前查询参数，不复用上一次查询文本。",
+      "打开第一个帖子后必须重新观察，再决定关注、点赞、收藏或评论目标。",
+      "不同搜索阶段的结果要分别保留，不能把最后一次搜索结果覆盖前面的结果。",
+      "一个子任务失败时只恢复该子任务，不从头盲目重放整个复杂任务。",
+      "不得使用 source 坐标、node-id 或 resource-id 作为跨页面的替代组合逻辑。"
+    ],
+    "reported_fields": [
+      "task_success",
+      "selected_function_ids",
+      "function_invocation_order",
+      "bound_arguments",
+      "intermediate_result_count",
+      "fallback_steps",
+      "model_calls",
+      "failed_subtask_id",
+      "final_facts"
+    ]
+  },
+  "historical_tasks": [
+    {
+      "id": "history_search_first_post",
+      "name": "搜索并定位第一条笔记",
+      "task": "在小红书搜索“大连美食”，打开搜索结果中的第一条笔记，并停留在笔记详情页。",
+      "semantic_capability": "search_and_open_first_post",
+      "expected_effect": "得到一个可复用的帖子定位能力：输入任意搜索词后进入第一条结果的详情页；不包含关注、点赞、收藏或评论。",
+      "success_facts": ["query=dalian_food", "first_result_open=true", "post_detail_visible=true"]
+    },
+    {
+      "id": "history_follow_author",
+      "name": "关注当前笔记作者",
+      "task": "在已经打开的一条小红书笔记中，进入发布者主页并关注该博主，然后返回笔记详情页。",
+      "semantic_capability": "follow_post_author",
+      "expected_effect": "得到一个以当前笔记为输入的多步能力：打开作者主页、关注作者、返回原笔记；不负责搜索帖子。",
+      "success_facts": ["author_profile_opened=true", "author_following=true", "original_post_restored=true"]
+    },
+    {
+      "id": "history_like_post",
+      "name": "点赞当前笔记",
+      "task": "在已经打开的一条小红书笔记中，确认当前笔记尚未点赞并完成点赞。",
+      "semantic_capability": "like_current_post",
+      "expected_effect": "得到一个以当前笔记详情页为输入的点赞能力；只有页面状态证明点赞成功后才结束。",
+      "success_facts": ["post_like=true"]
+    },
+    {
+      "id": "history_save_post",
+      "name": "收藏当前笔记",
+      "task": "在已经打开的一条小红书笔记中，点击收藏并确认收藏状态已经生效。",
+      "semantic_capability": "save_current_post",
+      "expected_effect": "得到一个以当前笔记详情页为输入的收藏能力；收藏状态变化是完成条件。",
+      "success_facts": ["post_saved=true"]
+    },
+    {
+      "id": "history_comment_post",
+      "name": "评论当前笔记",
+      "task": "在已经打开的一条小红书笔记中，输入评论“周末去试试”，提交评论，并确认评论已发布。",
+      "semantic_capability": "publish_comment_on_current_post",
+      "expected_effect": "得到一个以当前笔记为输入、以评论文本为参数的多步能力；输入和提交必须保持在同一语义段落。",
+      "parameters": ["comment_text"],
+      "success_facts": ["comment_text=周末去试试", "comment_published=true"]
+    }
+  ],
+  "complex_tasks": [
+    {
+      "id": "complex_search_and_follow",
+      "name": "搜索并关注美食博主",
+      "task": "在小红书搜索“大连美食”，打开第一条笔记，进入发布者主页并关注该博主，最后回到原笔记。",
+      "composes": ["search_and_open_first_post", "follow_post_author"],
+      "expected_effect": "正确先定位帖子，再把当前帖子交给关注作者能力；最终第一条笔记的发布者已关注，且页面回到原笔记。",
+      "success_facts": ["query=dalian_food", "first_result_open=true", "author_following=true", "original_post_restored=true"]
+    },
+    {
+      "id": "complex_search_and_like",
+      "name": "搜索并点赞美食笔记",
+      "task": "在小红书搜索“大连美食”，打开第一条笔记并点赞该笔记。",
+      "composes": ["search_and_open_first_post", "like_current_post"],
+      "expected_effect": "复用搜索定位能力后切换到点赞能力；最终点赞对象必须是本次“大连美食”搜索得到的第一条笔记。",
+      "success_facts": ["query=dalian_food", "first_result_open=true", "post_like=true"]
+    },
+    {
+      "id": "complex_search_save_comment",
+      "name": "搜索、收藏并评论旅行笔记",
+      "task": "在小红书搜索“大连海鲜”，打开第一条笔记，收藏该笔记，并评论“下周去打卡”，确认评论发布。",
+      "composes": ["search_and_open_first_post", "save_current_post", "publish_comment_on_current_post"],
+      "parameters": {"query": "大连海鲜", "comment_text": "下周去打卡"},
+      "expected_effect": "搜索参数和评论参数分别绑定到对应阶段；收藏和评论都作用于同一条第一结果笔记。",
+      "success_facts": ["query=dalian_seafood", "first_result_open=true", "post_saved=true", "comment_published=true"]
+    },
+    {
+      "id": "complex_three_queries_three_likes",
+      "name": "搜索三类信息并分别点赞",
+      "task": "依次在小红书搜索“大连美食”“大连住宿”“大连交通”，每次打开第一条笔记并点赞，然后回到搜索入口继续下一次搜索。",
+      "composes": ["search_and_open_first_post", "like_current_post"],
+      "parameters": {"queries": ["大连美食", "大连住宿", "大连交通"]},
+      "expected_effect": "同一组能力被按三组独立参数调用；三个点赞分别对应三次搜索得到的第一条笔记，不能只点赞最后一条。",
+      "success_facts": ["search_count=3", "like_count=3", "liked_queries=[大连美食,大连住宿,大连交通]"],
+      "failure_isolation": "第二次搜索失败时，只恢复“大连住宿”子任务，不重放已经完成的“大连美食”点赞。"
+    },
+    {
+      "id": "complex_food_stay_transport_actions",
+      "name": "美食、住宿、交通组合操作",
+      "task": "为大连旅行分别搜索“大连美食”“大连住宿”“大连交通”；每类信息打开第一条笔记，其中美食笔记点赞、住宿笔记收藏、交通笔记评论“出发前再确认”，最后返回首页。",
+      "composes": ["search_and_open_first_post", "like_current_post", "save_current_post", "publish_comment_on_current_post"],
+      "parameters": {"queries": ["大连美食", "大连住宿", "大连交通"], "comment_text": "出发前再确认"},
+      "expected_effect": "Planner 正确组合同一个搜索能力和三个不同的末端能力；每个动作只作用于对应类别的第一条笔记，最后完成首页返回。",
+      "success_facts": ["search_count=3", "food_post_like=true", "stay_post_saved=true", "transport_post_commented=true", "home_visible=true"],
+      "composition_check": "验证的是多 Function 的顺序、参数和中间页面上下文，不要求生成文字版旅游攻略。"
+    }
+  ]
+}

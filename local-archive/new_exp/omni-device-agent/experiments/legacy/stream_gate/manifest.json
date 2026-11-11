@@ -1,0 +1,926 @@
+{
+  "dataset": "Hcompany/trajectories",
+  "revision": "ede2a362c99ddba0d03f439c47a0b8fea6abae22",
+  "records": [
+    {
+      "id": "audiorecorderrecordaudio-0-e79c91ce",
+      "task": "AudioRecorderRecordAudio",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/000.webp",
+          "sha256": "ab464afb7e280836e832d789bdf9d2fdc5ae2c2d2cbfb4decb69a61f07c8b6f3"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/001.webp",
+          "sha256": "d4a16bc46775e2746a61690e4f746c312a8546a83c865a1a4e7e95b1b2ad5025"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/002.webp",
+          "sha256": "dfc44e323f4841edda0d1444299e6bc7f617791d8ec07770126888dcf21f726f"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/003.webp",
+          "sha256": "763a14e31a42b095d0bab24aaac4d6c3cfe3ecb991ae07afda03d87da3ff15f2"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/004.webp",
+          "sha256": "b7534c3610e5231ab5ec4e1aff6b5cbcc34dbcfb1eb9395e9ca0d52693f60648"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/005.webp",
+          "sha256": "bca00f8620128741c860e52fbd4f93e2bfeee1448e8dfc5c147802402702f270"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/006.webp",
+          "sha256": "3ef97af78d0b8c98f321ac7c2d032a2272c70070bdb9eff16d6ac3bfbdcda2db"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/007.webp",
+          "sha256": "792255409a3f3af4440de57fa76458b715d6896cd3776e4f6833bf78eb51e5fe"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/008.webp",
+          "sha256": "5ff2ff706bafd62b8d5afb8ae9f33fbe5df4f93ae691f40110e0e2999f739a19"
+        },
+        {
+          "source": "img/audiorecorderrecordaudio-0-e79c91ce/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudio-0-e79c91ce/009.webp",
+          "sha256": "da39cc7c2cfcf3bcb54cc3702156bebd9586cd54fdbae3f19d31dc1c7fd391ad"
+        }
+      ]
+    },
+    {
+      "id": "audiorecorderrecordaudiowithfilename-0-6e1a1532",
+      "task": "AudioRecorderRecordAudioWithFileName",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/001.webp",
+          "sha256": "09708bde51998e464ce03687f8af7f4b79d7f64111c07c7384a019307926c4ea"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/002.webp",
+          "sha256": "3b4d4244236ef09d0aee1f9b947cc3e4ed41c33afebb50655d75cb7cf9461035"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/003.webp",
+          "sha256": "c4535d61d439e018afc1bc5bb2cbf2f74cd010211b7d197a3f90f754795dd9d9"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/004.webp",
+          "sha256": "4b82996625c07eb3b1820b591a8c813c9015769e6401ce5771beeb35a2a1a624"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/005.webp",
+          "sha256": "8de1e268ccc423c09b2a2010028597985db47a6024eda22412ab4fe08fe2e688"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/006.webp",
+          "sha256": "880c2ed2e51a2f28566d69c0d012accb7af336f69c44bd49484a6da80ef8b5ea"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/007.webp",
+          "sha256": "0ad0bff71e9db1079a18c08425027fd55fed3b482fdb3723298726835a152afd"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/008.webp",
+          "sha256": "5ae282fe295e817e3d417fe3c10a184853c4be7b03d29d3fbe37314f102245ab"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/009.webp",
+          "sha256": "e4fb58ae612928c81a91c13c675e96c45bdd6306c51b178cb8e67b53e8ef8241"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/010.webp",
+          "sha256": "723a8d40598e12894360809523ebdaefcb8998fc909f73cb62fcc31b9193a1a8"
+        },
+        {
+          "source": "img/audiorecorderrecordaudiowithfilename-0-6e1a1532/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/audiorecorderrecordaudiowithfilename-0-6e1a1532/011.webp",
+          "sha256": "65aee9e45a7e5b544b84563ea54c35020e57be86324640b37287451395972ced"
+        }
+      ]
+    },
+    {
+      "id": "cameratakephoto-0-939d7959",
+      "task": "CameraTakePhoto",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/cameratakephoto-0-939d7959/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakephoto-0-939d7959/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/cameratakephoto-0-939d7959/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakephoto-0-939d7959/001.webp",
+          "sha256": "cc3e9be66eaa8eac6e398f01a244b619aab587389b68969958ddfd73dc8275cd"
+        },
+        {
+          "source": "img/cameratakephoto-0-939d7959/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakephoto-0-939d7959/002.webp",
+          "sha256": "8b13a6e0b49f1d974e5a6c70d4e95d4e37a3d5371dd28c66a54b2c163aa36c93"
+        },
+        {
+          "source": "img/cameratakephoto-0-939d7959/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakephoto-0-939d7959/003.webp",
+          "sha256": "4ab588ad8a24a402621d8ebe92f8122cb43b5efaa730775e932afe24d6508eae"
+        },
+        {
+          "source": "img/cameratakephoto-0-939d7959/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakephoto-0-939d7959/004.webp",
+          "sha256": "606244d9e6b852e0ce7eeef8c3a0a72a2e9bc6b998761ec930a6da9184f93a4e"
+        }
+      ]
+    },
+    {
+      "id": "cameratakevideo-0-ad545e95",
+      "task": "CameraTakeVideo",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/000.webp",
+          "sha256": "ab464afb7e280836e832d789bdf9d2fdc5ae2c2d2cbfb4decb69a61f07c8b6f3"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/001.webp",
+          "sha256": "1621da2d70a9a861a48ce00df379a86a83c8f7d08f024078a6d904ffeabdbad2"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/002.webp",
+          "sha256": "41739c4c847252c1f29be0e1869f3e0f5898e893d34c45ff19347fd79007f431"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/003.webp",
+          "sha256": "b1fa63818c0a16b697257284dbc1445571cee4a7c53ee62eae8986b74a838d04"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/004.webp",
+          "sha256": "f814298198ff00ec307594c350a195da4a7c95b0cc8f514a7ea6bacbb5b37083"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/005.webp",
+          "sha256": "6ebdf0b6f1ae86b89f3796c756a5f0519efd9c1524baef42a4099802a4c5b01d"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/006.webp",
+          "sha256": "0417f7ef19e747b01952c833da747c083bb05ded66bc8d3c764d033fa205e10a"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/007.webp",
+          "sha256": "556823c0908984a5da6f611b010acecb255bb4801895e51f1f23d2a94863e48c"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/008.webp",
+          "sha256": "56ab2b55fcfff7f13fa1bf98df49af0c64072b151afaa56b9d7f8cf1ef63b63e"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/009.webp",
+          "sha256": "26069401a5c31ec45d8caba3f1419f4c4f1aade8b9123185654d12e5f03ec823"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/010.webp",
+          "sha256": "2236cbf1299d1d90bc892c27c80ba2d6adc56e3a780bbc5c6fd7d33b7299e92d"
+        },
+        {
+          "source": "img/cameratakevideo-0-ad545e95/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/cameratakevideo-0-ad545e95/011.webp",
+          "sha256": "92fb5d007773debd9c07f3558c6f8d8522d0edeb4dd237a3f69e055aacc15448"
+        }
+      ]
+    },
+    {
+      "id": "clockstopwatchpausedverify-0-7347b71d",
+      "task": "ClockStopWatchPausedVerify",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/clockstopwatchpausedverify-0-7347b71d/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchpausedverify-0-7347b71d/000.webp",
+          "sha256": "a0eaee2d10a7ff973d08a1b21fef70d94ddea8fe459d49d923aeee0093ddce36"
+        },
+        {
+          "source": "img/clockstopwatchpausedverify-0-7347b71d/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchpausedverify-0-7347b71d/001.webp",
+          "sha256": "f4e1599acb958c007ece30ade1a10a212aeeca73919f4c49655f3cfbd1b92a35"
+        },
+        {
+          "source": "img/clockstopwatchpausedverify-0-7347b71d/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchpausedverify-0-7347b71d/002.webp",
+          "sha256": "90b8189f6de59dc67d05839c52576efaa94701f6c7098f7cf287f9f45aeb0077"
+        },
+        {
+          "source": "img/clockstopwatchpausedverify-0-7347b71d/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchpausedverify-0-7347b71d/003.webp",
+          "sha256": "5230b1b605c2cde4217ece962af1c64294405f51248a6a0bc0110cfdf3687222"
+        },
+        {
+          "source": "img/clockstopwatchpausedverify-0-7347b71d/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchpausedverify-0-7347b71d/004.webp",
+          "sha256": "623a098b5a7901d869541cca2ab43690e719ad5ad711387ae4fa8a8fe1a44526"
+        }
+      ]
+    },
+    {
+      "id": "clockstopwatchrunning-0-c3ae5111",
+      "task": "ClockStopWatchRunning",
+      "split": "dev",
+      "frames": [
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/000.webp",
+          "sha256": "d1ecd4f294843edabfa4633fd4972fc9d423fdf7c7ad196343346b5e09c05f9d"
+        },
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/001.webp",
+          "sha256": "bc4e3e31f2a900bbf6e5d53077f0cf1a60a53c03c528e62e7f740b4e1b776699"
+        },
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/002.webp",
+          "sha256": "c158bdf6b470e96ba1b5701af77d633c9236593728d0eac251d02da45550e844"
+        },
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/003.webp",
+          "sha256": "a3b70dbde66ff2851969e16ef63bf1f33ec5ace91e7588dffc269e8ac67150a7"
+        },
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/004.webp",
+          "sha256": "f07ba3cf831bb65f3aea261dc7ab61946182f18fff3a40b6c00edccdad047d0c"
+        },
+        {
+          "source": "img/clockstopwatchrunning-0-c3ae5111/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clockstopwatchrunning-0-c3ae5111/005.webp",
+          "sha256": "1737af81fdf1997e5bc7803ea1d8015f542d2e4604c2d715a9b239a2df2a0372"
+        }
+      ]
+    },
+    {
+      "id": "clocktimerentry-0-0a8e4277",
+      "task": "ClockTimerEntry",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/001.webp",
+          "sha256": "92ab05ad74a16da51f90010213549b6b0b3fd6249ba1309e374beba08154a9e7"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/002.webp",
+          "sha256": "9aea2da59fcb3e315200b7ccce974fff3499a7399d9b7f88c172e2e10172eaf5"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/003.webp",
+          "sha256": "e2783a127c49a34605f0bd5389aca1ec7fa7440f33416615433f6c33c4af64fc"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/004.webp",
+          "sha256": "a77ae9864abdb31d96b625a5b371807d9466b0f792f46f423f1d2c1ef1fd1b72"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/005.webp",
+          "sha256": "c756d8cafb70bd3f7a7daddcb594248db26e630ac68537f754c8192b2bb9201c"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/006.webp",
+          "sha256": "1c5b0af53f20ac50852fd8dd9005128a9e9b9b0959460f2872c6a1f53b3421b2"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/007.webp",
+          "sha256": "19fa81c57bfdfd9deb309abac7643b702ac213d1080092073cc82d995063778e"
+        },
+        {
+          "source": "img/clocktimerentry-0-0a8e4277/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/clocktimerentry-0-0a8e4277/008.webp",
+          "sha256": "fec153524b482967989b1ae48140a6c88ac0cdc57f906b7bfbbdfa7859199b91"
+        }
+      ]
+    },
+    {
+      "id": "contactsaddcontact-0-0b294190",
+      "task": "ContactsAddContact",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/001.webp",
+          "sha256": "9c072015ada06a757fd3a1e7afc8c17dbcf3979364af0340b9b4ec2fbcb2aee7"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/002.webp",
+          "sha256": "a2fa1945105b160a6ede964bd26b2e1e906cf98544ce7d878df5d82a0903143c"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/003.webp",
+          "sha256": "9c9a92bfaff57c19e5c8d8f074f58e2479c010ca908dea1c08266b6aae075da2"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/004.webp",
+          "sha256": "6326d3ce8d1e10c1330e3a074109daf0316f282246ba2c9b54b386407930b265"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/005.webp",
+          "sha256": "1f04eb4ea21fd12c859f8e7100f5b7a1aad319c41e57711e39f8d76abf8ac8fb"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/006.webp",
+          "sha256": "00459493870aa16d5dfa8a63856346f3865c4b26054233db0d8daa32f4855f94"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/007.webp",
+          "sha256": "c5a3f4376ce9d252ed5a0e06fd2167d519cf83ece2cab22c54ede5df226f3e2f"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/008.webp",
+          "sha256": "f32080193ea1955d444200d1b4336d3e913a704248d35f77e61064d9e52f7fe5"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/009.webp",
+          "sha256": "d7ad2eca9552f29b750d33bdcf6e6f494f725aedd221d593ba130035168ea29f"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/010.webp",
+          "sha256": "050500a5376027e1ecfe47c1b48171f797d8eddbc49c5321e939e8826628d2a2"
+        },
+        {
+          "source": "img/contactsaddcontact-0-0b294190/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsaddcontact-0-0b294190/011.webp",
+          "sha256": "7bf20e7c4f8f3a9f052d460995ef3c8a9e64a4bca102d5dbeabc75bed4aab379"
+        }
+      ]
+    },
+    {
+      "id": "contactsnewcontactdraft-0-18a5edda",
+      "task": "ContactsNewContactDraft",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/001.webp",
+          "sha256": "b7959393077067b7f06c9dd5aec40ab39078a8e79e28a2c36c88521bd4c10cf4"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/002.webp",
+          "sha256": "5e8b9b72f38eb2bd540a2fa38c8c49ca135e664bb82e59860340cd2e94a1d9b9"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/003.webp",
+          "sha256": "064254da87387f07981845f8e99411bd0f6e6a34c2ab6eaa846905a266853495"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/004.webp",
+          "sha256": "beb829a74450b3c89a6f6cf5a3b9595f66175572640e36e3100c5d8a19998bed"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/005.webp",
+          "sha256": "ae5b5962d6ef2c0aff5e5179460825dcafa7690c6a881afdf2ad392a505199a5"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/006.webp",
+          "sha256": "1f04eb4ea21fd12c859f8e7100f5b7a1aad319c41e57711e39f8d76abf8ac8fb"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/007.webp",
+          "sha256": "a1dd08bb7f11e7362b97c7f863186901d2395b137f9a0c7ac61cd510ea176b4c"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/008.webp",
+          "sha256": "45deb38c5dc8e7b92c258c525c44341bc7bc30de84db09f8519b23879525fba7"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/009.webp",
+          "sha256": "02e3c483187b5d65923afb490fb4beb362f21016bedcd38afae7249f127933d3"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/010.webp",
+          "sha256": "67b4824ce4a902f5c743a638fea72e415cab49dfd56995cd06b834f9c9ec8de7"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/011.webp",
+          "sha256": "c6f9dc8ea017d8fdcdf550217fac1b883e5694bbf65d62686bdf4b53ad8f0767"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_013.webp",
+          "step": 12,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/012.webp",
+          "sha256": "d8e2adab18b2068334abe5eb0d478470e688788464012b6557da0b4d323e1295"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_014.webp",
+          "step": 13,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/013.webp",
+          "sha256": "48fa70de3836c36a09282ce13ec7a238244839d666d7460871298e374a44b8b1"
+        },
+        {
+          "source": "img/contactsnewcontactdraft-0-18a5edda/image_015.webp",
+          "step": 14,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/contactsnewcontactdraft-0-18a5edda/014.webp",
+          "sha256": "b2b8a197e3ae8ca684e9cba32f11a614c2d7d20bdcefe4d8e3242c2ed438b8c4"
+        }
+      ]
+    },
+    {
+      "id": "expenseaddsingle-0-ca36846c",
+      "task": "ExpenseAddSingle",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/001.webp",
+          "sha256": "f913a0e6a7746e73e533f9e01596c207f268a69a76ed0b9d2a4f610b6746019b"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/002.webp",
+          "sha256": "c144f6a0e47749742d6ceabfe6086529c1bc96a4d253d69fb9edfdcb3b395d02"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/003.webp",
+          "sha256": "2725cc0c40847b99777b0ce4f7926a4aa540cd13800b27c51c57c0c52a7186f5"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/004.webp",
+          "sha256": "d3e73934d8de0f22c939352967642523e82c412f9b9f1ed5724986403187f6a7"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/005.webp",
+          "sha256": "3b76e228deecab9d79d61eca687af22468a157564b1367c091d990f21098eddd"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/006.webp",
+          "sha256": "35c163fff8fc2b467329afc7abec2af130f1ab8be56dbacfafe497d26a92cc89"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/007.webp",
+          "sha256": "7b4b36b08e16393b3159f64525bfe1ee39ff14f064ef95b3710731df2ee7543d"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/008.webp",
+          "sha256": "3355ad59b992986344e8902f8fe063be0f7c9be8859c8d6f2bda3cc4a3f944f3"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/009.webp",
+          "sha256": "98f8718c8a4d1a2947e973c9a76aef3aed92839bd741cb7b66a213b245fbd6a2"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/010.webp",
+          "sha256": "69eef71a005916772c9b5b759a715c3bf63bdd155aafb44f4b56235098bcb964"
+        },
+        {
+          "source": "img/expenseaddsingle-0-ca36846c/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expenseaddsingle-0-ca36846c/011.webp",
+          "sha256": "120672d31881fe65e6151800a8ce6a504b201f56ebdbec364a26b7fced5b7200"
+        }
+      ]
+    },
+    {
+      "id": "expensedeleteduplicates-0-bbbdb39a",
+      "task": "ExpenseDeleteDuplicates",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/000.webp",
+          "sha256": "b7e7d479a4d8234ab24056a8cb21e0683e17208293a36fb8ddc3b5788541df0c"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/001.webp",
+          "sha256": "0f457eb043fcb47b17520a6603fc43b1ce41b82c74a5d3aa1183eaf89532b8a4"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/002.webp",
+          "sha256": "1e0b5e1f9a1262b603898f737b3d095ca1b1590a38f74eeda3da242bb36d80eb"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/003.webp",
+          "sha256": "04f7204ea8c206a8e9a00b2cd694f9c2d7aee75d4e8bdd51024d2aca41e5c491"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/004.webp",
+          "sha256": "91361d8c4cf6cbb130b8b388a6ce2f82410ca529ef11034ec0df16af612aee45"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/005.webp",
+          "sha256": "8ed180545f0a7e5a161256e0fa82349b37b0afbc05fd60657d88a5d7e6d672cf"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/006.webp",
+          "sha256": "fa899b60be0cd59d6869e5a10152c971991a4baddfc9a05753a70dce10e64657"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/007.webp",
+          "sha256": "78f86f109421ac20039cd9712e4a01766b3e8c8a0cd8177e92d0992ae1135e40"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/008.webp",
+          "sha256": "b399503fc557369385b535e460bb705a680b94461850bc6246a2216473ed2836"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/009.webp",
+          "sha256": "86570765fa3df097ab8084b5c7d32c73c97b7729f9a4740703cdf4c98e72cc85"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/010.webp",
+          "sha256": "5ebf7c16c3b799894d0ae90a8b2402372019ee6be908e4b9ae5b7b4f6e9a9664"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/011.webp",
+          "sha256": "db8775c765b8d39c0f5fc1c8ca97925ae64c6001a051fcd2c4ed2c4632ba0ee0"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_013.webp",
+          "step": 12,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/012.webp",
+          "sha256": "860df22278bc48169f9fcdc44745f424c3fb68c91d6327d6e8c965a6e90fe1da"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_014.webp",
+          "step": 13,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/013.webp",
+          "sha256": "2b37022c4ea7d006361d6ca876759a64102c38f98e7d5e753f4baf07d682b746"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_015.webp",
+          "step": 14,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/014.webp",
+          "sha256": "97e9ca993fd44c18fdc446bf510b6424b54c634e73deaaadd92ede6646d80756"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_016.webp",
+          "step": 15,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/015.webp",
+          "sha256": "928b0417026a0ee22328ea491cd72f2c3d96b2698d912a17775f788102b4549f"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_017.webp",
+          "step": 16,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/016.webp",
+          "sha256": "79bbc1c293c24e9a8f6b0ec5edccbada72e3edae760b7c791c386ad274263c5b"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_018.webp",
+          "step": 17,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/017.webp",
+          "sha256": "b80363c878dcdf861db1619f507ed2f88cb3fd5ed81a4259615e22be91f93919"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_019.webp",
+          "step": 18,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/018.webp",
+          "sha256": "c286947f6d1f209c35c25676f81990aef46c318c5818c48b0db66fcebe0170b0"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_020.webp",
+          "step": 19,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/019.webp",
+          "sha256": "baee0c3364d9b9703ab436b87719a0c7ee8463647f7a60d794c48bb4f2591430"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_021.webp",
+          "step": 20,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/020.webp",
+          "sha256": "1d21804509200fbcc795d752f1871ca47a40c23710b7bbca9152847f3789b23d"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_022.webp",
+          "step": 21,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/021.webp",
+          "sha256": "5bd5b5bf9934ff1ea328b167f0d3e7d7ad9937f9f2f1117840d2dde100ced759"
+        },
+        {
+          "source": "img/expensedeleteduplicates-0-bbbdb39a/image_023.webp",
+          "step": 22,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates-0-bbbdb39a/022.webp",
+          "sha256": "777166dabfbf1f80a81496ded99042e1de781f270e33b91b8c9830b6e23df9ef"
+        }
+      ]
+    },
+    {
+      "id": "expensedeleteduplicates2-0-d36074ed",
+      "task": "ExpenseDeleteDuplicates2",
+      "split": "test",
+      "frames": [
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_001.webp",
+          "step": 0,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/000.webp",
+          "sha256": "d1ecd4f294843edabfa4633fd4972fc9d423fdf7c7ad196343346b5e09c05f9d"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_002.webp",
+          "step": 1,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/001.webp",
+          "sha256": "d918d1e11033a0c990624a78be11dee46728fdde6801ed25328f51545ef65ec0"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_003.webp",
+          "step": 2,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/002.webp",
+          "sha256": "586cacce9f383f737674ed4182f8837f9ccdaf84e9498cd206345a6896b100d9"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_004.webp",
+          "step": 3,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/003.webp",
+          "sha256": "f3e31b494c8d22a20bd915fd46fc2949e9c62dd9463a883dd3c18f9cb1349438"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_005.webp",
+          "step": 4,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/004.webp",
+          "sha256": "5b53435fa8bf57371b57b09920ea75538cdcaa69feca7e9ccd5b43b25eb1971d"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_006.webp",
+          "step": 5,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/005.webp",
+          "sha256": "98225b64135c9a315f302b63cbe5be594295dbe9054606a83d3b99b4e4393a29"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_007.webp",
+          "step": 6,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/006.webp",
+          "sha256": "4795712e274c0fa6f37361d72e8ee40d63526cc35ad27e7d79c433afc29b6fbf"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_008.webp",
+          "step": 7,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/007.webp",
+          "sha256": "b7bdee58ffc831ad8220a6b051f3804088c76d83efbb02d3e77f88fb5a3d6c26"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_009.webp",
+          "step": 8,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/008.webp",
+          "sha256": "f343d5d286b56b76ee132f0fde19ddd216181e36e8cc678a3069a8493752c8df"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_010.webp",
+          "step": 9,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/009.webp",
+          "sha256": "30d9d717129b9de2330695aae10d7d3e0be40b8110cd4a86d5574313c0831d0a"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_011.webp",
+          "step": 10,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/010.webp",
+          "sha256": "96d3b747c7848891264c243318be684c091808da57d2c83009597b7bbe616ace"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_012.webp",
+          "step": 11,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/011.webp",
+          "sha256": "80e3630ac114a290f185f4bcf6f160652114029b2a2fd8ba890867bd7f1000de"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_013.webp",
+          "step": 12,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/012.webp",
+          "sha256": "ad6f83c63d3ac3f5300f8ea81ced2f85580847032bd748aa8c301623cbbadfae"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_014.webp",
+          "step": 13,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/013.webp",
+          "sha256": "b33329534a14c2d3ee343cfc999b288c6b2adb945ebccedf01e05927e5236377"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_015.webp",
+          "step": 14,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/014.webp",
+          "sha256": "d51dbe831d3ff8bee66ca4c33554d93a031ec97f9bd967de3f714fc87b789ba7"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_016.webp",
+          "step": 15,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/015.webp",
+          "sha256": "dd6940751d8b02fc7e21683268c879f8d39ffad90c57eabb0ee4cfb10cdb4cc1"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_017.webp",
+          "step": 16,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/016.webp",
+          "sha256": "f10ce81fc126f6f864bbb9fe567d2cc026cd76b478ac59850bab61fedc764c06"
+        },
+        {
+          "source": "img/expensedeleteduplicates2-0-d36074ed/image_018.webp",
+          "step": 17,
+          "path": "/Users/wuzewen/.agent-reach/research/stream-gate-pilot/expensedeleteduplicates2-0-d36074ed/017.webp",
+          "sha256": "3b14a5e1d323e3409c8f3a82245d224baa43ad496a8f5aae965f9ebf91587da2"
+        }
+      ]
+    }
+  ],
+  "selection": "first 12 distinct task names with 5-24 steps in published AndroidWorld index",
+  "index_sha256": "a8525624049894e1aeb220790ed8c013067a99f2ffdbcb938d5a4cef91f0cf53"
+}

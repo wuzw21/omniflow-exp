@@ -1,0 +1,59 @@
+{
+  "schema_version": "omniflow.remote-transport.v1",
+  "measured_at": "2026-08-25T17:40:40.868147+00:00",
+  "remote": "4090",
+  "transport": "persistent encrypted SSH tunnel",
+  "cycles": 30,
+  "payload_provenance": {
+    "model": "OmniTransfer V10",
+    "source": "B-MoCA calculator encoded page",
+    "raw_screenshot_uploaded": false,
+    "raw_xml_uploaded": false,
+    "remote_request_retained": false
+  },
+  "measurements": [
+    {
+      "name": "control_1_byte",
+      "bytes": 1,
+      "requests": 30,
+      "rtt_p50_ms": 293.68,
+      "rtt_p95_ms": 355.48,
+      "rtt_mean_ms": 285.73,
+      "server_read_hash_p50_ms": 0.02,
+      "request_retained": false
+    },
+    {
+      "name": "page_vector_4_kib",
+      "bytes": 4096,
+      "requests": 30,
+      "rtt_p50_ms": 287.57,
+      "rtt_p95_ms": 395.96,
+      "rtt_mean_ms": 298.3,
+      "server_read_hash_p50_ms": 0.03,
+      "paired_increment_over_control_p50_ms": -0.59,
+      "request_retained": false
+    },
+    {
+      "name": "transfer_representation_fp16",
+      "bytes": 55197,
+      "requests": 30,
+      "rtt_p50_ms": 300.01,
+      "rtt_p95_ms": 370.24,
+      "rtt_mean_ms": 302.71,
+      "server_read_hash_p50_ms": 9.015,
+      "paired_increment_over_control_p50_ms": 13.27,
+      "request_retained": false
+    },
+    {
+      "name": "transfer_representation_fp32",
+      "bytes": 106925,
+      "requests": 30,
+      "rtt_p50_ms": 323.48,
+      "rtt_p95_ms": 385.49,
+      "rtt_mean_ms": 329.85,
+      "server_read_hash_p50_ms": 33.322,
+      "paired_increment_over_control_p50_ms": 52.35,
+      "request_retained": false
+    }
+  ]
+}

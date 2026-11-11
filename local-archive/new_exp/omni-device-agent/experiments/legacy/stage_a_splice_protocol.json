@@ -1,0 +1,34 @@
+{
+  "status": "Frozen before exact-splice diagnostic; exploratory follow-up to eight-question factorial",
+  "seed": 20261024,
+  "limit": 8,
+  "question_ids": [
+    "5a7780e855429949eeb29e9f",
+    "5a87defa5542993e715abfec",
+    "5ab915ad55429919ba4e239c",
+    "5a8324815542990548d0b184",
+    "5ac1a6a85542994ab5c67db6",
+    "5a83f07455429933447460be",
+    "5a863ff0554299211dda2ac6",
+    "5a89d36e554299515336132a"
+  ],
+  "conditions": [
+    "P2"
+  ],
+  "starts": [
+    0,
+    4,
+    8,
+    12,
+    16,
+    20,
+    24
+  ],
+  "width": 4,
+  "max_new_tokens": 64,
+  "selection": "First eight development IDs in existing manifest, including prior pilot; no outcome filtering. All seven original intervals. No held-out access or interval selection.",
+  "target": "Identical Bt prefix + X + Q for As/At/Bs/Bt cache interventions. Native source history is a separate control.",
+  "oracles": "At/Bs/Bt entries come from full counterfactual forwards. Not learned mappings or deployed algorithms. Layer-zero Bt is target embedding lookup.",
+  "decision": "Check exact splice versus previous recomputed joint oracle and the two outside regions. No equal-budget claim for replacing extra layers. No interval selection or learned mechanism.",
+  "interventions": "For every four-layer interval, use exact Bt KV inside, and independently As/Bt outside at lower/higher layers. Always Bt token prefix; no decoder interval recomputation. Reuse scores only for exactly identical layer provenance masks."
+}

@@ -1,0 +1,33 @@
+\begin{abstract}
+    abs
+Modern mobile UIs change between users, devices, and sessions: layouts
+re-flow, stable selectors are often absent, and content is personalized.
+LLM-based GUI agents handle this dynamism by re-reasoning at every
+step---effective on open-ended tasks, but expensive on the recurring
+routines that dominate real device use.  Each step in their reason-act
+loop may require a fresh model decision, incurring on-device latency,
+memory, power, and thermal cost, or expanding the privacy boundary when
+screens are shipped to a cloud planner.  Trajectory reuse is the natural
+serving target, but existing record-and-replay, memory-retrieval, and
+program-guided systems still fall back to online repair the moment
+those same dynamic conditions invalidate a stored action.
+
+We present \textbf{OmniFlow}, a plug-in cache for mobile GUI agents
+whose central design is to \emph{check and remap every recalled action
+against the live screen before it executes}, so historical executions
+become reusable Functions without requiring identical layouts, selectors,
+or coordinates at reuse time.  \wzw{}{\textbf{Omni} writes successful
+run logs into a Function Store whose assets are API-like
+\texttt{Functions}; the store induces sparse UDEG nodes as a
+privacy-safe state index that keeps raw XML, screenshots, and personal
+text outside the shared cache boundary.}
+\wzw{}{Recall returns compact executable candidates rather than full trajectories.}
+\textbf{Flow} drives a recalled Function on the live device through an
+observe-check-transfer-act loop that checks each action against the current
+state, remaps the target, executes when safe, and falls back otherwise.  Matched Functions therefore skip
+online reasoning entirely, while uncertain states remain under the host
+agent through a structured handoff.
+
+On androidworld benchmarks, OmniFlow enables 2.3$\times$ reuse of successful trajectories, improving task success rates by 5.4\% and reducing latency by 25\% on average, with up to 40\% improvement on challenging dynamic tasks.  User studies show that OmniFlow's reuse leads to smoother interactions and higher satisfaction, especially on tasks with dynamic content.  By enabling robust trajectory reuse, OmniFlow significantly enhances the efficiency and user experience of LLM-based GUI agents in the face of mobile UI dynamism.
+
+\end{abstract}

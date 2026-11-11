@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "torch": "2.13.0",
+  "device": "mps",
+  "chip": "Apple M4",
+  "sdpa_3d_max_absolute_error_vs_cpu_fp32": 0.007807016372680664,
+  "scatter_reduce_int64_output": [
+    0,
+    0,
+    2,
+    3
+  ]
+}

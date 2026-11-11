@@ -1,0 +1,38 @@
+{
+  "repo": "HazyResearch/minions",
+  "commit": "a87d0ee9063485ae2c065679c0471fd559aa5f4c",
+  "files": [
+    {
+      "path": "minions/minion.py",
+      "git_blob_sha1": "30f49ab6b4c918e712f4d2697757b81f4fc5d012"
+    },
+    {
+      "path": "minions/usage.py",
+      "git_blob_sha1": "45785f3e14134f96c3074e74effaa37785ada5bb"
+    },
+    {
+      "path": "minions/prompts/minion.py",
+      "git_blob_sha1": "eb69d1a86ffa6a17b2cb40997f9ecb4e8fb64236"
+    },
+    {
+      "path": "minions/prompts/minion_mcp.py",
+      "git_blob_sha1": "64a4a9f8d8d6c11433c47342a249f39f531684b1"
+    },
+    {
+      "path": "minions/prompts/multi_turn.py",
+      "git_blob_sha1": "3e05c1384746d550e32b44cf2c15ae2423a8e083"
+    },
+    {
+      "path": "minions/examples/code/task.json",
+      "git_blob_sha1": "876977a099ac992a6dd5018d893fd753ba0343d0"
+    },
+    {
+      "path": "minions/examples/code/sample.txt",
+      "git_blob_sha1": "ab36080317189f6ea1c2a07e250691950be945ed"
+    },
+    {
+      "path": "LICENSE",
+      "git_blob_sha1": "12a668a1f43ed8dd3478af849454682b1c89fade"
+    }
+  ]
+}

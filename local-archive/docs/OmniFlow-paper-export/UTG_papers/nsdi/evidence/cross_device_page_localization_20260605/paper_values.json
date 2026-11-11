@@ -1,0 +1,32 @@
+{
+  "schema_version": "cross_device_page_localization_paper_values_v1",
+  "paper_scope": "manual reviewed subset; remaining unreviewed pairs are duplicate data and excluded by user decision",
+  "apps": 23,
+  "source_queries_total": 255,
+  "candidate_nodes": 525,
+  "usable_nodes": 448,
+  "candidate_edges": 623,
+  "selected_edges": 410,
+  "reviewed_pairs": 94,
+  "invalid_or_duplicate_pairs": 21,
+  "valid_evaluated_pairs": 73,
+  "ours_top1_correct": 72,
+  "ours_top3_contains": 73,
+  "ours_top1_accuracy_percent": 98.63,
+  "ours_top3_recall_percent": 100.0,
+  "page_vector_encode_p50_ms": 3.54,
+  "page_vector_encode_p95_ms": 11.03,
+  "udeg_lookup_p50_ms": 0.0035,
+  "udeg_lookup_p95_ms": 0.0066,
+  "recalled_payload_mean_kb": 5.27,
+  "recalled_payload_p50_kb": 5.44,
+  "recalled_payload_p95_kb": 5.95,
+  "source_files": [
+    "ours_annotations_summary.json",
+    "ours_annotations_export.csv",
+    "ours_annotations_export.json",
+    "review.annotations.json",
+    "latency_summary.json",
+    "review.payload.json"
+  ]
+}

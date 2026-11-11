@@ -1,0 +1,57 @@
+{
+  "schema_version": "omniflow.function_lookup_microbench.v1",
+  "created_at": "2026-06-11T17:12:00+08:00",
+  "purpose": "Measure local UTGRuntime.recall(goal) Function recall lookup cost for one core AndroidWorld OpenApp runlog-derived Function store; no device action, VLM call, or replay execution is included.",
+  "code_repo": "/Users/wuzewen/Projects/Omni/clone/OmniFlow",
+  "code_commit": "52e13bf806d833c39786d03795def182f7ba5c62",
+  "utg_store": "/Users/wuzewen/Projects/Omni/OmniFlow/runtime/androidworld_omniflow_function_replay_5556_20260610T010500/01_OpenAppTaskEval_OpenAppTaskEval_app_name_settings_1780797162/utg_store.json",
+  "source_task": "AndroidWorld OpenAppTaskEval / settings",
+  "goal": "Open the settings app. Clear any pop-ups that may appear by granting all permissions that are required.",
+  "iterations": 1000,
+  "function_count": 1,
+  "node_count": 0,
+  "cold_runtime_init_ms": 13.169375,
+  "warmup_result": {
+    "decision": "hit",
+    "reason": "hash_hit",
+    "function_id": "oob_fn_androidworld_scripted_trajectory_80797163",
+    "score": 1.0,
+    "latency_ms_field": 0.01287501072511077
+  },
+  "compile_latency_ms": {
+    "min": 0.004292,
+    "p50": 0.0045,
+    "p90": 0.004667,
+    "p95": 0.00475,
+    "p99": 0.00575041,
+    "max": 0.010625,
+    "mean": 0.0045741160000000005,
+    "stdev": 0.0003852271103440151
+  },
+  "result_counts": [
+    {
+      "decision": "hit",
+      "reason": "hash_hit",
+      "function_id": "oob_fn_androidworld_scripted_trajectory_80797163",
+      "count": 1000
+    }
+  ],
+  "environment": {
+    "python": "3.13.5 | packaged by Anaconda, Inc. | (main, Jun 12 2025, 11:23:37) [Clang 14.0.6 ]",
+    "platform": "macOS-15.5-arm64-arm-64bit-Mach-O"
+  },
+  "interpretation": "Function recall lookup is sub-millisecond in this core store; the 11.745 s replay average is dominated by device action/observation/verification, not lookup.",
+  "recall_latency_ms": {
+    "min": 0.004292,
+    "p50": 0.0045,
+    "p90": 0.004667,
+    "p95": 0.00475,
+    "p99": 0.00575041,
+    "max": 0.010625,
+    "mean": 0.0045741160000000005,
+    "stdev": 0.0003852271103440151
+  },
+  "legacy_field_aliases": {
+    "compile_latency_ms": "recall_latency_ms"
+  }
+}

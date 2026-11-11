@@ -1,0 +1,32 @@
+{
+  "architectures": [
+    "VideoStreamingMemoryAgent"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "budget_size": 16,
+  "discard_semantic_weight": 0.2,
+  "discard_tau": 0.1,
+  "discard_threshold": 0.9,
+  "dtype": "bfloat16",
+  "encoder_path": "./pretrained/dinov3-vitb16-pretrain-lvd1689m",
+  "hidden_act": "silu",
+  "hidden_size": 1024,
+  "history_window_size": 256,
+  "intermediate_size": 2048,
+  "max_num_frames": 8192,
+  "model_type": "videostreaming_memory_agent",
+  "num_attention_heads": 16,
+  "replace_semantic_weight": 0.2,
+  "replace_tau": 0.1,
+  "rms_norm_eps": 1e-06,
+  "semantic_num_hidden_layers": 8,
+  "soft_label_temperature": 0.1,
+  "temporal_chunk_size": 512,
+  "temporal_dim": 64,
+  "temporal_num_hidden_layers": 2,
+  "temporal_rule_threshold": 1.0,
+  "temporal_uniformity_threshold": 1.0,
+  "transformers_version": "4.57.0",
+  "tune_weight": false
+}

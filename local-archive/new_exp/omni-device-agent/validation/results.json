@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-31",
+  "checks": [
+    {
+      "name": "snapshot",
+      "exit_code": 0,
+      "command": [
+        "python3",
+        "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/scripts/verify_snapshot.py"
+      ],
+      "cwd": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent",
+      "scope": "archive/recorded-result regression; not a new model experiment"
+    },
+    {
+      "name": "stream_gate",
+      "exit_code": 0,
+      "command": [
+        "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/edgecloud-research/.venv-latent/bin/python",
+        "-m",
+        "unittest",
+        "-v",
+        "test_stream_gate"
+      ],
+      "cwd": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/experiments/legacy",
+      "scope": "archive/recorded-result regression; not a new model experiment"
+    },
+    {
+      "name": "stage_a_final",
+      "exit_code": 0,
+      "command": [
+        "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/edgecloud-research/.venv-stage-a/bin/python",
+        "-m",
+        "unittest",
+        "-v",
+        "test_stage_a_full_p2_artifacts",
+        "test_merge_stage_a_factorial",
+        "test_stage_a_selection",
+        "test_stage_a_factorial"
+      ],
+      "cwd": "/Users/wuzewen/Desktop/\u4e2a\u4eba\u601d\u8003/omni-device-agent/experiments/legacy",
+      "scope": "archive/recorded-result regression; not a new model experiment"
+    }
+  ]
+}

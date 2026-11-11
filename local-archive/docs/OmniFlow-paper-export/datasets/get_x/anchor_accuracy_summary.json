@@ -1,0 +1,72 @@
+{
+  "schema_version": "get_x_action_anchor_accuracy.v1",
+  "generated_date": "2026-06-11",
+  "dataset": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/get_x_cases.json",
+  "case_count": 212,
+  "label_status": "silver_raw_step_aligned",
+  "note": "All cases are positive silver source/target point-action pairs; fallback counts as incorrect for case/projection accuracy.",
+  "methods": {
+    "fixed": {
+      "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/fixed_baseline_results.json",
+      "total": 212,
+      "mapped_or_valid": 212,
+      "failure_rate": 0.0,
+      "mean_ce": 243.4227791977834,
+      "median_ce": 0.0,
+      "p95_ce": 1130.8847200311798,
+      "ta_10": 0.5849056603773585,
+      "ta_25": 0.6084905660377359,
+      "ta_50": 0.6179245283018868,
+      "node_match_accuracy": 0.6415094339622641,
+      "projection_accuracy": 0.6415094339622641,
+      "case_accuracy": 0.6415094339622641,
+      "decision_accuracy": 1.0
+    },
+    "text_feature": {
+      "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/text_feature_baseline_results.json",
+      "total": 212,
+      "mapped_or_valid": 145,
+      "failure_rate": 0.3160377358490566,
+      "mean_ce": 168.61613053101877,
+      "median_ce": 0.5,
+      "p95_ce": 1179.5,
+      "ta_10": 0.7310344827586207,
+      "ta_25": 0.7379310344827587,
+      "ta_50": 0.7517241379310344,
+      "node_match_accuracy": 0.5188679245283019,
+      "projection_accuracy": 0.5188679245283019,
+      "case_accuracy": 0.5188679245283019,
+      "decision_accuracy": 0.6839622641509434
+    },
+    "omniflow_anchor": {
+      "result_path": "/Users/wuzewen/Projects/Omni/omniflow-paper-export/datasets/get_x/omniflow_anchor_results.json",
+      "total": 212,
+      "mapped_or_valid": 118,
+      "failure_rate": 0.44339622641509435,
+      "mean_ce": 114.84443489842002,
+      "median_ce": 0.0,
+      "p95_ce": 708.4412466817555,
+      "ta_10": 0.788135593220339,
+      "ta_25": 0.7966101694915254,
+      "ta_50": 0.7966101694915254,
+      "node_match_accuracy": 0.4481132075471698,
+      "projection_accuracy": 0.4481132075471698,
+      "case_accuracy": 0.4481132075471698,
+      "decision_accuracy": 0.5566037735849056,
+      "mapped_clicks": 118,
+      "mapped_click_precision": 0.8050847457627118,
+      "fallback_count": 94,
+      "fallback_reasons": {
+        "absent": 68,
+        "ambiguous": 14,
+        "occluded": 12
+      },
+      "fallback_modes": {
+        "absent_action_signature": 65,
+        "ambiguous_action_signature": 14,
+        "target_occluded": 12,
+        "weak_container_source_context_not_found": 3
+      }
+    }
+  }
+}

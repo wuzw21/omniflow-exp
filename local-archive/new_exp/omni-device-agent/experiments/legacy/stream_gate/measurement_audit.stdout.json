@@ -1,0 +1,46 @@
+[
+  {
+    "split": "test",
+    "kind": "all",
+    "param": 0,
+    "events": 296,
+    "hits": 296,
+    "recall": 1.0,
+    "calls": 89,
+    "frames": 89,
+    "call_fraction": 1.0
+  },
+  {
+    "split": "test",
+    "kind": "uniform",
+    "param": 2,
+    "events": 296,
+    "hits": 185,
+    "recall": 0.625,
+    "calls": 46,
+    "frames": 89,
+    "call_fraction": 0.5168539325842697
+  },
+  {
+    "split": "test",
+    "kind": "last",
+    "param": 0.01,
+    "events": 296,
+    "hits": 289,
+    "recall": 0.9763513513513513,
+    "calls": 73,
+    "frames": 89,
+    "call_fraction": 0.8202247191011236
+  },
+  {
+    "split": "test",
+    "kind": "memory",
+    "param": 0.01,
+    "events": 296,
+    "hits": 288,
+    "recall": 0.972972972972973,
+    "calls": 62,
+    "frames": 89,
+    "call_fraction": 0.6966292134831461
+  }
+]

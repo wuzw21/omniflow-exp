@@ -1,0 +1,5367 @@
+{
+  "status": "completed",
+  "mode": "frontend",
+  "cadence_seconds": 4,
+  "queries": [
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22,
+    24,
+    26,
+    28,
+    30,
+    32,
+    34,
+    36,
+    38,
+    40,
+    41,
+    42,
+    44,
+    46,
+    48,
+    50,
+    52,
+    54,
+    56,
+    58,
+    60,
+    62,
+    64,
+    66,
+    68,
+    70,
+    72,
+    74,
+    76,
+    78,
+    80,
+    82,
+    84,
+    86,
+    88,
+    90,
+    92,
+    94
+  ],
+  "pairs": 1,
+  "features_sha256": "03bfdb70285f1a6dc13887cc488b201eca1ad8423e3fe0c4edc1ef4efd8e40df",
+  "inputs_sha256": "6154a146105536798cd70d90dba3373eb3f121f45e84d2b4747134b8ccc6f63c",
+  "device": "mps",
+  "chip": "Apple M4",
+  "runs": [
+    {
+      "condition": "B",
+      "rep": -1,
+      "warmup": true,
+      "events": [
+        {
+          "blocks": 2,
+          "seconds": 4,
+          "visual_seconds": 1.7235698330041487,
+          "memory_seconds": 0.04655362499761395,
+          "retained_tokens": 240,
+          "state_bytes": 983040,
+          "vision_blocks": 2,
+          "memory_counts": {
+            "match_calls": 1,
+            "match_query_tokens": 120,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 426819584,
+            "physical_footprint_bytes": 3538225048,
+            "mps_allocated_bytes": 1399490816,
+            "mps_driver_bytes": 2435596288
+          },
+          "memory_peak": {
+            "rss_bytes": 440795136,
+            "physical_footprint_bytes": 3557771160,
+            "mps_allocated_bytes": 1391184640,
+            "mps_driver_bytes": 2445082624
+          }
+        },
+        {
+          "blocks": 4,
+          "seconds": 8,
+          "visual_seconds": 1.1501423329755198,
+          "memory_seconds": 0.027198041992960498,
+          "retained_tokens": 480,
+          "state_bytes": 1966080,
+          "vision_blocks": 4,
+          "memory_counts": {
+            "match_calls": 4,
+            "match_query_tokens": 480,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 446529536,
+            "physical_footprint_bytes": 3558983576,
+            "mps_allocated_bytes": 1398016512,
+            "mps_driver_bytes": 2445099008
+          },
+          "memory_peak": {
+            "rss_bytes": 452706304,
+            "physical_footprint_bytes": 3564685208,
+            "mps_allocated_bytes": 1392810240,
+            "mps_driver_bytes": 2445115392
+          }
+        },
+        {
+          "blocks": 6,
+          "seconds": 12,
+          "visual_seconds": 1.1628260829893406,
+          "memory_seconds": 0.10528258298290893,
+          "retained_tokens": 663,
+          "state_bytes": 2949120,
+          "vision_blocks": 6,
+          "memory_counts": {
+            "match_calls": 11,
+            "match_query_tokens": 1320,
+            "prune_frames": 2,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 458293248,
+            "physical_footprint_bytes": 3565864856,
+            "mps_allocated_bytes": 1399491072,
+            "mps_driver_bytes": 2445131776
+          },
+          "memory_peak": {
+            "rss_bytes": 469303296,
+            "physical_footprint_bytes": 3574761368,
+            "mps_allocated_bytes": 1402101248,
+            "mps_driver_bytes": 2445197312
+          }
+        },
+        {
+          "blocks": 8,
+          "seconds": 16,
+          "visual_seconds": 1.2828690829919651,
+          "memory_seconds": 0.16990783301298507,
+          "retained_tokens": 843,
+          "state_bytes": 3932160,
+          "vision_blocks": 8,
+          "memory_counts": {
+            "match_calls": 22,
+            "match_query_tokens": 2640,
+            "prune_frames": 6,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 471564288,
+            "physical_footprint_bytes": 3574761368,
+            "mps_allocated_bytes": 1405397248,
+            "mps_driver_bytes": 2445197312
+          },
+          "memory_peak": {
+            "rss_bytes": 475136000,
+            "physical_footprint_bytes": 3342485184,
+            "mps_allocated_bytes": 1405972480,
+            "mps_driver_bytes": 2445213696
+          }
+        },
+        {
+          "blocks": 10,
+          "seconds": 20,
+          "visual_seconds": 1.5163787089986727,
+          "memory_seconds": 0.31491637500585057,
+          "retained_tokens": 998,
+          "state_bytes": 4915200,
+          "vision_blocks": 10,
+          "memory_counts": {
+            "match_calls": 37,
+            "match_query_tokens": 4440,
+            "prune_frames": 12,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 428916736,
+            "physical_footprint_bytes": 3079390648,
+            "mps_allocated_bytes": 1406910208,
+            "mps_driver_bytes": 2445213696
+          },
+          "memory_peak": {
+            "rss_bytes": 434896896,
+            "physical_footprint_bytes": 3093415376,
+            "mps_allocated_bytes": 1409389312,
+            "mps_driver_bytes": 2453618688
+          }
+        },
+        {
+          "blocks": 12,
+          "seconds": 24,
+          "visual_seconds": 1.3460592500050552,
+          "memory_seconds": 0.3606905420019757,
+          "retained_tokens": 1108,
+          "state_bytes": 5898240,
+          "vision_blocks": 12,
+          "memory_counts": {
+            "match_calls": 56,
+            "match_query_tokens": 6720,
+            "prune_frames": 20,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 439713792,
+            "physical_footprint_bytes": 3093808592,
+            "mps_allocated_bytes": 1403041280,
+            "mps_driver_bytes": 2453635072
+          },
+          "memory_peak": {
+            "rss_bytes": 445612032,
+            "physical_footprint_bytes": 3099379152,
+            "mps_allocated_bytes": 1417903104,
+            "mps_driver_bytes": 2453667840
+          }
+        },
+        {
+          "blocks": 14,
+          "seconds": 28,
+          "visual_seconds": 1.3051702910161112,
+          "memory_seconds": 0.4635677920014132,
+          "retained_tokens": 1219,
+          "state_bytes": 6881280,
+          "vision_blocks": 14,
+          "memory_counts": {
+            "match_calls": 79,
+            "match_query_tokens": 9480,
+            "prune_frames": 30,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 450461696,
+            "physical_footprint_bytes": 3099772368,
+            "mps_allocated_bytes": 1409254144,
+            "mps_driver_bytes": 2454781952
+          },
+          "memory_peak": {
+            "rss_bytes": 456491008,
+            "physical_footprint_bytes": 3105523176,
+            "mps_allocated_bytes": 1423314432,
+            "mps_driver_bytes": 2453700608
+          }
+        },
+        {
+          "blocks": 16,
+          "seconds": 32,
+          "visual_seconds": 1.273387666005874,
+          "memory_seconds": 0.4874734590121079,
+          "retained_tokens": 1335,
+          "state_bytes": 7864320,
+          "vision_blocks": 16,
+          "memory_counts": {
+            "match_calls": 106,
+            "match_query_tokens": 12720,
+            "prune_frames": 42,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 461291520,
+            "physical_footprint_bytes": 3105916392,
+            "mps_allocated_bytes": 1408075264,
+            "mps_driver_bytes": 2453700608
+          },
+          "memory_peak": {
+            "rss_bytes": 467075072,
+            "physical_footprint_bytes": 3111519720,
+            "mps_allocated_bytes": 1427135488,
+            "mps_driver_bytes": 2453733376
+          }
+        },
+        {
+          "blocks": 18,
+          "seconds": 36,
+          "visual_seconds": 1.2545462919806596,
+          "memory_seconds": 0.6306657920067664,
+          "retained_tokens": 1460,
+          "state_bytes": 8847360,
+          "vision_blocks": 18,
+          "memory_counts": {
+            "match_calls": 137,
+            "match_query_tokens": 16440,
+            "prune_frames": 56,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 471744512,
+            "physical_footprint_bytes": 3111749096,
+            "mps_allocated_bytes": 1411300864,
+            "mps_driver_bytes": 2453733376
+          },
+          "memory_peak": {
+            "rss_bytes": 477642752,
+            "physical_footprint_bytes": 3117385192,
+            "mps_allocated_bytes": 1442531328,
+            "mps_driver_bytes": 2453766144
+          }
+        },
+        {
+          "blocks": 20,
+          "seconds": 40,
+          "visual_seconds": 1.2283677910163533,
+          "memory_seconds": 0.7170196670049336,
+          "retained_tokens": 1631,
+          "state_bytes": 9830400,
+          "vision_blocks": 20,
+          "memory_counts": {
+            "match_calls": 172,
+            "match_query_tokens": 20640,
+            "prune_frames": 72,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 482295808,
+            "physical_footprint_bytes": 3117614568,
+            "mps_allocated_bytes": 1408825088,
+            "mps_driver_bytes": 2453766144
+          },
+          "memory_peak": {
+            "rss_bytes": 488210432,
+            "physical_footprint_bytes": 3123299816,
+            "mps_allocated_bytes": 1439027968,
+            "mps_driver_bytes": 2453798912
+          }
+        },
+        {
+          "blocks": 22,
+          "seconds": 44,
+          "visual_seconds": 1.2236945839831606,
+          "memory_seconds": 0.7610618749749847,
+          "retained_tokens": 1806,
+          "state_bytes": 10813440,
+          "vision_blocks": 22,
+          "memory_counts": {
+            "match_calls": 211,
+            "match_query_tokens": 25320,
+            "prune_frames": 90,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 492929024,
+            "physical_footprint_bytes": 3123529192,
+            "mps_allocated_bytes": 1415407616,
+            "mps_driver_bytes": 2453798912
+          },
+          "memory_peak": {
+            "rss_bytes": 498761728,
+            "physical_footprint_bytes": 3129083368,
+            "mps_allocated_bytes": 1448462592,
+            "mps_driver_bytes": 2453831680
+          }
+        },
+        {
+          "blocks": 24,
+          "seconds": 48,
+          "visual_seconds": 1.2164713329984806,
+          "memory_seconds": 0.8692982079810463,
+          "retained_tokens": 1989,
+          "state_bytes": 11796480,
+          "vision_blocks": 24,
+          "memory_counts": {
+            "match_calls": 254,
+            "match_query_tokens": 30480,
+            "prune_frames": 110,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 503463936,
+            "physical_footprint_bytes": 3129312744,
+            "mps_allocated_bytes": 1412602368,
+            "mps_driver_bytes": 2453831680
+          },
+          "memory_peak": {
+            "rss_bytes": 509362176,
+            "physical_footprint_bytes": 3135079912,
+            "mps_allocated_bytes": 1451452160,
+            "mps_driver_bytes": 2453995520
+          }
+        },
+        {
+          "blocks": 26,
+          "seconds": 52,
+          "visual_seconds": 1.204372708016308,
+          "memory_seconds": 0.9211106250004377,
+          "retained_tokens": 2162,
+          "state_bytes": 12779520,
+          "vision_blocks": 26,
+          "memory_counts": {
+            "match_calls": 301,
+            "match_query_tokens": 36120,
+            "prune_frames": 132,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 514097152,
+            "physical_footprint_bytes": 3135342056,
+            "mps_allocated_bytes": 1414628096,
+            "mps_driver_bytes": 2453995520
+          },
+          "memory_peak": {
+            "rss_bytes": 520060928,
+            "physical_footprint_bytes": 3149399552,
+            "mps_allocated_bytes": 1449234944,
+            "mps_driver_bytes": 2462416896
+          }
+        },
+        {
+          "blocks": 28,
+          "seconds": 56,
+          "visual_seconds": 1.2273893329838756,
+          "memory_seconds": 1.0317325840005651,
+          "retained_tokens": 2306,
+          "state_bytes": 13762560,
+          "vision_blocks": 28,
+          "memory_counts": {
+            "match_calls": 352,
+            "match_query_tokens": 42240,
+            "prune_frames": 156,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 524779520,
+            "physical_footprint_bytes": 3149645312,
+            "mps_allocated_bytes": 1418065664,
+            "mps_driver_bytes": 2462416896
+          },
+          "memory_peak": {
+            "rss_bytes": 530726912,
+            "physical_footprint_bytes": 3155265024,
+            "mps_allocated_bytes": 1455610624,
+            "mps_driver_bytes": 2462449664
+          }
+        },
+        {
+          "blocks": 30,
+          "seconds": 60,
+          "visual_seconds": 1.2195597079989966,
+          "memory_seconds": 1.1163949579931796,
+          "retained_tokens": 2485,
+          "state_bytes": 14745600,
+          "vision_blocks": 30,
+          "memory_counts": {
+            "match_calls": 407,
+            "match_query_tokens": 48840,
+            "prune_frames": 182,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 535412736,
+            "physical_footprint_bytes": 3155265024,
+            "mps_allocated_bytes": 1421045504,
+            "mps_driver_bytes": 2462449664
+          },
+          "memory_peak": {
+            "rss_bytes": 541409280,
+            "physical_footprint_bytes": 3161179648,
+            "mps_allocated_bytes": 1459540480,
+            "mps_driver_bytes": 2462498816
+          }
+        },
+        {
+          "blocks": 32,
+          "seconds": 64,
+          "visual_seconds": 1.2082287090015598,
+          "memory_seconds": 1.192322332994081,
+          "retained_tokens": 2671,
+          "state_bytes": 15728640,
+          "vision_blocks": 32,
+          "memory_counts": {
+            "match_calls": 466,
+            "match_query_tokens": 55920,
+            "prune_frames": 210,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 546996224,
+            "physical_footprint_bytes": 3162342912,
+            "mps_allocated_bytes": 1418104832,
+            "mps_driver_bytes": 2463596544
+          },
+          "memory_peak": {
+            "rss_bytes": 552763392,
+            "physical_footprint_bytes": 3167929856,
+            "mps_allocated_bytes": 1464323328,
+            "mps_driver_bytes": 2462515200
+          }
+        },
+        {
+          "blocks": 34,
+          "seconds": 68,
+          "visual_seconds": 1.2042729170061648,
+          "memory_seconds": 1.273030624986859,
+          "retained_tokens": 2840,
+          "state_bytes": 16711680,
+          "vision_blocks": 34,
+          "memory_counts": {
+            "match_calls": 529,
+            "match_query_tokens": 63480,
+            "prune_frames": 240,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 557252608,
+            "physical_footprint_bytes": 3167929856,
+            "mps_allocated_bytes": 1419087872,
+            "mps_driver_bytes": 2462515200
+          },
+          "memory_peak": {
+            "rss_bytes": 563183616,
+            "physical_footprint_bytes": 3173484032,
+            "mps_allocated_bytes": 1467055360,
+            "mps_driver_bytes": 2462547968
+          }
+        },
+        {
+          "blocks": 36,
+          "seconds": 72,
+          "visual_seconds": 1.1919521249947138,
+          "memory_seconds": 1.3706160000001546,
+          "retained_tokens": 3040,
+          "state_bytes": 17694720,
+          "vision_blocks": 36,
+          "memory_counts": {
+            "match_calls": 596,
+            "match_query_tokens": 71520,
+            "prune_frames": 272,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 567656448,
+            "physical_footprint_bytes": 3172713984,
+            "mps_allocated_bytes": 1427213056,
+            "mps_driver_bytes": 2462547968
+          },
+          "memory_peak": {
+            "rss_bytes": 573636608,
+            "physical_footprint_bytes": 3179152896,
+            "mps_allocated_bytes": 1472017408,
+            "mps_driver_bytes": 2462613504
+          }
+        },
+        {
+          "blocks": 38,
+          "seconds": 76,
+          "visual_seconds": 1.1853595419961493,
+          "memory_seconds": 1.4932853749778587,
+          "retained_tokens": 3063,
+          "state_bytes": 18677760,
+          "vision_blocks": 38,
+          "memory_counts": {
+            "match_calls": 667,
+            "match_query_tokens": 80040,
+            "prune_frames": 306,
+            "merge_frames": 2
+          },
+          "visual_peak": {
+            "rss_bytes": 578093056,
+            "physical_footprint_bytes": 3179152896,
+            "mps_allocated_bytes": 1421053952,
+            "mps_driver_bytes": 2462613504
+          },
+          "memory_peak": {
+            "rss_bytes": 595394560,
+            "physical_footprint_bytes": 3201320472,
+            "mps_allocated_bytes": 1482079232,
+            "mps_driver_bytes": 2471100416
+          }
+        },
+        {
+          "blocks": 40,
+          "seconds": 80,
+          "visual_seconds": 1.1814005420019384,
+          "memory_seconds": 1.6247112499841023,
+          "retained_tokens": 3071,
+          "state_bytes": 19660800,
+          "vision_blocks": 40,
+          "memory_counts": {
+            "match_calls": 742,
+            "match_query_tokens": 89040,
+            "prune_frames": 342,
+            "merge_frames": 6
+          },
+          "visual_peak": {
+            "rss_bytes": 601030656,
+            "physical_footprint_bytes": 3202549272,
+            "mps_allocated_bytes": 1422274304,
+            "mps_driver_bytes": 2471100416
+          },
+          "memory_peak": {
+            "rss_bytes": 615104512,
+            "physical_footprint_bytes": 3216229912,
+            "mps_allocated_bytes": 1489337600,
+            "mps_driver_bytes": 2471198720
+          }
+        },
+        {
+          "blocks": 41,
+          "seconds": 82,
+          "visual_seconds": 0.5914910419960506,
+          "memory_seconds": 1.6583702499920037,
+          "retained_tokens": 3087,
+          "state_bytes": 20152320,
+          "vision_blocks": 41,
+          "memory_counts": {
+            "match_calls": 819,
+            "match_query_tokens": 98280,
+            "prune_frames": 379,
+            "merge_frames": 11
+          },
+          "visual_peak": {
+            "rss_bytes": 617578496,
+            "physical_footprint_bytes": 3216573976,
+            "mps_allocated_bytes": 1427083008,
+            "mps_driver_bytes": 2471198720
+          },
+          "memory_peak": {
+            "rss_bytes": 625131520,
+            "physical_footprint_bytes": 3223799320,
+            "mps_allocated_bytes": 1486956032,
+            "mps_driver_bytes": 2471264256
+          }
+        },
+        {
+          "blocks": 42,
+          "seconds": 84,
+          "visual_seconds": 0.6155149579863064,
+          "memory_seconds": 1.7989723749924451,
+          "retained_tokens": 3113,
+          "state_bytes": 20643840,
+          "vision_blocks": 42,
+          "memory_counts": {
+            "match_calls": 898,
+            "match_query_tokens": 107760,
+            "prune_frames": 417,
+            "merge_frames": 17
+          },
+          "visual_peak": {
+            "rss_bytes": 627523584,
+            "physical_footprint_bytes": 3224061464,
+            "mps_allocated_bytes": 1424219392,
+            "mps_driver_bytes": 2471264256
+          },
+          "memory_peak": {
+            "rss_bytes": 637599744,
+            "physical_footprint_bytes": 3242690072,
+            "mps_allocated_bytes": 1490619648,
+            "mps_driver_bytes": 2479734784
+          }
+        },
+        {
+          "blocks": 44,
+          "seconds": 88,
+          "visual_seconds": 1.170137540990254,
+          "memory_seconds": 1.8084950830088928,
+          "retained_tokens": 3193,
+          "state_bytes": 21626880,
+          "vision_blocks": 44,
+          "memory_counts": {
+            "match_calls": 981,
+            "match_query_tokens": 117720,
+            "prune_frames": 457,
+            "merge_frames": 25
+          },
+          "visual_peak": {
+            "rss_bytes": 642170880,
+            "physical_footprint_bytes": 3242231320,
+            "mps_allocated_bytes": 1424297984,
+            "mps_driver_bytes": 2479734784
+          },
+          "memory_peak": {
+            "rss_bytes": 656293888,
+            "physical_footprint_bytes": 3256665648,
+            "mps_allocated_bytes": 1500323072,
+            "mps_driver_bytes": 2479833088
+          }
+        },
+        {
+          "blocks": 46,
+          "seconds": 92,
+          "visual_seconds": 1.1837619169964455,
+          "memory_seconds": 2.0488019160111435,
+          "retained_tokens": 3298,
+          "state_bytes": 22609920,
+          "vision_blocks": 46,
+          "memory_counts": {
+            "match_calls": 1068,
+            "match_query_tokens": 128160,
+            "prune_frames": 499,
+            "merge_frames": 35
+          },
+          "visual_peak": {
+            "rss_bytes": 660766720,
+            "physical_footprint_bytes": 3256665648,
+            "mps_allocated_bytes": 1430474496,
+            "mps_driver_bytes": 2479833088
+          },
+          "memory_peak": {
+            "rss_bytes": 674693120,
+            "physical_footprint_bytes": 3278161480,
+            "mps_allocated_bytes": 1504456192,
+            "mps_driver_bytes": 2488451072
+          }
+        },
+        {
+          "blocks": 48,
+          "seconds": 96,
+          "visual_seconds": 1.1793274999945424,
+          "memory_seconds": 2.273945499997353,
+          "retained_tokens": 3359,
+          "state_bytes": 23592960,
+          "vision_blocks": 48,
+          "memory_counts": {
+            "match_calls": 1159,
+            "match_query_tokens": 139080,
+            "prune_frames": 543,
+            "merge_frames": 47
+          },
+          "visual_peak": {
+            "rss_bytes": 679362560,
+            "physical_footprint_bytes": 3278505544,
+            "mps_allocated_bytes": 1431342848,
+            "mps_driver_bytes": 2488451072
+          },
+          "memory_peak": {
+            "rss_bytes": 689307648,
+            "physical_footprint_bytes": 3288237640,
+            "mps_allocated_bytes": 1515784192,
+            "mps_driver_bytes": 2488532992
+          }
+        },
+        {
+          "blocks": 50,
+          "seconds": 100,
+          "visual_seconds": 1.2135417500103358,
+          "memory_seconds": 2.655830000003334,
+          "retained_tokens": 3369,
+          "state_bytes": 24576000,
+          "vision_blocks": 50,
+          "memory_counts": {
+            "match_calls": 1254,
+            "match_query_tokens": 150480,
+            "prune_frames": 589,
+            "merge_frames": 61
+          },
+          "visual_peak": {
+            "rss_bytes": 693878784,
+            "physical_footprint_bytes": 3288467016,
+            "mps_allocated_bytes": 1428795392,
+            "mps_driver_bytes": 2488532992
+          },
+          "memory_peak": {
+            "rss_bytes": 699760640,
+            "physical_footprint_bytes": 4373677640,
+            "mps_allocated_bytes": 1519931904,
+            "mps_driver_bytes": 3562356736
+          }
+        },
+        {
+          "blocks": 52,
+          "seconds": 104,
+          "visual_seconds": 1.2249415420228615,
+          "memory_seconds": 2.8625525000097696,
+          "retained_tokens": 3331,
+          "state_bytes": 25559040,
+          "vision_blocks": 52,
+          "memory_counts": {
+            "match_calls": 1353,
+            "match_query_tokens": 162360,
+            "prune_frames": 637,
+            "merge_frames": 77
+          },
+          "visual_peak": {
+            "rss_bytes": 524730368,
+            "physical_footprint_bytes": 4374349384,
+            "mps_allocated_bytes": 1434578688,
+            "mps_driver_bytes": 3562356736
+          },
+          "memory_peak": {
+            "rss_bytes": 527745024,
+            "physical_footprint_bytes": 4396631648,
+            "mps_allocated_bytes": 1527926784,
+            "mps_driver_bytes": 3570843648
+          }
+        },
+        {
+          "blocks": 54,
+          "seconds": 108,
+          "visual_seconds": 1.228710957977455,
+          "memory_seconds": 2.633291666978039,
+          "retained_tokens": 3328,
+          "state_bytes": 26542080,
+          "vision_blocks": 54,
+          "memory_counts": {
+            "match_calls": 1456,
+            "match_query_tokens": 174720,
+            "prune_frames": 687,
+            "merge_frames": 95
+          },
+          "visual_peak": {
+            "rss_bytes": 505757696,
+            "physical_footprint_bytes": 4396877408,
+            "mps_allocated_bytes": 1439771392,
+            "mps_driver_bytes": 3570843648
+          },
+          "memory_peak": {
+            "rss_bytes": 512704512,
+            "physical_footprint_bytes": 4408329824,
+            "mps_allocated_bytes": 1533550848,
+            "mps_driver_bytes": 3570925568
+          }
+        },
+        {
+          "blocks": 56,
+          "seconds": 112,
+          "visual_seconds": 1.2440371249977034,
+          "memory_seconds": 2.7745193330047186,
+          "retained_tokens": 3313,
+          "state_bytes": 27525120,
+          "vision_blocks": 56,
+          "memory_counts": {
+            "match_calls": 1563,
+            "match_query_tokens": 187560,
+            "prune_frames": 739,
+            "merge_frames": 115
+          },
+          "visual_peak": {
+            "rss_bytes": 497352704,
+            "physical_footprint_bytes": 4408673888,
+            "mps_allocated_bytes": 1434466560,
+            "mps_driver_bytes": 3570925568
+          },
+          "memory_peak": {
+            "rss_bytes": 512393216,
+            "physical_footprint_bytes": 4422370912,
+            "mps_allocated_bytes": 1537697536,
+            "mps_driver_bytes": 3571023872
+          }
+        },
+        {
+          "blocks": 58,
+          "seconds": 116,
+          "visual_seconds": 1.1986885830119718,
+          "memory_seconds": 2.898685416992521,
+          "retained_tokens": 3288,
+          "state_bytes": 28508160,
+          "vision_blocks": 58,
+          "memory_counts": {
+            "match_calls": 1674,
+            "match_query_tokens": 200880,
+            "prune_frames": 793,
+            "merge_frames": 137
+          },
+          "visual_peak": {
+            "rss_bytes": 517226496,
+            "physical_footprint_bytes": 4422747744,
+            "mps_allocated_bytes": 1435742208,
+            "mps_driver_bytes": 3571023872
+          },
+          "memory_peak": {
+            "rss_bytes": 524042240,
+            "physical_footprint_bytes": 4442752608,
+            "mps_allocated_bytes": 1547404800,
+            "mps_driver_bytes": 3579494400
+          }
+        },
+        {
+          "blocks": 60,
+          "seconds": 120,
+          "visual_seconds": 1.2081187079893425,
+          "memory_seconds": 3.044852167018689,
+          "retained_tokens": 3278,
+          "state_bytes": 29491200,
+          "vision_blocks": 60,
+          "memory_counts": {
+            "match_calls": 1789,
+            "match_query_tokens": 214680,
+            "prune_frames": 849,
+            "merge_frames": 161
+          },
+          "visual_peak": {
+            "rss_bytes": 498106368,
+            "physical_footprint_bytes": 4444030584,
+            "mps_allocated_bytes": 1441525504,
+            "mps_driver_bytes": 3579494400
+          },
+          "memory_peak": {
+            "rss_bytes": 504889344,
+            "physical_footprint_bytes": 4455630456,
+            "mps_allocated_bytes": 1550789632,
+            "mps_driver_bytes": 3579576320
+          }
+        },
+        {
+          "blocks": 62,
+          "seconds": 124,
+          "visual_seconds": 1.2737295830156654,
+          "memory_seconds": 3.705857749999268,
+          "retained_tokens": 3225,
+          "state_bytes": 30474240,
+          "vision_blocks": 62,
+          "memory_counts": {
+            "match_calls": 1908,
+            "match_query_tokens": 228960,
+            "prune_frames": 907,
+            "merge_frames": 187
+          },
+          "visual_peak": {
+            "rss_bytes": 489488384,
+            "physical_footprint_bytes": 4455728760,
+            "mps_allocated_bytes": 1441672960,
+            "mps_driver_bytes": 3579576320
+          },
+          "memory_peak": {
+            "rss_bytes": 288784384,
+            "physical_footprint_bytes": 4472473208,
+            "mps_allocated_bytes": 1557930496,
+            "mps_driver_bytes": 3588014080
+          }
+        },
+        {
+          "blocks": 64,
+          "seconds": 128,
+          "visual_seconds": 1.2436202089884318,
+          "memory_seconds": 4.015351667010691,
+          "retained_tokens": 3197,
+          "state_bytes": 31457280,
+          "vision_blocks": 64,
+          "memory_counts": {
+            "match_calls": 2031,
+            "match_query_tokens": 243720,
+            "prune_frames": 967,
+            "merge_frames": 215
+          },
+          "visual_peak": {
+            "rss_bytes": 451362816,
+            "physical_footprint_bytes": 4472604280,
+            "mps_allocated_bytes": 1440952320,
+            "mps_driver_bytes": 3588014080
+          },
+          "memory_peak": {
+            "rss_bytes": 458162176,
+            "physical_footprint_bytes": 4484204152,
+            "mps_allocated_bytes": 1566080512,
+            "mps_driver_bytes": 3588096000
+          }
+        },
+        {
+          "blocks": 66,
+          "seconds": 132,
+          "visual_seconds": 1.3745167500164825,
+          "memory_seconds": 3.624818290991243,
+          "retained_tokens": 3188,
+          "state_bytes": 32440320,
+          "vision_blocks": 66,
+          "memory_counts": {
+            "match_calls": 2158,
+            "match_query_tokens": 258960,
+            "prune_frames": 1029,
+            "merge_frames": 245
+          },
+          "visual_peak": {
+            "rss_bytes": 385531904,
+            "physical_footprint_bytes": 4484351608,
+            "mps_allocated_bytes": 1447734016,
+            "mps_driver_bytes": 3588096000
+          },
+          "memory_peak": {
+            "rss_bytes": 349339648,
+            "physical_footprint_bytes": 4495525520,
+            "mps_allocated_bytes": 1570970368,
+            "mps_driver_bytes": 3588161536
+          }
+        },
+        {
+          "blocks": 68,
+          "seconds": 136,
+          "visual_seconds": 1.324684791994514,
+          "memory_seconds": 3.5711012080137152,
+          "retained_tokens": 3206,
+          "state_bytes": 33423360,
+          "vision_blocks": 68,
+          "memory_counts": {
+            "match_calls": 2289,
+            "match_query_tokens": 274680,
+            "prune_frames": 1093,
+            "merge_frames": 277
+          },
+          "visual_peak": {
+            "rss_bytes": 302694400,
+            "physical_footprint_bytes": 4495640208,
+            "mps_allocated_bytes": 1444425728,
+            "mps_driver_bytes": 3588161536
+          },
+          "memory_peak": {
+            "rss_bytes": 316571648,
+            "physical_footprint_bytes": 4515546792,
+            "mps_allocated_bytes": 1578111232,
+            "mps_driver_bytes": 3596632064
+          }
+        },
+        {
+          "blocks": 70,
+          "seconds": 140,
+          "visual_seconds": 1.189198333013337,
+          "memory_seconds": 3.5274782500055153,
+          "retained_tokens": 3258,
+          "state_bytes": 34406400,
+          "vision_blocks": 70,
+          "memory_counts": {
+            "match_calls": 2424,
+            "match_query_tokens": 290880,
+            "prune_frames": 1159,
+            "merge_frames": 311
+          },
+          "visual_peak": {
+            "rss_bytes": 321241088,
+            "physical_footprint_bytes": 4515776168,
+            "mps_allocated_bytes": 1446162432,
+            "mps_driver_bytes": 3596632064
+          },
+          "memory_peak": {
+            "rss_bytes": 327958528,
+            "physical_footprint_bytes": 4530063040,
+            "mps_allocated_bytes": 1586223616,
+            "mps_driver_bytes": 3596746752
+          }
+        },
+        {
+          "blocks": 72,
+          "seconds": 144,
+          "visual_seconds": 1.3309274589992128,
+          "memory_seconds": 3.753293207992101,
+          "retained_tokens": 3331,
+          "state_bytes": 35389440,
+          "vision_blocks": 72,
+          "memory_counts": {
+            "match_calls": 2563,
+            "match_query_tokens": 307560,
+            "prune_frames": 1227,
+            "merge_frames": 347
+          },
+          "visual_peak": {
+            "rss_bytes": 316981248,
+            "physical_footprint_bytes": 4530308800,
+            "mps_allocated_bytes": 1447899136,
+            "mps_driver_bytes": 3596746752
+          },
+          "memory_peak": {
+            "rss_bytes": 342212608,
+            "physical_footprint_bytes": 4544612032,
+            "mps_allocated_bytes": 1588236032,
+            "mps_driver_bytes": 3596861440
+          }
+        },
+        {
+          "blocks": 74,
+          "seconds": 148,
+          "visual_seconds": 1.2026582920225337,
+          "memory_seconds": 4.145801709004445,
+          "retained_tokens": 3406,
+          "state_bytes": 36372480,
+          "vision_blocks": 74,
+          "memory_counts": {
+            "match_calls": 2706,
+            "match_query_tokens": 324720,
+            "prune_frames": 1297,
+            "merge_frames": 385
+          },
+          "visual_peak": {
+            "rss_bytes": 344784896,
+            "physical_footprint_bytes": 4544972480,
+            "mps_allocated_bytes": 1449635840,
+            "mps_driver_bytes": 3596861440
+          },
+          "memory_peak": {
+            "rss_bytes": 300826624,
+            "physical_footprint_bytes": 5624858328,
+            "mps_allocated_bytes": 1598369280,
+            "mps_driver_bytes": 4679090176
+          }
+        },
+        {
+          "blocks": 76,
+          "seconds": 152,
+          "visual_seconds": 1.2207389579853043,
+          "memory_seconds": 3.794852749997517,
+          "retained_tokens": 3483,
+          "state_bytes": 37355520,
+          "vision_blocks": 76,
+          "memory_counts": {
+            "match_calls": 2853,
+            "match_query_tokens": 342360,
+            "prune_frames": 1369,
+            "merge_frames": 425
+          },
+          "visual_peak": {
+            "rss_bytes": 338395136,
+            "physical_footprint_bytes": 5580457616,
+            "mps_allocated_bytes": 1451372544,
+            "mps_driver_bytes": 4679090176
+          },
+          "memory_peak": {
+            "rss_bytes": 347422720,
+            "physical_footprint_bytes": 5590992528,
+            "mps_allocated_bytes": 1606686208,
+            "mps_driver_bytes": 4679155712
+          }
+        },
+        {
+          "blocks": 78,
+          "seconds": 156,
+          "visual_seconds": 1.4492637920193374,
+          "memory_seconds": 4.2895842919824645,
+          "retained_tokens": 3529,
+          "state_bytes": 38338560,
+          "vision_blocks": 78,
+          "memory_counts": {
+            "match_calls": 3004,
+            "match_query_tokens": 360480,
+            "prune_frames": 1443,
+            "merge_frames": 467
+          },
+          "visual_peak": {
+            "rss_bytes": 330579968,
+            "physical_footprint_bytes": 5591549584,
+            "mps_allocated_bytes": 1457347840,
+            "mps_driver_bytes": 4679155712
+          },
+          "memory_peak": {
+            "rss_bytes": 237142016,
+            "physical_footprint_bytes": 5611964048,
+            "mps_allocated_bytes": 1614368256,
+            "mps_driver_bytes": 4687642624
+          }
+        },
+        {
+          "blocks": 80,
+          "seconds": 160,
+          "visual_seconds": 1.327906916005304,
+          "memory_seconds": 4.377514833002351,
+          "retained_tokens": 3600,
+          "state_bytes": 39321600,
+          "vision_blocks": 80,
+          "memory_counts": {
+            "match_calls": 3159,
+            "match_query_tokens": 379080,
+            "prune_frames": 1519,
+            "merge_frames": 511
+          },
+          "visual_peak": {
+            "rss_bytes": 327024640,
+            "physical_footprint_bytes": 5612291728,
+            "mps_allocated_bytes": 1454845952,
+            "mps_driver_bytes": 4687642624
+          },
+          "memory_peak": {
+            "rss_bytes": 333447168,
+            "physical_footprint_bytes": 5630690960,
+            "mps_allocated_bytes": 1619053824,
+            "mps_driver_bytes": 4696113152
+          }
+        },
+        {
+          "blocks": 82,
+          "seconds": 164,
+          "visual_seconds": 1.3187552499875892,
+          "memory_seconds": 4.365928041981533,
+          "retained_tokens": 3682,
+          "state_bytes": 40304640,
+          "vision_blocks": 82,
+          "memory_counts": {
+            "match_calls": 3318,
+            "match_query_tokens": 398160,
+            "prune_frames": 1597,
+            "merge_frames": 557
+          },
+          "visual_peak": {
+            "rss_bytes": 336117760,
+            "physical_footprint_bytes": 5631936144,
+            "mps_allocated_bytes": 1456582656,
+            "mps_driver_bytes": 4696113152
+          },
+          "memory_peak": {
+            "rss_bytes": 350715904,
+            "physical_footprint_bytes": 5644830376,
+            "mps_allocated_bytes": 1626365184,
+            "mps_driver_bytes": 4696195072
+          }
+        },
+        {
+          "blocks": 84,
+          "seconds": 168,
+          "visual_seconds": 1.184296457999153,
+          "memory_seconds": 4.519001999986358,
+          "retained_tokens": 3836,
+          "state_bytes": 41287680,
+          "vision_blocks": 84,
+          "memory_counts": {
+            "match_calls": 3481,
+            "match_query_tokens": 417720,
+            "prune_frames": 1677,
+            "merge_frames": 605
+          },
+          "visual_peak": {
+            "rss_bytes": 355762176,
+            "physical_footprint_bytes": 5645207208,
+            "mps_allocated_bytes": 1469147904,
+            "mps_driver_bytes": 4696195072
+          },
+          "memory_peak": {
+            "rss_bytes": 369393664,
+            "physical_footprint_bytes": 5657216680,
+            "mps_allocated_bytes": 1634402304,
+            "mps_driver_bytes": 4696260608
+          }
+        },
+        {
+          "blocks": 86,
+          "seconds": 172,
+          "visual_seconds": 1.1950853329908568,
+          "memory_seconds": 4.621206249983516,
+          "retained_tokens": 3886,
+          "state_bytes": 42270720,
+          "vision_blocks": 86,
+          "memory_counts": {
+            "match_calls": 3648,
+            "match_query_tokens": 437760,
+            "prune_frames": 1759,
+            "merge_frames": 655
+          },
+          "visual_peak": {
+            "rss_bytes": 373899264,
+            "physical_footprint_bytes": 5657544360,
+            "mps_allocated_bytes": 1462643456,
+            "mps_driver_bytes": 4696260608
+          },
+          "memory_peak": {
+            "rss_bytes": 380010496,
+            "physical_footprint_bytes": 5677385384,
+            "mps_allocated_bytes": 1637929728,
+            "mps_driver_bytes": 4704845824
+          }
+        },
+        {
+          "blocks": 88,
+          "seconds": 176,
+          "visual_seconds": 1.2756691669928841,
+          "memory_seconds": 4.743339917011326,
+          "retained_tokens": 3905,
+          "state_bytes": 43253760,
+          "vision_blocks": 88,
+          "memory_counts": {
+            "match_calls": 3819,
+            "match_query_tokens": 458280,
+            "prune_frames": 1843,
+            "merge_frames": 707
+          },
+          "visual_peak": {
+            "rss_bytes": 372703232,
+            "physical_footprint_bytes": 5678253736,
+            "mps_allocated_bytes": 1461792768,
+            "mps_driver_bytes": 4704862208
+          },
+          "memory_peak": {
+            "rss_bytes": 375930880,
+            "physical_footprint_bytes": 5685823144,
+            "mps_allocated_bytes": 1646196480,
+            "mps_driver_bytes": 4704927744
+          }
+        },
+        {
+          "blocks": 90,
+          "seconds": 180,
+          "visual_seconds": 1.2991866249940358,
+          "memory_seconds": 4.86323875002563,
+          "retained_tokens": 3980,
+          "state_bytes": 44236800,
+          "vision_blocks": 90,
+          "memory_counts": {
+            "match_calls": 3994,
+            "match_query_tokens": 479280,
+            "prune_frames": 1929,
+            "merge_frames": 761
+          },
+          "visual_peak": {
+            "rss_bytes": 357007360,
+            "physical_footprint_bytes": 5686068904,
+            "mps_allocated_bytes": 1463529472,
+            "mps_driver_bytes": 4704927744
+          },
+          "memory_peak": {
+            "rss_bytes": 368345088,
+            "physical_footprint_bytes": 5695751872,
+            "mps_allocated_bytes": 1652947968,
+            "mps_driver_bytes": 4705009664
+          }
+        },
+        {
+          "blocks": 92,
+          "seconds": 184,
+          "visual_seconds": 1.1740116250002757,
+          "memory_seconds": 5.08319904198288,
+          "retained_tokens": 4119,
+          "state_bytes": 45219840,
+          "vision_blocks": 92,
+          "memory_counts": {
+            "match_calls": 4173,
+            "match_query_tokens": 500760,
+            "prune_frames": 2017,
+            "merge_frames": 817
+          },
+          "visual_peak": {
+            "rss_bytes": 373145600,
+            "physical_footprint_bytes": 5696112320,
+            "mps_allocated_bytes": 1465266176,
+            "mps_driver_bytes": 4705009664
+          },
+          "memory_peak": {
+            "rss_bytes": 376406016,
+            "physical_footprint_bytes": 6790498008,
+            "mps_allocated_bytes": 1657961728,
+            "mps_driver_bytes": 5787205632
+          }
+        },
+        {
+          "blocks": 94,
+          "seconds": 188,
+          "visual_seconds": 1.2484088329947554,
+          "memory_seconds": 5.077036750008119,
+          "retained_tokens": 4258,
+          "state_bytes": 46202880,
+          "vision_blocks": 94,
+          "memory_counts": {
+            "match_calls": 4356,
+            "match_query_tokens": 522720,
+            "prune_frames": 2107,
+            "merge_frames": 875
+          },
+          "visual_peak": {
+            "rss_bytes": 362414080,
+            "physical_footprint_bytes": 6791759576,
+            "mps_allocated_bytes": 1467002880,
+            "mps_driver_bytes": 5787205632
+          },
+          "memory_peak": {
+            "rss_bytes": 378978304,
+            "physical_footprint_bytes": 6803424984,
+            "mps_allocated_bytes": 1668208896,
+            "mps_driver_bytes": 5787287552
+          }
+        }
+      ],
+      "total_visual_seconds": 58.99694883095799,
+      "total_memory_seconds": 113.51376045990037,
+      "total_seconds": 172.51070929085836,
+      "final_state_bytes": 46202880,
+      "vision_blocks": 94,
+      "counts": {
+        "match_calls": 4356,
+        "match_query_tokens": 522720,
+        "prune_frames": 2107,
+        "merge_frames": 875
+      }
+    },
+    {
+      "condition": "C",
+      "rep": -1,
+      "warmup": true,
+      "events": [
+        {
+          "blocks": 2,
+          "seconds": 4,
+          "visual_seconds": 1.224416334007401,
+          "memory_seconds": 0.02270333401975222,
+          "retained_tokens": 240,
+          "state_bytes": 3465704,
+          "vision_blocks": 2,
+          "memory_counts": {
+            "match_calls": 1,
+            "match_query_tokens": 120,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 685309952,
+            "physical_footprint_bytes": 3159869168,
+            "mps_allocated_bytes": 1401948416,
+            "mps_driver_bytes": 2436644864
+          },
+          "memory_peak": {
+            "rss_bytes": 686292992,
+            "physical_footprint_bytes": 3160114928,
+            "mps_allocated_bytes": 1390290176,
+            "mps_driver_bytes": 2436710400
+          }
+        },
+        {
+          "blocks": 4,
+          "seconds": 8,
+          "visual_seconds": 1.182355083990842,
+          "memory_seconds": 0.005250333982985467,
+          "retained_tokens": 480,
+          "state_bytes": 4450664,
+          "vision_blocks": 4,
+          "memory_counts": {
+            "match_calls": 3,
+            "match_query_tokens": 360,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 690814976,
+            "physical_footprint_bytes": 3160114928,
+            "mps_allocated_bytes": 1402522880,
+            "mps_driver_bytes": 2436726784
+          },
+          "memory_peak": {
+            "rss_bytes": 690814976,
+            "physical_footprint_bytes": 3159770864,
+            "mps_allocated_bytes": 1393247744,
+            "mps_driver_bytes": 2436710400
+          }
+        },
+        {
+          "blocks": 6,
+          "seconds": 12,
+          "visual_seconds": 1.1797304160136264,
+          "memory_seconds": 0.0835009159927722,
+          "retained_tokens": 663,
+          "state_bytes": 5201696,
+          "vision_blocks": 6,
+          "memory_counts": {
+            "match_calls": 7,
+            "match_query_tokens": 840,
+            "prune_frames": 2,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 695320576,
+            "physical_footprint_bytes": 3159770864,
+            "mps_allocated_bytes": 1403999488,
+            "mps_driver_bytes": 2436726784
+          },
+          "memory_peak": {
+            "rss_bytes": 695386112,
+            "physical_footprint_bytes": 3159770864,
+            "mps_allocated_bytes": 1395027712,
+            "mps_driver_bytes": 2436759552
+          }
+        },
+        {
+          "blocks": 8,
+          "seconds": 16,
+          "visual_seconds": 1.179426374990726,
+          "memory_seconds": 0.08961729099974036,
+          "retained_tokens": 843,
+          "state_bytes": 5940416,
+          "vision_blocks": 8,
+          "memory_counts": {
+            "match_calls": 11,
+            "match_query_tokens": 1320,
+            "prune_frames": 4,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 699908096,
+            "physical_footprint_bytes": 3168044784,
+            "mps_allocated_bytes": 1404953856,
+            "mps_driver_bytes": 2445131776
+          },
+          "memory_peak": {
+            "rss_bytes": 699924480,
+            "physical_footprint_bytes": 3168061168,
+            "mps_allocated_bytes": 1396384768,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 10,
+          "seconds": 20,
+          "visual_seconds": 1.1733259589818772,
+          "memory_seconds": 0.0859019169874955,
+          "retained_tokens": 998,
+          "state_bytes": 6576536,
+          "vision_blocks": 10,
+          "memory_counts": {
+            "match_calls": 15,
+            "match_query_tokens": 1800,
+            "prune_frames": 6,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 704446464,
+            "physical_footprint_bytes": 3168061168,
+            "mps_allocated_bytes": 1405907712,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 704446464,
+            "physical_footprint_bytes": 3168061168,
+            "mps_allocated_bytes": 1398919680,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 12,
+          "seconds": 24,
+          "visual_seconds": 1.1792276250198483,
+          "memory_seconds": 0.09350287498091348,
+          "retained_tokens": 1108,
+          "state_bytes": 7027976,
+          "vision_blocks": 12,
+          "memory_counts": {
+            "match_calls": 19,
+            "match_query_tokens": 2280,
+            "prune_frames": 8,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 708952064,
+            "physical_footprint_bytes": 3168061168,
+            "mps_allocated_bytes": 1410794240,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 708952064,
+            "physical_footprint_bytes": 3168061168,
+            "mps_allocated_bytes": 1399032064,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 14,
+          "seconds": 28,
+          "visual_seconds": 1.1788676669821143,
+          "memory_seconds": 0.09007837498211302,
+          "retained_tokens": 1219,
+          "state_bytes": 7483520,
+          "vision_blocks": 14,
+          "memory_counts": {
+            "match_calls": 23,
+            "match_query_tokens": 2760,
+            "prune_frames": 10,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 713490432,
+            "physical_footprint_bytes": 3168077552,
+            "mps_allocated_bytes": 1407995648,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 713490432,
+            "physical_footprint_bytes": 3168077552,
+            "mps_allocated_bytes": 1400443648,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 16,
+          "seconds": 32,
+          "visual_seconds": 1.181262791971676,
+          "memory_seconds": 0.09277733298949897,
+          "retained_tokens": 1335,
+          "state_bytes": 7959584,
+          "vision_blocks": 16,
+          "memory_counts": {
+            "match_calls": 27,
+            "match_query_tokens": 3240,
+            "prune_frames": 12,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 717996032,
+            "physical_footprint_bytes": 3168077552,
+            "mps_allocated_bytes": 1408776192,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 717996032,
+            "physical_footprint_bytes": 3168077552,
+            "mps_allocated_bytes": 1401875712,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 18,
+          "seconds": 36,
+          "visual_seconds": 1.164661167014856,
+          "memory_seconds": 0.08871775001171045,
+          "retained_tokens": 1460,
+          "state_bytes": 8472584,
+          "vision_blocks": 18,
+          "memory_counts": {
+            "match_calls": 31,
+            "match_query_tokens": 3720,
+            "prune_frames": 14,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 722518016,
+            "physical_footprint_bytes": 3168077552,
+            "mps_allocated_bytes": 1410194176,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 722534400,
+            "physical_footprint_bytes": 3168093936,
+            "mps_allocated_bytes": 1406902272,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 20,
+          "seconds": 40,
+          "visual_seconds": 1.1784683750011027,
+          "memory_seconds": 0.09225908300140873,
+          "retained_tokens": 1631,
+          "state_bytes": 9174368,
+          "vision_blocks": 20,
+          "memory_counts": {
+            "match_calls": 35,
+            "match_query_tokens": 4200,
+            "prune_frames": 16,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 727056384,
+            "physical_footprint_bytes": 3168093936,
+            "mps_allocated_bytes": 1410690304,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 727056384,
+            "physical_footprint_bytes": 3168093936,
+            "mps_allocated_bytes": 1405001984,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 22,
+          "seconds": 44,
+          "visual_seconds": 1.180109959008405,
+          "memory_seconds": 0.09160720798536204,
+          "retained_tokens": 1806,
+          "state_bytes": 9892568,
+          "vision_blocks": 22,
+          "memory_counts": {
+            "match_calls": 39,
+            "match_query_tokens": 4680,
+            "prune_frames": 18,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 731561984,
+            "physical_footprint_bytes": 3168093936,
+            "mps_allocated_bytes": 1415578880,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 731561984,
+            "physical_footprint_bytes": 3168093936,
+            "mps_allocated_bytes": 1406675712,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 24,
+          "seconds": 48,
+          "visual_seconds": 1.1735615830111783,
+          "memory_seconds": 0.09528775000944734,
+          "retained_tokens": 1989,
+          "state_bytes": 10643600,
+          "vision_blocks": 24,
+          "memory_counts": {
+            "match_calls": 43,
+            "match_query_tokens": 5160,
+            "prune_frames": 20,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 736116736,
+            "physical_footprint_bytes": 3168126704,
+            "mps_allocated_bytes": 1412604160,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 736116736,
+            "physical_footprint_bytes": 3168126704,
+            "mps_allocated_bytes": 1408382208,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 26,
+          "seconds": 52,
+          "visual_seconds": 1.1852994170039892,
+          "memory_seconds": 0.09390416598762386,
+          "retained_tokens": 2162,
+          "state_bytes": 11353592,
+          "vision_blocks": 26,
+          "memory_counts": {
+            "match_calls": 47,
+            "match_query_tokens": 5640,
+            "prune_frames": 22,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 740638720,
+            "physical_footprint_bytes": 3176515312,
+            "mps_allocated_bytes": 1413560832,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 740655104,
+            "physical_footprint_bytes": 3176531696,
+            "mps_allocated_bytes": 1410047744,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 28,
+          "seconds": 56,
+          "visual_seconds": 1.1756994579918683,
+          "memory_seconds": 0.09442350000608712,
+          "retained_tokens": 2306,
+          "state_bytes": 11944568,
+          "vision_blocks": 28,
+          "memory_counts": {
+            "match_calls": 51,
+            "match_query_tokens": 6120,
+            "prune_frames": 24,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 745160704,
+            "physical_footprint_bytes": 3176531696,
+            "mps_allocated_bytes": 1414487040,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 745177088,
+            "physical_footprint_bytes": 3176548080,
+            "mps_allocated_bytes": 1411594496,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 30,
+          "seconds": 60,
+          "visual_seconds": 1.1664054160064552,
+          "memory_seconds": 0.08703208301449195,
+          "retained_tokens": 2485,
+          "state_bytes": 12679184,
+          "vision_blocks": 30,
+          "memory_counts": {
+            "match_calls": 55,
+            "match_query_tokens": 6600,
+            "prune_frames": 26,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 749715456,
+            "physical_footprint_bytes": 3176564464,
+            "mps_allocated_bytes": 1419898112,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 749715456,
+            "physical_footprint_bytes": 3176564464,
+            "mps_allocated_bytes": 1413284608,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 32,
+          "seconds": 64,
+          "visual_seconds": 1.1445551659853663,
+          "memory_seconds": 0.08535908401245251,
+          "retained_tokens": 2671,
+          "state_bytes": 13442528,
+          "vision_blocks": 32,
+          "memory_counts": {
+            "match_calls": 59,
+            "match_query_tokens": 7080,
+            "prune_frames": 28,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 754204672,
+            "physical_footprint_bytes": 3176564464,
+            "mps_allocated_bytes": 1416400896,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 754204672,
+            "physical_footprint_bytes": 3176564464,
+            "mps_allocated_bytes": 1415003392,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 34,
+          "seconds": 68,
+          "visual_seconds": 1.160822832986014,
+          "memory_seconds": 0.08562833300675265,
+          "retained_tokens": 2840,
+          "state_bytes": 14136104,
+          "vision_blocks": 34,
+          "memory_counts": {
+            "match_calls": 63,
+            "match_query_tokens": 7560,
+            "prune_frames": 30,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 758759424,
+            "physical_footprint_bytes": 3176597232,
+            "mps_allocated_bytes": 1427798528,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 758759424,
+            "physical_footprint_bytes": 3176597232,
+            "mps_allocated_bytes": 1416652544,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 36,
+          "seconds": 72,
+          "visual_seconds": 1.1755315419868566,
+          "memory_seconds": 0.09210216600331478,
+          "retained_tokens": 3040,
+          "state_bytes": 14956904,
+          "vision_blocks": 36,
+          "memory_counts": {
+            "match_calls": 67,
+            "match_query_tokens": 8040,
+            "prune_frames": 32,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 763281408,
+            "physical_footprint_bytes": 3176597232,
+            "mps_allocated_bytes": 1418521856,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 763281408,
+            "physical_footprint_bytes": 3176597232,
+            "mps_allocated_bytes": 1418428672,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 38,
+          "seconds": 76,
+          "visual_seconds": 1.1853658329928294,
+          "memory_seconds": 0.15911062501254492,
+          "retained_tokens": 3063,
+          "state_bytes": 15051296,
+          "vision_blocks": 38,
+          "memory_counts": {
+            "match_calls": 71,
+            "match_query_tokens": 8520,
+            "prune_frames": 34,
+            "merge_frames": 2
+          },
+          "visual_peak": {
+            "rss_bytes": 767819776,
+            "physical_footprint_bytes": 3176630000,
+            "mps_allocated_bytes": 1419478784,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 768180224,
+            "physical_footprint_bytes": 3185247984,
+            "mps_allocated_bytes": 1418786560,
+            "mps_driver_bytes": 2461958144
+          }
+        },
+        {
+          "blocks": 40,
+          "seconds": 80,
+          "visual_seconds": 1.179942334012594,
+          "memory_seconds": 0.15935020800679922,
+          "retained_tokens": 3071,
+          "state_bytes": 15084128,
+          "vision_blocks": 40,
+          "memory_counts": {
+            "match_calls": 75,
+            "match_query_tokens": 9000,
+            "prune_frames": 36,
+            "merge_frames": 4
+          },
+          "visual_peak": {
+            "rss_bytes": 772734976,
+            "physical_footprint_bytes": 3185280752,
+            "mps_allocated_bytes": 1425449728,
+            "mps_driver_bytes": 2461958144
+          },
+          "memory_peak": {
+            "rss_bytes": 772882432,
+            "physical_footprint_bytes": 3185313520,
+            "mps_allocated_bytes": 1418959104,
+            "mps_driver_bytes": 2461990912
+          }
+        },
+        {
+          "blocks": 41,
+          "seconds": 82,
+          "visual_seconds": 0.5882083750038873,
+          "memory_seconds": 0.08116741600679234,
+          "retained_tokens": 3087,
+          "state_bytes": 15149792,
+          "vision_blocks": 41,
+          "memory_counts": {
+            "match_calls": 77,
+            "match_query_tokens": 9240,
+            "prune_frames": 37,
+            "merge_frames": 5
+          },
+          "visual_peak": {
+            "rss_bytes": 775159808,
+            "physical_footprint_bytes": 3185329904,
+            "mps_allocated_bytes": 1420043520,
+            "mps_driver_bytes": 2461990912
+          },
+          "memory_peak": {
+            "rss_bytes": 775208960,
+            "physical_footprint_bytes": 3185346288,
+            "mps_allocated_bytes": 1419024896,
+            "mps_driver_bytes": 2461990912
+          }
+        },
+        {
+          "blocks": 42,
+          "seconds": 84,
+          "visual_seconds": 0.5932711670175195,
+          "memory_seconds": 0.0787158329912927,
+          "retained_tokens": 3113,
+          "state_bytes": 15256496,
+          "vision_blocks": 42,
+          "memory_counts": {
+            "match_calls": 79,
+            "match_query_tokens": 9480,
+            "prune_frames": 38,
+            "merge_frames": 6
+          },
+          "visual_peak": {
+            "rss_bytes": 777469952,
+            "physical_footprint_bytes": 3185346288,
+            "mps_allocated_bytes": 1420044032,
+            "mps_driver_bytes": 2461990912
+          },
+          "memory_peak": {
+            "rss_bytes": 777486336,
+            "physical_footprint_bytes": 3185362672,
+            "mps_allocated_bytes": 1419762176,
+            "mps_driver_bytes": 2462007296
+          }
+        },
+        {
+          "blocks": 44,
+          "seconds": 88,
+          "visual_seconds": 1.1842705419985577,
+          "memory_seconds": 0.15197916701436043,
+          "retained_tokens": 3193,
+          "state_bytes": 15584816,
+          "vision_blocks": 44,
+          "memory_counts": {
+            "match_calls": 83,
+            "match_query_tokens": 9960,
+            "prune_frames": 40,
+            "merge_frames": 8
+          },
+          "visual_peak": {
+            "rss_bytes": 782008320,
+            "physical_footprint_bytes": 3185379056,
+            "mps_allocated_bytes": 1425589760,
+            "mps_driver_bytes": 2462007296
+          },
+          "memory_peak": {
+            "rss_bytes": 782041088,
+            "physical_footprint_bytes": 3185428208,
+            "mps_allocated_bytes": 1421700864,
+            "mps_driver_bytes": 2462040064
+          }
+        },
+        {
+          "blocks": 46,
+          "seconds": 92,
+          "visual_seconds": 1.1802962500078138,
+          "memory_seconds": 0.17670449998695403,
+          "retained_tokens": 3298,
+          "state_bytes": 16015736,
+          "vision_blocks": 46,
+          "memory_counts": {
+            "match_calls": 87,
+            "match_query_tokens": 10440,
+            "prune_frames": 42,
+            "merge_frames": 10
+          },
+          "visual_peak": {
+            "rss_bytes": 786530304,
+            "physical_footprint_bytes": 3185428208,
+            "mps_allocated_bytes": 1427479296,
+            "mps_driver_bytes": 2462040064
+          },
+          "memory_peak": {
+            "rss_bytes": 786595840,
+            "physical_footprint_bytes": 3185460976,
+            "mps_allocated_bytes": 1423390208,
+            "mps_driver_bytes": 2462072832
+          }
+        },
+        {
+          "blocks": 48,
+          "seconds": 96,
+          "visual_seconds": 1.168066791986348,
+          "memory_seconds": 0.14845708300708793,
+          "retained_tokens": 3359,
+          "state_bytes": 16266080,
+          "vision_blocks": 48,
+          "memory_counts": {
+            "match_calls": 91,
+            "match_query_tokens": 10920,
+            "prune_frames": 44,
+            "merge_frames": 12
+          },
+          "visual_peak": {
+            "rss_bytes": 791117824,
+            "physical_footprint_bytes": 3185477360,
+            "mps_allocated_bytes": 1424061184,
+            "mps_driver_bytes": 2462072832
+          },
+          "memory_peak": {
+            "rss_bytes": 791150592,
+            "physical_footprint_bytes": 3185510128,
+            "mps_allocated_bytes": 1425373952,
+            "mps_driver_bytes": 2462089216
+          }
+        },
+        {
+          "blocks": 50,
+          "seconds": 100,
+          "visual_seconds": 1.179649875004543,
+          "memory_seconds": 0.1534870420000516,
+          "retained_tokens": 3369,
+          "state_bytes": 16307120,
+          "vision_blocks": 50,
+          "memory_counts": {
+            "match_calls": 95,
+            "match_query_tokens": 11400,
+            "prune_frames": 46,
+            "merge_frames": 14
+          },
+          "visual_peak": {
+            "rss_bytes": 795688960,
+            "physical_footprint_bytes": 3185526512,
+            "mps_allocated_bytes": 1430710016,
+            "mps_driver_bytes": 2462089216
+          },
+          "memory_peak": {
+            "rss_bytes": 795803648,
+            "physical_footprint_bytes": 3185657584,
+            "mps_allocated_bytes": 1426526464,
+            "mps_driver_bytes": 2462105600
+          }
+        },
+        {
+          "blocks": 52,
+          "seconds": 104,
+          "visual_seconds": 1.1850902079895604,
+          "memory_seconds": 0.1586467910092324,
+          "retained_tokens": 3331,
+          "state_bytes": 16151168,
+          "vision_blocks": 52,
+          "memory_counts": {
+            "match_calls": 99,
+            "match_query_tokens": 11880,
+            "prune_frames": 48,
+            "merge_frames": 16
+          },
+          "visual_peak": {
+            "rss_bytes": 800325632,
+            "physical_footprint_bytes": 3185657584,
+            "mps_allocated_bytes": 1427144192,
+            "mps_driver_bytes": 2462105600
+          },
+          "memory_peak": {
+            "rss_bytes": 800456704,
+            "physical_footprint_bytes": 3194193648,
+            "mps_allocated_bytes": 1427949312,
+            "mps_driver_bytes": 2470526976
+          }
+        },
+        {
+          "blocks": 54,
+          "seconds": 108,
+          "visual_seconds": 1.1848132089944556,
+          "memory_seconds": 0.1552934999926947,
+          "retained_tokens": 3328,
+          "state_bytes": 16138856,
+          "vision_blocks": 54,
+          "memory_counts": {
+            "match_calls": 103,
+            "match_query_tokens": 12360,
+            "prune_frames": 50,
+            "merge_frames": 18
+          },
+          "visual_peak": {
+            "rss_bytes": 804962304,
+            "physical_footprint_bytes": 3194193648,
+            "mps_allocated_bytes": 1428542464,
+            "mps_driver_bytes": 2470526976
+          },
+          "memory_peak": {
+            "rss_bytes": 805093376,
+            "physical_footprint_bytes": 3194341104,
+            "mps_allocated_bytes": 1429380608,
+            "mps_driver_bytes": 2470543360
+          }
+        },
+        {
+          "blocks": 56,
+          "seconds": 112,
+          "visual_seconds": 1.1868808750004973,
+          "memory_seconds": 0.15345816701301374,
+          "retained_tokens": 3313,
+          "state_bytes": 16077296,
+          "vision_blocks": 56,
+          "memory_counts": {
+            "match_calls": 107,
+            "match_query_tokens": 12840,
+            "prune_frames": 52,
+            "merge_frames": 20
+          },
+          "visual_peak": {
+            "rss_bytes": 809615360,
+            "physical_footprint_bytes": 3194341104,
+            "mps_allocated_bytes": 1430756352,
+            "mps_driver_bytes": 2470543360
+          },
+          "memory_peak": {
+            "rss_bytes": 809746432,
+            "physical_footprint_bytes": 3194406640,
+            "mps_allocated_bytes": 1430877696,
+            "mps_driver_bytes": 2470576128
+          }
+        },
+        {
+          "blocks": 58,
+          "seconds": 116,
+          "visual_seconds": 1.1533889999845996,
+          "memory_seconds": 0.1418447079777252,
+          "retained_tokens": 3288,
+          "state_bytes": 15974696,
+          "vision_blocks": 58,
+          "memory_counts": {
+            "match_calls": 111,
+            "match_query_tokens": 13320,
+            "prune_frames": 54,
+            "merge_frames": 22
+          },
+          "visual_peak": {
+            "rss_bytes": 814284800,
+            "physical_footprint_bytes": 3194423024,
+            "mps_allocated_bytes": 1436385792,
+            "mps_driver_bytes": 2470576128
+          },
+          "memory_peak": {
+            "rss_bytes": 814333952,
+            "physical_footprint_bytes": 3194472176,
+            "mps_allocated_bytes": 1432043264,
+            "mps_driver_bytes": 2470592512
+          }
+        },
+        {
+          "blocks": 60,
+          "seconds": 120,
+          "visual_seconds": 1.1839693749789149,
+          "memory_seconds": 0.15246379197924398,
+          "retained_tokens": 3278,
+          "state_bytes": 15933656,
+          "vision_blocks": 60,
+          "memory_counts": {
+            "match_calls": 115,
+            "match_query_tokens": 13800,
+            "prune_frames": 56,
+            "merge_frames": 24
+          },
+          "visual_peak": {
+            "rss_bytes": 818855936,
+            "physical_footprint_bytes": 3194488560,
+            "mps_allocated_bytes": 1432886528,
+            "mps_driver_bytes": 2470592512
+          },
+          "memory_peak": {
+            "rss_bytes": 818970624,
+            "physical_footprint_bytes": 3194570480,
+            "mps_allocated_bytes": 1433221120,
+            "mps_driver_bytes": 2470608896
+          }
+        },
+        {
+          "blocks": 62,
+          "seconds": 124,
+          "visual_seconds": 1.1773322920198552,
+          "memory_seconds": 0.15067079200525768,
+          "retained_tokens": 3225,
+          "state_bytes": 15716144,
+          "vision_blocks": 62,
+          "memory_counts": {
+            "match_calls": 119,
+            "match_query_tokens": 14280,
+            "prune_frames": 58,
+            "merge_frames": 26
+          },
+          "visual_peak": {
+            "rss_bytes": 823508992,
+            "physical_footprint_bytes": 3194586864,
+            "mps_allocated_bytes": 1434064128,
+            "mps_driver_bytes": 2470608896
+          },
+          "memory_peak": {
+            "rss_bytes": 823574528,
+            "physical_footprint_bytes": 3203024624,
+            "mps_allocated_bytes": 1434685952,
+            "mps_driver_bytes": 2478997504
+          }
+        },
+        {
+          "blocks": 64,
+          "seconds": 128,
+          "visual_seconds": 1.183102582988795,
+          "memory_seconds": 0.1607129170151893,
+          "retained_tokens": 3197,
+          "state_bytes": 15601232,
+          "vision_blocks": 64,
+          "memory_counts": {
+            "match_calls": 123,
+            "match_query_tokens": 14760,
+            "prune_frames": 60,
+            "merge_frames": 28
+          },
+          "visual_peak": {
+            "rss_bytes": 828096512,
+            "physical_footprint_bytes": 3203041008,
+            "mps_allocated_bytes": 1435528960,
+            "mps_driver_bytes": 2478997504
+          },
+          "memory_peak": {
+            "rss_bytes": 828194816,
+            "physical_footprint_bytes": 3203106544,
+            "mps_allocated_bytes": 1436208384,
+            "mps_driver_bytes": 2479013888
+          }
+        },
+        {
+          "blocks": 66,
+          "seconds": 132,
+          "visual_seconds": 1.2078302910085768,
+          "memory_seconds": 0.15447445801692083,
+          "retained_tokens": 3188,
+          "state_bytes": 15564296,
+          "vision_blocks": 66,
+          "memory_counts": {
+            "match_calls": 127,
+            "match_query_tokens": 15240,
+            "prune_frames": 62,
+            "merge_frames": 30
+          },
+          "visual_peak": {
+            "rss_bytes": 832716800,
+            "physical_footprint_bytes": 3203106544,
+            "mps_allocated_bytes": 1441966336,
+            "mps_driver_bytes": 2479013888
+          },
+          "memory_peak": {
+            "rss_bytes": 832798720,
+            "physical_footprint_bytes": 3203204848,
+            "mps_allocated_bytes": 1437161728,
+            "mps_driver_bytes": 2479030272
+          }
+        },
+        {
+          "blocks": 68,
+          "seconds": 136,
+          "visual_seconds": 1.1781158329977188,
+          "memory_seconds": 0.15560554101830348,
+          "retained_tokens": 3206,
+          "state_bytes": 15638168,
+          "vision_blocks": 68,
+          "memory_counts": {
+            "match_calls": 131,
+            "match_query_tokens": 15720,
+            "prune_frames": 64,
+            "merge_frames": 32
+          },
+          "visual_peak": {
+            "rss_bytes": 837337088,
+            "physical_footprint_bytes": 3203221232,
+            "mps_allocated_bytes": 1443349760,
+            "mps_driver_bytes": 2479030272
+          },
+          "memory_peak": {
+            "rss_bytes": 837435392,
+            "physical_footprint_bytes": 3203319536,
+            "mps_allocated_bytes": 1439229696,
+            "mps_driver_bytes": 2479046656
+          }
+        },
+        {
+          "blocks": 70,
+          "seconds": 140,
+          "visual_seconds": 1.1844454160018358,
+          "memory_seconds": 0.15289075000328012,
+          "retained_tokens": 3258,
+          "state_bytes": 15851576,
+          "vision_blocks": 70,
+          "memory_counts": {
+            "match_calls": 135,
+            "match_query_tokens": 16200,
+            "prune_frames": 66,
+            "merge_frames": 34
+          },
+          "visual_peak": {
+            "rss_bytes": 841973760,
+            "physical_footprint_bytes": 3203352304,
+            "mps_allocated_bytes": 1440072960,
+            "mps_driver_bytes": 2479046656
+          },
+          "memory_peak": {
+            "rss_bytes": 842072064,
+            "physical_footprint_bytes": 3203401456,
+            "mps_allocated_bytes": 1440699136,
+            "mps_driver_bytes": 2479079424
+          }
+        },
+        {
+          "blocks": 72,
+          "seconds": 144,
+          "visual_seconds": 1.1799304590094835,
+          "memory_seconds": 0.1616499579977244,
+          "retained_tokens": 3331,
+          "state_bytes": 16151168,
+          "vision_blocks": 72,
+          "memory_counts": {
+            "match_calls": 139,
+            "match_query_tokens": 16680,
+            "prune_frames": 68,
+            "merge_frames": 36
+          },
+          "visual_peak": {
+            "rss_bytes": 846610432,
+            "physical_footprint_bytes": 3203417840,
+            "mps_allocated_bytes": 1441542144,
+            "mps_driver_bytes": 2479079424
+          },
+          "memory_peak": {
+            "rss_bytes": 846757888,
+            "physical_footprint_bytes": 3203581680,
+            "mps_allocated_bytes": 1442432768,
+            "mps_driver_bytes": 2479112192
+          }
+        },
+        {
+          "blocks": 74,
+          "seconds": 148,
+          "visual_seconds": 1.1798363749985583,
+          "memory_seconds": 0.15251458398415707,
+          "retained_tokens": 3406,
+          "state_bytes": 16458968,
+          "vision_blocks": 74,
+          "memory_counts": {
+            "match_calls": 143,
+            "match_query_tokens": 17160,
+            "prune_frames": 70,
+            "merge_frames": 38
+          },
+          "visual_peak": {
+            "rss_bytes": 851296256,
+            "physical_footprint_bytes": 3203598064,
+            "mps_allocated_bytes": 1442780160,
+            "mps_driver_bytes": 2479112192
+          },
+          "memory_peak": {
+            "rss_bytes": 851329024,
+            "physical_footprint_bytes": 3212019440,
+            "mps_allocated_bytes": 1443863552,
+            "mps_driver_bytes": 2487500800
+          }
+        },
+        {
+          "blocks": 76,
+          "seconds": 152,
+          "visual_seconds": 1.1739455829956569,
+          "memory_seconds": 0.13898079199134372,
+          "retained_tokens": 3483,
+          "state_bytes": 16774976,
+          "vision_blocks": 76,
+          "memory_counts": {
+            "match_calls": 147,
+            "match_query_tokens": 17640,
+            "prune_frames": 72,
+            "merge_frames": 40
+          },
+          "visual_peak": {
+            "rss_bytes": 855834624,
+            "physical_footprint_bytes": 3212019440,
+            "mps_allocated_bytes": 1444083968,
+            "mps_driver_bytes": 2487517184
+          },
+          "memory_peak": {
+            "rss_bytes": 855932928,
+            "physical_footprint_bytes": 3212101360,
+            "mps_allocated_bytes": 1445740032,
+            "mps_driver_bytes": 2487533568
+          }
+        },
+        {
+          "blocks": 78,
+          "seconds": 156,
+          "visual_seconds": 1.1993147080065683,
+          "memory_seconds": 0.15548183300415985,
+          "retained_tokens": 3529,
+          "state_bytes": 16963760,
+          "vision_blocks": 78,
+          "memory_counts": {
+            "match_calls": 151,
+            "match_query_tokens": 18120,
+            "prune_frames": 74,
+            "merge_frames": 42
+          },
+          "visual_peak": {
+            "rss_bytes": 860487680,
+            "physical_footprint_bytes": 3212134128,
+            "mps_allocated_bytes": 1445956352,
+            "mps_driver_bytes": 2487533568
+          },
+          "memory_peak": {
+            "rss_bytes": 860585984,
+            "physical_footprint_bytes": 3212347120,
+            "mps_allocated_bytes": 1447462912,
+            "mps_driver_bytes": 2487681024
+          }
+        },
+        {
+          "blocks": 80,
+          "seconds": 160,
+          "visual_seconds": 1.1775154579954688,
+          "memory_seconds": 0.3053880409861449,
+          "retained_tokens": 3600,
+          "state_bytes": 17255144,
+          "vision_blocks": 80,
+          "memory_counts": {
+            "match_calls": 155,
+            "match_query_tokens": 18600,
+            "prune_frames": 76,
+            "merge_frames": 44
+          },
+          "visual_peak": {
+            "rss_bytes": 865091584,
+            "physical_footprint_bytes": 3212347120,
+            "mps_allocated_bytes": 1451422720,
+            "mps_driver_bytes": 2487681024
+          },
+          "memory_peak": {
+            "rss_bytes": 865157120,
+            "physical_footprint_bytes": 3212527344,
+            "mps_allocated_bytes": 1449229824,
+            "mps_driver_bytes": 2487697408
+          }
+        },
+        {
+          "blocks": 82,
+          "seconds": 164,
+          "visual_seconds": 1.568080416007433,
+          "memory_seconds": 0.15174000000115484,
+          "retained_tokens": 3682,
+          "state_bytes": 17591672,
+          "vision_blocks": 82,
+          "memory_counts": {
+            "match_calls": 159,
+            "match_query_tokens": 19080,
+            "prune_frames": 78,
+            "merge_frames": 46
+          },
+          "visual_peak": {
+            "rss_bytes": 816758784,
+            "physical_footprint_bytes": 3314894576,
+            "mps_allocated_bytes": 1449032704,
+            "mps_driver_bytes": 2487697408
+          },
+          "memory_peak": {
+            "rss_bytes": 234258432,
+            "physical_footprint_bytes": 3320579824,
+            "mps_allocated_bytes": 1451474944,
+            "mps_driver_bytes": 2487730176
+          }
+        },
+        {
+          "blocks": 84,
+          "seconds": 168,
+          "visual_seconds": 1.2159645830106456,
+          "memory_seconds": 0.14301470801001415,
+          "retained_tokens": 3836,
+          "state_bytes": 18223688,
+          "vision_blocks": 84,
+          "memory_counts": {
+            "match_calls": 163,
+            "match_query_tokens": 19560,
+            "prune_frames": 80,
+            "merge_frames": 48
+          },
+          "visual_peak": {
+            "rss_bytes": 270057472,
+            "physical_footprint_bytes": 3320645360,
+            "mps_allocated_bytes": 1451080960,
+            "mps_driver_bytes": 2487730176
+          },
+          "memory_peak": {
+            "rss_bytes": 278495232,
+            "physical_footprint_bytes": 3326134000,
+            "mps_allocated_bytes": 1452912640,
+            "mps_driver_bytes": 2487762944
+          }
+        },
+        {
+          "blocks": 86,
+          "seconds": 172,
+          "visual_seconds": 1.2216424589860253,
+          "memory_seconds": 0.1576265420007985,
+          "retained_tokens": 3886,
+          "state_bytes": 18428888,
+          "vision_blocks": 86,
+          "memory_counts": {
+            "match_calls": 167,
+            "match_query_tokens": 20040,
+            "prune_frames": 82,
+            "merge_frames": 50
+          },
+          "visual_peak": {
+            "rss_bytes": 282836992,
+            "physical_footprint_bytes": 3326215920,
+            "mps_allocated_bytes": 1457196032,
+            "mps_driver_bytes": 2487762944
+          },
+          "memory_peak": {
+            "rss_bytes": 290078720,
+            "physical_footprint_bytes": 3338667760,
+            "mps_allocated_bytes": 1455127040,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 88,
+          "seconds": 176,
+          "visual_seconds": 1.2032356659765355,
+          "memory_seconds": 0.1383538329973817,
+          "retained_tokens": 3905,
+          "state_bytes": 18506864,
+          "vision_blocks": 88,
+          "memory_counts": {
+            "match_calls": 171,
+            "match_query_tokens": 20520,
+            "prune_frames": 84,
+            "merge_frames": 52
+          },
+          "visual_peak": {
+            "rss_bytes": 294682624,
+            "physical_footprint_bytes": 3338684144,
+            "mps_allocated_bytes": 1453954816,
+            "mps_driver_bytes": 2496167936
+          },
+          "memory_peak": {
+            "rss_bytes": 300318720,
+            "physical_footprint_bytes": 3339732720,
+            "mps_allocated_bytes": 1456851968,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 90,
+          "seconds": 180,
+          "visual_seconds": 1.1906098750187084,
+          "memory_seconds": 0.14252833402133547,
+          "retained_tokens": 3980,
+          "state_bytes": 18814664,
+          "vision_blocks": 90,
+          "memory_counts": {
+            "match_calls": 175,
+            "match_query_tokens": 21000,
+            "prune_frames": 86,
+            "merge_frames": 54
+          },
+          "visual_peak": {
+            "rss_bytes": 304939008,
+            "physical_footprint_bytes": 3339765488,
+            "mps_allocated_bytes": 1455601920,
+            "mps_driver_bytes": 2496167936
+          },
+          "memory_peak": {
+            "rss_bytes": 309231616,
+            "physical_footprint_bytes": 3341862640,
+            "mps_allocated_bytes": 1458210304,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 92,
+          "seconds": 184,
+          "visual_seconds": 1.1843050419993233,
+          "memory_seconds": 0.15186729101696983,
+          "retained_tokens": 4119,
+          "state_bytes": 19385120,
+          "vision_blocks": 92,
+          "memory_counts": {
+            "match_calls": 179,
+            "match_query_tokens": 21480,
+            "prune_frames": 88,
+            "merge_frames": 56
+          },
+          "visual_peak": {
+            "rss_bytes": 313868288,
+            "physical_footprint_bytes": 3341895408,
+            "mps_allocated_bytes": 1456644864,
+            "mps_driver_bytes": 2496167936
+          },
+          "memory_peak": {
+            "rss_bytes": 321798144,
+            "physical_footprint_bytes": 3347072752,
+            "mps_allocated_bytes": 1459619328,
+            "mps_driver_bytes": 2496200704
+          }
+        },
+        {
+          "blocks": 94,
+          "seconds": 188,
+          "visual_seconds": 1.2044680410181172,
+          "memory_seconds": 0.14569604201824404,
+          "retained_tokens": 4258,
+          "state_bytes": 19955576,
+          "vision_blocks": 94,
+          "memory_counts": {
+            "match_calls": 183,
+            "match_query_tokens": 21960,
+            "prune_frames": 90,
+            "merge_frames": 58
+          },
+          "visual_peak": {
+            "rss_bytes": 326402048,
+            "physical_footprint_bytes": 3347121904,
+            "mps_allocated_bytes": 1462399488,
+            "mps_driver_bytes": 2496200704
+          },
+          "memory_peak": {
+            "rss_bytes": 331923456,
+            "physical_footprint_bytes": 3350922992,
+            "mps_allocated_bytes": 1460944640,
+            "mps_driver_bytes": 2496217088
+          }
+        }
+      ],
+      "total_visual_seconds": 55.96661608296563,
+      "total_memory_seconds": 6.059528746060096,
+      "total_seconds": 62.026144829025725,
+      "final_state_bytes": 19955576,
+      "vision_blocks": 94,
+      "counts": {
+        "match_calls": 183,
+        "match_query_tokens": 21960,
+        "prune_frames": 90,
+        "merge_frames": 58
+      }
+    },
+    {
+      "condition": "B",
+      "rep": 0,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "seconds": 4,
+          "visual_seconds": 1.177102207991993,
+          "memory_seconds": 0.034616416989592835,
+          "retained_tokens": 240,
+          "state_bytes": 983040,
+          "vision_blocks": 2,
+          "memory_counts": {
+            "match_calls": 1,
+            "match_query_tokens": 120,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 454754304,
+            "physical_footprint_bytes": 3292317424,
+            "mps_allocated_bytes": 1401456896,
+            "mps_driver_bytes": 2436644864
+          },
+          "memory_peak": {
+            "rss_bytes": 454230016,
+            "physical_footprint_bytes": 3301132016,
+            "mps_allocated_bytes": 1396103424,
+            "mps_driver_bytes": 2445082624
+          }
+        },
+        {
+          "blocks": 4,
+          "seconds": 8,
+          "visual_seconds": 1.1842175000056159,
+          "memory_seconds": 0.02318420898518525,
+          "retained_tokens": 480,
+          "state_bytes": 1966080,
+          "vision_blocks": 4,
+          "memory_counts": {
+            "match_calls": 4,
+            "match_query_tokens": 480,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 458784768,
+            "physical_footprint_bytes": 3301197552,
+            "mps_allocated_bytes": 1402931456,
+            "mps_driver_bytes": 2445099008
+          },
+          "memory_peak": {
+            "rss_bytes": 458899456,
+            "physical_footprint_bytes": 3301033712,
+            "mps_allocated_bytes": 1397376256,
+            "mps_driver_bytes": 2445131776
+          }
+        },
+        {
+          "blocks": 6,
+          "seconds": 12,
+          "visual_seconds": 1.1764549159852322,
+          "memory_seconds": 0.09669254199252464,
+          "retained_tokens": 663,
+          "state_bytes": 2949120,
+          "vision_blocks": 6,
+          "memory_counts": {
+            "match_calls": 11,
+            "match_query_tokens": 1320,
+            "prune_frames": 2,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 461176832,
+            "physical_footprint_bytes": 3301050096,
+            "mps_allocated_bytes": 1401456896,
+            "mps_driver_bytes": 2445131776
+          },
+          "memory_peak": {
+            "rss_bytes": 461373440,
+            "physical_footprint_bytes": 3301426928,
+            "mps_allocated_bytes": 1402475776,
+            "mps_driver_bytes": 2445197312
+          }
+        },
+        {
+          "blocks": 8,
+          "seconds": 16,
+          "visual_seconds": 1.2832099160004873,
+          "memory_seconds": 0.2087437919981312,
+          "retained_tokens": 843,
+          "state_bytes": 3932160,
+          "vision_blocks": 8,
+          "memory_counts": {
+            "match_calls": 22,
+            "match_query_tokens": 2640,
+            "prune_frames": 6,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 465846272,
+            "physical_footprint_bytes": 3301426928,
+            "mps_allocated_bytes": 1403891968,
+            "mps_driver_bytes": 2445197312
+          },
+          "memory_peak": {
+            "rss_bytes": 369573888,
+            "physical_footprint_bytes": 3301869296,
+            "mps_allocated_bytes": 1405972224,
+            "mps_driver_bytes": 2445213696
+          }
+        },
+        {
+          "blocks": 10,
+          "seconds": 20,
+          "visual_seconds": 1.3595339999883436,
+          "memory_seconds": 0.3857709169969894,
+          "retained_tokens": 998,
+          "state_bytes": 4915200,
+          "vision_blocks": 10,
+          "memory_counts": {
+            "match_calls": 37,
+            "match_query_tokens": 4440,
+            "prune_frames": 12,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 464191488,
+            "physical_footprint_bytes": 3301885680,
+            "mps_allocated_bytes": 1406910208,
+            "mps_driver_bytes": 2445213696
+          },
+          "memory_peak": {
+            "rss_bytes": 458424320,
+            "physical_footprint_bytes": 3310372616,
+            "mps_allocated_bytes": 1409756928,
+            "mps_driver_bytes": 2453618688
+          }
+        },
+        {
+          "blocks": 12,
+          "seconds": 24,
+          "visual_seconds": 1.362215582979843,
+          "memory_seconds": 0.3686499999894295,
+          "retained_tokens": 1108,
+          "state_bytes": 5898240,
+          "vision_blocks": 12,
+          "memory_counts": {
+            "match_calls": 56,
+            "match_query_tokens": 6720,
+            "prune_frames": 20,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 455983104,
+            "physical_footprint_bytes": 3310372616,
+            "mps_allocated_bytes": 1407445504,
+            "mps_driver_bytes": 2453635072
+          },
+          "memory_peak": {
+            "rss_bytes": 450428928,
+            "physical_footprint_bytes": 3310405384,
+            "mps_allocated_bytes": 1419886080,
+            "mps_driver_bytes": 2453667840
+          }
+        },
+        {
+          "blocks": 14,
+          "seconds": 28,
+          "visual_seconds": 1.3667224170058034,
+          "memory_seconds": 0.4526902500074357,
+          "retained_tokens": 1219,
+          "state_bytes": 6881280,
+          "vision_blocks": 14,
+          "memory_counts": {
+            "match_calls": 79,
+            "match_query_tokens": 9480,
+            "prune_frames": 30,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 443236352,
+            "physical_footprint_bytes": 3310405384,
+            "mps_allocated_bytes": 1404800256,
+            "mps_driver_bytes": 2453667840
+          },
+          "memory_peak": {
+            "rss_bytes": 431800320,
+            "physical_footprint_bytes": 3310454536,
+            "mps_allocated_bytes": 1424166400,
+            "mps_driver_bytes": 2453700608
+          }
+        },
+        {
+          "blocks": 16,
+          "seconds": 32,
+          "visual_seconds": 1.391241750010522,
+          "memory_seconds": 0.4887267920130398,
+          "retained_tokens": 1335,
+          "state_bytes": 7864320,
+          "vision_blocks": 16,
+          "memory_counts": {
+            "match_calls": 106,
+            "match_query_tokens": 12720,
+            "prune_frames": 42,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 430456832,
+            "physical_footprint_bytes": 3310454536,
+            "mps_allocated_bytes": 1405617920,
+            "mps_driver_bytes": 2453700608
+          },
+          "memory_peak": {
+            "rss_bytes": 397459456,
+            "physical_footprint_bytes": 3310503688,
+            "mps_allocated_bytes": 1426283008,
+            "mps_driver_bytes": 2453733376
+          }
+        },
+        {
+          "blocks": 18,
+          "seconds": 36,
+          "visual_seconds": 1.2831758329994045,
+          "memory_seconds": 0.6986943749943748,
+          "retained_tokens": 1460,
+          "state_bytes": 8847360,
+          "vision_blocks": 18,
+          "memory_counts": {
+            "match_calls": 137,
+            "match_query_tokens": 16440,
+            "prune_frames": 56,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 399753216,
+            "physical_footprint_bytes": 3310520072,
+            "mps_allocated_bytes": 1412068864,
+            "mps_driver_bytes": 2453733376
+          },
+          "memory_peak": {
+            "rss_bytes": 345145344,
+            "physical_footprint_bytes": 3310552840,
+            "mps_allocated_bytes": 1442531328,
+            "mps_driver_bytes": 2453766144
+          }
+        },
+        {
+          "blocks": 20,
+          "seconds": 40,
+          "visual_seconds": 1.303263791021891,
+          "memory_seconds": 0.680340916995192,
+          "retained_tokens": 1631,
+          "state_bytes": 9830400,
+          "vision_blocks": 20,
+          "memory_counts": {
+            "match_calls": 172,
+            "match_query_tokens": 20640,
+            "prune_frames": 72,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 332660736,
+            "physical_footprint_bytes": 3310552840,
+            "mps_allocated_bytes": 1413509632,
+            "mps_driver_bytes": 2453766144
+          },
+          "memory_peak": {
+            "rss_bytes": 334495744,
+            "physical_footprint_bytes": 3310585608,
+            "mps_allocated_bytes": 1437988608,
+            "mps_driver_bytes": 2453798912
+          }
+        },
+        {
+          "blocks": 22,
+          "seconds": 44,
+          "visual_seconds": 1.2365729170269333,
+          "memory_seconds": 1.0468741669901647,
+          "retained_tokens": 1806,
+          "state_bytes": 10813440,
+          "vision_blocks": 22,
+          "memory_counts": {
+            "match_calls": 211,
+            "match_query_tokens": 25320,
+            "prune_frames": 90,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 336773120,
+            "physical_footprint_bytes": 3310520072,
+            "mps_allocated_bytes": 1411184128,
+            "mps_driver_bytes": 2453798912
+          },
+          "memory_peak": {
+            "rss_bytes": 327794688,
+            "physical_footprint_bytes": 3310552840,
+            "mps_allocated_bytes": 1448460544,
+            "mps_driver_bytes": 2453831680
+          }
+        },
+        {
+          "blocks": 24,
+          "seconds": 48,
+          "visual_seconds": 1.2899490830022842,
+          "memory_seconds": 1.10879970798851,
+          "retained_tokens": 1989,
+          "state_bytes": 11796480,
+          "vision_blocks": 24,
+          "memory_counts": {
+            "match_calls": 254,
+            "match_query_tokens": 30480,
+            "prune_frames": 110,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 309018624,
+            "physical_footprint_bytes": 3310552840,
+            "mps_allocated_bytes": 1413063424,
+            "mps_driver_bytes": 2453831680
+          },
+          "memory_peak": {
+            "rss_bytes": 314015744,
+            "physical_footprint_bytes": 3310733064,
+            "mps_allocated_bytes": 1446105088,
+            "mps_driver_bytes": 2453995520
+          }
+        },
+        {
+          "blocks": 26,
+          "seconds": 52,
+          "visual_seconds": 1.3808814579970203,
+          "memory_seconds": 1.3746897499950137,
+          "retained_tokens": 2162,
+          "state_bytes": 12779520,
+          "vision_blocks": 26,
+          "memory_counts": {
+            "match_calls": 301,
+            "match_query_tokens": 36120,
+            "prune_frames": 132,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 302710784,
+            "physical_footprint_bytes": 3310733064,
+            "mps_allocated_bytes": 1419535360,
+            "mps_driver_bytes": 2453995520
+          },
+          "memory_peak": {
+            "rss_bytes": 304381952,
+            "physical_footprint_bytes": 3319170824,
+            "mps_allocated_bytes": 1449990400,
+            "mps_driver_bytes": 2462416896
+          }
+        },
+        {
+          "blocks": 28,
+          "seconds": 56,
+          "visual_seconds": 1.2751789999892935,
+          "memory_seconds": 0.9897057089838199,
+          "retained_tokens": 2306,
+          "state_bytes": 13762560,
+          "vision_blocks": 28,
+          "memory_counts": {
+            "match_calls": 352,
+            "match_query_tokens": 42240,
+            "prune_frames": 156,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 308969472,
+            "physical_footprint_bytes": 3319187208,
+            "mps_allocated_bytes": 1421053696,
+            "mps_driver_bytes": 2462416896
+          },
+          "memory_peak": {
+            "rss_bytes": 314982400,
+            "physical_footprint_bytes": 3319236360,
+            "mps_allocated_bytes": 1461356544,
+            "mps_driver_bytes": 2462449664
+          }
+        },
+        {
+          "blocks": 30,
+          "seconds": 60,
+          "visual_seconds": 1.261133041989524,
+          "memory_seconds": 1.1515078749798704,
+          "retained_tokens": 2485,
+          "state_bytes": 14745600,
+          "vision_blocks": 30,
+          "memory_counts": {
+            "match_calls": 407,
+            "match_query_tokens": 48840,
+            "prune_frames": 182,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 308674560,
+            "physical_footprint_bytes": 3319252744,
+            "mps_allocated_bytes": 1421237504,
+            "mps_driver_bytes": 2462449664
+          },
+          "memory_peak": {
+            "rss_bytes": 300335104,
+            "physical_footprint_bytes": 3319301896,
+            "mps_allocated_bytes": 1459923968,
+            "mps_driver_bytes": 2462482432
+          }
+        },
+        {
+          "blocks": 32,
+          "seconds": 64,
+          "visual_seconds": 1.2813988750276621,
+          "memory_seconds": 1.1836782500031404,
+          "retained_tokens": 2671,
+          "state_bytes": 15728640,
+          "vision_blocks": 32,
+          "memory_counts": {
+            "match_calls": 466,
+            "match_query_tokens": 55920,
+            "prune_frames": 210,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 294993920,
+            "physical_footprint_bytes": 3319301896,
+            "mps_allocated_bytes": 1418104832,
+            "mps_driver_bytes": 2462482432
+          },
+          "memory_peak": {
+            "rss_bytes": 301367296,
+            "physical_footprint_bytes": 3319383816,
+            "mps_allocated_bytes": 1464323328,
+            "mps_driver_bytes": 2462515200
+          }
+        },
+        {
+          "blocks": 34,
+          "seconds": 68,
+          "visual_seconds": 1.2278683339827694,
+          "memory_seconds": 1.346626374986954,
+          "retained_tokens": 2840,
+          "state_bytes": 16711680,
+          "vision_blocks": 34,
+          "memory_counts": {
+            "match_calls": 529,
+            "match_query_tokens": 63480,
+            "prune_frames": 240,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 305905664,
+            "physical_footprint_bytes": 3319400200,
+            "mps_allocated_bytes": 1424002816,
+            "mps_driver_bytes": 2462515200
+          },
+          "memory_peak": {
+            "rss_bytes": 311984128,
+            "physical_footprint_bytes": 3319465736,
+            "mps_allocated_bytes": 1467060224,
+            "mps_driver_bytes": 2462547968
+          }
+        },
+        {
+          "blocks": 36,
+          "seconds": 72,
+          "visual_seconds": 1.2262555000197608,
+          "memory_seconds": 1.123283958004322,
+          "retained_tokens": 3040,
+          "state_bytes": 17694720,
+          "vision_blocks": 36,
+          "memory_counts": {
+            "match_calls": 596,
+            "match_query_tokens": 71520,
+            "prune_frames": 272,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 316538880,
+            "physical_footprint_bytes": 3318712072,
+            "mps_allocated_bytes": 1420070912,
+            "mps_driver_bytes": 2462547968
+          },
+          "memory_peak": {
+            "rss_bytes": 322846720,
+            "physical_footprint_bytes": 3319596808,
+            "mps_allocated_bytes": 1472764416,
+            "mps_driver_bytes": 2462613504
+          }
+        },
+        {
+          "blocks": 38,
+          "seconds": 76,
+          "visual_seconds": 1.2445409159990959,
+          "memory_seconds": 1.4839444999815896,
+          "retained_tokens": 3063,
+          "state_bytes": 18677760,
+          "vision_blocks": 38,
+          "memory_counts": {
+            "match_calls": 667,
+            "match_query_tokens": 80040,
+            "prune_frames": 306,
+            "merge_frames": 2
+          },
+          "visual_peak": {
+            "rss_bytes": 312819712,
+            "physical_footprint_bytes": 3319596808,
+            "mps_allocated_bytes": 1421053952,
+            "mps_driver_bytes": 2462613504
+          },
+          "memory_peak": {
+            "rss_bytes": 324190208,
+            "physical_footprint_bytes": 3327543048,
+            "mps_allocated_bytes": 1482079232,
+            "mps_driver_bytes": 2471100416
+          }
+        },
+        {
+          "blocks": 40,
+          "seconds": 80,
+          "visual_seconds": 1.1830506660044193,
+          "memory_seconds": 1.605405417009024,
+          "retained_tokens": 3071,
+          "state_bytes": 19660800,
+          "vision_blocks": 40,
+          "memory_counts": {
+            "match_calls": 742,
+            "match_query_tokens": 89040,
+            "prune_frames": 342,
+            "merge_frames": 6
+          },
+          "visual_peak": {
+            "rss_bytes": 328761344,
+            "physical_footprint_bytes": 3327657736,
+            "mps_allocated_bytes": 1421676544,
+            "mps_driver_bytes": 2471100416
+          },
+          "memory_peak": {
+            "rss_bytes": 343212032,
+            "physical_footprint_bytes": 3328214792,
+            "mps_allocated_bytes": 1485285888,
+            "mps_driver_bytes": 2471198720
+          }
+        },
+        {
+          "blocks": 41,
+          "seconds": 82,
+          "visual_seconds": 0.6223306669853628,
+          "memory_seconds": 1.8134901250014082,
+          "retained_tokens": 3087,
+          "state_bytes": 20152320,
+          "vision_blocks": 41,
+          "memory_counts": {
+            "match_calls": 819,
+            "match_query_tokens": 98280,
+            "prune_frames": 379,
+            "merge_frames": 11
+          },
+          "visual_peak": {
+            "rss_bytes": 345489408,
+            "physical_footprint_bytes": 3327821576,
+            "mps_allocated_bytes": 1422168064,
+            "mps_driver_bytes": 2471198720
+          },
+          "memory_peak": {
+            "rss_bytes": 345767936,
+            "physical_footprint_bytes": 3328427784,
+            "mps_allocated_bytes": 1485595648,
+            "mps_driver_bytes": 2471264256
+          }
+        },
+        {
+          "blocks": 42,
+          "seconds": 84,
+          "visual_seconds": 0.7742514169949573,
+          "memory_seconds": 1.995210541994311,
+          "retained_tokens": 3113,
+          "state_bytes": 20643840,
+          "vision_blocks": 42,
+          "memory_counts": {
+            "match_calls": 898,
+            "match_query_tokens": 107760,
+            "prune_frames": 417,
+            "merge_frames": 17
+          },
+          "visual_peak": {
+            "rss_bytes": 343769088,
+            "physical_footprint_bytes": 3327952648,
+            "mps_allocated_bytes": 1424219392,
+            "mps_driver_bytes": 2472378368
+          },
+          "memory_peak": {
+            "rss_bytes": 350240768,
+            "physical_footprint_bytes": 3336587016,
+            "mps_allocated_bytes": 1489759488,
+            "mps_driver_bytes": 2479734784
+          }
+        },
+        {
+          "blocks": 44,
+          "seconds": 88,
+          "visual_seconds": 1.2114667079877108,
+          "memory_seconds": 2.3697292500000913,
+          "retained_tokens": 3193,
+          "state_bytes": 21626880,
+          "vision_blocks": 44,
+          "memory_counts": {
+            "match_calls": 981,
+            "match_query_tokens": 117720,
+            "prune_frames": 457,
+            "merge_frames": 25
+          },
+          "visual_peak": {
+            "rss_bytes": 330792960,
+            "physical_footprint_bytes": 3336701704,
+            "mps_allocated_bytes": 1433897728,
+            "mps_driver_bytes": 2479734784
+          },
+          "memory_peak": {
+            "rss_bytes": 337084416,
+            "physical_footprint_bytes": 3337389832,
+            "mps_allocated_bytes": 1499068928,
+            "mps_driver_bytes": 2479833088
+          }
+        },
+        {
+          "blocks": 46,
+          "seconds": 92,
+          "visual_seconds": 1.374323916999856,
+          "memory_seconds": 2.6523362909792922,
+          "retained_tokens": 3298,
+          "state_bytes": 22609920,
+          "vision_blocks": 46,
+          "memory_counts": {
+            "match_calls": 1068,
+            "match_query_tokens": 128160,
+            "prune_frames": 499,
+            "merge_frames": 35
+          },
+          "visual_peak": {
+            "rss_bytes": 267829248,
+            "physical_footprint_bytes": 3336898312,
+            "mps_allocated_bytes": 1425559552,
+            "mps_driver_bytes": 2479833088
+          },
+          "memory_peak": {
+            "rss_bytes": 293961728,
+            "physical_footprint_bytes": 3345581832,
+            "mps_allocated_bytes": 1505366016,
+            "mps_driver_bytes": 2488451072
+          }
+        },
+        {
+          "blocks": 48,
+          "seconds": 96,
+          "visual_seconds": 1.288135290989885,
+          "memory_seconds": 2.1129289169912226,
+          "retained_tokens": 3359,
+          "state_bytes": 23592960,
+          "vision_blocks": 48,
+          "memory_counts": {
+            "match_calls": 1159,
+            "match_query_tokens": 139080,
+            "prune_frames": 543,
+            "merge_frames": 47
+          },
+          "visual_peak": {
+            "rss_bytes": 298516480,
+            "physical_footprint_bytes": 3345680136,
+            "mps_allocated_bytes": 1429883648,
+            "mps_driver_bytes": 2488451072
+          },
+          "memory_peak": {
+            "rss_bytes": 309723136,
+            "physical_footprint_bytes": 3346564872,
+            "mps_allocated_bytes": 1511445248,
+            "mps_driver_bytes": 2488532992
+          }
+        },
+        {
+          "blocks": 50,
+          "seconds": 100,
+          "visual_seconds": 1.1901300830068067,
+          "memory_seconds": 2.353560749994358,
+          "retained_tokens": 3369,
+          "state_bytes": 24576000,
+          "vision_blocks": 50,
+          "memory_counts": {
+            "match_calls": 1254,
+            "match_query_tokens": 150480,
+            "prune_frames": 589,
+            "merge_frames": 61
+          },
+          "visual_peak": {
+            "rss_bytes": 314261504,
+            "physical_footprint_bytes": 3346286344,
+            "mps_allocated_bytes": 1428795392,
+            "mps_driver_bytes": 2488532992
+          },
+          "memory_peak": {
+            "rss_bytes": 320503808,
+            "physical_footprint_bytes": 4426434312,
+            "mps_allocated_bytes": 1517516800,
+            "mps_driver_bytes": 3562356736
+          }
+        },
+        {
+          "blocks": 52,
+          "seconds": 104,
+          "visual_seconds": 1.2333952090120874,
+          "memory_seconds": 2.405287915986264,
+          "retained_tokens": 3331,
+          "state_bytes": 25559040,
+          "vision_blocks": 52,
+          "memory_counts": {
+            "match_calls": 1353,
+            "match_query_tokens": 162360,
+            "prune_frames": 637,
+            "merge_frames": 77
+          },
+          "visual_peak": {
+            "rss_bytes": 322895872,
+            "physical_footprint_bytes": 4426549000,
+            "mps_allocated_bytes": 1430532096,
+            "mps_driver_bytes": 3562356736
+          },
+          "memory_peak": {
+            "rss_bytes": 337821696,
+            "physical_footprint_bytes": 4444423944,
+            "mps_allocated_bytes": 1527927296,
+            "mps_driver_bytes": 3570843648
+          }
+        },
+        {
+          "blocks": 54,
+          "seconds": 108,
+          "visual_seconds": 1.2344129170232918,
+          "memory_seconds": 2.552036000008229,
+          "retained_tokens": 3328,
+          "state_bytes": 26542080,
+          "vision_blocks": 54,
+          "memory_counts": {
+            "match_calls": 1456,
+            "match_query_tokens": 174720,
+            "prune_frames": 687,
+            "merge_frames": 95
+          },
+          "visual_peak": {
+            "rss_bytes": 342048768,
+            "physical_footprint_bytes": 4444538632,
+            "mps_allocated_bytes": 1432268800,
+            "mps_driver_bytes": 3570843648
+          },
+          "memory_peak": {
+            "rss_bytes": 342179840,
+            "physical_footprint_bytes": 4452386568,
+            "mps_allocated_bytes": 1534578688,
+            "mps_driver_bytes": 3570925568
+          }
+        },
+        {
+          "blocks": 56,
+          "seconds": 112,
+          "visual_seconds": 1.194153834017925,
+          "memory_seconds": 2.661164416000247,
+          "retained_tokens": 3313,
+          "state_bytes": 27525120,
+          "vision_blocks": 56,
+          "memory_counts": {
+            "match_calls": 1563,
+            "match_query_tokens": 187560,
+            "prune_frames": 739,
+            "merge_frames": 115
+          },
+          "visual_peak": {
+            "rss_bytes": 346734592,
+            "physical_footprint_bytes": 4452435720,
+            "mps_allocated_bytes": 1443965696,
+            "mps_driver_bytes": 3570925568
+          },
+          "memory_peak": {
+            "rss_bytes": 361168896,
+            "physical_footprint_bytes": 4461840136,
+            "mps_allocated_bytes": 1539514624,
+            "mps_driver_bytes": 3571023872
+          }
+        },
+        {
+          "blocks": 58,
+          "seconds": 116,
+          "visual_seconds": 1.1875271669996437,
+          "memory_seconds": 3.957430292008212,
+          "retained_tokens": 3288,
+          "state_bytes": 28508160,
+          "vision_blocks": 58,
+          "memory_counts": {
+            "match_calls": 1674,
+            "match_query_tokens": 200880,
+            "prune_frames": 793,
+            "merge_frames": 137
+          },
+          "visual_peak": {
+            "rss_bytes": 363577344,
+            "physical_footprint_bytes": 4461954824,
+            "mps_allocated_bytes": 1440657152,
+            "mps_driver_bytes": 3571023872
+          },
+          "memory_peak": {
+            "rss_bytes": 369786880,
+            "physical_footprint_bytes": 4478846728,
+            "mps_allocated_bytes": 1548112128,
+            "mps_driver_bytes": 3579494400
+          }
+        },
+        {
+          "blocks": 60,
+          "seconds": 120,
+          "visual_seconds": 1.496359874989139,
+          "memory_seconds": 4.115775375015801,
+          "retained_tokens": 3278,
+          "state_bytes": 29491200,
+          "vision_blocks": 60,
+          "memory_counts": {
+            "match_calls": 1789,
+            "match_query_tokens": 214680,
+            "prune_frames": 849,
+            "merge_frames": 161
+          },
+          "visual_peak": {
+            "rss_bytes": 294354944,
+            "physical_footprint_bytes": 4481042184,
+            "mps_allocated_bytes": 1441717504,
+            "mps_driver_bytes": 3579494400
+          },
+          "memory_peak": {
+            "rss_bytes": 266240000,
+            "physical_footprint_bytes": 4487513864,
+            "mps_allocated_bytes": 1552793088,
+            "mps_driver_bytes": 3579576320
+          }
+        },
+        {
+          "blocks": 62,
+          "seconds": 124,
+          "visual_seconds": 1.381292583013419,
+          "memory_seconds": 4.2242441669804975,
+          "retained_tokens": 3225,
+          "state_bytes": 30474240,
+          "vision_blocks": 62,
+          "memory_counts": {
+            "match_calls": 1908,
+            "match_query_tokens": 228960,
+            "prune_frames": 907,
+            "merge_frames": 187
+          },
+          "visual_peak": {
+            "rss_bytes": 284360704,
+            "physical_footprint_bytes": 4487644936,
+            "mps_allocated_bytes": 1439215616,
+            "mps_driver_bytes": 3579576320
+          },
+          "memory_peak": {
+            "rss_bytes": 291864576,
+            "physical_footprint_bytes": 4502488840,
+            "mps_allocated_bytes": 1555918848,
+            "mps_driver_bytes": 3588014080
+          }
+        },
+        {
+          "blocks": 64,
+          "seconds": 128,
+          "visual_seconds": 1.598262582992902,
+          "memory_seconds": 4.745074999984354,
+          "retained_tokens": 3197,
+          "state_bytes": 31457280,
+          "vision_blocks": 64,
+          "memory_counts": {
+            "match_calls": 2031,
+            "match_query_tokens": 243720,
+            "prune_frames": 967,
+            "merge_frames": 215
+          },
+          "visual_peak": {
+            "rss_bytes": 285261824,
+            "physical_footprint_bytes": 4502587144,
+            "mps_allocated_bytes": 1444998912,
+            "mps_driver_bytes": 3588014080
+          },
+          "memory_peak": {
+            "rss_bytes": 282492928,
+            "physical_footprint_bytes": 4511123208,
+            "mps_allocated_bytes": 1565911552,
+            "mps_driver_bytes": 3588096000
+          }
+        },
+        {
+          "blocks": 66,
+          "seconds": 132,
+          "visual_seconds": 1.3668657089874614,
+          "memory_seconds": 3.408400750020519,
+          "retained_tokens": 3188,
+          "state_bytes": 32440320,
+          "vision_blocks": 66,
+          "memory_counts": {
+            "match_calls": 2158,
+            "match_query_tokens": 258960,
+            "prune_frames": 1029,
+            "merge_frames": 245
+          },
+          "visual_peak": {
+            "rss_bytes": 293224448,
+            "physical_footprint_bytes": 4511221512,
+            "mps_allocated_bytes": 1443241216,
+            "mps_driver_bytes": 3588096000
+          },
+          "memory_peak": {
+            "rss_bytes": 309641216,
+            "physical_footprint_bytes": 4518921992,
+            "mps_allocated_bytes": 1574360576,
+            "mps_driver_bytes": 3588161536
+          }
+        },
+        {
+          "blocks": 68,
+          "seconds": 136,
+          "visual_seconds": 1.2670815410092473,
+          "memory_seconds": 4.711800916003995,
+          "retained_tokens": 3206,
+          "state_bytes": 33423360,
+          "vision_blocks": 68,
+          "memory_counts": {
+            "match_calls": 2289,
+            "match_query_tokens": 274680,
+            "prune_frames": 1093,
+            "merge_frames": 277
+          },
+          "visual_peak": {
+            "rss_bytes": 311377920,
+            "physical_footprint_bytes": 4519069448,
+            "mps_allocated_bytes": 1448472320,
+            "mps_driver_bytes": 3588161536
+          },
+          "memory_peak": {
+            "rss_bytes": 313344000,
+            "physical_footprint_bytes": 4536207112,
+            "mps_allocated_bytes": 1576101632,
+            "mps_driver_bytes": 3596632064
+          }
+        },
+        {
+          "blocks": 70,
+          "seconds": 140,
+          "visual_seconds": 1.4387147910019848,
+          "memory_seconds": 5.544720625010086,
+          "retained_tokens": 3258,
+          "state_bytes": 34406400,
+          "vision_blocks": 70,
+          "memory_counts": {
+            "match_calls": 2424,
+            "match_query_tokens": 290880,
+            "prune_frames": 1159,
+            "merge_frames": 311
+          },
+          "visual_peak": {
+            "rss_bytes": 292651008,
+            "physical_footprint_bytes": 4538287880,
+            "mps_allocated_bytes": 1446162432,
+            "mps_driver_bytes": 3596632064
+          },
+          "memory_peak": {
+            "rss_bytes": 297140224,
+            "physical_footprint_bytes": 4546692872,
+            "mps_allocated_bytes": 1586503680,
+            "mps_driver_bytes": 3596746752
+          }
+        },
+        {
+          "blocks": 72,
+          "seconds": 144,
+          "visual_seconds": 1.8060321249940898,
+          "memory_seconds": 6.874972291989252,
+          "retained_tokens": 3331,
+          "state_bytes": 35389440,
+          "vision_blocks": 72,
+          "memory_counts": {
+            "match_calls": 2563,
+            "match_query_tokens": 307560,
+            "prune_frames": 1227,
+            "merge_frames": 347
+          },
+          "visual_peak": {
+            "rss_bytes": 279822336,
+            "physical_footprint_bytes": 4546856712,
+            "mps_allocated_bytes": 1450356480,
+            "mps_driver_bytes": 3596746752
+          },
+          "memory_peak": {
+            "rss_bytes": 243580928,
+            "physical_footprint_bytes": 4556998408,
+            "mps_allocated_bytes": 1592293888,
+            "mps_driver_bytes": 3596861440
+          }
+        },
+        {
+          "blocks": 74,
+          "seconds": 148,
+          "visual_seconds": 1.50113112499821,
+          "memory_seconds": 4.330946749978466,
+          "retained_tokens": 3406,
+          "state_bytes": 36372480,
+          "vision_blocks": 74,
+          "memory_counts": {
+            "match_calls": 2706,
+            "match_query_tokens": 324720,
+            "prune_frames": 1297,
+            "merge_frames": 385
+          },
+          "visual_peak": {
+            "rss_bytes": 289030144,
+            "physical_footprint_bytes": 4557227784,
+            "mps_allocated_bytes": 1451056384,
+            "mps_driver_bytes": 3596861440
+          },
+          "memory_peak": {
+            "rss_bytes": 290160640,
+            "physical_footprint_bytes": 5647664904,
+            "mps_allocated_bytes": 1596268032,
+            "mps_driver_bytes": 4679090176
+          }
+        },
+        {
+          "blocks": 76,
+          "seconds": 152,
+          "visual_seconds": 1.3470936249941587,
+          "memory_seconds": 3.9748072499933187,
+          "retained_tokens": 3483,
+          "state_bytes": 37355520,
+          "vision_blocks": 76,
+          "memory_counts": {
+            "match_calls": 2853,
+            "match_query_tokens": 342360,
+            "prune_frames": 1369,
+            "merge_frames": 425
+          },
+          "visual_peak": {
+            "rss_bytes": 319700992,
+            "physical_footprint_bytes": 5647779592,
+            "mps_allocated_bytes": 1451372544,
+            "mps_driver_bytes": 4679090176
+          },
+          "memory_peak": {
+            "rss_bytes": 329400320,
+            "physical_footprint_bytes": 5654939400,
+            "mps_allocated_bytes": 1602345216,
+            "mps_driver_bytes": 4679155712
+          }
+        },
+        {
+          "blocks": 78,
+          "seconds": 156,
+          "visual_seconds": 1.2329380409792066,
+          "memory_seconds": 4.231150000006892,
+          "retained_tokens": 3529,
+          "state_bytes": 38338560,
+          "vision_blocks": 78,
+          "memory_counts": {
+            "match_calls": 3004,
+            "match_query_tokens": 360480,
+            "prune_frames": 1443,
+            "merge_frames": 467
+          },
+          "visual_peak": {
+            "rss_bytes": 334086144,
+            "physical_footprint_bytes": 5655152392,
+            "mps_allocated_bytes": 1453109248,
+            "mps_driver_bytes": 4679155712
+          },
+          "memory_peak": {
+            "rss_bytes": 341278720,
+            "physical_footprint_bytes": 5670815496,
+            "mps_allocated_bytes": 1614371584,
+            "mps_driver_bytes": 4687642624
+          }
+        },
+        {
+          "blocks": 80,
+          "seconds": 160,
+          "visual_seconds": 1.2194763750012498,
+          "memory_seconds": 4.206884875020478,
+          "retained_tokens": 3600,
+          "state_bytes": 39321600,
+          "vision_blocks": 80,
+          "memory_counts": {
+            "match_calls": 3159,
+            "match_query_tokens": 379080,
+            "prune_frames": 1519,
+            "merge_frames": 511
+          },
+          "visual_peak": {
+            "rss_bytes": 345817088,
+            "physical_footprint_bytes": 5670913800,
+            "mps_allocated_bytes": 1459760896,
+            "mps_driver_bytes": 4687642624
+          },
+          "memory_peak": {
+            "rss_bytes": 357924864,
+            "physical_footprint_bytes": 5686937352,
+            "mps_allocated_bytes": 1615978752,
+            "mps_driver_bytes": 4696113152
+          }
+        },
+        {
+          "blocks": 82,
+          "seconds": 164,
+          "visual_seconds": 1.1926960409909952,
+          "memory_seconds": 4.895071665989235,
+          "retained_tokens": 3682,
+          "state_bytes": 40304640,
+          "vision_blocks": 82,
+          "memory_counts": {
+            "match_calls": 3318,
+            "match_query_tokens": 398160,
+            "prune_frames": 1597,
+            "merge_frames": 557
+          },
+          "visual_peak": {
+            "rss_bytes": 361840640,
+            "physical_footprint_bytes": 5687035656,
+            "mps_allocated_bytes": 1456582656,
+            "mps_driver_bytes": 4696113152
+          },
+          "memory_peak": {
+            "rss_bytes": 363216896,
+            "physical_footprint_bytes": 5691246344,
+            "mps_allocated_bytes": 1622886144,
+            "mps_driver_bytes": 4696195072
+          }
+        },
+        {
+          "blocks": 84,
+          "seconds": 168,
+          "visual_seconds": 1.5357292919943575,
+          "memory_seconds": 7.150190457992721,
+          "retained_tokens": 3836,
+          "state_bytes": 41287680,
+          "vision_blocks": 84,
+          "memory_counts": {
+            "match_calls": 3481,
+            "match_query_tokens": 417720,
+            "prune_frames": 1677,
+            "merge_frames": 605
+          },
+          "visual_peak": {
+            "rss_bytes": 298369024,
+            "physical_footprint_bytes": 5655447328,
+            "mps_allocated_bytes": 1458871552,
+            "mps_driver_bytes": 4696195072
+          },
+          "memory_peak": {
+            "rss_bytes": 260407296,
+            "physical_footprint_bytes": 5667538720,
+            "mps_allocated_bytes": 1634057728,
+            "mps_driver_bytes": 4696260608
+          }
+        },
+        {
+          "blocks": 86,
+          "seconds": 172,
+          "visual_seconds": 1.515897125005722,
+          "memory_seconds": 5.852267207985278,
+          "retained_tokens": 3886,
+          "state_bytes": 42270720,
+          "vision_blocks": 86,
+          "memory_counts": {
+            "match_calls": 3648,
+            "match_query_tokens": 437760,
+            "prune_frames": 1759,
+            "merge_frames": 655
+          },
+          "visual_peak": {
+            "rss_bytes": 309542912,
+            "physical_footprint_bytes": 5667653408,
+            "mps_allocated_bytes": 1460517120,
+            "mps_driver_bytes": 4696260608
+          },
+          "memory_peak": {
+            "rss_bytes": 273891328,
+            "physical_footprint_bytes": 5687363360,
+            "mps_allocated_bytes": 1640010240,
+            "mps_driver_bytes": 4704845824
+          }
+        },
+        {
+          "blocks": 88,
+          "seconds": 176,
+          "visual_seconds": 1.7208398340153508,
+          "memory_seconds": 7.092628917016555,
+          "retained_tokens": 3905,
+          "state_bytes": 43253760,
+          "vision_blocks": 88,
+          "memory_counts": {
+            "match_calls": 3819,
+            "match_query_tokens": 458280,
+            "prune_frames": 1843,
+            "merge_frames": 707
+          },
+          "visual_peak": {
+            "rss_bytes": 335511552,
+            "physical_footprint_bytes": 5687494432,
+            "mps_allocated_bytes": 1463213312,
+            "mps_driver_bytes": 4704862208
+          },
+          "memory_peak": {
+            "rss_bytes": 162922496,
+            "physical_footprint_bytes": 5694932768,
+            "mps_allocated_bytes": 1649992960,
+            "mps_driver_bytes": 4704927744
+          }
+        },
+        {
+          "blocks": 90,
+          "seconds": 180,
+          "visual_seconds": 1.3321461250016,
+          "memory_seconds": 6.783420708001358,
+          "retained_tokens": 3980,
+          "state_bytes": 44236800,
+          "vision_blocks": 90,
+          "memory_counts": {
+            "match_calls": 3994,
+            "match_query_tokens": 479280,
+            "prune_frames": 1929,
+            "merge_frames": 761
+          },
+          "visual_peak": {
+            "rss_bytes": 334774272,
+            "physical_footprint_bytes": 5695031072,
+            "mps_allocated_bytes": 1463529472,
+            "mps_driver_bytes": 4704927744
+          },
+          "memory_peak": {
+            "rss_bytes": 345997312,
+            "physical_footprint_bytes": 5704730400,
+            "mps_allocated_bytes": 1656061952,
+            "mps_driver_bytes": 4705009664
+          }
+        },
+        {
+          "blocks": 92,
+          "seconds": 184,
+          "visual_seconds": 1.3743449579924345,
+          "memory_seconds": 6.336869791994104,
+          "retained_tokens": 4119,
+          "state_bytes": 45219840,
+          "vision_blocks": 92,
+          "memory_counts": {
+            "match_calls": 4173,
+            "match_query_tokens": 500760,
+            "prune_frames": 2017,
+            "merge_frames": 817
+          },
+          "visual_peak": {
+            "rss_bytes": 269369344,
+            "physical_footprint_bytes": 5705926432,
+            "mps_allocated_bytes": 1465266176,
+            "mps_driver_bytes": 4705009664
+          },
+          "memory_peak": {
+            "rss_bytes": 277266432,
+            "physical_footprint_bytes": 6797444896,
+            "mps_allocated_bytes": 1662494720,
+            "mps_driver_bytes": 5787205632
+          }
+        },
+        {
+          "blocks": 94,
+          "seconds": 188,
+          "visual_seconds": 1.3112880419939756,
+          "memory_seconds": 7.346080458984943,
+          "retained_tokens": 4258,
+          "state_bytes": 46202880,
+          "vision_blocks": 94,
+          "memory_counts": {
+            "match_calls": 4356,
+            "match_query_tokens": 522720,
+            "prune_frames": 2107,
+            "merge_frames": 875
+          },
+          "visual_peak": {
+            "rss_bytes": 349634560,
+            "physical_footprint_bytes": 6798673696,
+            "mps_allocated_bytes": 1471687424,
+            "mps_driver_bytes": 5788319744
+          },
+          "memory_peak": {
+            "rss_bytes": 356401152,
+            "physical_footprint_bytes": 6810404640,
+            "mps_allocated_bytes": 1668205568,
+            "mps_driver_bytes": 5787287552
+          }
+        }
+      ],
+      "total_visual_seconds": 62.44228470500093,
+      "total_memory_seconds": 136.5511076268158,
+      "total_seconds": 198.99339233181672,
+      "final_state_bytes": 46202880,
+      "vision_blocks": 94,
+      "counts": {
+        "match_calls": 4356,
+        "match_query_tokens": 522720,
+        "prune_frames": 2107,
+        "merge_frames": 875
+      }
+    },
+    {
+      "condition": "C",
+      "rep": 0,
+      "warmup": false,
+      "events": [
+        {
+          "blocks": 2,
+          "seconds": 4,
+          "visual_seconds": 1.37935133400606,
+          "memory_seconds": 0.02236812500632368,
+          "retained_tokens": 240,
+          "state_bytes": 3465704,
+          "vision_blocks": 2,
+          "memory_counts": {
+            "match_calls": 1,
+            "match_query_tokens": 120,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 661929984,
+            "physical_footprint_bytes": 3150104328,
+            "mps_allocated_bytes": 1401948416,
+            "mps_driver_bytes": 2436644864
+          },
+          "memory_peak": {
+            "rss_bytes": 662306816,
+            "physical_footprint_bytes": 3150219016,
+            "mps_allocated_bytes": 1390290176,
+            "mps_driver_bytes": 2436710400
+          }
+        },
+        {
+          "blocks": 4,
+          "seconds": 8,
+          "visual_seconds": 1.1927137919992674,
+          "memory_seconds": 0.006054208002751693,
+          "retained_tokens": 480,
+          "state_bytes": 4450664,
+          "vision_blocks": 4,
+          "memory_counts": {
+            "match_calls": 3,
+            "match_query_tokens": 360,
+            "prune_frames": 0,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 666861568,
+            "physical_footprint_bytes": 3150219016,
+            "mps_allocated_bytes": 1403682304,
+            "mps_driver_bytes": 2436726784
+          },
+          "memory_peak": {
+            "rss_bytes": 666861568,
+            "physical_footprint_bytes": 3150219016,
+            "mps_allocated_bytes": 1393247744,
+            "mps_driver_bytes": 2436710400
+          }
+        },
+        {
+          "blocks": 6,
+          "seconds": 12,
+          "visual_seconds": 1.244059707998531,
+          "memory_seconds": 0.10458412501611747,
+          "retained_tokens": 663,
+          "state_bytes": 5201696,
+          "vision_blocks": 6,
+          "memory_counts": {
+            "match_calls": 7,
+            "match_query_tokens": 840,
+            "prune_frames": 2,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 671367168,
+            "physical_footprint_bytes": 3150219016,
+            "mps_allocated_bytes": 1403999488,
+            "mps_driver_bytes": 2436726784
+          },
+          "memory_peak": {
+            "rss_bytes": 671432704,
+            "physical_footprint_bytes": 3149989640,
+            "mps_allocated_bytes": 1395027712,
+            "mps_driver_bytes": 2436759552
+          }
+        },
+        {
+          "blocks": 8,
+          "seconds": 16,
+          "visual_seconds": 1.2178149170067627,
+          "memory_seconds": 0.07823945800191723,
+          "retained_tokens": 843,
+          "state_bytes": 5940416,
+          "vision_blocks": 8,
+          "memory_counts": {
+            "match_calls": 11,
+            "match_query_tokens": 1320,
+            "prune_frames": 4,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 675971072,
+            "physical_footprint_bytes": 3158624008,
+            "mps_allocated_bytes": 1404953856,
+            "mps_driver_bytes": 2445131776
+          },
+          "memory_peak": {
+            "rss_bytes": 675971072,
+            "physical_footprint_bytes": 3158624008,
+            "mps_allocated_bytes": 1396384768,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 10,
+          "seconds": 20,
+          "visual_seconds": 1.2860714580165222,
+          "memory_seconds": 0.11300970800220966,
+          "retained_tokens": 998,
+          "state_bytes": 6576536,
+          "vision_blocks": 10,
+          "memory_counts": {
+            "match_calls": 15,
+            "match_query_tokens": 1800,
+            "prune_frames": 6,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 680509440,
+            "physical_footprint_bytes": 3158640392,
+            "mps_allocated_bytes": 1405907712,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 680509440,
+            "physical_footprint_bytes": 3158640392,
+            "mps_allocated_bytes": 1398076672,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 12,
+          "seconds": 24,
+          "visual_seconds": 1.5004729580250569,
+          "memory_seconds": 0.07442187500419095,
+          "retained_tokens": 1108,
+          "state_bytes": 7027976,
+          "vision_blocks": 12,
+          "memory_counts": {
+            "match_calls": 19,
+            "match_query_tokens": 2280,
+            "prune_frames": 8,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 685015040,
+            "physical_footprint_bytes": 3158640392,
+            "mps_allocated_bytes": 1406862336,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 685015040,
+            "physical_footprint_bytes": 3158640392,
+            "mps_allocated_bytes": 1399032064,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 14,
+          "seconds": 28,
+          "visual_seconds": 1.6474575409956742,
+          "memory_seconds": 0.10953729200991802,
+          "retained_tokens": 1219,
+          "state_bytes": 7483520,
+          "vision_blocks": 14,
+          "memory_counts": {
+            "match_calls": 23,
+            "match_query_tokens": 2760,
+            "prune_frames": 10,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 689553408,
+            "physical_footprint_bytes": 3158640392,
+            "mps_allocated_bytes": 1412703488,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 689569792,
+            "physical_footprint_bytes": 3158411016,
+            "mps_allocated_bytes": 1400443648,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 16,
+          "seconds": 32,
+          "visual_seconds": 1.7776277500088327,
+          "memory_seconds": 0.184707166015869,
+          "retained_tokens": 1335,
+          "state_bytes": 7959584,
+          "vision_blocks": 16,
+          "memory_counts": {
+            "match_calls": 27,
+            "match_query_tokens": 3240,
+            "prune_frames": 12,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 694075392,
+            "physical_footprint_bytes": 3158411016,
+            "mps_allocated_bytes": 1412708096,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 694075392,
+            "physical_footprint_bytes": 3158411016,
+            "mps_allocated_bytes": 1401875712,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 18,
+          "seconds": 36,
+          "visual_seconds": 1.6538897909922525,
+          "memory_seconds": 0.12072924998938106,
+          "retained_tokens": 1460,
+          "state_bytes": 8472584,
+          "vision_blocks": 18,
+          "memory_counts": {
+            "match_calls": 31,
+            "match_query_tokens": 3720,
+            "prune_frames": 14,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 698597376,
+            "physical_footprint_bytes": 3158411016,
+            "mps_allocated_bytes": 1409909504,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 698597376,
+            "physical_footprint_bytes": 3158411016,
+            "mps_allocated_bytes": 1403344640,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 20,
+          "seconds": 40,
+          "visual_seconds": 1.449390374997165,
+          "memory_seconds": 0.11763062499812804,
+          "retained_tokens": 1631,
+          "state_bytes": 9174368,
+          "vision_blocks": 20,
+          "memory_counts": {
+            "match_calls": 35,
+            "match_query_tokens": 4200,
+            "prune_frames": 16,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 703135744,
+            "physical_footprint_bytes": 3158558472,
+            "mps_allocated_bytes": 1413116672,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 703135744,
+            "physical_footprint_bytes": 3158558472,
+            "mps_allocated_bytes": 1405001984,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 22,
+          "seconds": 44,
+          "visual_seconds": 1.843263292015763,
+          "memory_seconds": 0.17947816700325347,
+          "retained_tokens": 1806,
+          "state_bytes": 9892568,
+          "vision_blocks": 22,
+          "memory_counts": {
+            "match_calls": 39,
+            "match_query_tokens": 4680,
+            "prune_frames": 18,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 707641344,
+            "physical_footprint_bytes": 3158558472,
+            "mps_allocated_bytes": 1413121280,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 707657728,
+            "physical_footprint_bytes": 3158492936,
+            "mps_allocated_bytes": 1406675712,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 24,
+          "seconds": 48,
+          "visual_seconds": 1.8901877089811023,
+          "memory_seconds": 0.1859967499913182,
+          "retained_tokens": 1989,
+          "state_bytes": 10643600,
+          "vision_blocks": 24,
+          "memory_counts": {
+            "match_calls": 43,
+            "match_query_tokens": 5160,
+            "prune_frames": 20,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 713244672,
+            "physical_footprint_bytes": 3159852808,
+            "mps_allocated_bytes": 1417449728,
+            "mps_driver_bytes": 2445148160
+          },
+          "memory_peak": {
+            "rss_bytes": 713261056,
+            "physical_footprint_bytes": 3159885576,
+            "mps_allocated_bytes": 1408382208,
+            "mps_driver_bytes": 2445148160
+          }
+        },
+        {
+          "blocks": 26,
+          "seconds": 52,
+          "visual_seconds": 1.6943001249746885,
+          "memory_seconds": 0.17476979200728238,
+          "retained_tokens": 2162,
+          "state_bytes": 11353592,
+          "vision_blocks": 26,
+          "memory_counts": {
+            "match_calls": 47,
+            "match_query_tokens": 5640,
+            "prune_frames": 22,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 717815808,
+            "physical_footprint_bytes": 3168028424,
+            "mps_allocated_bytes": 1421916416,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 717815808,
+            "physical_footprint_bytes": 3168061192,
+            "mps_allocated_bytes": 1410047744,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 28,
+          "seconds": 56,
+          "visual_seconds": 1.8997987920010928,
+          "memory_seconds": 0.22142287500901148,
+          "retained_tokens": 2306,
+          "state_bytes": 11944568,
+          "vision_blocks": 28,
+          "memory_counts": {
+            "match_calls": 51,
+            "match_query_tokens": 6120,
+            "prune_frames": 24,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 722337792,
+            "physical_footprint_bytes": 3168077576,
+            "mps_allocated_bytes": 1420415744,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 722337792,
+            "physical_footprint_bytes": 3168077576,
+            "mps_allocated_bytes": 1411594496,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 30,
+          "seconds": 60,
+          "visual_seconds": 1.6254289580101613,
+          "memory_seconds": 0.1310537499957718,
+          "retained_tokens": 2485,
+          "state_bytes": 12679184,
+          "vision_blocks": 30,
+          "memory_counts": {
+            "match_calls": 55,
+            "match_query_tokens": 6600,
+            "prune_frames": 26,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 726892544,
+            "physical_footprint_bytes": 3168110344,
+            "mps_allocated_bytes": 1415935744,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 726892544,
+            "physical_footprint_bytes": 3168110344,
+            "mps_allocated_bytes": 1413284608,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 32,
+          "seconds": 64,
+          "visual_seconds": 1.6455548329977319,
+          "memory_seconds": 0.14689604201703332,
+          "retained_tokens": 2671,
+          "state_bytes": 13442528,
+          "vision_blocks": 32,
+          "memory_counts": {
+            "match_calls": 59,
+            "match_query_tokens": 7080,
+            "prune_frames": 28,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 731398144,
+            "physical_footprint_bytes": 3168110344,
+            "mps_allocated_bytes": 1416431616,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 731398144,
+            "physical_footprint_bytes": 3168110344,
+            "mps_allocated_bytes": 1415003392,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 34,
+          "seconds": 68,
+          "visual_seconds": 1.7259908329870086,
+          "memory_seconds": 0.14947895900695585,
+          "retained_tokens": 2840,
+          "state_bytes": 14136104,
+          "vision_blocks": 34,
+          "memory_counts": {
+            "match_calls": 63,
+            "match_query_tokens": 7560,
+            "prune_frames": 30,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 735936512,
+            "physical_footprint_bytes": 3168110344,
+            "mps_allocated_bytes": 1421320448,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 735952896,
+            "physical_footprint_bytes": 3168143112,
+            "mps_allocated_bytes": 1416652544,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 36,
+          "seconds": 72,
+          "visual_seconds": 1.5451117920165416,
+          "memory_seconds": 0.11889025001437403,
+          "retained_tokens": 3040,
+          "state_bytes": 14956904,
+          "vision_blocks": 36,
+          "memory_counts": {
+            "match_calls": 67,
+            "match_query_tokens": 8040,
+            "prune_frames": 32,
+            "merge_frames": 0
+          },
+          "visual_peak": {
+            "rss_bytes": 740474880,
+            "physical_footprint_bytes": 3168143112,
+            "mps_allocated_bytes": 1420802816,
+            "mps_driver_bytes": 2453536768
+          },
+          "memory_peak": {
+            "rss_bytes": 740458496,
+            "physical_footprint_bytes": 3168372488,
+            "mps_allocated_bytes": 1418428672,
+            "mps_driver_bytes": 2453536768
+          }
+        },
+        {
+          "blocks": 38,
+          "seconds": 76,
+          "visual_seconds": 1.5695532910176553,
+          "memory_seconds": 0.23348683401127346,
+          "retained_tokens": 3063,
+          "state_bytes": 15051296,
+          "vision_blocks": 38,
+          "memory_counts": {
+            "match_calls": 71,
+            "match_query_tokens": 8520,
+            "prune_frames": 34,
+            "merge_frames": 2
+          },
+          "visual_peak": {
+            "rss_bytes": 744980480,
+            "physical_footprint_bytes": 3168388872,
+            "mps_allocated_bytes": 1423234304,
+            "mps_driver_bytes": 2454650880
+          },
+          "memory_peak": {
+            "rss_bytes": 745177088,
+            "physical_footprint_bytes": 3176761096,
+            "mps_allocated_bytes": 1418786560,
+            "mps_driver_bytes": 2461958144
+          }
+        },
+        {
+          "blocks": 40,
+          "seconds": 80,
+          "visual_seconds": 1.894535708008334,
+          "memory_seconds": 0.20425783397513442,
+          "retained_tokens": 3071,
+          "state_bytes": 15084128,
+          "vision_blocks": 40,
+          "memory_counts": {
+            "match_calls": 75,
+            "match_query_tokens": 9000,
+            "prune_frames": 36,
+            "merge_frames": 4
+          },
+          "visual_peak": {
+            "rss_bytes": 749764608,
+            "physical_footprint_bytes": 3176924936,
+            "mps_allocated_bytes": 1419060224,
+            "mps_driver_bytes": 2463072256
+          },
+          "memory_peak": {
+            "rss_bytes": 749944832,
+            "physical_footprint_bytes": 3176957704,
+            "mps_allocated_bytes": 1418959104,
+            "mps_driver_bytes": 2461990912
+          }
+        },
+        {
+          "blocks": 41,
+          "seconds": 82,
+          "visual_seconds": 0.7584752500115428,
+          "memory_seconds": 0.10106041701510549,
+          "retained_tokens": 3087,
+          "state_bytes": 15149792,
+          "vision_blocks": 41,
+          "memory_counts": {
+            "match_calls": 77,
+            "match_query_tokens": 9240,
+            "prune_frames": 37,
+            "merge_frames": 5
+          },
+          "visual_peak": {
+            "rss_bytes": 752205824,
+            "physical_footprint_bytes": 3176957704,
+            "mps_allocated_bytes": 1419552256,
+            "mps_driver_bytes": 2461990912
+          },
+          "memory_peak": {
+            "rss_bytes": 752238592,
+            "physical_footprint_bytes": 3176875784,
+            "mps_allocated_bytes": 1419024896,
+            "mps_driver_bytes": 2461990912
+          }
+        },
+        {
+          "blocks": 42,
+          "seconds": 84,
+          "visual_seconds": 0.7790082080173306,
+          "memory_seconds": 0.11866179099888541,
+          "retained_tokens": 3113,
+          "state_bytes": 15256496,
+          "vision_blocks": 42,
+          "memory_counts": {
+            "match_calls": 79,
+            "match_query_tokens": 9480,
+            "prune_frames": 38,
+            "merge_frames": 6
+          },
+          "visual_peak": {
+            "rss_bytes": 754499584,
+            "physical_footprint_bytes": 3176875784,
+            "mps_allocated_bytes": 1424958976,
+            "mps_driver_bytes": 2461990912
+          },
+          "memory_peak": {
+            "rss_bytes": 754565120,
+            "physical_footprint_bytes": 3176941320,
+            "mps_allocated_bytes": 1419762176,
+            "mps_driver_bytes": 2462007296
+          }
+        },
+        {
+          "blocks": 44,
+          "seconds": 88,
+          "visual_seconds": 1.7237036669976078,
+          "memory_seconds": 0.17405162498471327,
+          "retained_tokens": 3193,
+          "state_bytes": 15584816,
+          "vision_blocks": 44,
+          "memory_counts": {
+            "match_calls": 83,
+            "match_query_tokens": 9960,
+            "prune_frames": 40,
+            "merge_frames": 8
+          },
+          "visual_peak": {
+            "rss_bytes": 759087104,
+            "physical_footprint_bytes": 3176957704,
+            "mps_allocated_bytes": 1421305600,
+            "mps_driver_bytes": 2462007296
+          },
+          "memory_peak": {
+            "rss_bytes": 759152640,
+            "physical_footprint_bytes": 3177023240,
+            "mps_allocated_bytes": 1421700864,
+            "mps_driver_bytes": 2462040064
+          }
+        },
+        {
+          "blocks": 46,
+          "seconds": 92,
+          "visual_seconds": 1.6304844170226716,
+          "memory_seconds": 0.21118933300022036,
+          "retained_tokens": 3298,
+          "state_bytes": 16015736,
+          "vision_blocks": 46,
+          "memory_counts": {
+            "match_calls": 87,
+            "match_query_tokens": 10440,
+            "prune_frames": 42,
+            "merge_frames": 10
+          },
+          "visual_peak": {
+            "rss_bytes": 763691008,
+            "physical_footprint_bytes": 3177039624,
+            "mps_allocated_bytes": 1427270912,
+            "mps_driver_bytes": 2462040064
+          },
+          "memory_peak": {
+            "rss_bytes": 763822080,
+            "physical_footprint_bytes": 3177187080,
+            "mps_allocated_bytes": 1423390208,
+            "mps_driver_bytes": 2462072832
+          }
+        },
+        {
+          "blocks": 48,
+          "seconds": 96,
+          "visual_seconds": 1.6268069589859806,
+          "memory_seconds": 0.22230779100209475,
+          "retained_tokens": 3359,
+          "state_bytes": 16266080,
+          "vision_blocks": 48,
+          "memory_counts": {
+            "match_calls": 91,
+            "match_query_tokens": 10920,
+            "prune_frames": 44,
+            "merge_frames": 12
+          },
+          "visual_peak": {
+            "rss_bytes": 768344064,
+            "physical_footprint_bytes": 3177203464,
+            "mps_allocated_bytes": 1433260544,
+            "mps_driver_bytes": 2462072832
+          },
+          "memory_peak": {
+            "rss_bytes": 768409600,
+            "physical_footprint_bytes": 3177236232,
+            "mps_allocated_bytes": 1425373952,
+            "mps_driver_bytes": 2462089216
+          }
+        },
+        {
+          "blocks": 50,
+          "seconds": 100,
+          "visual_seconds": 1.6976082919863984,
+          "memory_seconds": 0.21537225000793114,
+          "retained_tokens": 3369,
+          "state_bytes": 16307120,
+          "vision_blocks": 50,
+          "memory_counts": {
+            "match_calls": 95,
+            "match_query_tokens": 11400,
+            "prune_frames": 46,
+            "merge_frames": 14
+          },
+          "visual_peak": {
+            "rss_bytes": 772947968,
+            "physical_footprint_bytes": 3177236232,
+            "mps_allocated_bytes": 1432299264,
+            "mps_driver_bytes": 2462089216
+          },
+          "memory_peak": {
+            "rss_bytes": 773029888,
+            "physical_footprint_bytes": 3177334536,
+            "mps_allocated_bytes": 1426526464,
+            "mps_driver_bytes": 2462105600
+          }
+        },
+        {
+          "blocks": 52,
+          "seconds": 104,
+          "visual_seconds": 1.704213749995688,
+          "memory_seconds": 0.17674295799224637,
+          "retained_tokens": 3331,
+          "state_bytes": 16151168,
+          "vision_blocks": 52,
+          "memory_counts": {
+            "match_calls": 99,
+            "match_query_tokens": 11880,
+            "prune_frames": 48,
+            "merge_frames": 16
+          },
+          "visual_peak": {
+            "rss_bytes": 777568256,
+            "physical_footprint_bytes": 3177350920,
+            "mps_allocated_bytes": 1431551232,
+            "mps_driver_bytes": 2462105600
+          },
+          "memory_peak": {
+            "rss_bytes": 777666560,
+            "physical_footprint_bytes": 3185854216,
+            "mps_allocated_bytes": 1427949312,
+            "mps_driver_bytes": 2470526976
+          }
+        },
+        {
+          "blocks": 54,
+          "seconds": 108,
+          "visual_seconds": 1.6485576250124723,
+          "memory_seconds": 0.19177508298889734,
+          "retained_tokens": 3328,
+          "state_bytes": 16138856,
+          "vision_blocks": 54,
+          "memory_counts": {
+            "match_calls": 103,
+            "match_query_tokens": 12360,
+            "prune_frames": 50,
+            "merge_frames": 18
+          },
+          "visual_peak": {
+            "rss_bytes": 782188544,
+            "physical_footprint_bytes": 3185870600,
+            "mps_allocated_bytes": 1433457408,
+            "mps_driver_bytes": 2470526976
+          },
+          "memory_peak": {
+            "rss_bytes": 782303232,
+            "physical_footprint_bytes": 3185985288,
+            "mps_allocated_bytes": 1429380608,
+            "mps_driver_bytes": 2470543360
+          }
+        },
+        {
+          "blocks": 56,
+          "seconds": 112,
+          "visual_seconds": 1.5311909580195788,
+          "memory_seconds": 0.19275141699472442,
+          "retained_tokens": 3313,
+          "state_bytes": 16077296,
+          "vision_blocks": 56,
+          "memory_counts": {
+            "match_calls": 107,
+            "match_query_tokens": 12840,
+            "prune_frames": 52,
+            "merge_frames": 20
+          },
+          "visual_peak": {
+            "rss_bytes": 786825216,
+            "physical_footprint_bytes": 3185985288,
+            "mps_allocated_bytes": 1432431104,
+            "mps_driver_bytes": 2470543360
+          },
+          "memory_peak": {
+            "rss_bytes": 786972672,
+            "physical_footprint_bytes": 3186149128,
+            "mps_allocated_bytes": 1430877696,
+            "mps_driver_bytes": 2470576128
+          }
+        },
+        {
+          "blocks": 58,
+          "seconds": 116,
+          "visual_seconds": 1.555037624988472,
+          "memory_seconds": 0.17787841698736884,
+          "retained_tokens": 3288,
+          "state_bytes": 15974696,
+          "vision_blocks": 58,
+          "memory_counts": {
+            "match_calls": 111,
+            "match_query_tokens": 13320,
+            "prune_frames": 54,
+            "merge_frames": 22
+          },
+          "visual_peak": {
+            "rss_bytes": 791511040,
+            "physical_footprint_bytes": 3186165512,
+            "mps_allocated_bytes": 1438335488,
+            "mps_driver_bytes": 2470576128
+          },
+          "memory_peak": {
+            "rss_bytes": 791576576,
+            "physical_footprint_bytes": 3186231048,
+            "mps_allocated_bytes": 1432043264,
+            "mps_driver_bytes": 2470592512
+          }
+        },
+        {
+          "blocks": 60,
+          "seconds": 120,
+          "visual_seconds": 1.5313715410011355,
+          "memory_seconds": 0.1613283749902621,
+          "retained_tokens": 3278,
+          "state_bytes": 15933656,
+          "vision_blocks": 60,
+          "memory_counts": {
+            "match_calls": 115,
+            "match_query_tokens": 13800,
+            "prune_frames": 56,
+            "merge_frames": 24
+          },
+          "visual_peak": {
+            "rss_bytes": 796098560,
+            "physical_footprint_bytes": 3186247432,
+            "mps_allocated_bytes": 1432886272,
+            "mps_driver_bytes": 2470592512
+          },
+          "memory_peak": {
+            "rss_bytes": 796164096,
+            "physical_footprint_bytes": 3186427656,
+            "mps_allocated_bytes": 1433221120,
+            "mps_driver_bytes": 2470608896
+          }
+        },
+        {
+          "blocks": 62,
+          "seconds": 124,
+          "visual_seconds": 1.5147170840064064,
+          "memory_seconds": 0.16264075000071898,
+          "retained_tokens": 3225,
+          "state_bytes": 15716144,
+          "vision_blocks": 62,
+          "memory_counts": {
+            "match_calls": 119,
+            "match_query_tokens": 14280,
+            "prune_frames": 58,
+            "merge_frames": 26
+          },
+          "visual_peak": {
+            "rss_bytes": 800702464,
+            "physical_footprint_bytes": 3186444040,
+            "mps_allocated_bytes": 1434064128,
+            "mps_driver_bytes": 2470608896
+          },
+          "memory_peak": {
+            "rss_bytes": 800768000,
+            "physical_footprint_bytes": 3194914568,
+            "mps_allocated_bytes": 1434685952,
+            "mps_driver_bytes": 2478981120
+          }
+        },
+        {
+          "blocks": 64,
+          "seconds": 128,
+          "visual_seconds": 1.5209630409954116,
+          "memory_seconds": 0.16834825000842102,
+          "retained_tokens": 3197,
+          "state_bytes": 15601232,
+          "vision_blocks": 64,
+          "memory_counts": {
+            "match_calls": 123,
+            "match_query_tokens": 14760,
+            "prune_frames": 60,
+            "merge_frames": 28
+          },
+          "visual_peak": {
+            "rss_bytes": 805355520,
+            "physical_footprint_bytes": 3194930952,
+            "mps_allocated_bytes": 1435528960,
+            "mps_driver_bytes": 2478997504
+          },
+          "memory_peak": {
+            "rss_bytes": 805437440,
+            "physical_footprint_bytes": 3194832648,
+            "mps_allocated_bytes": 1436208384,
+            "mps_driver_bytes": 2479013888
+          }
+        },
+        {
+          "blocks": 66,
+          "seconds": 132,
+          "visual_seconds": 1.5232604170159902,
+          "memory_seconds": 0.17260941700078547,
+          "retained_tokens": 3188,
+          "state_bytes": 15564296,
+          "vision_blocks": 66,
+          "memory_counts": {
+            "match_calls": 127,
+            "match_query_tokens": 15240,
+            "prune_frames": 62,
+            "merge_frames": 30
+          },
+          "visual_peak": {
+            "rss_bytes": 807698432,
+            "physical_footprint_bytes": 3203745544,
+            "mps_allocated_bytes": 1437051648,
+            "mps_driver_bytes": 2479013888
+          },
+          "memory_peak": {
+            "rss_bytes": 777666560,
+            "physical_footprint_bytes": 3204204296,
+            "mps_allocated_bytes": 1437161728,
+            "mps_driver_bytes": 2479030272
+          }
+        },
+        {
+          "blocks": 68,
+          "seconds": 136,
+          "visual_seconds": 1.7496308339759707,
+          "memory_seconds": 0.18988125000032596,
+          "retained_tokens": 3206,
+          "state_bytes": 15638168,
+          "vision_blocks": 68,
+          "memory_counts": {
+            "match_calls": 131,
+            "match_query_tokens": 15720,
+            "prune_frames": 64,
+            "merge_frames": 32
+          },
+          "visual_peak": {
+            "rss_bytes": 780763136,
+            "physical_footprint_bytes": 3208840968,
+            "mps_allocated_bytes": 1447396608,
+            "mps_driver_bytes": 2480144384
+          },
+          "memory_peak": {
+            "rss_bytes": 781336576,
+            "physical_footprint_bytes": 3210200840,
+            "mps_allocated_bytes": 1439229696,
+            "mps_driver_bytes": 2479046656
+          }
+        },
+        {
+          "blocks": 70,
+          "seconds": 140,
+          "visual_seconds": 1.4439905420003925,
+          "memory_seconds": 0.19006387502304278,
+          "retained_tokens": 3258,
+          "state_bytes": 15851576,
+          "vision_blocks": 70,
+          "memory_counts": {
+            "match_calls": 135,
+            "match_query_tokens": 16200,
+            "prune_frames": 66,
+            "merge_frames": 34
+          },
+          "visual_peak": {
+            "rss_bytes": 785088512,
+            "physical_footprint_bytes": 3211249416,
+            "mps_allocated_bytes": 1440072704,
+            "mps_driver_bytes": 2479046656
+          },
+          "memory_peak": {
+            "rss_bytes": 781991936,
+            "physical_footprint_bytes": 3212691208,
+            "mps_allocated_bytes": 1440699136,
+            "mps_driver_bytes": 2479079424
+          }
+        },
+        {
+          "blocks": 72,
+          "seconds": 144,
+          "visual_seconds": 1.4193026249995455,
+          "memory_seconds": 0.19630166600109078,
+          "retained_tokens": 3331,
+          "state_bytes": 16151168,
+          "vision_blocks": 72,
+          "memory_counts": {
+            "match_calls": 139,
+            "match_query_tokens": 16680,
+            "prune_frames": 68,
+            "merge_frames": 36
+          },
+          "visual_peak": {
+            "rss_bytes": 786432000,
+            "physical_footprint_bytes": 3212723976,
+            "mps_allocated_bytes": 1445588736,
+            "mps_driver_bytes": 2479079424
+          },
+          "memory_peak": {
+            "rss_bytes": 788627456,
+            "physical_footprint_bytes": 3214706440,
+            "mps_allocated_bytes": 1442432768,
+            "mps_driver_bytes": 2479112192
+          }
+        },
+        {
+          "blocks": 74,
+          "seconds": 148,
+          "visual_seconds": 1.4025609169912059,
+          "memory_seconds": 0.17741512501379475,
+          "retained_tokens": 3406,
+          "state_bytes": 16458968,
+          "vision_blocks": 74,
+          "memory_counts": {
+            "match_calls": 143,
+            "match_query_tokens": 17160,
+            "prune_frames": 70,
+            "merge_frames": 38
+          },
+          "visual_peak": {
+            "rss_bytes": 793182208,
+            "physical_footprint_bytes": 3214739208,
+            "mps_allocated_bytes": 1442780160,
+            "mps_driver_bytes": 2479112192
+          },
+          "memory_peak": {
+            "rss_bytes": 794558464,
+            "physical_footprint_bytes": 3224291080,
+            "mps_allocated_bytes": 1443863552,
+            "mps_driver_bytes": 2487500800
+          }
+        },
+        {
+          "blocks": 76,
+          "seconds": 152,
+          "visual_seconds": 1.3567025419906713,
+          "memory_seconds": 0.1741303339949809,
+          "retained_tokens": 3483,
+          "state_bytes": 16774976,
+          "vision_blocks": 76,
+          "memory_counts": {
+            "match_calls": 147,
+            "match_query_tokens": 17640,
+            "prune_frames": 72,
+            "merge_frames": 40
+          },
+          "visual_peak": {
+            "rss_bytes": 799113216,
+            "physical_footprint_bytes": 3224323848,
+            "mps_allocated_bytes": 1444083968,
+            "mps_driver_bytes": 2487517184
+          },
+          "memory_peak": {
+            "rss_bytes": 800620544,
+            "physical_footprint_bytes": 3225421576,
+            "mps_allocated_bytes": 1445740032,
+            "mps_driver_bytes": 2487533568
+          }
+        },
+        {
+          "blocks": 78,
+          "seconds": 156,
+          "visual_seconds": 1.4015867090201937,
+          "memory_seconds": 0.17906250001396984,
+          "retained_tokens": 3529,
+          "state_bytes": 16963760,
+          "vision_blocks": 78,
+          "memory_counts": {
+            "match_calls": 151,
+            "match_query_tokens": 18120,
+            "prune_frames": 74,
+            "merge_frames": 42
+          },
+          "visual_peak": {
+            "rss_bytes": 805175296,
+            "physical_footprint_bytes": 3225437960,
+            "mps_allocated_bytes": 1445956352,
+            "mps_driver_bytes": 2487533568
+          },
+          "memory_peak": {
+            "rss_bytes": 806371328,
+            "physical_footprint_bytes": 3226584840,
+            "mps_allocated_bytes": 1447462912,
+            "mps_driver_bytes": 2487681024
+          }
+        },
+        {
+          "blocks": 80,
+          "seconds": 160,
+          "visual_seconds": 1.4700197500060312,
+          "memory_seconds": 0.17478354199556634,
+          "retained_tokens": 3600,
+          "state_bytes": 17255144,
+          "vision_blocks": 80,
+          "memory_counts": {
+            "match_calls": 155,
+            "match_query_tokens": 18600,
+            "prune_frames": 76,
+            "merge_frames": 44
+          },
+          "visual_peak": {
+            "rss_bytes": 810893312,
+            "physical_footprint_bytes": 3226601224,
+            "mps_allocated_bytes": 1452405760,
+            "mps_driver_bytes": 2487681024
+          },
+          "memory_peak": {
+            "rss_bytes": 812040192,
+            "physical_footprint_bytes": 3227666184,
+            "mps_allocated_bytes": 1449229824,
+            "mps_driver_bytes": 2487697408
+          }
+        },
+        {
+          "blocks": 82,
+          "seconds": 164,
+          "visual_seconds": 1.2955534160137177,
+          "memory_seconds": 0.18435875000432134,
+          "retained_tokens": 3682,
+          "state_bytes": 17591672,
+          "vision_blocks": 82,
+          "memory_counts": {
+            "match_calls": 159,
+            "match_query_tokens": 19080,
+            "prune_frames": 78,
+            "merge_frames": 46
+          },
+          "visual_peak": {
+            "rss_bytes": 816594944,
+            "physical_footprint_bytes": 3227698952,
+            "mps_allocated_bytes": 1449032448,
+            "mps_driver_bytes": 2487697408
+          },
+          "memory_peak": {
+            "rss_bytes": 818151424,
+            "physical_footprint_bytes": 3229124360,
+            "mps_allocated_bytes": 1451474944,
+            "mps_driver_bytes": 2487730176
+          }
+        },
+        {
+          "blocks": 84,
+          "seconds": 168,
+          "visual_seconds": 1.4508867079857737,
+          "memory_seconds": 0.17976437500328757,
+          "retained_tokens": 3836,
+          "state_bytes": 18223688,
+          "vision_blocks": 84,
+          "memory_counts": {
+            "match_calls": 163,
+            "match_query_tokens": 19560,
+            "prune_frames": 80,
+            "merge_frames": 48
+          },
+          "visual_peak": {
+            "rss_bytes": 822706176,
+            "physical_footprint_bytes": 3229157128,
+            "mps_allocated_bytes": 1454971904,
+            "mps_driver_bytes": 2487730176
+          },
+          "memory_peak": {
+            "rss_bytes": 824147968,
+            "physical_footprint_bytes": 3230402312,
+            "mps_allocated_bytes": 1452912640,
+            "mps_driver_bytes": 2487762944
+          }
+        },
+        {
+          "blocks": 86,
+          "seconds": 172,
+          "visual_seconds": 1.7799830419826321,
+          "memory_seconds": 0.29671333299484104,
+          "retained_tokens": 3886,
+          "state_bytes": 18428888,
+          "vision_blocks": 86,
+          "memory_counts": {
+            "match_calls": 167,
+            "match_query_tokens": 20040,
+            "prune_frames": 82,
+            "merge_frames": 50
+          },
+          "visual_peak": {
+            "rss_bytes": 826474496,
+            "physical_footprint_bytes": 3323627272,
+            "mps_allocated_bytes": 1452912128,
+            "mps_driver_bytes": 2487762944
+          },
+          "memory_peak": {
+            "rss_bytes": 369213440,
+            "physical_footprint_bytes": 3336177416,
+            "mps_allocated_bytes": 1455127040,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 88,
+          "seconds": 176,
+          "visual_seconds": 1.8474706249835435,
+          "memory_seconds": 0.23334062498179264,
+          "retained_tokens": 3905,
+          "state_bytes": 18506864,
+          "vision_blocks": 88,
+          "memory_counts": {
+            "match_calls": 171,
+            "match_query_tokens": 20520,
+            "prune_frames": 84,
+            "merge_frames": 52
+          },
+          "visual_peak": {
+            "rss_bytes": 485343232,
+            "physical_footprint_bytes": 3336226568,
+            "mps_allocated_bytes": 1461704192,
+            "mps_driver_bytes": 2496167936
+          },
+          "memory_peak": {
+            "rss_bytes": 488783872,
+            "physical_footprint_bytes": 3337504520,
+            "mps_allocated_bytes": 1456851968,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 90,
+          "seconds": 180,
+          "visual_seconds": 1.6771795000240672,
+          "memory_seconds": 0.2079509579925798,
+          "retained_tokens": 3980,
+          "state_bytes": 18814664,
+          "vision_blocks": 90,
+          "memory_counts": {
+            "match_calls": 175,
+            "match_query_tokens": 21000,
+            "prune_frames": 86,
+            "merge_frames": 54
+          },
+          "visual_peak": {
+            "rss_bytes": 493355008,
+            "physical_footprint_bytes": 3337651976,
+            "mps_allocated_bytes": 1459476480,
+            "mps_driver_bytes": 2496167936
+          },
+          "memory_peak": {
+            "rss_bytes": 496369664,
+            "physical_footprint_bytes": 3340044040,
+            "mps_allocated_bytes": 1458210304,
+            "mps_driver_bytes": 2496167936
+          }
+        },
+        {
+          "blocks": 92,
+          "seconds": 184,
+          "visual_seconds": 1.5435829159978312,
+          "memory_seconds": 0.3184227920137346,
+          "retained_tokens": 4119,
+          "state_bytes": 19385120,
+          "vision_blocks": 92,
+          "memory_counts": {
+            "match_calls": 179,
+            "match_query_tokens": 21480,
+            "prune_frames": 88,
+            "merge_frames": 56
+          },
+          "visual_peak": {
+            "rss_bytes": 498647040,
+            "physical_footprint_bytes": 3340060424,
+            "mps_allocated_bytes": 1461559808,
+            "mps_driver_bytes": 2497282048
+          },
+          "memory_peak": {
+            "rss_bytes": 428376064,
+            "physical_footprint_bytes": 3346024200,
+            "mps_allocated_bytes": 1459619328,
+            "mps_driver_bytes": 2496200704
+          }
+        },
+        {
+          "blocks": 94,
+          "seconds": 188,
+          "visual_seconds": 1.775529499980621,
+          "memory_seconds": 0.2391336250002496,
+          "retained_tokens": 4258,
+          "state_bytes": 19955576,
+          "vision_blocks": 94,
+          "memory_counts": {
+            "match_calls": 183,
+            "match_query_tokens": 21960,
+            "prune_frames": 90,
+            "merge_frames": 58
+          },
+          "visual_peak": {
+            "rss_bytes": 393412608,
+            "physical_footprint_bytes": 3346089736,
+            "mps_allocated_bytes": 1461359104,
+            "mps_driver_bytes": 2496200704
+          },
+          "memory_peak": {
+            "rss_bytes": 389693440,
+            "physical_footprint_bytes": 3350415112,
+            "mps_allocated_bytes": 1460944640,
+            "mps_driver_bytes": 2496217088
+          }
+        }
+      ],
+      "total_visual_seconds": 74.04195341706509,
+      "total_memory_seconds": 8.065053709084168,
+      "total_seconds": 82.10700712614926,
+      "final_state_bytes": 19955576,
+      "vision_blocks": 94,
+      "counts": {
+        "match_calls": 183,
+        "match_query_tokens": 21960,
+        "prune_frames": 90,
+        "merge_frames": 58
+      }
+    }
+  ],
+  "source_hashes": {
+    "benchmark.py": "ea664e6151475d4393a4af77b12ae28a1e5d2395b38c8a43934a00fc6850c8a0",
+    "common.py": "0970297efa9633ffe7a9d260b686972849e5ea7fc89d33d06809131c79d2a460",
+    "PROTOCOL.md": "e63048ca5536f25a8491d373df6fa1514057a58174283d2c55620ee697000bc0"
+  },
+  "summary": {
+    "total_seconds": {
+      "B": [
+        198.99339233181672
+      ],
+      "C": [
+        82.10700712614926
+      ],
+      "B_minus_C": [
+        116.88638520566747
+      ],
+      "B_median": 198.99339233181672,
+      "C_median": 82.10700712614926,
+      "mean_saving": 116.88638520566747
+    },
+    "total_memory_seconds": {
+      "B": [
+        136.5511076268158
+      ],
+      "C": [
+        8.065053709084168
+      ],
+      "B_minus_C": [
+        128.48605391773162
+      ],
+      "B_median": 136.5511076268158,
+      "C_median": 8.065053709084168,
+      "mean_saving": 128.48605391773162
+    },
+    "total_visual_seconds": {
+      "B": [
+        62.44228470500093
+      ],
+      "C": [
+        74.04195341706509
+      ],
+      "B_minus_C": [
+        -11.599668712064158
+      ],
+      "B_median": 62.44228470500093,
+      "C_median": 74.04195341706509,
+      "mean_saving": -11.599668712064158
+    }
+  }
+}

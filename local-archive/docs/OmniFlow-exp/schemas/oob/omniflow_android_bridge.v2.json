@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_id": "omniflow.android.mcp",
+  "contract_version": 2,
+  "protocol_version": "2025-11-25",
+  "transport": {
+    "encoding": "utf-8",
+    "framing": "json-rpc-lines",
+    "request": {
+      "required": ["jsonrpc", "id", "method"],
+      "optional": ["params"],
+      "jsonrpc": "2.0"
+    },
+    "response": {
+      "required": ["jsonrpc", "id"],
+      "one_of": ["result", "error"],
+      "jsonrpc": "2.0"
+    }
+  },
+  "function": {
+    "identifier_field": "function_id",
+    "schema_version": "omniflow.function.v2",
+    "accepted_input_aliases": [],
+    "forbidden_output_fields": ["id", "parameters", "actions", "execution"]
+  },
+  "state": {
+    "identifier_field": "state_id",
+    "inline_xml_field": "xml",
+    "display_field": "display",
+    "display_semantics": "device_screen_pixels",
+    "accepted_input_aliases": []
+  },
+  "run_log": {
+    "schema_version": "omniflow.run_log.v1",
+    "schema_ref": "omniflow_run_log.v1.json",
+    "observation_variants": {
+      "androidworld_state": ["pixels", "forest", "ui_elements", "auxiliaries"],
+      "xml_state": ["pixels", "xml", "auxiliaries"]
+    },
+    "action_contract": "AndroidWorld JSONAction",
+    "accepted_input_aliases": []
+  },
+  "operations": {
+    "initialize": {
+      "request": {
+        "required": ["protocolVersion", "capabilities", "clientInfo"]
+      },
+      "response": {
+        "required": ["protocolVersion", "capabilities", "serverInfo", "_meta"]
+      }
+    },
+    "tools/call": {
+      "request": {
+        "required": ["name"],
+        "optional": ["arguments", "_meta"],
+        "run_gui_arguments": {
+          "required": ["goal", "model"],
+          "optional": [
+            "defer_user_input",
+            "max_steps",
+            "step_skill_guidance",
+            "target_package_name"
+          ],
+          "max_steps": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "tools": [
+          "run_gui",
+          "list_functions",
+          "get_function",
+          "save_function",
+          "delete_function",
+          "clear_functions",
+          "list_run_logs",
+          "get_run_log",
+          "get_run_log_state"
+        ]
+      },
+      "host_calls": [
+        "installed_apps",
+        "observe",
+        "act",
+        "record_step",
+        "request_input",
+        "list_run_logs",
+        "get_run_log",
+        "get_state"
+      ],
+      "response": {
+        "semantics": "The selected Function tool returns its canonical payload without Kotlin reshaping.",
+        "function_identifier": "function_id",
+        "post_run_actions": "Harness-owned requests executed by Android only after RunLog sealing and host allowlist validation."
+      }
+    },
+    "tools/list": {
+      "request": {"optional": ["cursor"]},
+      "response": {"required": ["tools"]}
+    }
+  },
+  "host_call": {
+    "request_required": ["jsonrpc", "id", "method", "params"],
+    "response_required": ["jsonrpc", "id"],
+    "method_prefix": "omniflow/",
+    "methods": [
+      "act",
+      "get_run_log",
+      "get_state",
+      "installed_apps",
+      "list_run_logs",
+      "model_turn",
+      "observe",
+      "record_step",
+      "request_input"
+    ],
+    "act_payload": {"required": ["action", "state"], "optional": ["metadata"]},
+    "installed_apps_payload": {"required": []},
+    "installed_apps_response": {"required": ["apps"]},
+    "model_turn_payload": {
+      "required": ["goal", "model", "request"],
+      "optional": ["state", "max_steps", "target_package_name", "step_skill_guidance"]
+    },
+    "model_turn_response": {
+      "required": ["requested_model", "tool_calls"],
+      "optional": ["resolved_model", "reasoning", "finish_reason", "usage"]
+    },
+    "request_input_payload": {"required": ["question"]},
+    "list_run_logs_payload": {
+      "required": ["limit", "offset", "source", "status", "model", "query"]
+    },
+    "record_step_payload": {
+      "required": ["fact"],
+      "fact": {
+        "required": [
+          "before_state_id",
+          "action",
+          "result",
+          "after_state_id"
+        ],
+        "optional": ["metadata"],
+        "action_schema_ref": "oob_canonical_actions.v1.json"
+      }
+    },
+    "record_step_response": {
+      "required": ["step"]
+    },
+    "get_run_log_response": {
+      "schema_ref": "omniflow_run_log.v1.json"
+    }
+  },
+  "invariants": {
+    "closed_operation_set": true,
+    "function_output_identifier": "function_id",
+    "action_coordinate_space": "relative_0_1000",
+    "state_display_semantics": "device_screen_pixels",
+    "vlm_tool_coordinate_space": "current_display_pixels",
+    "vlm_coordinate_conversion_owner": "omniflow.vlm_coordinates",
+    "manual_coordinate_conversion_owner": "canonicalManualScreenAction",
+    "android_pixel_conversion_owner": "host_action_executor",
+    "function_transfer_failure_falls_back_to_vlm": true
+  }
+}

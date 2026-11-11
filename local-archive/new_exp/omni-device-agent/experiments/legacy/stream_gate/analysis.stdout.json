@@ -1,0 +1,340 @@
+{
+  "chosen": [
+    {
+      "kind": "uniform",
+      "status": "no_configuration_meets_dev_recall_95pct"
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.01,
+      "events": 252,
+      "hits": 250,
+      "recall": 0.9920634920634921,
+      "calls": 47,
+      "frames": 50,
+      "call_fraction": 0.94
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.01,
+      "events": 252,
+      "hits": 250,
+      "recall": 0.9920634920634921,
+      "calls": 47,
+      "frames": 50,
+      "call_fraction": 0.94
+    }
+  ],
+  "aggregate": [
+    {
+      "split": "dev",
+      "kind": "all",
+      "param": 0,
+      "events": 252,
+      "hits": 252,
+      "recall": 1.0,
+      "calls": 50,
+      "frames": 50,
+      "call_fraction": 1.0
+    },
+    {
+      "split": "dev",
+      "kind": "uniform",
+      "param": 2,
+      "events": 252,
+      "hits": 108,
+      "recall": 0.42857142857142855,
+      "calls": 26,
+      "frames": 50,
+      "call_fraction": 0.52
+    },
+    {
+      "split": "dev",
+      "kind": "uniform",
+      "param": 3,
+      "events": 252,
+      "hits": 57,
+      "recall": 0.2261904761904762,
+      "calls": 18,
+      "frames": 50,
+      "call_fraction": 0.36
+    },
+    {
+      "split": "dev",
+      "kind": "uniform",
+      "param": 4,
+      "events": 252,
+      "hits": 72,
+      "recall": 0.2857142857142857,
+      "calls": 15,
+      "frames": 50,
+      "call_fraction": 0.3
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.01,
+      "events": 252,
+      "hits": 250,
+      "recall": 0.9920634920634921,
+      "calls": 47,
+      "frames": 50,
+      "call_fraction": 0.94
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.025,
+      "events": 252,
+      "hits": 237,
+      "recall": 0.9404761904761905,
+      "calls": 40,
+      "frames": 50,
+      "call_fraction": 0.8
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.05,
+      "events": 252,
+      "hits": 237,
+      "recall": 0.9404761904761905,
+      "calls": 36,
+      "frames": 50,
+      "call_fraction": 0.72
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.1,
+      "events": 252,
+      "hits": 224,
+      "recall": 0.8888888888888888,
+      "calls": 30,
+      "frames": 50,
+      "call_fraction": 0.6
+    },
+    {
+      "split": "dev",
+      "kind": "last",
+      "param": 0.2,
+      "events": 252,
+      "hits": 176,
+      "recall": 0.6984126984126984,
+      "calls": 27,
+      "frames": 50,
+      "call_fraction": 0.54
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.01,
+      "events": 252,
+      "hits": 250,
+      "recall": 0.9920634920634921,
+      "calls": 47,
+      "frames": 50,
+      "call_fraction": 0.94
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.025,
+      "events": 252,
+      "hits": 237,
+      "recall": 0.9404761904761905,
+      "calls": 39,
+      "frames": 50,
+      "call_fraction": 0.78
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.05,
+      "events": 252,
+      "hits": 235,
+      "recall": 0.9325396825396826,
+      "calls": 34,
+      "frames": 50,
+      "call_fraction": 0.68
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.1,
+      "events": 252,
+      "hits": 224,
+      "recall": 0.8888888888888888,
+      "calls": 30,
+      "frames": 50,
+      "call_fraction": 0.6
+    },
+    {
+      "split": "dev",
+      "kind": "memory",
+      "param": 0.2,
+      "events": 252,
+      "hits": 170,
+      "recall": 0.6746031746031746,
+      "calls": 23,
+      "frames": 50,
+      "call_fraction": 0.46
+    },
+    {
+      "split": "test",
+      "kind": "all",
+      "param": 0,
+      "events": 335,
+      "hits": 335,
+      "recall": 1.0,
+      "calls": 89,
+      "frames": 89,
+      "call_fraction": 1.0
+    },
+    {
+      "split": "test",
+      "kind": "uniform",
+      "param": 2,
+      "events": 335,
+      "hits": 213,
+      "recall": 0.6358208955223881,
+      "calls": 46,
+      "frames": 89,
+      "call_fraction": 0.5168539325842697
+    },
+    {
+      "split": "test",
+      "kind": "uniform",
+      "param": 3,
+      "events": 335,
+      "hits": 108,
+      "recall": 0.32238805970149254,
+      "calls": 30,
+      "frames": 89,
+      "call_fraction": 0.33707865168539325
+    },
+    {
+      "split": "test",
+      "kind": "uniform",
+      "param": 4,
+      "events": 335,
+      "hits": 98,
+      "recall": 0.29253731343283584,
+      "calls": 24,
+      "frames": 89,
+      "call_fraction": 0.2696629213483146
+    },
+    {
+      "split": "test",
+      "kind": "last",
+      "param": 0.01,
+      "events": 335,
+      "hits": 320,
+      "recall": 0.9552238805970149,
+      "calls": 73,
+      "frames": 89,
+      "call_fraction": 0.8202247191011236
+    },
+    {
+      "split": "test",
+      "kind": "last",
+      "param": 0.025,
+      "events": 335,
+      "hits": 306,
+      "recall": 0.9134328358208955,
+      "calls": 64,
+      "frames": 89,
+      "call_fraction": 0.7191011235955056
+    },
+    {
+      "split": "test",
+      "kind": "last",
+      "param": 0.05,
+      "events": 335,
+      "hits": 304,
+      "recall": 0.9074626865671642,
+      "calls": 55,
+      "frames": 89,
+      "call_fraction": 0.6179775280898876
+    },
+    {
+      "split": "test",
+      "kind": "last",
+      "param": 0.1,
+      "events": 335,
+      "hits": 216,
+      "recall": 0.6447761194029851,
+      "calls": 36,
+      "frames": 89,
+      "call_fraction": 0.4044943820224719
+    },
+    {
+      "split": "test",
+      "kind": "last",
+      "param": 0.2,
+      "events": 335,
+      "hits": 200,
+      "recall": 0.5970149253731343,
+      "calls": 25,
+      "frames": 89,
+      "call_fraction": 0.2808988764044944
+    },
+    {
+      "split": "test",
+      "kind": "memory",
+      "param": 0.01,
+      "events": 335,
+      "hits": 319,
+      "recall": 0.9522388059701492,
+      "calls": 62,
+      "frames": 89,
+      "call_fraction": 0.6966292134831461
+    },
+    {
+      "split": "test",
+      "kind": "memory",
+      "param": 0.025,
+      "events": 335,
+      "hits": 305,
+      "recall": 0.9104477611940298,
+      "calls": 52,
+      "frames": 89,
+      "call_fraction": 0.5842696629213483
+    },
+    {
+      "split": "test",
+      "kind": "memory",
+      "param": 0.05,
+      "events": 335,
+      "hits": 271,
+      "recall": 0.808955223880597,
+      "calls": 42,
+      "frames": 89,
+      "call_fraction": 0.47191011235955055
+    },
+    {
+      "split": "test",
+      "kind": "memory",
+      "param": 0.1,
+      "events": 335,
+      "hits": 201,
+      "recall": 0.6,
+      "calls": 27,
+      "frames": 89,
+      "call_fraction": 0.30337078651685395
+    },
+    {
+      "split": "test",
+      "kind": "memory",
+      "param": 0.2,
+      "events": 335,
+      "hits": 190,
+      "recall": 0.5671641791044776,
+      "calls": 22,
+      "frames": 89,
+      "call_fraction": 0.24719101123595505
+    }
+  ]
+}

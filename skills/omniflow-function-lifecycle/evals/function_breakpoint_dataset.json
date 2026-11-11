@@ -1,0 +1,278 @@
+{
+  "schema_version": "omniflow.function-breakpoint-dataset.v1",
+  "dataset_id": "function-breakpoint-v1",
+  "language": "zh-CN",
+  "scope": {
+    "kind": "offline_runtime_validation",
+    "benchmark_use": "do_not_count_as_benchmark",
+    "scene_policy": "synthetic_ui_state_with_real_action_semantics",
+    "note": "用于验证 Function 在状态变化、用户退出和映射失败后的断点行为；真实 Benchmark 仍必须使用真实 App RunLog、截图、UI tree 和官方 validator。"
+  },
+  "evaluation_contract": {
+    "input": [
+      "registered omniflow.function.v2 artifact",
+      "ordered target observation snapshots",
+      "deterministic Planner fallback actions",
+      "OmniTransfer mapping result for every attempted Function step"
+    ],
+    "required_invariants": [
+      "Function 只在当前观察与 source_state 对齐且 transfer confidence 达标时执行",
+      "replay failure 必须回到 Planner/VLM fallback，再尝试 weighted-LCS resume",
+      "resume 只能从对齐后的 source step 开始，不能重复已确认成功的动作",
+      "mapping=NULL、低置信度或不可执行时不得回放 source 坐标",
+      "需要读取变化 UI 的重复动作必须拆成 one-step local Function"
+    ],
+    "reported_fields": [
+      "replay_status",
+      "failed_step_index",
+      "resume_step_index",
+      "resume_events",
+      "fallback_steps",
+      "model_calls",
+      "source_coordinate_replayed",
+      "final_state_id",
+      "final_facts"
+    ]
+  },
+  "cases": [
+    {
+      "id": "rednote_collect_engagement",
+      "scene": "小红书：搜索帖子，打开博主头像，收藏、评论并打卡",
+      "app": {
+        "label": "rednote",
+        "package_name": "com.xingin.xhs",
+        "activity_name": "com.xingin.xhs.MainActivity"
+      },
+      "goal": "搜索‘城市徒步路线’，打开目标帖子的博主头像，收藏帖子，评论‘周末去试试’，并完成打卡。",
+      "source_run_id": "source-rednote-engagement-001",
+      "source_states": {
+        "s0_home": {"page": "home", "facts": ["search_available"]},
+        "s1_search_focused": {"page": "search", "facts": ["query_field_focused"]},
+        "s2_results": {"page": "search_results", "facts": ["query=城市徒步路线", "target_post_visible"]},
+        "s3_post": {"page": "post_detail", "facts": ["target_post_visible", "avatar_visible", "favorite=false"]},
+        "s4_profile": {"page": "profile", "facts": ["target_creator_visible"]},
+        "s5_favorited": {"page": "post_detail", "facts": ["favorite=true", "comment_box_visible"]},
+        "s6_comment_draft": {"page": "post_detail", "facts": ["favorite=true", "comment=周末去试试", "submit_visible"]},
+        "s7_commented": {"page": "post_detail", "facts": ["comment_published=true", "check_in_visible"]},
+        "s8_complete": {"page": "post_detail", "facts": ["favorite=true", "comment_published=true", "checked_in=true"]},
+        "s_exit_home": {"page": "home", "facts": ["rednote_backgrounded=false"]}
+      },
+      "function_artifact": {
+        "schema_version": "omniflow.function.v2",
+        "function_id": "rednote_collect_engagement",
+        "name": "Collect engagement on a RedNote post",
+        "description": "Search for the requested post, open its creator profile, favorite the post, publish the requested comment, and complete the visible check-in action.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Post search query"},
+            "comment": {"type": "string", "description": "Comment to publish"}
+          },
+          "required": ["query", "comment"],
+          "additionalProperties": false
+        },
+        "bindings": [
+          {"source": "$.arguments.query", "target": "$.steps[1].action.args.text"},
+          {"source": "$.arguments.comment", "target": "$.steps[7].action.args.text"}
+        ],
+        "steps": [
+          {"step_index": 0, "source_state_id": "s0_home", "action": {"tool": "open_app", "args": {"package_name": "com.xingin.xhs"}}},
+          {"step_index": 1, "source_state_id": "s1_search_focused", "action": {"tool": "input_text", "args": {"target_description": "Search", "text": ""}}},
+          {"step_index": 2, "source_state_id": "s1_search_focused", "action": {"tool": "press_key", "args": {"key": "enter"}}},
+          {"step_index": 3, "source_state_id": "s2_results", "action": {"tool": "click", "args": {"target_description": "城市徒步路线 post", "x": 500, "y": 420}}},
+          {"step_index": 4, "source_state_id": "s3_post", "action": {"tool": "click", "args": {"target_description": "博主头像", "x": 120, "y": 160}}},
+          {"step_index": 5, "source_state_id": "s4_profile", "action": {"tool": "press_key", "args": {"key": "back"}}},
+          {"step_index": 6, "source_state_id": "s5_favorited", "action": {"tool": "click", "args": {"target_description": "收藏", "x": 850, "y": 820}}},
+          {"step_index": 7, "source_state_id": "s5_favorited", "action": {"tool": "input_text", "args": {"target_description": "评论输入框", "text": ""}}},
+          {"step_index": 8, "source_state_id": "s6_comment_draft", "action": {"tool": "click", "args": {"target_description": "发表评论", "x": 900, "y": 940}}},
+          {"step_index": 9, "source_state_id": "s7_commented", "action": {"tool": "click", "args": {"target_description": "打卡", "x": 760, "y": 820}}}
+        ],
+        "agent_visible": true
+      },
+      "variants": [
+        {
+          "id": "baseline_full_replay",
+          "kind": "control",
+          "target_observations": ["s0_home", "s1_search_focused", "s2_results", "s3_post", "s4_profile", "s5_favorited", "s6_comment_draft", "s7_commented", "s8_complete"],
+          "interventions": [],
+          "expected": {
+            "replay_status": "succeeded",
+            "failed_step_index": null,
+            "resume_step_index": null,
+            "resume_events": [],
+            "fallback_steps": 0,
+            "model_calls": 0,
+            "source_coordinate_replayed": false,
+            "final_state_id": "s8_complete",
+            "final_facts": ["favorite=true", "comment_published=true", "checked_in=true"]
+          }
+        },
+        {
+          "id": "user_exits_after_profile",
+          "kind": "state_change_then_resume",
+          "target_observations": ["s0_home", "s1_search_focused", "s2_results", "s3_post", "s4_profile", "s_exit_home", "s2_results", "s3_post", "s5_favorited", "s6_comment_draft", "s7_commented", "s8_complete"],
+          "interventions": [
+            {"after_source_step": 4, "action": {"tool": "press_key", "args": {"key": "back"}}, "resulting_state": "s_exit_home"},
+            {"after_source_step": 4, "planner_recovery": {"tool": "open_app", "args": {"package_name": "com.xingin.xhs"}}}
+          ],
+          "expected": {
+            "replay_status": "failed_then_resumed",
+            "failed_step_index": 5,
+            "resume_step_index": 6,
+            "resume_events": [{"trigger": "function_replay_failure", "status": "succeeded", "start_step_index": 5, "resume_step_index": 6}],
+            "fallback_steps": 1,
+            "model_calls": 1,
+            "source_coordinate_replayed": false,
+            "final_state_id": "s8_complete",
+            "final_facts": ["favorite=true", "comment_published=true", "checked_in=true"]
+          }
+        },
+        {
+          "id": "skip_profile_step",
+          "kind": "middle_step_removed",
+          "target_observations": ["s0_home", "s1_search_focused", "s2_results", "s5_favorited", "s6_comment_draft", "s7_commented", "s8_complete"],
+          "interventions": [
+            {"after_source_step": 2, "action": {"tool": "click", "args": {"target_description": "收藏", "x": 850, "y": 820}}, "resulting_state": "s5_favorited", "removed_source_steps": [3, 4, 5], "mapping": null, "mapping_reason": "target_context_changed"}
+          ],
+          "expected": {
+            "replay_status": "failed_then_planner_handoff",
+            "failed_step_index": 3,
+            "resume_step_index": null,
+            "resume_events": [{"trigger": "function_replay_failure", "status": "not_aligned", "start_step_index": 3}],
+            "fallback_steps": 1,
+            "model_calls": 1,
+            "source_coordinate_replayed": false,
+            "final_state_id": "s8_complete",
+            "final_facts": ["favorite=true", "comment_published=true", "checked_in=true"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "rednote_search_then_exit",
+      "scene": "小红书：搜索后用户直接退出，目标流程不再继续",
+      "app": {"label": "rednote", "package_name": "com.xingin.xhs", "activity_name": "com.xingin.xhs.MainActivity"},
+      "goal": "搜索‘露营装备’，如果用户退出则停止当前 Function，不要自动重新打开并继续后续动作。",
+      "source_run_id": "source-rednote-search-002",
+      "source_states": {
+        "q0_home": {"page": "home", "facts": ["search_available"]},
+        "q1_results": {"page": "search_results", "facts": ["query=露营装备", "result_visible"]},
+        "q_exit_home": {"page": "home", "facts": ["user_exit=true"]},
+        "q2_post": {"page": "post_detail", "facts": ["result_open=true"]}
+      },
+      "function_artifact": {
+        "schema_version": "omniflow.function.v2",
+        "function_id": "rednote_search_and_open",
+        "name": "Search and open a RedNote result",
+        "description": "Search for the requested topic and open the selected result, then hand control back to the Planner for any changed goal.",
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}}, "required": ["query"], "additionalProperties": false},
+        "bindings": [{"source": "$.arguments.query", "target": "$.steps[1].action.args.text"}],
+        "steps": [
+          {"step_index": 0, "source_state_id": "q0_home", "action": {"tool": "open_app", "args": {"package_name": "com.xingin.xhs"}}},
+          {"step_index": 1, "source_state_id": "q0_home", "action": {"tool": "input_text", "args": {"target_description": "Search", "text": ""}}},
+          {"step_index": 2, "source_state_id": "q0_home", "action": {"tool": "press_key", "args": {"key": "enter"}}},
+          {"step_index": 3, "source_state_id": "q1_results", "action": {"tool": "click", "args": {"target_description": "露营装备 result", "x": 500, "y": 420}}}
+        ],
+        "agent_visible": true
+      },
+      "variants": [
+        {
+          "id": "exit_is_terminal_change",
+          "kind": "middle_step_removed_and_user_exit",
+          "target_observations": ["q0_home", "q1_results", "q_exit_home"],
+          "interventions": [{"after_source_step": 2, "action": {"tool": "press_key", "args": {"key": "back"}}, "resulting_state": "q_exit_home", "removed_source_steps": [3], "goal_update": "用户已退出，不再打开结果"}],
+          "expected": {
+            "replay_status": "cancelled_by_planner",
+            "failed_step_index": 3,
+            "resume_step_index": null,
+            "resume_events": [],
+            "fallback_steps": 1,
+            "model_calls": 1,
+            "source_coordinate_replayed": false,
+            "final_state_id": "q_exit_home",
+            "final_facts": ["user_exit=true"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "rednote_changing_checkin_repeat",
+      "scene": "小红书：连续点击打卡控件，每次都会改变计数",
+      "app": {"label": "rednote", "package_name": "com.xingin.xhs", "activity_name": "com.xingin.xhs.MainActivity"},
+      "goal": "在当前帖子上完成打卡，直到页面显示目标次数；每次点击后先读取新的计数。",
+      "source_run_id": "source-rednote-repeat-003",
+      "source_states": {
+        "r0": {"page": "post_detail", "facts": ["check_in_count=0", "check_in_visible"]},
+        "r1": {"page": "post_detail", "facts": ["check_in_count=1", "check_in_visible"]},
+        "r2": {"page": "post_detail", "facts": ["check_in_count=2", "check_in_visible"]},
+        "r3": {"page": "post_detail", "facts": ["check_in_count=3", "target_reached=true"]}
+      },
+      "local_function": {
+        "schema_version": "omniflow.function.v2",
+        "function_id": "rednote_one_checkin",
+        "name": "Complete one visible check-in",
+        "description": "Click the visible check-in control once; the Planner must observe the changed count before calling this Function again.",
+        "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+        "bindings": [],
+        "steps": [{"step_index": 0, "source_state_id": "r0", "action": {"tool": "click", "args": {"target_description": "打卡", "x": 760, "y": 820}}}],
+        "agent_visible": true
+      },
+      "variants": [
+        {
+          "id": "planner_observes_between_repeats",
+          "kind": "observation_dependent_repeat",
+          "target_observations": ["r0", "r1", "r2", "r3"],
+          "interventions": [],
+          "expected": {
+            "replay_status": "three_local_invocations",
+            "local_invocation_count": 3,
+            "observation_boundaries": ["r1", "r2", "r3"],
+            "blind_repeat_count": 0,
+            "source_coordinate_replayed": false,
+            "final_state_id": "r3",
+            "final_facts": ["check_in_count=3", "target_reached=true"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "rednote_transfer_null_no_coordinate_replay",
+      "scene": "小红书：Fold 页面结构变化导致 OmniTransfer 无法映射收藏按钮",
+      "app": {"label": "rednote", "package_name": "com.xingin.xhs", "activity_name": "com.xingin.xhs.MainActivity"},
+      "goal": "在 Fold 设备上收藏当前帖子；若页面映射失败，交给 Planner 重新观察，不得使用 source 坐标。",
+      "source_run_id": "source-rednote-transfer-004",
+      "source_states": {"t0_post": {"page": "post_detail", "facts": ["favorite=false", "favorite_visible"]}},
+      "target_states": {"t0_fold_post": {"page": "post_detail_fold", "facts": ["favorite=false", "favorite_visible", "layout_changed=true"]}},
+      "function_artifact": {
+        "schema_version": "omniflow.function.v2",
+        "function_id": "rednote_favorite_post",
+        "name": "Favorite the current RedNote post",
+        "description": "Favorite the current post when OmniTransfer can safely map the visible control.",
+        "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+        "bindings": [],
+        "steps": [{"step_index": 0, "source_state_id": "t0_post", "action": {"tool": "click", "args": {"target_description": "收藏", "x": 850, "y": 820}}}],
+        "agent_visible": true
+      },
+      "variants": [
+        {
+          "id": "transfer_returns_null",
+          "kind": "transfer_failure",
+          "target_observations": ["t0_fold_post"],
+          "interventions": [{"at": "transfer", "mapping": null, "reason": "target_candidate_not_executable"}],
+          "expected": {
+            "replay_status": "unavailable_then_planner_fallback",
+            "failed_step_index": 0,
+            "resume_step_index": null,
+            "resume_events": [],
+            "fallback_steps": 1,
+            "model_calls": 1,
+            "source_coordinate_replayed": false,
+            "required_transfer_reason": "omnitransfer_target_candidate_not_executable",
+            "final_state_id": "t0_fold_post",
+            "final_facts": ["favorite=true"]
+          }
+        }
+      ]
+    }
+  ]
+}

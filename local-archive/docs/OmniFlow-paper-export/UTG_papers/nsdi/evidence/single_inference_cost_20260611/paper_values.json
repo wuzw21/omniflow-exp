@@ -1,0 +1,34 @@
+{
+  "status": "appendix_only_diagnostic",
+  "scope": "single inference cost for a full textual description of one mobile observation",
+  "notes": [
+    "Screenshot and XML inputs are both counted as complete textual descriptions of the observed screen.",
+    "Values are per-inference reference costs, not end-to-end task results."
+  ],
+  "rows": [
+    {
+      "location": "On-device",
+      "model_backend_device": "Llama.cpp + 0.8B-W4 + CPU",
+      "tokens": "screenshot ~2500",
+      "time": "60s+"
+    },
+    {
+      "location": "On-device",
+      "model_backend_device": "MNN-LMM + 0.8B-W4 + CPU",
+      "tokens": "screenshot ~2500",
+      "time": "10s+"
+    },
+    {
+      "location": "On-device",
+      "model_backend_device": "Omniinfer + 0.8B-W4 + NPU",
+      "tokens": "XML ~1k--10k+",
+      "time": "3s"
+    },
+    {
+      "location": "Cloud",
+      "model_backend_device": "Qwen-VL-Plus + cloud",
+      "tokens": "screenshot ~3200",
+      "time": "3s"
+    }
+  ]
+}

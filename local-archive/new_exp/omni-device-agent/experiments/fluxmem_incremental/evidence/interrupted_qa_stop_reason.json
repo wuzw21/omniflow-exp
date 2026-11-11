@@ -1,0 +1,7 @@
+{
+  "action": "interrupt for loader memory diagnosis",
+  "pid": 41539,
+  "completed_records": 3,
+  "observation": "physical footprint increased from ~7.3 GiB after load to ~15 GiB before generation, unlike preceding baseline; not attributed to incremental state",
+  "status": "partial, not a complete QA pass"
+}
