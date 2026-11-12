@@ -57,3 +57,13 @@ nohup.out
 /*.synctex.gz
 /main.pdf
 /wrapper.pdf
+
+# Machine-specific local indexes are never publication material.
+/local-archive/README.md
+/local-archive/paper.md
+/local-archive/docs/CVM_EXPERIMENT_LAYOUT.md
+/docs/CVM_EXPERIMENT_LAYOUT.md
+/docs/CVM_*.md
+/local-archive/**/CVM_*.md
+**/devcloud_config
+/.local-private/
